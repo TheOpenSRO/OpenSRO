@@ -37,6 +37,17 @@ class_name KeyInput
 ##   "is_typing": func() -> bool
 ##   "run":       func(action: String, arg: int) -> String   what it did
 ##   "held":      func(action: String, down: bool) -> void   optional
+##   "arrow":     func(keycode: int, down: bool, echo: bool) -> String   optional
+##   "arrow_release_all": func() -> void   optional
+##
+## **The arrow keys** (round 808; World3D._on_arrow_key has the reading): not
+## table slots, since they act on the press, on every OS repeat of it (retail's
+## WM_KEYDOWN runs its case again on each) and on the release. While a text
+## line has the keyboard they are the line's (retail's 0x77c8e0 gate); one held
+## when a line takes the keyboard or the window loses the focus is let go
+## (OURS, as V and Z are).
+const ARROW_KEYS := [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
+var _arrows_down: Dictionary = {}
 
 var host: Dictionary = {}
 ## Actions whose key is down: action -> keycode.
@@ -85,16 +96,22 @@ func _typing() -> bool:
 func _process(_delta: float) -> void:
 	# A text line took the keyboard while a key was held: its release now
 	# belongs to the line, so let go here.
-	if (not _held.is_empty() or _space_held) and _typing():
+	if (not _held.is_empty() or _space_held or not _arrows_down.is_empty()) and _typing():
 		release_all("typing")
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		release_all("focus lost")
 
-## Lets go of every held key (V, Z and Space).
+## Lets go of every held key (V, Z, Space and the arrows).
 func release_all(why: String = "") -> void:
 	_space_held = false
+	if not _arrows_down.is_empty():
+		_arrows_down.clear()
+		var f: Callable = host.get("arrow_release_all", Callable())
+		if f.is_valid():
+			f.call()
+		_note("arrows up (%s)" % why)
 	for action in _held.keys():
 		_let_go(action, why)
 
@@ -135,6 +152,12 @@ func _input(event: InputEvent) -> void:
 	var keycode := key_code_of(key)
 	if _typing() and not KeyMap.runs_while_typing(keycode):
 		_log_typing()
+		return
+	if keycode in ARROW_KEYS and host.has("arrow"):
+		_arrows_down[keycode] = true
+		get_viewport().set_input_as_handled()
+		var arrow: Callable = host["arrow"]
+		arrow.call(keycode, true, key.echo)
 		return
 	_typing_logged = false
 	var hit := KeyMap.resolve(keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, _space_held, key.shift_pressed)
@@ -212,6 +235,13 @@ func _on_release(key: InputEventKey) -> void:
 	for action in _held.keys():
 		if int(_held[action]) == keycode:
 			_let_go(action)
+	if _arrows_down.has(keycode):
+		_arrows_down.erase(keycode)
+		get_viewport().set_input_as_handled()
+		var arrow: Callable = host.get("arrow", Callable())
+		if arrow.is_valid():
+			arrow.call(keycode, false, false)
+		return
 	var hit := KeyMap.resolve_release(keycode)
 	if hit.is_empty():
 		return

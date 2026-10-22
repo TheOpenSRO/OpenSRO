@@ -43,6 +43,8 @@ const (
 const (
 	CommandMove   = 1 // the destination body of 0x7021
 	CommandAttack = 2 // u32 target uid
+	CommandStop   = 3 // u16 angle: the arrow Up's release, ridden (c:0x9eb6e0; round 808)
+	CommandTurn   = 4 // u16 angle: an arrow turn, ridden (c:0x9eb470; round 808)
 	CommandPick   = 8 // u32 item uid (the ability pet's own pick, s:CAIState_PICKITEM)
 	CommandFollow = 9
 )

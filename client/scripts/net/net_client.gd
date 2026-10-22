@@ -52,6 +52,8 @@ signal entity_moved(moved: WorldNet.EntityMoved)
 ## did not take a stop or placement it was told.
 signal entity_move_echo(echo: DestMoveNet.Echo)
 signal entity_move_stop(stop: DestMoveNet.Stop)
+## Round 808: 0xB024, a body's new heading (uid, the u16 wire angle).
+signal entity_turned(uid: int, angle: int)
 signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
 ## A character's state changed (WorldNet.OP_STATE_CHANGE, round 607): kind 1 is
@@ -776,7 +778,8 @@ static func _is_barrier(op: int) -> bool:
 
 ## A movement's uid (0xB021 / 0xB023: u32 at 0), or -1.
 static func _move_uid(p: Packet) -> int:
-	if (p.opcode == DestMoveNet.OP_MOVEMENT_ECHO or p.opcode == DestMoveNet.OP_MOVEMENT_STOP) and p.data.size() >= 4:
+	if (p.opcode == DestMoveNet.OP_MOVEMENT_ECHO or p.opcode == DestMoveNet.OP_MOVEMENT_STOP \
+			or p.opcode == DestMoveNet.OP_MOVEMENT_TURN) and p.data.size() >= 4:
 		return p.data.decode_u32(0)
 	return -1
 
@@ -820,7 +823,7 @@ func _passes_group(p: Packet) -> bool:
 			var st := StatusNet.decode_object_status(p.data)
 			return st.error == "" and st.owner_kind == SkillNet.OWNER_CHARACTER and own_character_id >= 0 \
 				and (st.owner_id == own_character_id or st.owner_id == (own_character_id & 0xffffffff))
-		DestMoveNet.OP_MOVEMENT_ECHO, DestMoveNet.OP_MOVEMENT_STOP:
+		DestMoveNet.OP_MOVEMENT_ECHO, DestMoveNet.OP_MOVEMENT_STOP, DestMoveNet.OP_MOVEMENT_TURN:
 			var u := _move_uid(p)
 			return u >= 0 and user_roster.has(u) and not _held_uids.has(u) and _pending_spawns.is_empty()
 	return false
@@ -1194,6 +1197,22 @@ func quantize_destination(at: Vector3) -> Vector3:
 	var lz := float(int(float(l["lz"])))
 	var w := DestMoveNet.world_of_local(int(l["region"]), lx, lz, _spawn_frame)
 	return Vector3(w.x, float(int(at.y)), w.y)
+
+## Round 808: the arrow keys' turn, 0x7024 {u16 angle} (FUN_009eb470), or
+## 0x70C5 {uid, 4, angle} riding.
+func move_turn(angle: int) -> void:
+	if riding_mount != 0:
+		_send(CosNet.OP_COMMAND, DestMoveNet.encode_cos_angle(riding_mount, DestMoveNet.COS_COMMAND_TURN, angle))
+	else:
+		_send(DestMoveNet.OP_MOVEMENT_TURN_REQUEST, DestMoveNet.encode_angle(angle))
+
+## Round 808: Up's release, 0x7023 {u16 angle} (FUN_009eb6e0), or 0x70C5
+## {uid, 3, angle} riding.
+func move_stop_request(angle: int) -> void:
+	if riding_mount != 0:
+		_send(CosNet.OP_COMMAND, DestMoveNet.encode_cos_angle(riding_mount, DestMoveNet.COS_COMMAND_STOP, angle))
+	else:
+		_send(DestMoveNet.OP_MOVEMENT_STOP_REQUEST, DestMoveNet.encode_angle(angle))
 
 ## Round 749: 0x7021's heading form (the sky click, FUN_009ebec0): kind 0,
 ## the command (SkyRun.COMMAND_FORWARD) and the u16 wire angle.
@@ -1913,6 +1932,11 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 			var at := DestMoveNet.world_of_local(stop.region, stop.local.x, stop.local.z, _spawn_frame)
 			stop.world = Vector3(at.x, stop.local.y, at.y)
 			entity_move_stop.emit(stop)
+		DestMoveNet.OP_MOVEMENT_TURN:
+			# Round 808: a body's new heading, in order with its moves.
+			var turn := DestMoveNet.decode_turn(data)
+			if int(turn["uid"]) >= 0:
+				entity_turned.emit(int(turn["uid"]), int(turn["angle"]))
 		NpcSpawnNet.OP_SINGLE_SPAWN:
 			if _spawn_types == null:
 				_pending_spawns.append({"op": op, "data": data, "rx": _rx_msec})
@@ -2505,7 +2529,7 @@ func _dispatch(p: Packet) -> void:
 					monster_list_result.emit(whole, "")
 		NpcSpawnNet.OP_FACING_UNKNOWN:
 			npc_roster.facing_unknown(NpcSpawnNet.decode_facing_unknown(p.data))
-		DestMoveNet.OP_MOVEMENT_ECHO, DestMoveNet.OP_MOVEMENT_STOP:
+		DestMoveNet.OP_MOVEMENT_ECHO, DestMoveNet.OP_MOVEMENT_STOP, DestMoveNet.OP_MOVEMENT_TURN:
 			# Round 749: in order behind any player spawn still waiting for the
 			# item table, so a body is never told to walk before it exists.
 			_user_spawn_message(p.opcode, p.data)

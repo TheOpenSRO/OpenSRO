@@ -34,6 +34,13 @@ func _test_request() -> void:
 	# ftol truncates toward zero (0x9ec080): 1000.9 -> 1000, -3.7 -> -3.
 	_check(DestMoveNet.encode_destination(0x61a8, 1000.9, -3.7, 900.99) == d, "the coordinates are truncated, not rounded")
 	_check(DestMoveNet.encode_heading(1, 0xbeef) == PackedByteArray([0, 1, 0xef, 0xbe]), "the heading form is 00 | command | u16 angle")
+	# Round 808: the arrow keys' stop and turn, and the server's turn (destmove808_test.go).
+	_check(DestMoveNet.encode_angle(0xbeef) == PackedByteArray([0xef, 0xbe]), "0x7023 / 0x7024 carry the u16 angle")
+	_check(DestMoveNet.encode_cos_angle(0x01020304, DestMoveNet.COS_COMMAND_TURN, 0xbeef) == PackedByteArray([4, 3, 2, 1, 4, 0xef, 0xbe]),
+		"ridden, 0x70C5 {uid, 4, angle}")
+	var turn := DestMoveNet.decode_turn(PackedByteArray([4, 3, 2, 1, 0xef, 0xbe]))
+	_check(int(turn["uid"]) == 0x01020304 and int(turn["angle"]) == 0xbeef, "0xB024 reads uid and angle")
+	_check(int(DestMoveNet.decode_turn(PackedByteArray([1, 2]))["uid"]) == -1, "a short 0xB024 is refused")
 
 func _test_echo() -> void:
 	var e := DestMoveNet.decode_echo(_hex(ECHO))

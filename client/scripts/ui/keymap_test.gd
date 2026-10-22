@@ -27,6 +27,8 @@ var _runs: Array = []
 ## [action, down] per held() call.
 var _holds: Array = []
 var _typing_line: LineEdit
+## Round 808: what the "arrow" host heard: [keycode, down, echo].
+var _arrows: Array = []
 var _panels: Control
 var _key_input: Node
 var _map_toggles := 0
@@ -117,6 +119,9 @@ func _run() -> void:
 				_runs.append([action, arg])
 				return "recorded",
 			"held": func(action: String, down: bool) -> void: _holds.append([action, down]),
+			"arrow": func(code: int, down: bool, echo: bool) -> String:
+				_arrows.append([code, down, echo])
+				return "recorded",
 		})
 		get_root().add_child(_key_input)
 	await process_frame
@@ -124,6 +129,7 @@ func _run() -> void:
 	_check_table(keymap)
 	_check_windows()
 	_check_world_keys()
+	await _check_arrows()
 	_check_outside_keys()
 	await _check_holds()
 	_check_typing()
@@ -183,9 +189,36 @@ func _check_world_keys() -> void:
 		_check(got[0] == [keys[code]] and got[1].is_empty(),
 			"%s runs %s (slot %d) (ran %s, toggled %s)" % [_name(code), keys[code][0], keys[code][1], got[0], got[1]])
 	# Keys retail does not bind do nothing here.
-	for code in [KEY_D, KEY_J, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_F5, KEY_F12]:
+	for code in [KEY_D, KEY_J, KEY_F5, KEY_F12]:
 		var got := _what(code)
 		_check(got[0].is_empty() and got[1].is_empty(), "%s does nothing (ran %s)" % [_name(code), got[0]])
+
+## Round 808: the arrows reach the host's "arrow" callable -- the press, each
+## OS repeat (echo) and the release; Down too (the world does nothing with it,
+## READ) -- and run no table slot; while a text line has the keyboard they are
+## the line's, and a held one is let go when it takes it.
+func _check_arrows() -> void:
+	_arrows.clear()
+	var runs_before := _runs.size()
+	get_root().push_input(_event(KEY_LEFT, true))
+	get_root().push_input(_event(KEY_LEFT, true, false, true))
+	get_root().push_input(_event(KEY_LEFT, false))
+	_check(_arrows == [[KEY_LEFT, true, false], [KEY_LEFT, true, true], [KEY_LEFT, false, false]] and _runs.size() == runs_before,
+		"Left's press, repeat and release reach the arrow path, no slot (%s)" % str(_arrows))
+	_arrows.clear()
+	for code in [KEY_UP, KEY_RIGHT, KEY_DOWN]:
+		_tap(code)
+	_check(_arrows.size() == 6 and _arrows[0] == [KEY_UP, true, false] and _arrows[5] == [KEY_DOWN, false, false],
+		"Up, Right and Down reach it too (%s)" % str(_arrows))
+	_arrows.clear()
+	get_root().push_input(_event(KEY_UP, true))
+	_typing_line.grab_focus()
+	await process_frame
+	_check(_arrows.size() == 1 and _key_input._arrows_down.is_empty(), "a held Up is let go when a line takes the keyboard (%s)" % str(_arrows))
+	_tap(KEY_LEFT)
+	_check(_arrows.size() == 1, "typing, the arrows are the line's")
+	_typing_line.release_focus()
+	await process_frame
 
 ## F-keys, digits, Space+digit, Ctrl+digit, PrintScreen and the developer keys.
 func _check_outside_keys() -> void:

@@ -83,6 +83,17 @@ func handleCOSCommand(sess *gateway.Session, owner int64, e world.Entity, data [
 		if riderMount(owner) == o {
 			return riderMove(sess, body, hub, chars)
 		}
+	case cos.CommandStop, cos.CommandTurn:
+		// Round 808: the arrow keys ridden (READ client side; the server's
+		// FUN_004d2200 cases 3 / 4 are not read -- INFERRED to be the ridden
+		// 0x7023 / 0x7024): the rider is what the hub moves, and its stop and
+		// turn go out under the COS's uid (moverUID).
+		if riderMount(owner) == o {
+			if cmd == cos.CommandStop {
+				return arrowStop(sess, body, hub)
+			}
+			return arrowTurn(sess, body, hub)
+		}
 	case cos.CommandAttack:
 		if len(body) < 4 {
 			return nil

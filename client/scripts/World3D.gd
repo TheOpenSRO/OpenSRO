@@ -1616,18 +1616,17 @@ var _released_attack: Dictionary = {}
 var _last_combat_time := -1000.0
 ## How long the battle stance is held after the last combat action, in seconds.
 ##
-## READ from the server (round 218): the stance is the wire's BattleState
-## (CGObjPC::SetCharacterState case 8 -> GObjPC::FUN_004e2910). Entering it
-## arms a countdown of 20 at pc+0x203c; the PC's periodic update
-## CGObjPC::vslot_415 decrements it once per call and, at zero, calls the
-## same setter back to peace. So the stance lasts exactly 20 ticks of that
-## update. THE TICK IS ONE SECOND, READ (round 223): vslot_415 is reached
-## from the PC's 1.0-second timer job (CGObjChar::Create registers the slot-364
-## thunk with fld1; the timer vector is advanced by CGObjChar::Update with the
-## main loop's delta, which is GetTickCount milliseconds / 1000). So 20 ticks
-## is 20 seconds. In the original this is server-driven; here the client holds
-## the pose itself from its last action (docs/protocol/character_state.md).
-const COMBAT_STANCE_SECONDS := 20.0
+## Round 808: 5, the CLIENT's own countdown (READ, sro_client.exe): the idle
+## state picks the stance clip, type 6, while +0x4e0 > 0 (0xa592f0), and the
+## only setter of +0x4e0 (0x9c7570) arms it with 5000 ms -- from the attack
+## state's enter for a player (0xa5a025, `push 0x1388`) and from a hit landing
+## on a player character (FUN_00a49290, 0xa4966b, behind FUN_00504ed0's
+## TypeID test); the character tick counts it down by frame ms (0x9d1f64) and
+## at 0 re-enters the idle, which crossfades the stance back to the town idle
+## over 200 ms. The server's 20 s BattleState (round 218: CGObjPC::
+## SetCharacterState case 8, pc+0x203c) is real but does not drive the clip:
+## nothing it sends writes +0x4e0.
+const COMBAT_STANCE_SECONDS := 5.0
 ## skilleffect.txt parsed once: Basic_Code (upper) -> hit `.efp` path. Lazy.
 var _skill_hit_efp: Dictionary = {}
 var _skill_hit_efp_loaded := false
@@ -2143,6 +2142,7 @@ func _ready() -> void:
 	# Round 749: retail's 0xB021 and 0xB023 (DestMoveNet).
 	NetClient.entity_move_echo.connect(_on_entity_move_echo)
 	NetClient.entity_move_stop.connect(_on_entity_move_stop)
+	NetClient.entity_turned.connect(_on_entity_turned)
 	# Round 795: the COS (pets, rides, transports).
 	_cos_connect()
 	NetClient.unstuck_result.connect(_on_unstuck_result)
@@ -2548,6 +2548,7 @@ func _try_initialize_pk2_ui() -> void:
 			# than the last one this client played (round 607).
 			_sit.own_id = -1
 			_sit.reset()
+			_arrow_reset()
 			# And runs (round 781: the mover's default; the server's enter).
 			_reset_walk_for_entry()
 			# And whose buffs are whose (round 617): OpSelfId for this entry,
@@ -7366,6 +7367,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_end_move_order_for_arrival()
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
+		_arrow_reset()
 		# And runs it again (round 781, the server's runAgain; OURS).
 		_reset_walk_for_entry()
 		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
@@ -7930,6 +7932,11 @@ func _animate(assembled: SkinnedBsrAssembler.AssembledCharacter) -> void:
 	if assembled == null:
 		return
 	_animate_skeleton(assembled.skeleton, assembled.idle_animation)
+	# Round 808: its idle fidget (_step_body_fidgets).
+	if assembled.skeleton != null:
+		var archive := _data_pk2
+		assembled.skeleton.set_meta(FIDGET_META, [assembled.idle_animation,
+			func(t: int) -> BanReader.ParsedAnimation: return SkinnedBsrAssembler.animation_for(archive, assembled, t)])
 
 ## Registers a skeleton to play `anim` as its looping idle. Split from
 ## _animate so a duplicated NPC body (which is not the cached template's own
@@ -7963,6 +7970,9 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 	# A far body plays its one-shot on the full path (round 747, CrowdGpu
 	# draws loops only): back now, posed where its loop is.
 	_crowd_wake(skeleton)
+	# Round 808: a one-shot at full weight hides every loop under it (the
+	# mix, ClipMixer), so a change still fading is over.
+	_pose_fades.erase(skeleton.get_instance_id())
 	var resume = null
 	# Round 785: EVERY entry the skeleton has goes, not the first found. A
 	# skeleton left with a second entry (MEASURED on the box: a monster's
@@ -8034,6 +8044,14 @@ func _tick_idle_animations(delta: float) -> void:
 	var pose_range := MonsterDraw.POSE_RANGE
 	_crowd_cull.tick()
 	var pose_tick := _crowd_cull.ticks()
+	_step_other_stances()
+	_step_body_fidgets(delta)
+	# Round 808: changes on bodies no longer posed (culled, freed) are
+	# dropped once over.
+	if pose_tick % 120 == 0 and not _pose_fades.is_empty():
+		for fid in _pose_fades.keys():
+			if (_pose_fades[fid] as ClipMixer.Fade).done(_idle_anim_time):
+				_pose_fades.erase(fid)
 	var cull_ids: Dictionary = _crowd_cull.by_id()
 	var lod_skipped := 0
 	# The characters in the tick, for the players' animation LOD (round 738,
@@ -8165,6 +8183,8 @@ func _tick_idle_animations(delta: float) -> void:
 			if pose:
 				if timing: t0 = Time.get_ticks_usec()
 				MonsterCrowd.pose_at(skeleton, anim, _idle_anim_time + phase, true)
+				if not _pose_fades.is_empty():
+					_blend_pose_fade(skeleton, eye)
 				if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 			if audible:
 				if timing: t0 = Time.get_ticks_usec()
@@ -8191,9 +8211,20 @@ func _tick_idle_animations(delta: float) -> void:
 				handed_back = true
 				resume[5] = _idle_anim_time
 				alive.append(resume)
+				# Round 808: the one-shot holds its last frame and fades into
+				# the loop over 200 ms (CRTAniOneShot, READ; ClipMixer).
+				var back := ClipMixer.Fade.new()
+				back.from = anim
+				back.from_loop = false
+				back.from_ms = float(anim.duration_ms)
+				back.at = _idle_anim_time
+				back.in_ms = 0.0
+				back.out_ms = ClipMixer.SHOT_OUT_MS
+				_pose_fades[skeleton.get_instance_id()] = back
 				if pose:
 					if timing: t0 = Time.get_ticks_usec()
 					MonsterCrowd.pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
+					_blend_pose_fade(skeleton, eye)
 					if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 				if audible:
 					if timing: t0 = Time.get_ticks_usec()
@@ -8813,7 +8844,8 @@ func _crowd_on_exit(skel: Skeleton3D) -> void:
 
 ## Another player's loop changes (MonsterMotion.swap_loop's job): a far body
 ## swaps on the GPU when the new clip is baked, else comes back first.
-func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation, hint: Array = []) -> void:
+func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation, hint: Array = [], in_ms: float = ClipMixer.LOOP_IN_MS) -> void:
+	_end_body_fidget(skel)
 	var frames := _frame_count(anim)
 	if frames > 1 and _crowd_gpu != null and _crowd_gpu.has(skel):
 		if frames > 1 and _crowd_gpu.set_clip(skel, anim, frames, _idle_anim_time):
@@ -8828,7 +8860,39 @@ func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation, hint: A
 				_sound_schedule(fb)
 			return
 		_crowd_wake(skel)
-	MonsterMotion.swap_loop(_animated, skel, anim, frames, _idle_anim_time, hint)
+	MonsterMotion.swap_loop(_animated, skel, anim, frames, _idle_anim_time, hint, _pose_fades, in_ms)
+
+## Round 808: the clip changes in progress on bodies in the clip tick, by
+## skeleton id (ClipMixer.Fade): swap_loop's, and a one-shot's hand-back
+## (_tick_idle_animations). Blended over the entry's own pose while it is
+## posed (_blend_pose_fade); a GPU-drawn far body swaps at once (OURS: its
+## clip is a texel write; it is beyond the near bodies by construction).
+var _pose_fades := {}
+
+## A run fades in over 100 ms, any other loop over 200 (READ, 0xa59680 and
+## 0xa592f0; ClipMixer).
+static func _loop_in_ms(action: int) -> float:
+	return ClipMixer.RUN_IN_MS if action == BsrReader.AnimationEntry.TYPE_RUN else ClipMixer.LOOP_IN_MS
+
+## Blends `skeleton`'s change of clip over the pose just written, if one is
+## in progress; drops it once over. OURS (the crowd gate: +0.3 ms a frame
+## over 2,500 monsters when every change blended): only within
+## MonsterCrowd.POSE_FULL of the camera -- the bodies posed every frame --
+## does a change blend; a farther one swaps at once, as before round 808.
+func _blend_pose_fade(skeleton: Skeleton3D, eye: Vector3) -> void:
+	var id := skeleton.get_instance_id()
+	var f = _pose_fades.get(id)
+	if f == null:
+		return
+	if skeleton.global_position.distance_squared_to(eye) > MonsterCrowd.POSE_FULL * MonsterCrowd.POSE_FULL:
+		_pose_fades.erase(id)
+		return
+	if not ClipMixer.blend_from(skeleton, f, _idle_anim_time):
+		_pose_fades.erase(id)
+	# The baked frame it was posed with no longer holds (CrowdAnim, round
+	# 738's review F7).
+	if skeleton.has_meta(CrowdAnim.META_LAST):
+		skeleton.remove_meta(CrowdAnim.META_LAST)
 
 ## Round 748 (the merge with 747): other players' swap hints (gait["at"]) by
 ## skeleton id, the same arrays, so a rebuild of `_animated` can set them.
@@ -9175,6 +9239,12 @@ func _refresh_player_name_plate() -> void:
 	player.add_child(plate)
 	_plate_job_level = NetClient.job_level
 	_job_plate_decor(plate, plate, js, NetClient.job_level, _race_of_body(_player_body) == 1, false)
+	# Round 808: a plate re-made on a mount (a suit worn, the alias landing)
+	# goes straight over it, not into it for a frame.
+	var own := _own_id()
+	var mount: Node3D = _cos_bodies.get(int(_riders.get(own, 0))) if _riders.has(own) else null
+	if mount != null and is_instance_valid(mount):
+		_raise_rider_plate(own, mount, true)
 
 ## `swept` (round 673's review): whether the plate follows the 300-from-the-
 ## player rule (NamePlates.Sweep), which owns its `visible`. A ground item's
@@ -10387,6 +10457,9 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	group.add_child(holder)
 	_light_character(holder)
 	_animate_skeleton(skeleton, idle_anim)
+	# Round 808: its idle fidget, from its template's table (_step_body_fidgets).
+	skeleton.set_meta(FIDGET_META, [idle_anim,
+		func(t: int) -> BanReader.ParsedAnimation: return SkinnedBsrAssembler.animation_for(archive, template, t)])
 	_npc_holders[rec.uid] = holder
 	# A quest mark that came before its NPC (round 785, QuestMarks).
 	if NetClient.quest.marks.has(rec.uid):
@@ -12363,10 +12436,151 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	if moving:
 		gait["sitting"] = false
 		_other_seated.erase(character_id)
+	_refresh_other_loop(character_id)
+
+## Round 808: the idle fidget of every body in the clip tick -- other players,
+## NPCs, monsters, pets -- as the local player's (_step_player_fidget, which
+## has the READ rule): the client's character tick runs it for every
+## CICharactor (0x9d1ef8, in CICharactor's own tick; INFERRED for each class
+## from the inheritance). NPC bodies carry type 122 (128 of their entries,
+## MEASURED round 808: `..._time` clips, a gambler's, a horse's), player
+## bodies 61. The countdown is kept per skeleton and stepped every
+## FIDGET_PASS_SECONDS (OURS: retail steps it each frame; a quarter second
+## late is not visible against 15 s), and only for a body whose loop is its
+## stand -- moving, sitting, in the stance or in a one-shot it starts over.
+## The one-shot fades in over 400 ms over the stand (ClipMixer.Fade `over`)
+## and hands back over 200; a gait change ends it (_end_body_fidget, state
+## 9 clearing bit 7). OURS: a ridden pet and its rider do not fidget.
+const FIDGET_META := &"opensro_fidget"
+const FIDGET_PASS_SECONDS := 0.25
+var _fidget_pass_t := 0.0
+## skeleton id -> ms left; skeleton id -> the fidget clip it plays.
+var _body_fidget_ms := {}
+var _body_fidget_clip := {}
+
+func _step_body_fidgets(delta: float) -> void:
+	_fidget_pass_t += delta
+	if _fidget_pass_t < FIDGET_PASS_SECONDS:
+		return
+	var dt_ms := _fidget_pass_t * 1000.0
+	_fidget_pass_t = 0.0
+	var due: Array = []
+	for entry in _animated:
+		if not is_instance_valid(entry[0]):
+			continue
+		var skel: Skeleton3D = entry[0]
+		var src = skel.get_meta(FIDGET_META, null)
+		if src == null:
+			continue
+		var id := skel.get_instance_id()
+		var lookup: Callable = src[1]
+		var idle = src[0] if src[0] != null else lookup.call(BsrReader.AnimationEntry.TYPE_STAND)
+		if not bool(entry[4]) or idle == null or entry[1] != idle or skel.has_meta(FIDGET_RIDDEN_META):
+			_body_fidget_ms[id] = FIDGET_FIRST_MS
+			continue
+		_body_fidget_clip.erase(id)
+		var left := float(_body_fidget_ms.get(id, FIDGET_FIRST_MS)) - dt_ms
+		if left > 0.0:
+			_body_fidget_ms[id] = left
+			continue
+		_body_fidget_ms[id] = FIDGET_AGAIN_MS + float(_fidget_rng.randi() % FIDGET_SPREAD_MS)
+		var pick: int = FIDGET_TYPES[_fidget_rng.randi() % FIDGET_TYPES.size()]
+		var clip = lookup.call(pick)
+		if clip == null and pick != 0x7a:
+			clip = lookup.call(0x7a)
+		if clip != null:
+			due.append([skel, clip, entry[1], fposmod((_idle_anim_time + float(entry[3])) * 1000.0, maxf(float((entry[1] as BanReader.ParsedAnimation).duration_ms), 1.0))])
+	for d in due:
+		var skel: Skeleton3D = d[0]
+		if _play_once(skel, d[1]) <= 0.0:
+			continue
+		_body_fidget_clip[skel.get_instance_id()] = d[1]
+		if _qa_mix_log:
+			print("FIDGET: body %s plays %s" % [skel.get_parent().name if skel.get_parent() != null else skel.name,
+				(d[1] as BanReader.ParsedAnimation).animation_name.get_file()])
+		var f := ClipMixer.Fade.new()
+		f.from = d[2]
+		f.from_ms = float(d[3])
+		f.from_loop = true
+		f.over = true
+		f.at = _idle_anim_time
+		f.in_ms = ClipMixer.FIDGET_MS
+		f.out_ms = ClipMixer.FIDGET_MS
+		_pose_fades[skel.get_instance_id()] = f
+	# Bodies gone: their countdowns go with them.
+	if _body_fidget_ms.size() > _animated.size() * 2 + 64:
+		for id in _body_fidget_ms.keys():
+			if not is_instance_valid(instance_from_id(id)):
+				_body_fidget_ms.erase(id)
+				_body_fidget_clip.erase(id)
+
+## A ridden pet does not fidget (OURS; _cos_seat / _cos_unseat set it).
+const FIDGET_RIDDEN_META := &"opensro_fidget_ridden"
+
+## A gait change during a fidget ends it: the loop it would resume takes
+## over, the fidget fading out over 200 ms from where it was (state 9 clears
+## state 7, whose exit stops it over 200, READ 0xa59560).
+func _end_body_fidget(skel: Skeleton3D) -> void:
+	if skel == null or _body_fidget_clip.is_empty():
+		return
+	var id := skel.get_instance_id()
+	var clip = _body_fidget_clip.get(id)
+	if clip == null:
+		return
+	_body_fidget_clip.erase(id)
+	for i in range(_animated.size()):
+		var entry: Array = _animated[i]
+		if entry[0] != skel or bool(entry[4]) or entry[1] != clip or entry[6] == null:
+			continue
+		var resume: Array = entry[6]
+		resume[5] = _idle_anim_time
+		_animated[i] = resume
+		var back := ClipMixer.Fade.new()
+		back.from = clip
+		back.from_loop = false
+		back.from_ms = (_idle_anim_time - float(entry[5])) * 1000.0
+		back.at = _idle_anim_time
+		back.in_ms = 0.0
+		back.out_ms = ClipMixer.STOP_MS
+		_pose_fades[id] = back
+		_rehint_other_loops()
+		return
+
+## Round 808: another player's 5 s battle stance (COMBAT_STANCE_SECONDS: the
+## client arms +0x4e0 on any player character's attack state and on a blow
+## landing on one, READ 0xa5a025 / 0xa4966b), by character id: until when, on
+## the clip tick's clock. Its end swaps the stand back in (_step_other_stances).
+var _other_stance_until := {}
+
+func _arm_other_stance(character_id: int) -> void:
+	if character_id < 0 or not _other_gaits.has(character_id):
+		return
+	var was := _other_stance_until.has(character_id)
+	_other_stance_until[character_id] = _idle_anim_time + COMBAT_STANCE_SECONDS
+	if not was:
+		_refresh_other_loop(character_id)
+
+func _step_other_stances() -> void:
+	if _other_stance_until.is_empty():
+		return
+	for id in _other_stance_until.keys():
+		if float(_other_stance_until[id]) <= _idle_anim_time:
+			_other_stance_until.erase(id)
+			_refresh_other_loop(int(id))
+
+## Another player's loop for its state: the run or walk while moving, else
+## the battle stance while it lasts, else the town idle.
+func _refresh_other_loop(character_id: int) -> void:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if gait.is_empty() or not is_instance_valid(gait.get("skeleton")) or bool(gait.get("sitting", false)):
+		return
+	var moving := bool(gait["moving"])
 	var action := BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND
 	# A walker walks (round 781): type 1, its body's walk.
 	if moving and _other_walking.has(character_id):
 		action = BsrReader.AnimationEntry.TYPE_WALK
+	elif not moving and _other_stance_until.has(character_id) and not _riders.has(character_id):
+		action = BsrReader.AnimationEntry.TYPE_STAND_BATTLE
 	var anim := _body_animation_for(gait["body"], action, gait["group"])
 	var frames := _frame_count(anim)
 	if frames <= 1:
@@ -12381,7 +12595,7 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	if not gait.has("at"):
 		gait["at"] = [-1]
 		_other_hint_by_skel[(gait["skeleton"] as Object).get_instance_id()] = gait["at"]
-	_swap_other_loop(gait["skeleton"], anim, gait["at"])
+	_swap_other_loop(gait["skeleton"], anim, gait["at"], _loop_in_ms(action))
 
 ## Round 756: a ghost starting or stopping: its loop swapped on the GPU (a
 ## texel write), or, when the new loop is not baked, it is dressed now and
@@ -12445,7 +12659,8 @@ func _retry_ghost_gaits() -> void:
 ## decoration's own WAIT clip sets it again (_deco_play_clip). Until then
 ## the flag stuck, and every one-shot started during a hold -- a hit
 ## reaction, the pick-up, a keep-up swing, the die clip -- looped.
-func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
+func _play_player_once(anim: BanReader.ParsedAnimation, fade_in_ms: float = ClipMixer.SNAP_IN_MS,
+		fade_out_ms: float = ClipMixer.SHOT_OUT_MS) -> float:
 	if _player_one_shot_hold:
 		return 0.0
 	var frames := _frame_count(anim)
@@ -12454,6 +12669,10 @@ func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 	_player_one_shot = anim
 	_player_one_shot_start = _player_anim_time
 	_player_one_shot_loop = false
+	# Round 808: its fades in the mixer (_mix_player). The default is the
+	# states' (0 in, 200 out: a sit, a stand, a hit); a skill's own fades
+	# (state 2, through +0x9c slots 0x84/0x88) are not read, and take it too.
+	_player_shot_fades = Vector2(fade_in_ms, fade_out_ms)
 	return anim.duration_seconds()
 
 ## skilleffect.txt's skillaniset rows, from the one shared parse.
@@ -13593,6 +13812,9 @@ func _attack_pvp(kind: int, id: int, skill_id: int = 0, basic_code: String = "",
 	if _player_dead:
 		print("World3D: attack on %s %d while dead -- not sent" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id])
 		return
+	# Round 808: a seated swing stands instead (0x791d40, READ; as _attack_monster).
+	if skill_id == 0 and _stand_instead("an attack on %s %d" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id]):
+		return
 	_drop_pending_attack()
 	_pending_pvp = {}
 	if _pvp_ground(kind, id) == null:
@@ -13772,6 +13994,7 @@ func _on_player_struck(d: Dictionary) -> void:
 			var clip := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_ATTACK, gait["group"])
 			if clip != null:
 				_play_once(gait["skeleton"], clip)
+			_arm_other_stance(striker)
 	var on_self := not on_cos and target == (_own_id() & 0xffffffff) and _own_id() >= 0
 	if on_self:
 		_own_hp_told()
@@ -14275,7 +14498,7 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 	var deco := SkillDeco.new(skill_id, plan, info, now, due)
 	var entry := {"deco": deco, "skill": skill_id, "code": code, "caster": caster, "target": target,
 		"body": body_code, "group": group, "own": bool(b.get("own", false)), "skel": b.get("skel"),
-		"assembled": monster_body,
+		"assembled": monster_body, "character": int(b.get("character", -1)),
 		"loops": [], "hits_done": 0, "hits": int(opts.get("hits", 1)), "on_hit": on_hit,
 		"on_end": opts.get("on_end", Callable()), "what": what}
 	_decos[caster.get_instance_id()] = entry
@@ -14447,6 +14670,8 @@ func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) ->
 		if skel != null and is_instance_valid(skel):
 			_play_once(skel, anim)
 			_mark_one_shot_loop(skel, loop)
+			# Round 808: a player's attack state arms its stance.
+			_arm_other_stance(int(e.get("character", -1)))
 
 ## The decoration ended: a looping clip of its own stops (retail's end stops
 ## the WAIT and SHOT clips, vslot 0xb8 in FUN_00a50a00).
@@ -14571,6 +14796,11 @@ func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = ""
 		# click and a quickslot are stopped before this; the QA attack loop
 		# is stopped at the death. The server would refuse it anyway.
 		print("World3D: attack on monster %d while dead -- not sent" % monster_id)
+		return
+	# Round 808: a seated swing stands instead (0x791d40, READ); a skill is
+	# cast from the seat (the server's gate, motion.md), and a skill's walk
+	# into reach stands the player instead (_physics_step, OURS).
+	if skill_id == 0 and _stand_instead("an attack on monster %d" % monster_id):
 		return
 	LatencyProbe.attack_click(monster_id, Time.get_ticks_msec())
 	# A new attack replaces one still walking into reach, and the walk that was
@@ -14883,6 +15113,8 @@ func _flush_position() -> void:
 ## attack after this returns.
 func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	_released_attack = {}
+	# Round 808: no arrow-key move for 500 ms after an action request (+0x48).
+	_move_send_block_ms = MOVE_SEND_BLOCK_MS
 	if skill_id == 0:
 		NetClient.attack(NetClient.current_character_name, monster_id)
 		return
@@ -16780,6 +17012,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       `key:ctrl+1` Ctrl, `key:alt+1` Alt (round 788)
 #   down:<name>         press a key and keep it down (V, Z, Space; round 608)
 #   up:<name>           release it
+#   repeat:<name>       the OS's repeat of a held key: a press with echo set
+#                       (round 808, the arrow keys)
 #   whisper_from:<name> a whisper from <name> arrives, as the server's would
 #                       (R's reply; the text is a synthetic "tt" line)
 #   click:<x>,<y>       left press and release at a viewport point
@@ -17152,6 +17386,17 @@ func _qa_job_step() -> void:
 				print("QA JOB: tick %d plate '%s' title '%s' (offset %.1f) mark %s (offset %.1f)" % [_qa_tick, plate.text,
 					title.text if title != null else "", title.offset.x if title != null else 0.0,
 					mk.texture.resource_path.get_file() if mk != null and mk.texture != null else "none", mk.offset.x if mk != null else 0.0])
+				# Round 808: the heights over the holder's feet (a rider's plate is raised).
+				var feet := (h[0] as Node3D).global_position.y
+				var head := "-"
+				var hs := _player_skeleton if h[0] == player else _rider_skeleton(int((h[0] as Node).get_meta("character_id", -1)))
+				if hs != null and is_instance_valid(hs):
+					var hb := hs.find_bone("Bip01 Head")
+					if hb >= 0:
+						head = "%.1f" % ((hs.global_transform * hs.get_bone_global_pose(hb)).origin.y - feet)
+				print("QA JOB: tick %d plate '%s' y %.1f title y %s mark y %s head y %s" % [_qa_tick, plate.text, plate.global_position.y - feet,
+					"%.1f" % (title.global_position.y - feet) if title != null else "-",
+					"%.1f" % (mk.global_position.y - feet) if mk != null else "-", head])
 		elif what == "ground":
 			if _ground_items != null:
 				for gid in _ground_items._items:
@@ -17359,6 +17604,9 @@ func _qa_input_step() -> void:
 			_qa_push_key(arg, [true])
 		"up":
 			_qa_push_key(arg, [false])
+		"repeat":
+			# Round 808: the OS's key repeat of a held key (echo).
+			_qa_push_key(arg, [true], true)
 		"whisper_from":
 			var heard := ChatNet.Update.new()
 			heard.type = HudChat.TYPE_WHISPER
@@ -17423,7 +17671,7 @@ func _qa_input_step() -> void:
 		_:
 			_qa_input_report = action + " (unknown action)"
 
-func _qa_push_key(name: String, phases: Array = [true, false]) -> void:
+func _qa_push_key(name: String, phases: Array = [true, false], echo: bool = false) -> void:
 	var shift := name.to_lower().begins_with("shift+")
 	var ctrl := name.to_lower().begins_with("ctrl+")
 	# "alt+" (round 788): the extra quick-slot bar's Alt+digit.
@@ -17447,6 +17695,7 @@ func _qa_push_key(name: String, phases: Array = [true, false]) -> void:
 		ev.ctrl_pressed = ctrl
 		ev.alt_pressed = alt
 		ev.pressed = pressed
+		ev.echo = echo and pressed
 		get_viewport().push_input(ev)
 
 func _qa_push_mouse(at: Vector2, button: MouseButton, pressed: bool) -> void:
@@ -20579,7 +20828,8 @@ func _process(_delta: float) -> void:
 			t = t1
 	if not _player_pose_due.is_empty():
 		if _player_skeleton != null and is_instance_valid(_player_skeleton):
-			Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, _player_pose_due[0], float(_player_pose_due[1]), bool(_player_pose_due[2]))
+			# Round 808: the mixer's clips (ClipMixer.apply).
+			(_player_pose_due[0] as ClipMixer).apply(_player_skeleton)
 		_player_pose_due = []
 		if fs:
 			var t1 := Time.get_ticks_usec()
@@ -20692,12 +20942,24 @@ func _physics_step(delta: float) -> void:
 	# `GetLifeState() != 1` guards). Gravity, streaming and the position send
 	# below still run, as they do while typing.
 	# Getting up or down (round 607): the server refuses a move in its 1.5 s
-	# transition, so none is made; a move while seated is allowed and stands
-	# the character at once (_leave_sit_by_moving), as the server's does.
+	# transition, so none is made. Seated (round 808), nothing walks either:
+	# retail's move gate (0x9eb140, the sit bit in its 0x2476 mask) never lets
+	# a 0x7021 out while seated, and its clicks ask to stand instead
+	# (_stand_instead). A walk asked for some other way -- a skill's, a PvP
+	# attack's or a friendly cast's walk into reach, a ground item's -- stands
+	# the player the same way (OURS for those paths: retail's skill approach
+	# is not read).
+	var seated_walk := _sit.sitting and (_has_move_target or not _pending_attack.is_empty() \
+		or not _pending_friend_cast.is_empty() or not _pending_pvp.is_empty())
+	if seated_walk:
+		if not _motion_locked():
+			_stand_instead("a walk")
+		_pending_pvp = {}
+		_pending_pickup_id = -1
 	# Rooted by the player's own wall (round 640, OURS -- _wall_root): a walk
 	# already under way when the wall went up stops, as the server drops its
 	# moves.
-	var locked := typing or _player_dead or _motion_locked() or (_has_move_target and _wall_root() != 0) \
+	var locked := typing or _player_dead or _motion_locked() or seated_walk or (_has_move_target and _wall_root() != 0) \
 		or _own_slide_active()
 	if locked:
 		_has_move_target = false
@@ -20706,12 +20968,15 @@ func _physics_step(delta: float) -> void:
 		_pending_friend_cast = {}
 	# A talk approach's arrival (round 701): the walk ended last tick.
 	_step_talk_approach(locked)
+	# The QA walk (round 808): held while seated or in the transition, as a
+	# click's walk is.
+	var qa_walking := _qa_walk != "" and not _player_dead and not _sit.sitting and not _motion_locked()
 	var pp := Time.get_ticks_usec() if FrameSplit.on else 0
 	# Round 653's follow-up: an approach whose move a wall ended is re-issued
 	# here on the next tick (_step_move_order).
 	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
 		_step_move_order(delta)
-	elif _qa_walk != "" and not _player_dead:
+	elif qa_walking:
 		# OPENSRO_QA_WALK: walk on a fixed world heading (its own path; no
 		# key moves the character since round 608), so a render shows the
 		# run and the log the path.
@@ -20725,11 +20990,13 @@ func _physics_step(delta: float) -> void:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
 	_step_local_turn(delta)
+	# Round 808: the arrow keys' turn and its sends.
+	_step_arrow_keys(delta)
 	# Round 785: fighters turn to face what they strike.
 	_step_combat_faces(delta)
 
-	var is_moving := _has_move_target or (_qa_walk != "" and not _player_dead)
-	if is_moving and (_sit.sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
+	var is_moving := _has_move_target or qa_walking
+	if is_moving and _player_sit_clip != null and _player_one_shot == _player_sit_clip:
 		_leave_sit_by_moving()
 	if is_moving and _player_pickup_clip != null:
 		_leave_pickup_by_moving()
@@ -20963,6 +21230,8 @@ func _physics_step(delta: float) -> void:
 		var anim := _body_animation_for(_player_body, action, _player_anim_group())
 		# An abnormal state's clip speed (round 785, StateLook).
 		_player_anim_time += delta * _player_clip_speed
+		# Round 808: the idle fidget (state 7), before the one-shot below.
+		_step_player_fidget(is_moving, action, delta * 1000.0)
 		if _player_one_shot != null:
 			var elapsed := _player_anim_time - _player_one_shot_start
 			# A decoration's WAIT hold repeats its clip (round 785).
@@ -20978,29 +21247,37 @@ func _physics_step(delta: float) -> void:
 					# State 10 ends with its clip (0xa59a60, round 785).
 					_player_pickup_clip = null
 					print("PICKUP MOTION: self ms=%d t=%.3f -- the clip ended" % [Time.get_ticks_msec(), _player_anim_time])
+				if _player_one_shot == _player_fidget_clip:
+					_player_fidget_clip = null
+				# Played to its end: the mixer holds its last frame and fades it
+				# into the loop under it by itself (_mix_player).
+				_mix_shot_ended = true
 				_player_one_shot = null
 			else:
 				# A held one-shot (the die clip, round 548) keeps its last
-				# keyframe past its end: apply_ban_pose_at pins a non-looping
-				# clip on it once `seconds` reaches the duration.
-				_player_pose_due = [_player_one_shot, elapsed, false]
+				# keyframe past its end, as the mixer's `hold` does.
 				_anim_sounds.advance(_player_skeleton, _player_one_shot, _player_one_shot_start, elapsed * 1000.0, false)
-		if _player_one_shot == null and anim != null and not anim.bones.is_empty():
-			var ref_track: BanReader.Bone = anim.bones[0]
-			if not ref_track.keyframes.is_empty():
-				# Pinnable, so the in-world pose can be held against the same
-				# frame applied offline by check_ban_pose.gd -- which is how
-				# the two were shown to agree exactly.
-				var pinned := OS.get_environment("OPENSRO_QA_ANIM_FRAME")
-				if pinned != "" and pinned.is_valid_int():
-					Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, int(pinned) % ref_track.keyframes.size())
-				else:
-					# On the clip's own clock: every keyframe at the time the
-					# file gives it, blended in between. See BAN_FORMAT.md --
-					# a fixed 30 keyframes a second ran the idle five times
-					# too fast.
-					_player_pose_due = [anim, _player_anim_time, true]
-					_anim_sounds.advance(_player_skeleton, anim, 0.0, _loop_ms(anim, _player_anim_time), true)
+		# Round 808: the clips go through the body's mixer (ClipMixer, the
+		# client's AniMixer): the loop the action picks restarts from its first
+		# frame and crossfades with the last one, and a one-shot lies over the
+		# loop and fades back into it -- never a whole pose swapped in a frame.
+		_mix_player(anim, action)
+		_player_mixer.step(delta * _player_clip_speed * 1000.0)
+		if _qa_mix_log and (_player_mixer.loops.size() + _player_mixer.shots.size() > 1 or _qa_tick % 60 == 0):
+			_qa_mix_report()
+		# Pinnable, so the in-world pose can be held against the same frame
+		# applied offline by check_ban_pose.gd -- which is how the two were
+		# shown to agree exactly.
+		var pinned := OS.get_environment("OPENSRO_QA_ANIM_FRAME")
+		if pinned != "" and pinned.is_valid_int() and _player_one_shot == null and anim != null \
+				and not anim.bones.is_empty() and not anim.bones[0].keyframes.is_empty():
+			Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, int(pinned) % anim.bones[0].keyframes.size())
+		else:
+			_player_pose_due = [_player_mixer]
+		if _player_one_shot == null and anim != null and _player_mixer.time_ms(anim) >= 0.0:
+			# The loop's sounds on the mixer's clock (its footsteps where its
+			# stride is); a new play of it is a new start.
+			_anim_sounds.advance(_player_skeleton, anim, float(_player_mixer.serial_of(anim)), _player_mixer.time_ms(anim), true)
 	if FrameSplit.on:
 		FrameSplit.add("p_selfpose", Time.get_ticks_usec() - split_sw)
 
@@ -21298,8 +21575,102 @@ var _other_frame_usec := 0
 var _appear_fade_due := 0.0
 
 ## Round 748: the local player's pose the frame's physics steps asked for,
-## [clip, seconds, loop], applied once in _process; empty when none.
+## applied once in _process; empty when none. Round 808: [the mixer].
 var _player_pose_due: Array = []
+
+## Round 808: the local player's clips (ClipMixer), and what was last handed
+## to it: the action's loop, and the one-shot (its start, and whether it was
+## played to its end -- then the mixer fades it out by itself).
+var _player_mixer := ClipMixer.new()
+var _mix_loop: BanReader.ParsedAnimation = null
+var _mix_shot: BanReader.ParsedAnimation = null
+var _mix_shot_start := -1.0
+var _mix_shot_ended := false
+## The fades _play_player_once gave the one-shot (in, out; ms).
+var _player_shot_fades := Vector2(ClipMixer.SNAP_IN_MS, ClipMixer.SHOT_OUT_MS)
+
+## Hands the action's loop and the current one-shot to the mixer when they
+## change. A new loop restarts from its first frame and fades in -- the run
+## over 100 ms, any other over 200 (state 9's enter 0xa59680 and 8's
+## 0xa592f0, READ) -- while the old one fades out over 200 (every state
+## exit's stop, READ). A one-shot cut short (a move, a new one) is stopped
+## over 200; one played to its end is left to fade out by itself.
+func _mix_player(anim: BanReader.ParsedAnimation, action: int) -> void:
+	if anim != _mix_loop:
+		_player_mixer.stop_loops_except(anim, ClipMixer.STOP_MS)
+		if anim != null:
+			_player_mixer.play_loop(anim, ClipMixer.RUN_IN_MS if action == BsrReader.AnimationEntry.TYPE_RUN else ClipMixer.LOOP_IN_MS)
+		_mix_loop = anim
+	var restarted := _player_one_shot != null and not _player_one_shot_loop and _player_one_shot_start != _mix_shot_start
+	if _player_one_shot != _mix_shot or restarted:
+		if _mix_shot != null and not _mix_shot_ended:
+			_player_mixer.stop(_mix_shot, ClipMixer.STOP_MS)
+		if _player_one_shot != null:
+			_player_mixer.play_once(_player_one_shot, _player_shot_fades.x, _player_shot_fades.y, 1.0,
+				_player_one_shot_hold, _player_one_shot_loop)
+		_mix_shot = _player_one_shot
+		_mix_shot_start = _player_one_shot_start
+		_mix_shot_ended = false
+	elif _player_one_shot != null and _player_one_shot_hold:
+		# The die clip's hold is set after its play (_play_player_death_pose).
+		for l in _player_mixer.shots:
+			if (l as ClipMixer.Layer).clip == _player_one_shot:
+				(l as ClipMixer.Layer).hold = true
+
+## QA (round 808): OPENSRO_QA_MIX_LOG=1 prints the player's mixer -- every
+## clip's weight and time -- each tick two or more are mixed, and once a second.
+var _qa_mix_log := OS.get_environment("OPENSRO_QA_MIX_LOG") != ""
+
+func _qa_mix_report() -> void:
+	var parts := PackedStringArray()
+	for l in _player_mixer.loops + _player_mixer.shots:
+		var ly := l as ClipMixer.Layer
+		parts.append("%s %s w=%.2f t=%.0f%s" % ["once" if ly.once else "loop", ly.clip.animation_name.get_file(), ly.w, ly.t,
+			" stopping" if ly.stopping else ""])
+	print("QA MIX tick %d: %s" % [_qa_tick, " | ".join(parts)])
+
+## Round 808: the idle fidget (READ: the character tick 0x9d1ef8..0x9d1f4e and
+## state 7, 0xa59460). A countdown of 15 s runs only while the body stands
+## idle -- not moving, sitting, acting or in the battle stance -- and starts
+## over at anything else; at 0 it picks one of the types 122, 61 and 81 at
+## random (a missing one tries 122, and with no 122 either nothing plays),
+## plays it once fading in over 400 ms, and re-arms at 10 + rand % 5 s. A
+## player body has only 61 (MEASURED, round 808: none of the 56 has 81 or
+## 122), so one draw in three plays it. A move leaves it (state 9 clears bit 7,
+## 0x21a0), as does its end (a 200 ms stop, 0xa59560).
+## OURS: a rider does not fidget (its group is "cart", and the standing clip
+## the lookup would fall back to is not a rider's).
+const FIDGET_FIRST_MS := 15000.0
+const FIDGET_AGAIN_MS := 10000.0
+const FIDGET_SPREAD_MS := 5000
+const FIDGET_TYPES := [0x7a, 61, 81]
+var _fidget_ms := FIDGET_FIRST_MS
+var _player_fidget_clip: BanReader.ParsedAnimation = null
+var _fidget_rng := RandomNumberGenerator.new()
+
+func _step_player_fidget(moving: bool, action: int, dt_ms: float) -> void:
+	if _player_fidget_clip != null and _player_one_shot == _player_fidget_clip and (moving or _sit.sitting or _player_dead):
+		_player_one_shot = null
+	if _player_one_shot != _player_fidget_clip:
+		_player_fidget_clip = null
+	var idle := not moving and not _sit.sitting and not _player_dead and _player_one_shot == null \
+		and action == BsrReader.AnimationEntry.TYPE_STAND and not _riders.has(_own_id())
+	if not idle:
+		_fidget_ms = FIDGET_FIRST_MS
+		return
+	_fidget_ms -= dt_ms
+	if _fidget_ms > 0.0:
+		return
+	_fidget_ms = FIDGET_AGAIN_MS + float(_fidget_rng.randi() % FIDGET_SPREAD_MS)
+	var pick: int = FIDGET_TYPES[_fidget_rng.randi() % FIDGET_TYPES.size()]
+	var clip := _body_animation_for(_player_body, pick, _player_anim_group())
+	if clip == null and pick != 0x7a:
+		clip = _body_animation_for(_player_body, 0x7a, _player_anim_group())
+	if clip == null:
+		return
+	if _play_player_once(clip, ClipMixer.FIDGET_MS, ClipMixer.STOP_MS) > 0.0:
+		_player_fidget_clip = clip
+		print("FIDGET: the player plays type %d (%s)" % [pick, clip.animation_name])
 
 ## Round 748: other players standing on their target with their gait at
 ## rest (id -> true), whom _step_other_bodies passes over.
@@ -22492,6 +22863,13 @@ func _dress_other(character_id: int) -> void:
 			pass # its entry is handed over below
 		elif frames > 1:
 			_animated.append([skeleton, idle, frames, float(_animated_total()) * 0.37, true, _idle_anim_time, null])
+		# Round 808: its idle fidget, from its body's table in its weapon's
+		# group as it is then (_step_body_fidgets); none while it rides.
+		skeleton.set_meta(FIDGET_META, [null, func(t: int) -> BanReader.ParsedAnimation:
+			var g: Dictionary = _other_gaits.get(character_id, {})
+			if g.is_empty() or _riders.has(character_id):
+				return null
+			return _body_animation_for(g["body"], t, g["group"])])
 		if dt != null:
 			dt.mark("clip")
 		if seated:
@@ -22606,10 +22984,16 @@ func _ghost_handover(character_id: int, node: Node3D, skeleton: Skeleton3D, ghos
 func _replace_plate_and_click(node: Node3D, top: float) -> void:
 	for c in node.get_children():
 		if c is Label3D and String(c.name) == "Name":
-			(c as Label3D).position = Vector3(0.0, top * (1.0 + NAME_PLATE_CLEARANCE_FRACTION), 0.0)
-			# A batched plate takes its new height now (round 757's merge, S2).
-			if _plate_batch != null:
-				_plate_batch.moved(c as Label3D)
+			# A batched plate takes its new height now (round 757's merge,
+			# S2). Round 808: a rider's stays over its mount (the body's own
+			# top is put back at the dismount), and the job mark and title
+			# move with it.
+			var rid := int(node.get_meta("character_id", -1))
+			var y := top * (1.0 + NAME_PLATE_CLEARANCE_FRACTION)
+			if rid >= 0 and _rider_plate_y.has(rid):
+				_rider_plate_y[rid] = y
+			else:
+				_set_plate_y(node, c as Label3D, y)
 		elif c is StaticBody3D and String(c.name) == "PlayerClickBody":
 			for cs in c.get_children():
 				if cs is CollisionShape3D and (cs as CollisionShape3D).shape is CapsuleShape3D:
@@ -23048,6 +23432,44 @@ func _on_entity_move_stop(stop: DestMoveNet.Stop) -> void:
 	# Standing on its target (round 748: _step_other_bodies passes over it),
 	# and a far body re-read at the flush (round 747).
 	_other_settled[id] = true
+	_other_moved(body)
+
+## Round 808: 0xB024 (c:0x8a4ec0, READ): another body's new heading, the
+## arrow keys' turn. This player's own is ignored; another body (or the rider
+## of the COS named) turns toward it at 3 pi rad/s (FUN_009e02f0), and its
+## heading run, if it runs one, bends there and goes on (FUN_009e0090).
+func _on_entity_turned(uid: int, angle: int) -> void:
+	_sync_own_id()
+	if _own_id() >= 0 and uid == (_own_id() & 0xffffffff):
+		return
+	if NetClient.riding_mount != 0 and uid == NetClient.riding_mount:
+		return
+	var id := uid
+	if _cos_recs.has(uid):
+		id = _cos_rider_of(uid)
+		if id < 0:
+			return
+	else:
+		var other := _other_by_uid(uid)
+		if other >= 0:
+			id = other
+	var h := RemoteFacing.from_wire_angle(angle)
+	if _qa_move_log:
+		print("MOVE recv %d ms=%d 0xB024 heading=%.4f" % [id, Time.get_ticks_msec(), h])
+	if _arrival_pending and _arrival_entries.has(id):
+		var kept: WorldNet.EntitySnapshot = _arrival_entries[id]
+		kept.heading = h
+		if kept.run_wire >= 0:
+			kept.run_wire = angle
+		return
+	if not _other_bodies.has(id):
+		return
+	var body: Node3D = _other_bodies[id]
+	var leg = _other_legs.get(id)
+	if leg != null and bool((leg as Dictionary)["run"]):
+		_other_legs[id] = OtherWalk.on_heading(angle, float((leg as Dictionary)["speed"]))
+	_remote_turns[body.get_instance_id()] = {"target": h, "front": 0.0}
+	_other_awake[id] = true
 	_other_moved(body)
 
 ## The server did not take this player's stop or placement (round 749,
@@ -25056,7 +25478,11 @@ func _start_talk_approach(node: Node3D) -> bool:
 	var distance := player.global_position.distance_to(target)
 	if not talk_needs_approach(distance, structure):
 		return false
-	var far := TALK_APPROACH_GATE_RANGE if structure else TALK_APPROACH_NPC_RANGE
+	# Round 808: the approach is the same click (0x78f8d0 with its approach
+	# flag), so seated it stands instead of walking; the selection stands.
+	if _stand_instead("a walk to talk to %s" % str(node.get_meta("npc_name", node.name))):
+		return true
+	var far :=TALK_APPROACH_GATE_RANGE if structure else TALK_APPROACH_NPC_RANGE
 	var d := _talk_rng.randf_range(TALK_APPROACH_NEAR, far)
 	var point := _walkable_point(talk_approach_point(target, player.global_position, d))
 	_markers().place_at(point)
@@ -25706,6 +26132,9 @@ func _on_guild_leave_requested() -> void:
 	NetClient.leave_guild(NetClient.current_character_name)
 
 func _try_set_move_target(screen_pos: Vector2) -> void:
+	# Round 808: seated, the click only stands (retail tests it before the pick).
+	if _stand_instead("a click on the world"):
+		return
 	var root := _wall_root()
 	if root != 0:
 		_log_root("a move to the clicked point", root)
@@ -25752,6 +26181,10 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 ## and run the click filter FUN_009ec240. The caller has placed the ring.
 ## Returns "walk" or "ignore" (the filter sent nothing).
 func _issue_walk(point: Vector3) -> String:
+	# Round 808: no walk is ordered from the seat (_stand_instead; the click
+	# paths stop before this, the QA click does not).
+	if _stand_instead("a walk order"):
+		return "stand"
 	if _own_move_blocked():
 		return "ignore"
 	# A click on the ground supersedes an attack that was walking into reach,
@@ -25805,6 +26238,8 @@ func _own_move_blocked() -> bool:
 ## started -- "keep" -- when the player is moving and the heading is within 5
 ## degrees of its facing (FUN_0078f8d0, READ; SkyRun.click_rule).
 func _start_heading_run(dir: Vector3) -> String:
+	if _stand_instead("a heading run"):
+		return "stand"
 	if _own_move_blocked():
 		return "ignore"
 	var current := RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
@@ -25815,6 +26250,12 @@ func _start_heading_run(dir: Vector3) -> String:
 	# degrees during a ground walk therefore starts a run.
 	if SkyRun.click_rule(_has_move_target and _move_heading_run, current, h) == "keep":
 		return "keep"
+	return _begin_heading_run(h)
+
+## A heading run along `h` (the sky click's, and round 808's Up key's): the
+## order, the local run and the turn toward it; its 0x7021 goes out at the
+## end of the tick (_sync_move_order).
+func _begin_heading_run(h: float) -> String:
 	# The click supersedes an attack or friendly cast walking into reach, as
 	# a ground click does.
 	_pending_attack = {}
@@ -25841,6 +26282,195 @@ func _start_heading_run(dir: Vector3) -> String:
 	if _qa_move_log:
 		print("MOVE run t=%d ms=%d heading=%.4f wire=%d dir=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), h, SkyRun.wire_angle(h), flat.x, flat.y])
 	return "run"
+
+# --- The arrow keys (round 808) ---------------------------------------------
+#
+# READ, sro_client.exe (docs/protocol/opcodes/movement.md, "The arrow keys";
+# the key-down handler 0x780610, the key-up 0x77d8d0):
+#   - Up runs along the facing: one heading-form 0x7021 per press
+#     (FUN_009ebec0, command 1), nothing while a heading run is already on --
+#     so a held key's repeats send nothing -- and its release sends 0x7023
+#     {u16 the facing} (FUN_009eb6e0), which the server answers with 0xB023 to
+#     the 3 x 3, the player included. Up while seated sends nothing and does
+#     not stand (the key never reaches the click's sit test).
+#   - Left / Right turn the body at pi rad/s (FUN_009e0c10, 0xd81948), Left
+#     winning when both are held, standing or running; no clip. During a click
+#     walk they do nothing (the +0x6e8 != 1 test of 0x9ebf40).
+#   - The turn reaches the server as 0x7024 {u16 the facing} (FUN_009eb470)
+#     only when the facing has moved from the last one sent by pi/4 (a key-down
+#     or the OS's key-repeat, and each frame of a run while turning; double
+#     0xde47f8) or by 1 degree (the release, and the run's 500 ms timer 7;
+#     float 0xde4800) -- the raw difference, not wrapped. So a spin in place is
+#     seen by the server, and so by everyone else (0xB024), in 45-degree steps
+#     at the key repeats, and exactly when the key is let go.
+#   - Down has no key-down case at all.
+#   - Every press first cancels an attack or cast in progress (0x78f7c0:
+#     0x7074 [02] in the attack state).
+#   - For 500 ms after an attack or skill request none of these go out (the
+#     record's +0x48, FUN_009eb130 called from the attack sender 0x791d40;
+#     INFERRED from the callers).
+# OURS: the cancel is local (this client has no 0x7074 [02] sender; the
+# server's keep-up ends at the run's 0x7021); the run's 500 ms re-plot
+# (0x9eb8e0's steering) is not modelled beyond its 1-degree re-send; a body
+# does not turn while seated (whether retail's does is not read); the keys are
+# let go when the window loses the focus or a text line takes the keyboard.
+const ARROW_TURN_RATE := PI
+const TURN_SEND_COARSE := 0.78539818525314331
+const TURN_SEND_FINE := 0.0174532924
+const ARROW_RESEND_MS := 500.0
+const MOVE_SEND_BLOCK_MS := 500.0
+const TURN_LEFT := 0x10
+const TURN_RIGHT := 0x20
+## The turn keys held (+0x88's 0x10 / 0x30).
+var _turn_keys := 0
+## Up's press started the run in effect (+0x7e0).
+var _arrow_up_run := false
+## The facing the last 0x7024 carried (+0x40), NAN before the first.
+var _turn_sent := NAN
+## Timer 7's ms left (-1 off) and the send block's (+0x48).
+var _arrow_resend_ms := -1.0
+var _move_send_block_ms := 0.0
+
+## A new world entry, a zone change, a death: no turn held, nothing sent yet.
+func _arrow_reset() -> void:
+	_turn_keys = 0
+	_arrow_up_run = false
+	_turn_sent = NAN
+	_arrow_resend_ms = -1.0
+	_move_send_block_ms = 0.0
+
+## A key event of the arrows (KeyInput's "arrow" callable): `down` with
+## `echo` for the OS's repeats, which retail's WM_KEYDOWN runs in full.
+func _on_arrow_key(keycode: int, down: bool, echo: bool) -> String:
+	if title_mode or player == null:
+		return "no world"
+	if down and _is_typing():
+		return "typing"
+	var what := ""
+	match keycode:
+		KEY_UP:
+			what = _arrow_up(down)
+		KEY_LEFT:
+			what = _arrow_turn(TURN_LEFT, down)
+		KEY_RIGHT:
+			what = _arrow_turn(TURN_RIGHT, down)
+		_:
+			what = "nothing (no key-down case, READ)"
+	if _qa_move_log or (not echo and keycode != KEY_DOWN):
+		print("ARROW %s %s%s: %s (facing %.4f)" % [OS.get_keycode_string(keycode), "down" if down else "up", " (repeat)" if echo else "",
+			what, _arrow_facing()])
+	return what
+
+## The facing, as the arrows turn and send it.
+func _arrow_facing() -> float:
+	return RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
+
+## The move gate the arrows' sends pass (FUN_009eb140's states: dead, sitting
+## or getting up, acting, picking up; the +0x48 block).
+func _arrow_send_allowed() -> bool:
+	return not _player_dead and not _sit.sitting and not _motion_locked() and _move_send_block_ms <= 0.0 \
+		and _player_pickup_clip == null and NetClient.is_connected_to_server()
+
+## Up: the run along the facing, or its stop.
+func _arrow_up(down: bool) -> String:
+	if down:
+		_arrow_cancel_action()
+		if _has_move_target and _move_heading_run:
+			return "already running"
+		if not _arrow_send_allowed() or _own_move_blocked() or _wall_root() != 0:
+			return "refused (the move gate)"
+		var took := _begin_heading_run(_arrow_facing())
+		_arrow_up_run = took == "run"
+		if _arrow_up_run:
+			_arrow_resend_ms = ARROW_RESEND_MS
+		return took
+	_arrow_resend_ms = -1.0
+	var was := _arrow_up_run
+	_arrow_up_run = false
+	if not _arrow_send_allowed():
+		return "release refused (the move gate)"
+	var h := _arrow_facing()
+	NetClient.move_stop_request(SkyRun.wire_angle(h))
+	if was and _has_move_target and _move_heading_run:
+		# Stopped here; the server's 0xB023 puts the body where it has it.
+		_has_move_target = false
+		_move_heading_run = false
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
+		_move_sync.placed(player.position)
+	return "0x7023 sent (angle %d)" % SkyRun.wire_angle(h)
+
+## Left / Right: the turn bit and the coarse send, or its release.
+func _arrow_turn(bit: int, down: bool) -> String:
+	if down:
+		_arrow_cancel_action()
+		if _has_move_target and not _move_heading_run:
+			return "ignored (a click walk is in progress)"
+		var sent := _send_turn_if(_arrow_facing(), TURN_SEND_COARSE)
+		_turn_keys |= bit
+		return "turning (%s)" % sent
+	_turn_keys &= ~bit
+	var sent := _send_turn_if(_arrow_facing(), TURN_SEND_FINE)
+	# FUN_009e0160(facing, 0x30, 1): both turn bits clear, the facing and the
+	# travel direction take the facing.
+	_turn_keys = 0
+	if _has_move_target and _move_heading_run:
+		_move_heading = _arrow_facing()
+		_move_sync.heading_wire = SkyRun.wire_angle(_move_heading)
+	return "released (%s)" % sent
+
+## FUN_009eb470: 0x7024 with `h` when it has moved `threshold` from the last
+## sent; "sent", "within" or "refused".
+func _send_turn_if(h: float, threshold: float) -> String:
+	if not _arrow_send_allowed():
+		return "refused"
+	if not is_nan(_turn_sent) and absf(_turn_sent - h) < threshold:
+		return "within"
+	NetClient.move_turn(SkyRun.wire_angle(h))
+	_turn_sent = h
+	if _qa_move_log:
+		print("MOVE send t=%d ms=%d 0x7024 heading=%.4f wire=%d" % [_qa_move_tick + 1, Time.get_ticks_msec(), h, SkyRun.wire_angle(h)])
+	return "sent"
+
+## An arrow press ends an attack or cast in progress (OURS, locally).
+func _arrow_cancel_action() -> void:
+	_drop_pending_attack()
+	_end_own_cast_for_move("an arrow key")
+
+## The keys let go without their release events (the focus lost, typing):
+## the turn stops, and an Up run stops as its release would.
+func _arrow_release_all() -> void:
+	if _turn_keys != 0:
+		_arrow_turn(TURN_LEFT, false)
+	if _arrow_up_run:
+		_arrow_up(false)
+
+## Each physics step: the turn (FUN_009e0c10, standing or running), the
+## per-frame coarse send of a run, timer 7's fine re-send, and the block.
+func _step_arrow_keys(delta: float) -> void:
+	if _move_send_block_ms > 0.0:
+		_move_send_block_ms -= delta * 1000.0
+	var running := _has_move_target and _move_heading_run
+	if _turn_keys != 0 and not _player_dead and not _sit.sitting and not _motion_locked():
+		var h := _arrow_facing()
+		h += delta * ARROW_TURN_RATE if (_turn_keys & TURN_LEFT) != 0 else -delta * ARROW_TURN_RATE
+		h = RemoteFacing.wrap_heading(h)
+		player.rotation.y = RemoteFacing.yaw_of(h, 0.0)
+		_player_turn_target = NAN
+		if running:
+			# The run follows the turn; the server hears it by 0x7024, not
+			# by a new 0x7021.
+			_move_heading = h
+			_move_sync.heading_wire = SkyRun.wire_angle(h)
+			_send_turn_if(h, TURN_SEND_COARSE)
+	if _arrow_resend_ms >= 0.0:
+		if not running or not _arrow_up_run:
+			_arrow_resend_ms = -1.0
+		else:
+			_arrow_resend_ms -= delta * 1000.0
+			if _arrow_resend_ms <= 0.0:
+				_arrow_resend_ms += ARROW_RESEND_MS
+				_send_turn_if(_move_heading, TURN_SEND_FINE)
 
 ## The point on the ground or a placed object's walkable surface under a
 ## screen point, or null: the click-to-move pick, shared with the ground-pick
@@ -27245,7 +27875,8 @@ func _on_pick_up_motion(motion: GroundItemsNet.PickUpMotion) -> void:
 			print("PICKUP MOTION: self ms=%d angle %d -- no body to animate" % [Time.get_ticks_msec(), motion.angle])
 			return
 		var clip := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_PICKUP, _player_weapon_group)
-		var secs := _play_player_once(clip)
+		# Round 808: state 10 fades in and out over 200 (0xa59a00, READ).
+		var secs := _play_player_once(clip, ClipMixer.SHOT_IN_MS, ClipMixer.SHOT_OUT_MS)
 		_player_pickup_clip = clip if secs > 0.0 else null
 		print("PICKUP MOTION: self ms=%d t=%.3f angle %d heading %.3f -- clip %s, %.3f s" % [Time.get_ticks_msec(), _player_anim_time,
 			motion.angle, h, _body_animation_path(_player_body, BsrReader.AnimationEntry.TYPE_PICKUP, _player_weapon_group), secs])
@@ -27329,6 +27960,14 @@ func _pick_up_ground_item(ground_id: int) -> void:
 	# there) -- which this client then displayed as "your inventory may be
 	# full". The player had the gold and an error message about it.
 	var target := _ground_items.position_of(ground_id)
+	# Round 808 (OURS): seated and out of reach, the click stands instead of
+	# walking, as every other walk does (retail sends a pick-up with no sit
+	# test, 0x793570's DAT_00ef1c28 branch; what its server does with a
+	# seated pick-up is not read).
+	if target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE \
+			and _stand_instead("a walk to ground item %d" % ground_id):
+		_pending_pickup_id = -1
+		return
 	# Round 640 (OURS): rooted, the pick-up is asked for from where the player
 	# stands and the server judges the range.
 	var pick_root := _wall_root()
@@ -27597,7 +28236,8 @@ func _set_monster_gait(monster_id: int, gait: int) -> void:
 	var clip := MonsterMotion.gait_clip(_data_pk2, assembled, gait)
 	if clip == null:
 		return
-	MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time)
+	_end_body_fidget(assembled.skeleton)
+	MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
 
 ## Ends a monster's leg where its body is drawn, in its stand clip.
 func _stop_monster_motion(monster_id: int) -> void:
@@ -28318,6 +28958,9 @@ func _show_own_strike_landed(attacked: CombatNet.MonsterAttacked, seq: int) -> v
 ## revive. That the retail client plays a death clip and leaves the body down
 ## was not read here; the clip type is the body table's own.
 func _play_player_struck() -> void:
+	# Round 808: a blow on a player arms the 5 s battle stance (READ,
+	# FUN_00a49290 0xa4966b; COMBAT_STANCE_SECONDS).
+	_last_combat_time = _player_anim_time
 	if _player_skeleton == null:
 		return
 	if _player_dead:
@@ -28376,6 +29019,7 @@ func _enter_dead_state(exp_lost: int) -> void:
 	# life state 2 -> FUN_0084ab10(1), then the death; READ).
 	_loading_mode = LoadingBackdrop.MODE_REBIRTH
 	_sit.reset()
+	_arrow_reset()
 	# The body stops turning where it fell (round 637's review follow-up; OURS).
 	_player_turn_target = NAN
 	# Retail's death (0x30BF kind 0 value 2 -> FUN_0077b000) runs FUN_007b5300:
@@ -28677,6 +29321,7 @@ func _play_other_hit(character_id: int) -> void:
 	var hit := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
 	if hit != null:
 		_play_once(gait["skeleton"], hit)
+	_arm_other_stance(character_id)
 
 # --- Skill visual effects (round 620) ------------------------------------------
 
@@ -29289,6 +29934,21 @@ func _request_sit_toggle() -> String:
 	NetClient.request_motion(WorldNet.MOTION_SIT)
 	return "0x704f [04] sent (%s)" % ("standing up" if was_sitting else "sitting down")
 
+## Round 808: a click that would walk, approach or swing while seated asks to
+## stand instead and does nothing else -- no ring, no walk, no attack; the
+## player clicks again once standing (READ: the world click 0x78f8d0 tests the
+## sit state, +0x65c bit 6, before its pick, 0x78f9c4..0x78f9d7; the basic
+## attack's sender 0x791d40 right after its target lookup, 0x791d9b..
+## 0x791daa; both call 0x9d4a20, the N key's 0x704f [04] -- and the move gate
+## 0x9eb140 never lets a 0x7021 out while seated). The stand-up clip plays
+## from the server's answer (_apply_player_motion). True when the player was
+## seated, and the caller stops.
+func _stand_instead(what: String) -> bool:
+	if not _sit.sitting:
+		return false
+	print("SIT: %s while seated -- standing up instead: %s" % [what, _request_sit_toggle()])
+	return true
+
 ## Whether movement input is held for the motion: a request in flight, or the
 ## server's transition after its answer.
 func _motion_locked() -> bool:
@@ -29510,7 +30170,8 @@ func _on_emote_received(object_id: int, emote: int) -> void:
 	var action_type := ActionCommands.emote_animation(emote)
 	if own >= 0 and object_id == own:
 		var anim := _body_animation_for(_player_body, action_type, _player_weapon_group)
-		var played := _play_player_once(anim) if anim != null else 0.0
+		# Round 808: state 13 fades in and out over 200 (0xa59bc0, READ).
+		var played := _play_player_once(anim, ClipMixer.SHOT_IN_MS, ClipMixer.SHOT_OUT_MS) if anim != null else 0.0
 		print("EMOTE: this player plays emote %d -- action type %d, %s (%.2f s)" % [emote, action_type,
 			_body_animation_path(_player_body, action_type, _player_weapon_group), played])
 		return
@@ -29629,6 +30290,9 @@ func _setup_keys() -> void:
 		"run": Callable(self, "_run_key_action"),
 		"held": Callable(self, "_on_key_held"),
 		"panel": Callable(self, "_run_panel_key"),
+		# Round 808: the arrow keys, presses (repeats too) and releases.
+		"arrow": Callable(self, "_on_arrow_key"),
+		"arrow_release_all": Callable(self, "_arrow_release_all"),
 	})
 	_key_input.name = "KeyInput"
 	add_child(_key_input)
@@ -30579,10 +31243,12 @@ func _apply_player_motion(value: int) -> void:
 		_:
 			print("SIT: motion value %d for the player is not one OpenSRO plays" % value)
 
-## A move while seated: the server accepts it and puts the character on its
-## feet at once (its movement handler's SetMotionState(WALK/RUN), no
-## transition), so the sit ends here without the stand-up clip, and a sit-down
-## or stand-up clip still running gives way to the run.
+## A move starting while the stand-up clip still runs: the clip gives way to
+## the run. Round 808: a seated player no longer moves at all (_stand_instead,
+## the physics step's seated_walk), so the seated branch below is only a
+## safety net -- the server would stand a character whose move reached it
+## seated (its movement handler's SetMotionState(WALK/RUN)), and this client
+## must then agree.
 func _leave_sit_by_moving() -> void:
 	var was_sitting := _sit.leave_by_moving()
 	if was_sitting and NetClient.is_connected_to_server():
@@ -33264,7 +33930,8 @@ func _cos_gait(uid: int, gait: int) -> void:
 		return
 	var clip := MonsterMotion.gait_clip(_data_pk2, assembled, gait)
 	if clip != null:
-		MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time)
+		_end_body_fidget(assembled.skeleton)
+		MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
 
 ## rider -> the skeleton whose weapon and shield are off (round 796).
 var _rider_held_hidden := {}
@@ -33331,10 +33998,25 @@ func _raise_rider_plate(rider: int, mount: Node3D, on: bool) -> void:
 	elif _rider_plate_y.has(rider):
 		y = float(_rider_plate_y[rider])
 		_rider_plate_y.erase(rider)
+	_set_plate_y(root, plate, y)
+
+## Round 808: a plate's height, with the job mark and title beside it. On
+## another player they are the body's children, not the plate's
+## (_job_plate_decor), so moving the name alone left them at the body's own
+## height -- inside the mount while the name rode above it. The original
+## draws both from the plate's one projected point (c:0x9dea30, the point
+## FUN_009d0a80 leaves at +0x4f0), so they cannot part.
+func _set_plate_y(holder: Node3D, plate: Label3D, y: float) -> void:
 	if not is_equal_approx(plate.position.y, y):
 		plate.position.y = y
 		if _plate_batch != null and _plate_batch.has(plate):
 			_plate_batch.moved(plate)
+	if holder == null or holder == plate:
+		return
+	for decor in ["JobMark", "JobTitle"]:
+		var n := holder.get_node_or_null(decor) as Node3D
+		if n != null and n.get_parent() == holder and not is_equal_approx(n.position.y, y):
+			n.position.y = y
 
 ## Round 796: COS uid -> true while its body waits for ground (_cos_step).
 var _cos_ground_pending := {}
@@ -33599,6 +34281,17 @@ func _player_anim_group() -> String:
 		return "cart"
 	return _player_weapon_group
 
+## Round 808: a ridden pet does not fidget (FIDGET_RIDDEN_META, OURS).
+func _cos_fidget_ridden(uid: int, on: bool) -> void:
+	var a: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+	if a == null or not is_instance_valid(a.skeleton):
+		return
+	if on:
+		a.skeleton.set_meta(FIDGET_RIDDEN_META, true)
+		_end_body_fidget(a.skeleton)
+	elif a.skeleton.has_meta(FIDGET_RIDDEN_META):
+		a.skeleton.remove_meta(FIDGET_RIDDEN_META)
+
 ## A rider takes the mount (0xB0CB flag 1, or a spawn record's ride state).
 func _cos_seat(rider: int, uid: int) -> void:
 	if int(_riders.get(rider, 0)) == uid:
@@ -33610,6 +34303,7 @@ func _cos_seat(rider: int, uid: int) -> void:
 	var seat_body: Node3D = _cos_bodies.get(uid)
 	if rec != null and seat_body != null and is_instance_valid(seat_body):
 		_cos_label(seat_body, rec)
+	_cos_fidget_ridden(uid, true)
 	if rider == _own_id():
 		NetClient.riding_mount = uid
 		if rec != null and rec.run > 0.0:
@@ -33626,6 +34320,7 @@ func _cos_unseat(rider: int) -> void:
 		return
 	var uid := int(_riders[rider])
 	_riders.erase(rider)
+	_cos_fidget_ridden(uid, false)
 	var rskel := _rider_skeleton(rider)
 	var unseat_root := _rider_root(rider)
 	if unseat_root != null:

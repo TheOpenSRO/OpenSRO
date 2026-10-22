@@ -301,9 +301,9 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	order := world.MoveOrder{Speed: motionSpeed(e.CharacterID)}
 	if m.Kind == proto.MovementKindHeading {
 		// The heading form steps only while the command's bit 0 is set
-		// (READ, CGObjMoverByCmd::vslot_004); the arrow keys' turn-only
-		// commands 0x10 / 0x20 are not modelled (OURS: OpenSRO's client
-		// binds no arrow key, keymap.gd NOT_BOUND).
+		// (READ, CGObjMoverByCmd::vslot_004). Round 808: the client's
+		// 0x10 / 0x20 are its own turn bits and never reach the wire (READ,
+		// c:0x9ebec0 writes command 1); a turn comes as 0x7024.
 		if m.HeadingByte&proto.MovementCommandForward == 0 {
 			return nil
 		}
@@ -365,6 +365,88 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	// watchers' 0xB021, not before (savePositionEvery).
 	savePositionEvery(chars, sess, r.Entity, now)
 	return nil
+}
+
+// The arrow keys (round 808; docs/protocol/opcodes/movement.md, "The arrow
+// keys", READ unless marked): Up's release sends 0x7023 {u16 angle}, a turn
+// 0x7024 {u16 angle}; a rider sends them as 0x70C5 {uid, 3 | 4, u16 angle}
+// (c:0x9eb6e0 / 0x9eb470).
+const (
+	OpMovementStopRequest uint16 = 0x7023
+	OpMovementTurnRequest uint16 = 0x7024
+	// OpMovementTurn is 0xB024 {u32 uid, u16 angle}, to the 3 x 3, the mover
+	// included (s:0x4b1360 -> FUN_00484d90); its client ignores its own.
+	OpMovementTurn uint16 = 0xB024
+)
+
+// handleMovementStopRequest is 0x7023 (s:GObjPC::FUN_004b12a0): the angle,
+// then the slot-300 stop FUN_004a9430(angle, 1) -- the leg ends where the
+// server has it, the character faces the angle, and 0xB023 goes to the
+// 3 x 3, the mover included, whose client snaps there. A rider's own 0x7023
+// is dropped as its 0x7021 is (it sends 0x70C5 command 3). OURS: a dead
+// character's is dropped (retail's slot-0x540 gate is not read).
+func handleMovementStopRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
+	e, ok := hub.EntityBySession(sess.ID())
+	if !ok || riderMount(e.CharacterID) != nil {
+		return nil
+	}
+	return arrowStop(sess, p.Data, hub)
+}
+
+// arrowStop is a stop request's body (u16 angle) for sess's character.
+func arrowStop(sess *gateway.Session, data []byte, hub *world.Hub) error {
+	if len(data) < 2 {
+		return nil
+	}
+	e, ok := hub.EntityBySession(sess.ID())
+	if !ok || e.Life == world.LifeDead {
+		return nil
+	}
+	heading := world.HeadingFromWire(binary.LittleEndian.Uint16(data))
+	r, _, ok := hub.Halt(sess)
+	if !ok {
+		return nil
+	}
+	hub.SetHeading(sess, heading)
+	r.Entity.Heading = heading
+	motions.walking(e.CharacterID, time.Now())
+	stopRelay(sess, r, true)
+	return nil
+}
+
+// handleMovementTurnRequest is 0x7024 (s:GObjPC::FUN_004b1360): the
+// character's heading is the angle, a heading run bends there (Hub.Turn),
+// and 0xB024 {uid, the angle as received} goes to the 3 x 3, the mover
+// included. A rider's own is dropped (it sends 0x70C5 command 4). OURS: a
+// dead character's is dropped.
+func handleMovementTurnRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
+	e, ok := hub.EntityBySession(sess.ID())
+	if !ok || riderMount(e.CharacterID) != nil {
+		return nil
+	}
+	return arrowTurn(sess, p.Data, hub)
+}
+
+// arrowTurn is a turn request's body (u16 angle) for sess's character.
+func arrowTurn(sess *gateway.Session, data []byte, hub *world.Hub) error {
+	if len(data) < 2 {
+		return nil
+	}
+	e, ok := hub.EntityBySession(sess.ID())
+	if !ok || e.Life == world.LifeDead {
+		return nil
+	}
+	angle := binary.LittleEndian.Uint16(data)
+	if _, ok := hub.Turn(sess, world.HeadingFromWire(angle), angle); !ok {
+		return nil
+	}
+	sendAboutPlayerPacket(hub, e.CharacterID, true, OpMovementTurn, encodeMoveTurn(moverUID(e.CharacterID), angle))
+	return nil
+}
+
+// encodeMoveTurn is 0xB024's payload.
+func encodeMoveTurn(uid uint32, angle uint16) []byte {
+	return binary.LittleEndian.AppendUint16(binary.LittleEndian.AppendUint32(nil, uid), angle)
 }
 
 // movementBytes is the 0x48bad0 serialiser's output for m with no extra byte,

@@ -417,8 +417,12 @@ The heading form's byte was "not read" above. It is now:
   other way for **0x20**, wrapped by 2π (`0xb45c18`).
 - `vslot_005` keeps the low nibble (it ends a turn); `vslot_006` clears it and `+0xc` (it ends the
   step).
-- The client's arrow-key handler `FUN_0077b070` (keys `0x26`, `0x25`, `0x27`) calls
-  `FUN_009ebf40` with 1, 0x10 and 0x20. The sky click sends 1 (forward).
+- ~~The client's arrow-key handler `FUN_0077b070` (keys `0x26`, `0x25`, `0x27`) calls
+  `FUN_009ebf40` with 1, 0x10 and 0x20.~~ **Corrected in round 808:** `FUN_0077b070` has no caller
+  (dead code); the live handlers are the key-down `0x780610` and key-up `0x77d8d0`, and of the
+  three commands **only 1 reaches the wire** (`FUN_009ebec0` writes 1). 0x10 and 0x20 are the
+  client mover's own turn bits (`+0x88`); a turn reaches the server as `0x7024` (below, "The arrow
+  keys"). The sky click sends 1 (forward).
 
 `proto.MovementCommandForward` names bit 0.
 
@@ -497,6 +501,68 @@ not retail's 0x7021 requests that the server steps. So:
     up to 0.2 toward its cell's centre, and at 60 re-issues a second that crept it along the wall
     by 22.7 units in 2 s (MEASURED, `click_walk_test.gd`).
   - Only the QA walk (`OPENSRO_QA_WALK`, no order) still slides.
+
+## The arrow keys: `0x7023`, `0x7024`, `0xB024` (round 808)
+
+Labels as above; `c:` sro_client.exe, `s:` SR_GameServer.exe.
+
+**Keys (READ).** The window's key-down handler `c:0x780610` switches on the virtual key: Up
+(`0x26`) → `0x780690`, Left (`0x25`) → `0x7806e8`, Right (`0x27`) → `0x780721`. **Down (`0x28`)
+has no case**; its key-up `0x9ebb90(2)` acts on no bit. Each case is gated by `FUN_0077c8e0() == 0`
+(a window holding the keyboard, INFERRED the chat line) and `+0x3ce == 0` (the developer camera),
+first calls `0x78f7c0` (sends `0x7074 [02]`, the action cancel, only in the attack state), then
+`FUN_009ebf40(cmd)` with 1, 0x10 or 0x20. There is no test of the repeat bit, so each OS
+key-repeat runs the case again. The key-up `c:0x77d8d0` clears the press's result and calls
+`FUN_009ebb90(cmd)`.
+
+**Up.** `FUN_009ebec0(facing, 0)` sends the heading form of `0x7021` with command 1 — unless the
+body is already moving on a heading (state bit 9 and mover kind 2), so a held Up's repeats send
+nothing. Its send `FUN_009ebd10` refuses while the record's `+0x48` block runs or the move gate
+`FUN_009eb140` fails (`(+0x65c & 0x2476) != 0`: dead, acting, knocked down, **sitting**, picking up,
+an emote). Up while seated therefore sends nothing and does not stand (the click's sit test,
+`motion.md`, is never reached). Its release sends **`0x7023 {u16 angle of the facing}`**
+(`FUN_009eb6e0`, the same refusals), moving or not.
+
+**Left / Right.** `FUN_009e0930` sets the mover's turn bit; the mover tick turns the facing by
+**`dt × π`** (`FUN_009e0c10`, double `0xd81948`): `+` for Left, else `−` for Right (Left wins). It
+turns standing still, and a running body's path curves with it. No clip is played. During a click
+walk (mover kind 1) the turn keys do nothing at all.
+
+**The turn's send, `0x7024 {u16 angle}` (`FUN_009eb470(h, fine)`).** Sent only when
+`|last_sent − h|` (unwrapped) is at least **π/4** (`fine` 0; double `0xde47f8`) or **1°** (`fine` 1;
+float `0xde4800`):
+- on each key-down of Left/Right, the OS repeats included: π/4;
+- each frame of a heading run in effect while turning: π/4;
+- on the turn key's release: 1° (and both turn bits clear, `FUN_009e0160(h, 0x30, 1)`);
+- Up's 500 ms timer 7 while the run is plotted: 1°.
+
+So a spin in place reaches the server in 45° steps at the key repeats and exactly at the release
+(the user's "the server picks it up only a fraction of the time, or when it stops").
+
+**The block.** `FUN_009eb130` sets `+0x48 = 500` from the attack/skill sender (`0x791f96`,
+`0x7920c5`) and near `0x81c5b0`; the record's update counts it down. INFERRED: no `0x7021` /
+`0x7023` / `0x7024` for 500 ms after an action request.
+
+**Riding.** The two go out as `0x70C5 {u32 COS uid, u8 3 | 4, u16 angle}` (READ client side).
+
+**The server.** Handler index `0x023` → `CGObjPC +0x5ec` = `GObjPC::FUN_004b12a0`: the angle, then
+the slot-300 stop `FUN_004a9430(angle, 1)` (the `0xB023` above, the mover included). Index `0x024`
+→ `+0x5f0` = `GObjPC::FUN_004b1360`: the current mover's `vslot_005(angle)` (the heading mover sets
+the angle and keeps its forward bit, so a run bends and goes on), then **`0xB024 {u32 uid, u16
+angle as received}`** to the 3 × 3, the mover included. Both are dropped when `CGObjPC::vslot_336`
+(`+0x1d18`) answers (OPEN what state that is).
+
+**The client's `0xB024`** (`c:0x8a4ec0`): ignored for its own player; otherwise the body (or its
+mount's mover) turns toward it at 3π rad/s and its travel direction points along it.
+
+**OpenSRO.** Client: `KeyInput`'s arrow path → `World3D._on_arrow_key` (the press, each repeat, the
+release), `_step_arrow_keys` (the turn and the run's sends), `_on_entity_turned`; `DestMoveNet`
+`encode_angle` / `encode_cos_angle` / `decode_turn`. Server: `session/destmove.go`
+`handleMovementStopRequest` / `handleMovementTurnRequest` (the ridden forms through
+`coscommand.go`), `world.Hub.Turn`. OURS: the action cancel is local (no `0x7074 [02]` sender);
+the run's 500 ms re-plot is only its 1° re-send; a body does not turn while seated (not read); the
+keys are let go when the window loses the focus or a text line takes the keyboard; the server's
+60 s heading-run limit (round 749) still ends a straight held-Up run, a turn re-arms it.
 
 ## 0xB023, the stop (round 749)
 

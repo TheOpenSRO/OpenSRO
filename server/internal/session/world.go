@@ -1414,6 +1414,11 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 		case proto.OpMovementRequest:
 			// Round 749: retail's click move (destmove.go).
 			return handleMovementRequest(sess, p, hub, chars)
+		case OpMovementStopRequest:
+			// Round 808: the arrow keys' stop and turn (destmove.go).
+			return handleMovementStopRequest(sess, p, hub)
+		case OpMovementTurnRequest:
+			return handleMovementTurnRequest(sess, p, hub)
 		case OpUnstuck:
 			// Round 749's verification, FP6: the server's /unstuck (unstuck.go).
 			return handleUnstuck(ctx, sess, hub, chars, eq, zerk)

@@ -491,6 +491,34 @@ func (h *Hub) Halt(sess *gateway.Session) (r MoveResult, moved, ok bool) {
 	return r, moved, true
 }
 
+// Turn sets sess's character's heading -- an arrow key's 0x7024 (round 808;
+// READ s:0x4b1360 -> slot 0x4b8 -> the current mover's vslot_005) -- and a
+// heading run in progress goes on from where it has the character, along the
+// new heading (CGObjMoverByCmd::vslot_005 sets the angle and keeps the
+// command's forward bit). A walk to a point keeps its leg (INFERRED: the
+// destination mover's vslot_005 is not read, and the retail client sends no
+// turn during one). ok is false when the session is not in the world.
+func (h *Hub) Turn(sess *gateway.Session, heading float64, wire uint16) (e Entity, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.clock()
+	ent, exists := h.bySession[sess.ID()]
+	if !exists {
+		return Entity{}, false
+	}
+	h.settleLocked(ent, now)
+	ent.Heading = heading
+	if m := ent.Move; m != nil && m.Heading {
+		n := *m
+		n.Src, n.Start = ent.Pos, now
+		n.DirX, n.DirZ = math.Sin(heading), math.Cos(heading)
+		n.WireAngle = wire
+		ent.Move = &n
+		ent.allowLeg, ent.allowSpeed = 0, n.Speed
+	}
+	return outLocked(ent, now), true
+}
+
 // Correct puts sess's character back where the server has it -- its leg's
 // point now, or its trusted point -- after a claim it refused (round 749's
 // review, F1): the leg ends and the stored position is the trusted one.

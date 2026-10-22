@@ -216,28 +216,46 @@ static func gait_clip(archive: Pk2Reader, assembled: SkinnedBsrAssembler.Assembl
 ## found by the scan as before. Other players' gait swaps scanned the whole
 ## list (every monster and player) once each: 1000 players walking spent
 ## about 13 ms a frame on it (MEASURED, round 748's crowd split).
-static func swap_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float, hint: Array = []) -> bool:
+static func swap_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float, hint: Array = [],
+		fades = null, in_ms: float = ClipMixer.LOOP_IN_MS) -> bool:
 	if skeleton == null or anim == null or frames <= 1:
 		return false
 	if not hint.is_empty():
 		var h: int = hint[0]
 		if h >= 0 and h < animated.size() and animated[h][0] == skeleton:
-			return _swap_entry(animated, animated[h], skeleton, anim, frames, now)
+			return _swap_entry(animated, animated[h], skeleton, anim, frames, now, fades, in_ms)
 	for i in animated.size():
 		var entry: Array = animated[i]
 		if entry[0] != skeleton:
 			continue
 		if not hint.is_empty():
 			hint[0] = i
-		return _swap_entry(animated, entry, skeleton, anim, frames, now)
+		return _swap_entry(animated, entry, skeleton, anim, frames, now, fades, in_ms)
 	if not hint.is_empty():
 		hint[0] = animated.size()
 	animated.append(_new_loop(animated, skeleton, anim, frames, now))
 	return true
 
 ## swap_loop on the skeleton's entry, found.
-static func _swap_entry(animated: Array, entry: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float) -> bool:
+static func _swap_entry(animated: Array, entry: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float,
+		fades = null, in_ms: float = ClipMixer.LOOP_IN_MS) -> bool:
 	if entry[4]:
+		# Round 808: with `fades` (World3D's), the change is the client's --
+		# the new loop from its first frame (entry[3] puts its clock at 0 now;
+		# entry[5], its sounds' play, is new), the old one fading out over
+		# 200 ms while it fades in over `in_ms` (ClipMixer.Fade). Without, the
+		# old swap: the clip replaced on the entry's own phase.
+		if fades != null and entry[1] != anim:
+			var f := ClipMixer.Fade.new()
+			f.from = entry[1]
+			var dur := float((entry[1] as BanReader.ParsedAnimation).duration_ms)
+			f.from_ms = fposmod((now + float(entry[3])) * 1000.0, dur) if dur > 0.0 else 0.0
+			f.from_loop = true
+			f.at = now
+			f.in_ms = in_ms
+			(fades as Dictionary)[skeleton.get_instance_id()] = f
+			entry[3] = -now
+			entry[5] = now
 		entry[1] = anim
 		entry[2] = frames
 		return true

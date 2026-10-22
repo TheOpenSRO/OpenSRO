@@ -7483,6 +7483,87 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eighth round: sitting, movement feel, the arrow keys, job plates on mounts
+
+The user (2026-10-22): "When sitting and if you move you must stand up again then move ... a lot of
+movement animations aren't fully flushed out. Like when I turn around they're kind of supposed to take a
+step and ours doesn't ... make sure we're doing it faithfully everywhere possible ... when in a job, the
+name is supposed to be above the character even when on a mount"; mid-round: "make the arrow keys on the
+keyboard work again. It was never WASD but the directional arrows ... if you spin the character in place
+the server seems to pick it up only a fraction of the time or until it stops".
+
+- **Sitting (READ; `motion.md`, "Round 808").** Retail's world click `0x78f8d0` tests the sit bit before
+  its pick and only sends `0x704f [04]`; the basic attack `0x791d40` does the same after its target
+  lookup; the move gate `0x9eb140` never lets a `0x7021` out seated. Ours walked off at once with no clip
+  (`_leave_sit_by_moving`, the server's accepting path). Now `World3D._stand_instead`: the click, the walk
+  to talk, the basic attacks and every walk order ask to stand and stop; the stand-up clip plays from the
+  server's answer; the next click moves. A skill's, PvP attack's, friendly cast's or ground item's walk
+  stands the same way (OURS). State 8 after the stand-up is the idle loop, no timer (closes motion.md's
+  "unread").
+- **Movement feel (READ; `animation_mixer.md`).** There is no turn-in-place clip: types 24/25
+  (`standroll`, in every body) and 23 are never played (all 37 character play/stop sites). The "step" is
+  the AniMixer: a played loop restarts at t = 0 and weight 0; the run fades in over 100 ms, every other
+  loop over 200; a state's exit stops its clip over 200; a one-shot holds its last frame while it fades
+  out; one-shots are committed over the loops per bone. Ours swapped one clip a frame on a global clock
+  (a short move behind the player popped into mid-stride and back).
+  - `ClipMixer` (new) does exactly that for the local player (`_mix_player`): the loop the action picks,
+    the one-shot with its state's fades (sit/stand/hit 0/200, pick-up and emotes 200/200).
+  - Other players, monsters, NPCs, pets: `MonsterMotion.swap_loop` with `_pose_fades` restarts the new
+    loop at its first frame and blends the outgoing one (still cycling) over it; a one-shot's hand-back
+    holds its last frame and fades 200 ms into the loop (`ClipMixer.Fade`, `blend_from`).
+  - The battle stance is the client's own 5 s (`+0x4e0`, armed with 5000 by the attack state `0xa5a025`
+    and a blow on a PC `0xa4966b`), not the server's 20 s BattleState: `COMBAT_STANCE_SECONDS` 20 -> 5,
+    armed on the player's hit too; other players now show it (`_arm_other_stance`).
+  - The idle fidget (`+0x510`: 15 s standing idle, then 10 + rand % 5 s; types 122/61/81 at random, 400 ms
+    in): the player (`_step_player_fidget`) and every body in the clip tick (`_step_body_fidgets`). Player
+    bodies have only 61, NPC bodies 122 (MEASURED: 128 `..._time` entries).
+  - Not done: footprints (sand/snow decals at footstep keys; the surface table is OPEN).
+- **The arrow keys (READ; `movement.md`, "The arrow keys").** Up: one heading `0x7021` per press, its
+  release `0x7023 {angle}`; Left/Right turn pi rad/s locally (no clip, Left wins, nothing during a click
+  walk); the turn goes out as `0x7024 {angle}` only at >= 45 deg from the last sent (a press or OS
+  repeat, each frame of a run) or >= 1 deg (the release, the run's 500 ms timer) -- the user's "a
+  fraction of the time or until it stops". The server stops (`0xB023`, the mover included) or turns and
+  broadcasts `0xB024 {uid, angle}`; riding, `0x70C5` commands 3 / 4. Down does nothing; Up seated sends
+  nothing. Round 653's "the arrow keys send 1, 0x10 and 0x20" is corrected: only 1 reaches the wire, and
+  `FUN_0077b070` is dead code. Client: `KeyInput`'s arrow path, `World3D._on_arrow_key`,
+  `_step_arrow_keys`, `_on_entity_turned`; server: `destmove.go` `handleMovementStopRequest` /
+  `handleMovementTurnRequest`, `world.Hub.Turn`. Round 608's NOT_BOUND choice is
+  reversed at the user's request; Down and F12 stay unbound.
+- **Job plates on a mount.** Another player's job mark and title are the body's children beside its
+  "Name", and round 796's rider raise moved only the name -- they stayed at the body's own height,
+  inside the mount. `_set_plate_y` moves all three; a re-dress keeps a rider's plate over the mount, and
+  the own plate re-made while riding (a suit worn, the alias) goes straight over it. The rider height is
+  READ (mount `+0x22c` + 7.0; `+0x228` = 20 x the characterInfo Size x 0.5 (`fmul` at `0xa9afbe`) x the
+  scale, which stays INFERRED 1.0). MEASURED on the donkey: plate 25.0 with the head bone at 20.7 (on
+  foot 21.5 over 16.1).
+- **Tests.** `clip_mixer_test` (weights at 50/100/200 ms, restart at 0, hold-and-fade, the per-bone mix,
+  the fades of other bodies); `sit_move_test` (a seated click, a talk walk, a basic attack ask to stand;
+  the plate decor follows); `keymap_test` (the arrows' press, repeat, release; typing); `dest_move_net_test`
+  (the encoders and `0xB024`); server `destmove808_test.go` (`0xB024` to window and mover, the run bent,
+  `0x7023`'s stop relayed, a standing turn).
+- **QA (render box, `/var/tmp/r808/qa808.sh`).**
+  - Sit: seated, a ground click -> `0x704f [04] sent (standing up)`, the stand-up clip, no walk; the next
+    click walks. The mixer log (`OPENSRO_QA_MIX_LOG`): the run from t = 0 at weight 0.17/0.33/0.50 over
+    the first 3 frames, full at 100 ms, the stand gone at 200 ms; the stop with the run still cycling
+    while it fades over 200 ms; the stand-up holding its last frame (t = 1600) while it fades.
+  - Arrows: a held Left turns 0.1047 rad a 33 ms step (pi rad/s); with key repeats from 0.53 s at 30/s,
+    `0x7024` went out every 0.84 rad and on the release. A full circle of running and turning on the
+    Jangan plaza, real time: the stop's `0xB023` put the player 1.5 units from where the client had it.
+    Down: nothing; Up seated: refused; Left during a click walk: ignored.
+  - Fidgets (Jangan plaza, 40 s real time): the player 2 (type 61), a quest merchant 2 (`..._time`).
+  - Job ride (Tess in the trader suit on the donkey): plate, title and mark at 25.0 together.
+- **Gates.** Server `go test ./...` all ok, `go vet` clean. Client `run_gd_tests.sh` "ran 346 GDScript
+  test(s)", 0 failing (before the fidget pass; the suites it touches re-run since: clip_mixer, sit_move,
+  monster_motion, monster_crowd, crowd_anim, world_bodies, monster_draw, talk_approach, all pass).
+- **Perf gate** (`--base 2c27af49 --sites jangan,crowd --frames 60000`, 1280x720, median of 3): jangan
+  frame 0.86 / 0.86 ms, entry 9987 / 8642, freeze 2710 / 2746, hitches 5 / 5, all SAME. The crowd
+  (2,500 monsters) first read 2.28 -> 2.55 ms (+0.3, consistent over three runs): every change of clip
+  blended. Blending only within `MonsterCrowd.POSE_FULL` (300) of the camera, the re-gate read 2.27 ->
+  2.36 (+0.1; the run's fresh base check read 2.09), entry 10947 / 11129, freeze 3488 / 3461, hitches
+  5 / 5: SAME. (The default 3000 frames ran 4 s at ~700 fps on the box and gave too few samples:
+  `--frames 60000`, as round 805.)
+- **Deployed (the Mac mini):** the server, for the arrow keys' `0x7023` / `0x7024` (see below).
+
 ## Eight-hundred-and-seventh round: the effects' range, fog and walls
 
 The user (2026-10-21), after round 806: "They basically pop out of view too early and it's a jarring

@@ -176,16 +176,17 @@ const OTHER_KEYS: Array = [
 ]
 
 ## The retail keys this client does not bind, and why (for the help and the
-## records). Keyboard movement is the user's decision of round 608:
-## "Original only" -- the player moves by clicking, as the defaults do.
+## records).
 ##
-## - Up (key-down 0x9ebf40(1), which first cancels an action with 0x7074
-##   [02] through 0x78f7c0) and Left/Right (0x9ebf40(0x10 / 0x20)) move by
-##   request packets 0x7023/0x7024 and 0x70c5 (0x9eb470, 0x9eb6e0) that this
-##   server does not have; whether Left/Right turn or strafe was not read.
-##   Down has no key-down case at all (index 3 of 0x780da8 is the default).
+## - The arrows are bound since round 808, at the user's request (round 608
+##   had left them out believing them WASD-like): Up runs along the facing and
+##   Left/Right turn at pi rad/s, through KeyInput's "arrow" path, not a table
+##   slot (World3D._on_arrow_key has the reading: 0x780610 / 0x77d8d0, the
+##   0x7021 / 0x7023 / 0x7024 sends). Down stays here: it has no key-down case
+##   at all (index 3 of 0x780da8 is the default), and its key-up case,
+##   0x9ebb90(2), acts on no bit.
 ## - F12 (0x79e1a0) was not identified. F5-F8 and F11 do nothing.
-const NOT_BOUND := ["Up", "Left", "Right", "Down", "F12"]
+const NOT_BOUND := ["Down", "F12"]
 
 static var _by_key: Dictionary = {}
 

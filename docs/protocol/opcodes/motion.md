@@ -275,3 +275,31 @@ From the action window (`docs/WORLD_ISSUES.md`, "Round 781 (part): the action wi
 - **Emote (READ, `GObjPC::FUN_004b1630`, handler index `0x091` through `0x4b23d0` and CGObjPC's
   vtable `+0x600`):** one u8 read, `0x3091 {+8 the unique id, the byte}` sent through
   `FUN_00484d90`; no test of state or byte. OpenSRO: `session.EmoteHandler`.
+
+## Round 808: a click while seated stands, and does nothing else
+
+READ, `sro_client.exe` (the full notes in round 808's WORLD_ISSUES entry):
+
+- **The world click** `0x78f8d0` (from the left-click dispatcher `0x793570`, with and without its
+  approach flag) tests the sit state, `+0x65c` bit 6, **before its pick** (`0x78f9c4..0x78f9d7`):
+  seated, it calls `FUN_009d4a20` -- the N key's `0x704f [04]` -- and returns. No pick, no ring, no
+  pending destination, no `0x7021`. An NPC or a monster out of reach is approached through the same
+  call, so the player stands and does not walk. The player clicks again once standing.
+- **The basic attack's sender** `0x791d40` (`0x7074 [1][1][1][id]`) tests it right after its target
+  lookup (`0x791d9b..0x791daa`) and sends the stand request instead.
+- **The move gate** `FUN_009eb140` is `(+0x65c & 0x2476) == 0`, the sit bit included: no `0x7021`
+  ever leaves a seated client, and a ground-targeted cast is held until the player stands.
+- Selecting (`0x78f5f0`) has no sit test; a ground item's pick-up request has none either (what the
+  server does with it seated is OPEN).
+- **The client's state 8** after the stand-up (motion.md's "enters state 8 (unread)") is the idle
+  loop: no timer, no lock. A click in the server's 1.5 s transition is sent and dropped silently by
+  the server (`0x4b0f83` → `0x4b11f7`).
+- **Another player's** `0xB021` while it sits would not move its body (state 9 needs STAND); retail
+  clients never send one.
+
+OpenSRO: `World3D._stand_instead` -- the ground and sky click, the walk to talk, the basic attack
+(monster, player, COS), and every walk order (`_issue_walk`, `_start_heading_run`) ask to stand and
+stop; a skill's, a PvP attack's or a friendly cast's walk into reach and a ground item out of reach
+stand the player the same way (OURS for those paths); a skill in reach is still cast from the seat.
+The server is unchanged: its move-while-seated path is now unreachable from this client, as from
+retail's. The arrow keys' Up does nothing while seated (READ; `movement.md`, "The arrow keys").

@@ -26,6 +26,17 @@ class_name DestMoveNet
 const OP_MOVEMENT_REQUEST := 0x7021  # client -> server
 const OP_MOVEMENT_ECHO := 0xB021     # server -> the 3 x 3, the mover included
 const OP_MOVEMENT_STOP := 0xB023     # server -> the 3 x 3
+## The arrow keys (round 808; docs/protocol/opcodes/movement.md, "The arrow
+## keys", READ): Up's release sends a stop with the facing, a turn sends the
+## facing; the server stops (0xB023 to the 3 x 3, the mover included) or
+## turns and broadcasts 0xB024 {u32 uid, u16 angle} (s:0x4b12a0 / 0x4b1360;
+## the client's reader c:0x8a4ec0). Riding, the two go out as 0x70C5 {uid,
+## 3 | 4, u16 angle} (c:0x9eb6e0 / 0x9eb470).
+const OP_MOVEMENT_STOP_REQUEST := 0x7023  # client -> server: u16 angle
+const OP_MOVEMENT_TURN_REQUEST := 0x7024  # client -> server: u16 angle
+const OP_MOVEMENT_TURN := 0xB024          # server -> the 3 x 3: u32 uid, u16 angle
+const COS_COMMAND_STOP := 3
+const COS_COMMAND_TURN := 4
 
 const KIND_HEADING := 0
 const KIND_DESTINATION := 1
@@ -95,6 +106,27 @@ static func encode_heading(command: int, angle: int) -> PackedByteArray:
 	var out := PackedByteArray([KIND_HEADING, command & 0xff, 0, 0])
 	out.encode_u16(2, angle & 0xffff)
 	return out
+
+## 0x7023's or 0x7024's body: the u16 wire angle (SkyRun.wire_angle).
+static func encode_angle(angle: int) -> PackedByteArray:
+	var out := PackedByteArray([0, 0])
+	out.encode_u16(0, angle & 0xffff)
+	return out
+
+## The ridden form, 0x70C5 {u32 COS uid, u8 command, u16 angle}.
+static func encode_cos_angle(uid: int, command: int, angle: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(7)
+	out.encode_u32(0, uid & 0xffffffff)
+	out[4] = command & 0xff
+	out.encode_u16(5, angle & 0xffff)
+	return out
+
+## One 0xB024, decoded: whose heading and the wire angle; uid -1 when short.
+static func decode_turn(data: PackedByteArray) -> Dictionary:
+	if data.size() < 6:
+		return {"uid": -1, "angle": 0}
+	return {"uid": data.decode_u32(0), "angle": data.decode_u16(4)}
 
 ## Reads a 0xB021 payload.
 static func decode_echo(data: PackedByteArray) -> Echo:
