@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.567** plus what is merged on `dev`; updated 2026-10-22.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.568** plus what is merged on `dev`; updated 2026-10-22.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -73,7 +73,7 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Terrain, objects and region streaming | ✅ Supported | Seamless world from Map.pk2; regions load off the main thread |
 | Click-to-walk | ✅ Supported | Click the ground to walk; arrival lands exactly on the point |
 | Sky-click run | ✅ Supported | Clicking sky or far ground runs on that heading until blocked |
-| Keyboard (arrow keys) movement | ✅ Supported | Up runs where the character faces, Left/Right turn it on the spot; as in retail the server hears a turn in 45° steps and exactly on release |
+| Keyboard (arrow keys) movement | ✅ Supported | Up runs where the character faces, Left/Right turn it on the spot (seated too); as in retail the server hears a turn in 45° steps and exactly on release |
 | Walk/run toggle and sitting | ✅ Supported | Walk/run, sit and stand through the action window and keys; a click while seated stands up first, as retail |
 | Movement animation | ✅ Supported | Retail blending: a run starts from its first frame and fades in, a stop lets the stride finish, 5 s battle stance, idle fidgets for players and NPCs |
 | Collision | 🟡 Partial | Client navmesh for terrain and buildings; server checks speed and height only |
