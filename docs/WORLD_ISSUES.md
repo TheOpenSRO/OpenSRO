@@ -7483,6 +7483,37 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-tenth round: rider plates back from the ground; the ice star's life
+
+The user (2026-10-22), on v0.1.570: "Now it's too high up lol" (a screenshot of ours: the plate a rider's
+height over the head on the white trade ox), then "Hashade's ice effect that spreads out seems to hang
+around too long".
+
+- **Rider plates (READ formula, a floor OURS).** The mount in both of the user's screenshots is the Indian
+  ox (`COS_T_COW3`, rendered to match). It has no characterInfo row and its OrgCodeName is `xxx`, so the
+  lookup falls to the first row (READ FUN_00a95d30), Size 2: height 20. From the ground (round 808) that
+  is 27, under its 29.1 seat -- the waist; from the seat (round 809) 56, with the head bone at 34.8. The
+  rider's +0x94 is INFERRED to be the ground: the rider is drawn on the saddle through its render matrix
+  only (ICharactor::FUN_009d05d0) and the dismount writes +0x90..+0x98 back into it (FUN_009cf600). Now
+  `max(height + 7, seat + 11)`, the 11 a seated head bone over the saddle (MEASURED 5.6, donkey and
+  buffalo) + a standing plate's clearance over the head bone (MEASURED 5.4). MEASURED live: Indian and
+  Kunlun ox 40.1 (head bone 34.8), donkey 26.1 (20.8), buffalo 32.0 (24.9). By the table: horses 32,
+  camels 35, Fire ox 42, lizard 41.4, behemoth 77, white elephant 59, rhinoceros 45.
+- **The ice star's life (READ; `combat_presentation.md`, "Round 809").** On arrival a skill mover fades its
+  head and every trail copy from their alpha to 0 over Fade's first value (`FUN_00a48690` ->
+  `FUN_00a48190`, stepped linearly by `FUN_00a47d20`), hands the alpha to the effect (slot 0x24, which
+  scales each particle colour's alpha, `EFEffect::FUN_00c893f0`) and frees a copy when its fade ends
+  (`FUN_00a48760`). Ours held the shards at full strength for Fade's 3000 ms and then let each play out
+  (about 0.55 s more for `cold_bingpan_ice.efp`). Now `EfpEffect.set_alpha` fades them and they are stopped
+  at 0. MEASURED on Hashade's skill 269: on screen ~4.0 s before, ~3.4 s after, dimming through the fade.
+  The effect shader multiplies its alpha by Godot's (`a *= ALPHA;`, 1 for an effect not fading). OURS: the
+  alpha scales the final alpha, not the colour before the texture stage, so ONE/ONE nodes dim too. OPEN:
+  Fade first 0 with a second value (still let go at once).
+- **Perf gate** (`perf_gate.sh --base 16e7ba6b --sites jangan,crowd`, medians of 3): jangan frame 0.86 / 0.86
+  SAME; crowd 2.97 / 2.94 SAME (entry -1436 ms FASTER, noise).
+- **QA:** a job step `close` shuts the talk box, so a ride render after the job join sees the world
+  (`qa809.sh` with `JOB=...;close@640`, `OPENSRO_QA_DIST=60 OPENSRO_QA_PITCH=-10`).
+
 ## Eight-hundred-and-ninth round: monsters' platforms, rides, skins, own particles and skill effects; plates over the seat
 
 The user (2026-10-22): "hashade and ishade and maybe some other similar monsters sit on a platform that
