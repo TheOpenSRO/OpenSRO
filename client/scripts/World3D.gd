@@ -21101,10 +21101,13 @@ func _process(_delta: float) -> void:
 	_night_tick()
 	if title_mode:
 		return
-	# Round 795: riders on their mounts' saddles, the mounts under them.
-	_cos_place_riders()
+	# Round 795: riders on their mounts' saddles, the mounts under them
+	# (round 813: a mount leaning with the ground before its rider is seated).
+	_cos_place_riders(_delta)
 	# Round 809: monsters' rides, and the riders on their saddles.
 	_step_monster_rides()
+	# Round 813: monsters and COS leaning with the ground (SlopeTilt).
+	_step_slope_tilts(_delta)
 	# The auto potion's interface timers (round 786, 0xb933d0's pass).
 	_auto_potion.step(Time.get_ticks_msec())
 	# The time of day (round 786, DayCycle): the environment eased toward the
@@ -27168,6 +27171,9 @@ var _monster_models_by_name: Dictionary = {}
 var _monster_org_by_code: Dictionary = {}
 ## Round 809: monster and COS code -> its non-zero TextureType (CharTables).
 var _monster_texture_by_code: Dictionary = {}
+## Round 813: monster and COS code -> its non-zero characterdata column 80,
+## the slope tilt's factors (CharTables, SlopeTilt).
+var _slope_tilt_by_code: Dictionary = {}
 var _monster_models_loaded := false
 ## The object name table as parsed from the player's archive, kept so the
 ## debug panel can show what language its columns yield.
@@ -27190,6 +27196,7 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 			_monster_models_by_code = centry.mob_models_by_code
 			_monster_org_by_code = centry.mob_org
 			_monster_texture_by_code = centry.mob_texture
+			_slope_tilt_by_code = centry.slope_tilt
 			_monster_models_by_name = centry.mob_models_by_name
 			var through_org := 0
 			for code in _monster_org_by_code:
@@ -27541,6 +27548,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 
 	if _qa_split != null and not _qa_split_off.is_empty():
 		_qa_split_strip(body, monster_skeleton)
+	# Round 813: it leans with the ground if its row says so (SlopeTilt).
+	if monster_skeleton != null:
+		_slope_tilt_register(body, monster.code_name, SLOPE_MOB, monster.monster_id)
 	other_entities.add_child(body)
 	LatencyProbe.lap("add_child")
 	_monster_bodies[monster.monster_id] = body
@@ -27812,6 +27822,148 @@ func _assembled_clip(a: SkinnedBsrAssembler.AssembledCharacter, action_type: int
 		if path == "" or not a.animation_cache.has(path):
 			return null
 	return SkinnedBsrAssembler.animation_for(_data_pk2, a, action_type, group)
+
+## Round 813: the bodies that lean with the ground they stand on (SlopeTilt,
+## docs/protocol/slope_tilt.md): body instance id -> [body, SlopeTilt.State,
+## kind (SLOPE_MOB or SLOPE_COS), its monster id or COS uid, its region pair
+## (the [NavGraph, group] it last stood in)]. Only a monster's or a COS's,
+## and only with a non-zero characterdata column 80 (READ: nothing else ever
+## marks its normal stale).
+var _slope_tilts := {}
+## The bodies to look at this frame: those a move or a turn filed
+## (SlopeTiltBody, the original's slot-15 events) and those still easing.
+## Standing bodies whose eases ended cost nothing (round 813's perf gate:
+## polling 2,500 every frame cost 14 ms).
+var _slope_hot := {}
+const SLOPE_MOB := 0
+const SLOPE_COS := 1
+
+## Puts a body on the slope tilt's list when its row tilts, before it enters
+## the tree (its script, SlopeTiltBody, reports its moves and turns).
+func _slope_tilt_register(body: Node3D, code: String, kind: int, id: int) -> void:
+	var value := int(_slope_tilt_by_code.get(code, 0))
+	if value == 0 or body == null or body.get_script() != null:
+		return
+	body.set_script(SlopeTiltBody)
+	(body as SlopeTiltBody).hot = _slope_hot
+	body.set_notify_transform(true)
+	var key := body.get_instance_id()
+	_slope_tilts[key] = [body, SlopeTilt.State.new(value), kind, id, []]
+	_slope_hot[key] = true
+
+## The node a tilting body's model hangs from: its skeleton (the die model's
+## after a swap, which takes the old one's transform as the original keeps its
+## matrix, READ 0xa59cc0).
+func _slope_tilt_model(kind: int, id: int) -> Node3D:
+	var a: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(id) if kind == SLOPE_MOB else _cos_assembled.get(id)
+	if a == null or a.skeleton == null or not is_instance_valid(a.skeleton):
+		return null
+	return a.skeleton
+
+## Every frame: each hot tilting body that is not a ridden mount (those lean
+## in _cos_place_riders, before their riders are seated on them); one whose
+## eases have ended and whose normal is current leaves the hot set.
+func _step_slope_tilts(delta: float) -> void:
+	if not _slope_hot.is_empty():
+		for key in _slope_hot.keys():
+			var e = _slope_tilts.get(key)
+			if e == null:
+				_slope_hot.erase(key)
+				continue
+			if not is_instance_valid(e[0]):
+				if _qa_slope_on:
+					print("QA SLOPE: body of %d is gone" % int(e[3]))
+				_slope_tilts.erase(key)
+				_slope_hot.erase(key)
+				continue
+			if int(e[2]) == SLOPE_COS and _cos_rider_of(int(e[3])) >= 0:
+				continue
+			if not _slope_tilt_body(e, delta):
+				_slope_hot.erase(key)
+	if _qa_slope_due():
+		_qa_slope_report()
+
+## The [NavGraph, group] a body stands in: the one it stood in last when the
+## point is still inside it, else the lookup (_nav_graph_for).
+func _slope_pair(e: Array, pos: Vector3) -> Array:
+	var pair: Array = e[4]
+	if pair.size() == 2 and is_instance_valid(pair[1]):
+		var graph: NavGraph = pair[0]
+		var local := (pair[1] as Node3D).to_local(pos)
+		if graph.dungeon or (local.x >= 0.0 and local.z >= 0.0 and local.x <= REGION_SPAN and local.z <= REGION_SPAN):
+			return pair
+	pair = _nav_graph_for(pos)
+	e[4] = pair
+	return pair
+
+## One body's frame of the slope tilt (SlopeTilt's header): a moved or turned
+## body asks the ground under it for a new normal, both eases advance, and on a
+## frame either moved its model node is turned about the feet. False when
+## there is nothing more to do until it moves or turns again.
+func _slope_tilt_body(e: Array, delta: float) -> bool:
+	var body: Node3D = e[0]
+	var st: SlopeTilt.State = e[1]
+	var model := _slope_tilt_model(int(e[2]), int(e[3]))
+	if model == null or not body.is_inside_tree():
+		# Not drawn yet (or its skeleton is being swapped): looked at again
+		# when it moves, or while its normal is stale.
+		return st.stale
+	# A monster seated on its ride's saddle takes the saddle's matrix after
+	# its own (ICharactor::FUN_009d05d0 runs after FUN_009c9400): it never
+	# leans (MonsterRide, type none).
+	var ride: MonsterRide = _monster_rides.get(model.get_instance_id()) if int(e[2]) == SLOPE_MOB else null
+	if ride != null and ride.ride_type == SoundTable.RIDE_NONE:
+		return false
+	if not st.has_rest:
+		st.rest = model.transform
+		st.has_rest = true
+	var pos := body.global_position
+	var front: Vector3 = body.global_basis * st.rest.basis.z
+	if pos != st.last_pos or not front.is_equal_approx(st.last_front):
+		st.stale = true
+		st.last_pos = pos
+		st.last_front = front
+	if st.stale:
+		var pair := _slope_pair(e, pos)
+		if not pair.is_empty():
+			var group: Node3D = pair[1]
+			var local := group.to_local(pos)
+			st.region_basis = group.global_basis
+			st.retarget((pair[0] as NavGraph).ground_normal_at(local.x, local.z, local.y))
+			st.stale = false
+	if st.advance(delta):
+		st.applied = SlopeTilt.in_body(st.n, front, st.k, st.region_basis, body.global_basis)
+		model.transform = Transform3D(st.applied, Vector3.ZERO) * st.rest
+		# A dummy ride is the monster's whole transform (FUN_009d0660).
+		if ride != null and ride.ride_type == SoundTable.RIDE_DUMMY and is_instance_valid(ride.root):
+			ride.root.transform = model.transform
+	return st.stale or (st.enabled and not (st.n_done and st.k_done))
+
+## OPENSRO_QA_SLOPE: every 60 frames, the tilting bodies nearest the player --
+## the ground's normal, the eased one, the factors and the model's lean.
+var _qa_slope_on := OS.get_environment("OPENSRO_QA_SLOPE") != ""
+func _qa_slope_due() -> bool:
+	return _qa_slope_on and Engine.get_process_frames() % 60 == 0
+func _qa_slope_report() -> void:
+	print("QA SLOPE: %d bod(ies) on the list, %d hot" % [_slope_tilts.size(), _slope_hot.size()])
+	var rows: Array = []
+	for key in _slope_tilts:
+		var e: Array = _slope_tilts[key]
+		if is_instance_valid(e[0]):
+			rows.append([(e[0] as Node3D).global_position.distance_to(player.global_position), e])
+	rows.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	for r in rows.slice(0, 6):
+		var e: Array = r[1]
+		var st: SlopeTilt.State = e[1]
+		var model := _slope_tilt_model(int(e[2]), int(e[3]))
+		var lean := 0.0
+		if model != null:
+			lean = rad_to_deg(model.global_basis.y.normalized().angle_to(Vector3.UP))
+		var n_world: Vector3 = st.region_basis * st.n
+		print("QA SLOPE: %s %d at (%.1f, %.1f, %.1f) %.0f away: normal %s (%.1f deg off up) eased %.2f/%.2f, factors %s, model up %.2f deg off vertical" % [
+			"mob" if int(e[2]) == SLOPE_MOB else "cos", e[3], (e[0] as Node3D).global_position.x, (e[0] as Node3D).global_position.y, (e[0] as Node3D).global_position.z,
+			float(r[0]), str(n_world.normalized()), rad_to_deg(n_world.normalized().angle_to(Vector3.UP)),
+			st.n_t, st.k_t, str(st.k), lean])
 
 ## Every frame: each ride where its type puts it, and a seated rider on its
 ## saddle (MonsterRide.place). Round 809's perf gate: a ride is posed and
@@ -34629,6 +34781,9 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	owner_label.offset.y = _cos_owner_offset(owner_label)
 	body.add_child(owner_label)
 	_cos_label(body, rec)
+	# Round 813: it leans with the ground if its row says so (SlopeTilt).
+	if skel != null and row != null:
+		_slope_tilt_register(body, row.code, SLOPE_COS, rec.uid)
 	other_entities.add_child(body)
 	_cos_bodies[rec.uid] = body
 	CharacterBlobs.register(body, float(row.bc) if row != null else 0.0)
@@ -34981,7 +35136,7 @@ func _cos_step(delta: float) -> void:
 ## Every frame, after the walkers moved: each mount under its rider's root,
 ## and the rider's skeleton on the mount's saddle (READ ICharactor::
 ## FUN_009d05d0: rider world = saddle bone x mount world, no offset).
-func _cos_place_riders() -> void:
+func _cos_place_riders(delta: float = 0.0) -> void:
 	for rider in _riders.keys():
 		var uid := int(_riders[rider])
 		var mount: Node3D = _cos_bodies.get(uid)
@@ -34994,6 +35149,12 @@ func _cos_place_riders() -> void:
 		# The root's yaw is its heading (the player's skeleton is turned PI
 		# under it); the mount's skeleton is not, so its front is taken off.
 		mount.rotation.y = RemoteFacing.yaw_of(RemoteFacing.heading_of_yaw(root.rotation.y, 0.0), _cos_front())
+		# Round 813: the mount leans with the ground (SlopeTilt), and the
+		# saddle the rider is seated on below leans with it (READ: the rider's
+		# world is the saddle x the mount's, ICharactor::FUN_009d05d0).
+		var tilt_entry = _slope_tilts.get(mount.get_instance_id())
+		if tilt_entry != null:
+			_slope_tilt_body(tilt_entry, delta)
 		# The mount's gait is its rider's: walk or run while the rider moves,
 		# by the rider's Walk/Run (round 798; see _rider_walking).
 		var gait := BsrReader.AnimationEntry.TYPE_STAND

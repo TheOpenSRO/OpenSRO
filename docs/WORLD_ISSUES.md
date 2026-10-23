@@ -7483,6 +7483,62 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirteenth round: monsters and mounts lean with the slope; a chaser swings between passes
+
+The user (2026-10-23), on v0.1.574, with an original and an OpenSRO screenshot of a mount on a hillside:
+"Have mounts respect slopes ... it doesn't look like the character does but monsters do? Verify against the
+game code please and make it similar to the original as much as possible and make no mistakes." Then a clip
+of a Black Tiger running at a fleeing player's back without swinging, and: the Go module still named
+OpenSRO ("It's supposed to be TheOpenSRO").
+
+- **Slope tilt (READ, docs/protocol/slope_tilt.md).** The original leans a character only if it IsKindOf
+  CICMonster or CICCos (the appear, `FUN_009d17e0`): characterdata column 80 gives the factors (pair 0 =
+  bytes 3 and 2 / 100), the normal is the cell's under the character (terrain: the tile triangle's face
+  normal, flat on a solid plane at its height; an object: its cell's face normal, never flipped; a
+  dungeon: up), eased over 0.3 s from every position or heading change, the factors over 0.1 s from 0,
+  and the matrix (`FUN_009c9400`) scales forward's height by factor 0 and side's by factor 1. Players,
+  NPCs and guards are never tilted (their `+0x74c` stays 0). A rider is set on its mount's saddle after
+  the tilt (`FUN_009d05d0`): it leans with the mount; a monster seated on its own ride does not lean;
+  a dummy ride copies its rider; the die model keeps the matrix (0xa59cc0). MEASURED: 0x64146414
+  (1.0 forward, 0.2 sideways) on every horse, tiger, pet and transport; 0x14141414 on 6,403 monsters;
+  0 (never) on 621.
+  - Built: `SlopeTilt`, `NavGraph.ground_normal_at`, `NvmCollision.terrain_normal`,
+    `NpcTableReader.parse_slope_tilt`, `SlopeTiltBody` (a move or a turn files the body as hot, the
+    original's events), World3D's `_step_slope_tilts` over the hot bodies only (ridden mounts in
+    `_cos_place_riders`, before the rider is seated); MonsterRide's dummy ride takes the rider's
+    current transform. The model node under the body leans about the feet; the body keeps its yaw.
+    OURS: no tracked cell, so the surface nearest the body's height.
+  - Tests: `world/slope_tilt_test.gd` (37 checks: the bytes, pitch atan(k tan a), roll, the eases,
+    the mirror, the triangle split, the plane, object winding, dungeon, the body's move and turn events). NEGATIVE: against v0.1.574
+    SlopeTilt does not exist.
+  - Live (render box, real server, `OPENSRO_QA_SLOPE`): the client's normals equal a Go computation
+    from the heightmap at three points (38.9, 0.0, 0.4 deg); a ridden pegasus leaned 11.43 deg up an
+    11.4 deg slope and 5.04 deg across a 12.9 deg one, 38.7 on 38.9 facing up it; black tigers 9.25 on
+    9.3; a 0x14141414 monster 1.80 on 8.9 (atan(0.2 tan 8.9) = 1.79).
+  - MEASURED, OPEN: 646 of the export's 78,483 object cells (28 meshes, 12 wound downward on every cell,
+    placed in field regions) face down; the original would turn a body standing on one over, and so
+    do we. Whether anything stands there in the original is not known.
+  - Perf gate (`--base c323ad10 --sites jangan,crowd --frames 60000`, median of 3): the first build,
+    which looked at every tilting body every frame, was SLOWER at the crowd view (2,500 monsters):
+    3.02 -> 17.03 ms a frame. Made event-driven (SlopeTiltBody, the hot set), it is SAME everywhere:
+
+    | site | frame ms | entry ms | freeze ms | hitches |
+    |---|---|---|---|---|
+    | jangan | 0.86 -> 0.86 | 8638 -> 8572 | 2752 -> 2713 | 4 -> 4 |
+    | crowd | 3.09 -> 3.18 | 12040 -> 11361 | 3297 -> 3493 | 5 -> 5 |
+
+  - QA note: a GM `/spawn` in or beside Jangan is sent away again within a second (the town rule,
+    round 674): use `/goto mangyang`.
+- **The chase (READ).** The original tests reach every frame (`Tick_UseSkill` phase 1 `0x4ae590` ->
+  `Action_IsTargetWithinReach` `0x4ad4a0`) at the target's current place; ours once a 100 ms pass after
+  the step, so a chaser that met its leg's end mid-step stood while the runner ran on and never swung.
+  `reachedDuringStep` swings when the step's closest approach was in reach (monster_ai.md, round 813).
+  INFERRED from the read rules: the clip's 75-speed tiger behind a straight 50-speed runner settles about
+  32.7 away against reach 30 and never swings in the original either; a faster chaser now does (it never
+  did). OPEN against the original running.
+- **The module.** `server/go.mod` is `github.com/TheOpenSRO/OpenSRO/server` (the repo moved 2026-10-13);
+  the local `opensro` remote is gone.
+
 ## Eight-hundred-and-twelfth round: NPC thieves off by default; a monster stands through its swing; server collision
 
 The user (2026-10-22), on v0.1.572: "Let's make NPC thieves a toggable feature and let's disable it for now.

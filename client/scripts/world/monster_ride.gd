@@ -95,8 +95,10 @@ func place() -> void:
 			if not root.transform.basis.is_equal_approx(want) or root.transform.origin != Vector3.ZERO:
 				root.transform = Transform3D(want, Vector3.ZERO)
 		SoundTable.RIDE_DUMMY:
-			if not root.transform.is_equal_approx(rider_rest):
-				root.transform = rider_rest
+			# The rider's whole transform as it is now -- round 813: with its
+			# slope tilt (SlopeTilt), which rider_rest does not carry.
+			if not root.transform.is_equal_approx(rider.transform):
+				root.transform = rider.transform
 		SoundTable.RIDE_NONE:
 			if root.transform != Transform3D.IDENTITY:
 				root.transform = Transform3D.IDENTITY

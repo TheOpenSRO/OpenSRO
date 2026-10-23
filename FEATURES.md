@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.574** plus what is merged on `dev`; updated 2026-10-22.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.575** plus what is merged on `dev`; updated 2026-10-23.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -119,7 +119,7 @@ Every field nest of the game populated, with retail AI, uniques and drops.
 | Field spawns from nests | ✅ Supported | About 10,000 field spawn points placed from the game's nest data |
 | Respawn timing | ✅ Supported | Each nest's own retail respawn window |
 | Monster models and animations | ✅ Supported | Retail models with idle, walk, attack and death clips; each species' own skin (clones, champions), mounts and platforms (Tiger Girl's tiger, Uruchi's dragon, Ishade's ice), death models, and the particles their models carry |
-| Wander, chase and leash | ✅ Supported | Idle wander, battle chase, return home when pulled too far; a monster stands through each swing before it follows, re-aims its chase as the original does and backs off a target it stands inside |
+| Wander, chase and leash | ✅ Supported | Idle wander, battle chase, return home when pulled too far; a monster stands through each swing before it follows, re-aims its chase as the original does and backs off a target it stands inside; a chaser that comes within reach between server ticks swings, as the original's every-frame reach test does |
 | Aggro on sight | ✅ Supported | Aggressive monsters notice nearby players; detection radius is an estimate |
 | Linked aggro | ✅ Supported | Nearby monsters join when a party member attacks, as retail |
 | Threat / hate retarget | 🟡 Partial | Threat is tracked but monsters stay on their first attacker |
@@ -268,7 +268,7 @@ Pets, horses, the item mall's rides and the trade transports from the original's
 |---|---|---|
 | Ability (pickup) pets | ✅ Supported | Pick up gold, equipment and other items by their settings; gold to the owner, the rest to the pet's own bag |
 | Growth and fellow pets | ✅ Supported | Follow, fight what the owner attacks, gain EXP and level up, hunger, naming once |
-| Horses and rides | ✅ Supported | Horses, tigers, beetles, ostriches and the other ride scrolls: summoned at the owner's level bracket, ridden at the mount's speed; Walk or Run on a mount plays its walk or run (a pegasus flies only at a run) |
+| Horses and rides | ✅ Supported | Horses, tigers, beetles, ostriches and the other ride scrolls: summoned at the owner's level bracket, ridden at the mount's speed; Walk or Run on a mount plays its walk or run (a pegasus flies only at a run); mounts, pets and monsters lean with the slope they stand on, by each one's own factors from the game's data, and a rider leans with its mount (players and NPCs stay upright, as retail) |
 | Pet controls | ✅ Supported | Pet window, status slot, command bar, the retail pet keys, pet potions (on the current pet, transports included), revival and clocks; the Test Items NPC sells pets and rides |
 | Trade transports | ✅ Supported | For a trader or thief in a suit: the goods bag sized by level, the 100 m leash, goods dropped when it dies or is dismissed, no teleport scrolls with a cart (the thief den's excepted) |
 

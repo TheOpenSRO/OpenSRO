@@ -673,6 +673,47 @@ func surface_at(x: float, z: float, reference_y: float) -> Surface:
 		best.height = minf(best.height, reference_y)
 	return best
 
+## Round 813: the normal of the ground a character stands on at region-local
+## (x, y, z), the target of the original's slope tilt (world/slope_tilt.gd).
+## READ: the character update (`GlobalDataManager::FUN_009d1d60`, 0x9d1d76..
+## 0x9d1daa) asks the cell it is in (`+0x74`) through slot 4: a terrain cell
+## (`CRTNavCellQuad::vslot_004`) answers NvmCollision.terrain_normal; an
+## object's cell (`CRTNavCellTri::vslot_004` 0x45dee0) its triangle's face
+## normal, (v1 - v0) x (v2 - v0) over the cell's three vertices in file order,
+## normalised and never flipped (`FUN_0045c420`), turned by the object's
+## placement (here already in its vertices, `place`); in a dungeon (the region
+## id's 0x8000 bit, 0x9d1d89) straight up. OURS: the client tracks the cell; a
+## body here is told by height -- of the terrain and every object cell over the
+## point, the surface nearest `y` (the terrain on a tie).
+func ground_normal_at(x: float, z: float, y: float) -> Vector3:
+	if dungeon:
+		return Vector3.UP
+	var best_gap := absf(NvmCollision.terrain_height(region, x, z) - y)
+	var tri := PackedVector3Array()
+	for oi in objects_at(x, z):
+		var placed: PlacedObject = objects[oi]
+		if x < placed.bounds_min.x or x > placed.bounds_max.x:
+			continue
+		if z < placed.bounds_min.y or z > placed.bounds_max.y:
+			continue
+		var verts := placed.vertices
+		var cells := placed.cells
+		var last := cells.size() - 1
+		var i := 0
+		while i + 2 <= last:
+			var a: Vector3 = verts[cells[i]]
+			var b: Vector3 = verts[cells[i + 1]]
+			var c: Vector3 = verts[cells[i + 2]]
+			i += 3
+			var h := _triangle_height(a, b, c, x, z)
+			if not is_nan(h) and absf(h - y) < best_gap:
+				best_gap = absf(h - y)
+				tri = PackedVector3Array([a, b, c])
+	if tri.is_empty():
+		return NvmCollision.terrain_normal(region, x, z, y)
+	var n := (tri[1] - tri[0]).cross(tri[2] - tri[0])
+	return n.normalized() if n.length_squared() > 0.0 else Vector3.UP
+
 ## Convenience wrapper around surface_at.
 func height_at(x: float, z: float, reference_y: float) -> float:
 	return surface_at(x, z, reference_y).height

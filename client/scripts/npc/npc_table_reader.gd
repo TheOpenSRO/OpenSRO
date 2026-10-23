@@ -320,6 +320,41 @@ static func parse_texture_types(data: PackedByteArray, into: Dictionary = {}) ->
 			into.erase(code)
 	return into
 
+## Round 813: characterdata column 80 -- the slope tilt's factors (SlopeTilt).
+## READ: the row parser files it at the record's +0x20c (`FUN_00971450`, the
+## word after ExpToGive's), the common block's +0x204, which the appear
+## (`FUN_009d17e0`) reads for a CICMonster or a CICCos only. Parses one part
+## into {code -> value} for the rows of those two classes -- TypeID 1/2/1
+## (CICMonster and its CICMonsterNPC, the object factory 0x9c2030) and 1/2/3
+## (CICCos) -- with a non-zero value (0 never tilts), merging into `into`.
+const COL_SLOPE_TILT := 80
+const COL_TYPE_ID1 := 9
+const COL_TYPE_ID2 := 10
+const COL_TYPE_ID3 := 11
+static func parse_slope_tilt(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	for line in _lines(data):
+		# Columns 9..11 side by side: a row that has neither run is not one
+		# of the two classes (the split only for those that do).
+		if not line.contains("\t1\t2\t1\t") and not line.contains("\t1\t2\t3\t"):
+			continue
+		var cols := line.split("\t")
+		if cols.size() <= COL_SLOPE_TILT:
+			continue
+		if cols[COL_TYPE_ID1].strip_edges() != "1" or cols[COL_TYPE_ID2].strip_edges() != "2":
+			continue
+		var t3 := cols[COL_TYPE_ID3].strip_edges()
+		if t3 != "1" and t3 != "3":
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		var v := cols[COL_SLOPE_TILT].strip_edges()
+		if code == "" or not v.is_valid_int():
+			continue
+		if int(v) != 0:
+			into[code] = int(v) & 0xFFFFFFFF
+		else:
+			into.erase(code)
+	return into
+
 ## The material slot a monster body draws (READ, CICMonster::vslot_025): its
 ## TextureType through the table at 0x9d3c5c (0 -> 0, 1 -> 1, 2 -> 0, 3 -> 3,
 ## 4 -> 4, above -> 0), then a champion (rarity 1, the spawn byte's low

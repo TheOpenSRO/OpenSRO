@@ -56,6 +56,10 @@ class Entry:
 	## Round 809: monster code -> its non-zero TextureType (characterdata
 	## col 93; NpcTableReader.parse_texture_types).
 	var mob_texture := {}
+	## Round 813: code -> its non-zero characterdata column 80, the slope
+	## tilt's factors, for the monster and COS rows (NpcTableReader.
+	## parse_slope_tilt, SlopeTilt).
+	var slope_tilt := {}
 
 ## Every characterdata part `media` holds, as archive paths, in its index's
 ## order; the legacy list when the archive has no index.
@@ -201,6 +205,7 @@ static func read_entry(media: Pk2Reader) -> Entry:
 		e.mob_models_by_code = NpcTableReader.parse_models_by_code(bytes, e.mob_models_by_code, "")
 		e.mob_org = NpcTableReader.parse_org_codes(bytes, e.mob_org)
 		e.mob_texture = NpcTableReader.parse_texture_types(bytes, e.mob_texture)
+		e.slope_tilt = NpcTableReader.parse_slope_tilt(bytes, e.slope_tilt)
 		if e.names != null:
 			e.npc_names = NpcTableReader.parse_names(bytes, e.names, e.npc_names)
 			e.mob_models_by_name = NpcTableReader.parse_models_by_name(bytes, e.names, e.mob_models_by_name)

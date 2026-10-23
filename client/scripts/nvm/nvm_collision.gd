@@ -130,6 +130,47 @@ static func terrain_height(region: NvmReader.ParsedRegion, x: float, z: float) -
 		return plane
 	return h
 
+## Round 813: the terrain's normal under a character standing at region-local
+## (x, y, z), as the original's slope tilt reads it (READ,
+## `RTNavMeshTerrain::FUN_00403980`, reached as `CRTNavCellQuad::vslot_004`):
+## - the 20-unit tile (`_ftol` of x / 20 and z / 20, 20.0 at 0xe1b830);
+## - on a block whose PlaneTypeMap has SOLID_PLANE_BIT, a character whose y IS
+##   the block's PlaneHeight (`fucompp` 0x403a4b) stands on the plane: straight
+##   up (0xee5c54, (0, 1, 0));
+## - else the face normal of the tile's triangle under the point. The tile is
+##   split on its (x0, z0)-(x1, z1) diagonal: where the z fraction is below the
+##   x fraction, the triangle (x0, z0), (x1, z0), (x1, z1), normal
+##   (20 (h00 - h10), 400, -20 (h11 - h10)); else (x0, z0), (x0, z1), (x1, z1),
+##   normal (-20 (h11 - h01), 400, 20 (h00 - h01)); both normalised.
+## Unlike terrain_height, which interpolates the four corners, this is the
+## triangle's own plane. OURS: the tile is clamped to the region (the client
+## is only asked about a point inside it), and "y is the plane's height" is
+## taken within PLANE_NORMAL_MATCH (our y has been through the scene's float
+## transforms; the client compares its own stored y).
+const PLANE_NORMAL_MATCH := 0.001
+static func terrain_normal(region: NvmReader.ParsedRegion, x: float, z: float, y: float) -> Vector3:
+	var side := NvmReader.HEIGHT_MAP_SIDE
+	var tiles := NvmReader.TILE_MAP_SIDE
+	if region == null or region.heights.size() < side * side:
+		return Vector3.UP
+	var ix := clampi(int(x / TILE_SIZE), 0, tiles - 1)
+	var iz := clampi(int(z / TILE_SIZE), 0, tiles - 1)
+	var count := NvmReader.PLANE_COUNT
+	if region.plane_types.size() >= count and region.plane_heights.size() >= count:
+		var pi := (iz >> 4) * NvmReader.PLANE_MAP_SIDE + (ix >> 4)
+		if (region.plane_types[pi] & SOLID_PLANE_BIT) != 0 and absf(region.plane_heights[pi] - y) < PLANE_NORMAL_MATCH:
+			return Vector3.UP
+	var fx := (x - float(ix) * TILE_SIZE) / TILE_SIZE
+	var fz := (z - float(iz) * TILE_SIZE) / TILE_SIZE
+	var h00 := region.heights[iz * side + ix]
+	var h10 := region.heights[iz * side + ix + 1]
+	var h01 := region.heights[(iz + 1) * side + ix]
+	var h11 := region.heights[(iz + 1) * side + ix + 1]
+	var s := TILE_SIZE
+	if fz < fx:
+		return Vector3(s * (h00 - h10), s * s, -s * (h11 - h10)).normalized()
+	return Vector3(-s * (h11 - h01), s * s, s * (h00 - h01)).normalized()
+
 ## The solid planes as collision triangles, region-local: one flat 320 x 320
 ## quad at PlaneHeight per block with SOLID_PLANE_BIT, two triangles each, for
 ## a ConcavePolygonShape3D on the terrain layer -- so the click-to-move ray, the
