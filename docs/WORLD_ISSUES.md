@@ -7483,6 +7483,40 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twelfth round: NPC thieves off by default; a monster stands through its swing
+
+The user (2026-10-22), on v0.1.572: "Let's make NPC thieves a toggable feature and let's disable it for now.
+Also let's fully implement collision like the original game", then "Also fix the bug where mobs keep attacking
+you and they jitter. It's supposed to be stop, 1 attack animated with damage, then chase and attack, rinse and
+repeat until they give up following you. Check how the original game does it", with a 5-s video (two White
+Tigers at the user's ox, 30 fps: crouched sliding for about a second between pounces).
+
+- **NPC thieves behind `-npc-thieves` (OURS, off by default).** A trader's caravan keeps its clock; its wave
+  logs `caravan: wave skipped` and spawns nothing. NPC hunters unchanged. Prod deployed (boot log
+  `npc_thieves=false`). `TestRound804CaravanWave` checks both.
+- **The swing holds the monster (READ).** `Handler_0e8` (0x5472a0) posts a 0x7070 skill command (0x5411a0),
+  and the command's phase 3 stands for CastingTime + ActionDuration (PreparingTime folded in by the server's
+  table load; `auto_command.md`). `combat.MonsterSkill.ActionMs` (skilldata cols 7-9: Mangyang 2400, White
+  Tiger 1500, MEASURED), `brain.actionUntil`: BATTLE neither chases nor swings until it ends. Before, a target
+  out of reach was chased the next tick, mid-swing.
+- **The chase's re-aim (READ 0x4b0490):** at most every 100 ms; standing, or the walk 0.2618 rad or more off
+  the line -> a new leg (`ChaseOffLine`). Round 554's own 1-unit rule (`ChaseReaimDistance`) re-legged every
+  tick behind a moving target.
+- **The back-off (READ 0x4b0653..0x4b07d9):** closer than the two radii less 4 with the stop beyond them, the
+  follower walks the two radii straight back (`BackOff`). MEASURED live: two tigers `/spawn`ed 6 units from
+  the player backed off to 22, then swung every 1.5 s with no other leg.
+- **What the user's video is (INFERRED).** Our client moves a monster only by the server's legs (it turns it
+  to face, `_play_monster_swing`), so the sliding was server legs: prod ran round 554's re-aim and no swing
+  hold. A standing, mounted player in a box repro (`/goto mangyang; /spawn white tiger 2`, a horse) drew no
+  legs at all on the old server, so the exact trigger in the user's fight is not reproduced (OPEN); the
+  three READ rules above remove both ways a fight produced them.
+- **Collision (surveyed, not built this round).** The client walks the navmesh as the original does (the
+  rule READ, the carried cell INFERRED); the server has no geometry at all: monsters walk straight through
+  walls, the server cannot refuse a walk through a wall, `.cpd` objects have no navmesh, doors and gates
+  never change. Characters do not block each other in our client, and no read says the original does.
+- **Tests:** `monsterswing812_test.go` (the hold: no move 2.4 s into a swing, one chase leg after; fails
+  with ActionMs 0; the 15-degree test; the back-off), the existing battle suite, `go test ./...` all ok.
+
 ## Eight-hundred-and-eleventh round: the original's name plates; a safe 1-star trade still meets NPC thieves
 
 The user (2026-10-22), on v0.1.571: "Also player names should be in a box likes mobs, bigger, and seem like they

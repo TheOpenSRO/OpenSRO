@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.572** plus what is merged on `dev`; updated 2026-10-22.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.573** plus what is merged on `dev`; updated 2026-10-22.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -119,7 +119,7 @@ Every field nest of the game populated, with retail AI, uniques and drops.
 | Field spawns from nests | ✅ Supported | About 10,000 field spawn points placed from the game's nest data |
 | Respawn timing | ✅ Supported | Each nest's own retail respawn window |
 | Monster models and animations | ✅ Supported | Retail models with idle, walk, attack and death clips; each species' own skin (clones, champions), mounts and platforms (Tiger Girl's tiger, Uruchi's dragon, Ishade's ice), death models, and the particles their models carry |
-| Wander, chase and leash | ✅ Supported | Idle wander, battle chase, return home when pulled too far |
+| Wander, chase and leash | ✅ Supported | Idle wander, battle chase, return home when pulled too far; a monster stands through each swing before it follows, re-aims its chase as the original does and backs off a target it stands inside |
 | Aggro on sight | ✅ Supported | Aggressive monsters notice nearby players; detection radius is an estimate |
 | Linked aggro | ✅ Supported | Nearby monsters join when a party member attacks, as retail |
 | Threat / hate retarget | 🟡 Partial | Threat is tracked but monsters stay on their first attacker |
@@ -256,7 +256,7 @@ The trader, hunter and thief jobs from the original's own rules: the job guilds,
 | Trader, hunter, thief jobs | ✅ Supported | Join at the job guild NPCs (fee, 7-day penalty on leaving), aliases, last week's rankings, the weekly reward pools, the previous job |
 | Job suits | ✅ Supported | The 10-second change with its bar over the head; the job name and icon on the plates (your own too, over the rider on every mount, centred with the title as the original lays it out), the job target window, the job rows of the character window; optional job titles on the plates (on by default) |
 | Trade goods and specialty runs | ✅ Supported | Buy goods into a transport at a trade center, sell at another town's quotation (each sale lowers the price, which recovers every 10 minutes), trade scale stars, job EXP, contribution, Trade Export Details; stolen goods sell only at the thief den; dropped goods show their owner's job name |
-| Job PvP | ✅ Supported | Thieves against traders and hunters outside towns, with the original's rules (party, level 20, the one-star safe trade's protection from player thieves; NPC thief waves still come, as in the original); opposed names drawn red, the original's click and Alt-click, skills on a player or a transport; a job death costs job and character EXP and nothing else, the killer earns job EXP and EXP |
+| Job PvP | ✅ Supported | Thieves against traders and hunters outside towns, with the original's rules (party, level 20, the one-star safe trade's protection from player thieves; NPC thief waves round a trader's caravan are a server switch, off by default); opposed names drawn red, the original's click and Alt-click, skills on a player or a transport; a job death costs job and character EXP and nothing else, the killer earns job EXP and EXP |
 | Safe trade | ✅ Supported | A trader's one-star run of normal goods is protected from player thieves, eight times a day, with its icon and messages |
 | NPC thieves and hunters | ✅ Supported | Every 60 to 120 seconds a trade run outside town draws a wave of NPC thieves (round a trader) or NPC hunters (round a thief), its size from the goods carried, its level from the trader's; they go for the trader and the transport, and a transport they kill drops its goods; drawn as the original draws them, in thief and hunter suits with their weapons |
 

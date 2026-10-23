@@ -176,14 +176,43 @@ var monsterAggro atomic.Bool
 // scans, and the brains draw nothing new from the rng.
 func SetMonsterAggro(on bool) { monsterAggro.Store(on) }
 
-// ChaseReaimDistance is how far a BATTLE target must have moved since the
-// chase last aimed at it before the leg is re-issued to the zone (chase). OWN
-// DESIGN, an engineering choice: the engine re-aims its walk on every AI
-// update; pushing a new OpMonsterMoved every tick for a target that has not
-// moved would be ten pushes a second per chasing monster for no new
-// information. A monster that stopped short (a blow's stop, an arrival) is
-// re-issued whatever the target did.
-const ChaseReaimDistance = 1.0
+// ChaseReaimAngle is how far off the line to its target a chasing monster's
+// walk may point before the leg is re-aimed (READ, round 812: the follow
+// update 0x4b0490, from CGObjChar::Update at 0x4a89e9 at most every 100 ms,
+// re-aims a 0x7021 to `stop` short of the target only when the walker stands
+// or its walk is 0.2618 rad -- 15 degrees, the double at 0xb462b8 -- or more
+// off the line; combat_presentation.md, "Walking into reach"). Round 554's
+// ChaseReaimDistance (own design) re-issued the leg each time the target had
+// moved 1 unit: a monster chasing a running player got a new OpMonsterMoved
+// every tick, and the clients redrew its walk from each -- the jitter the
+// user reported (2026-10-22).
+const ChaseReaimAngle = 0.2618
+
+// ChaseOffLine is 0x4b0490's re-aim test for a walker at (x, z) on a leg to
+// (dx, dz) chasing a target at (tx, tz): the walk is ChaseReaimAngle or more
+// off the line to the target. A leg with no length, or a target on the
+// walker, counts as off (re-aimed).
+func ChaseOffLine(x, z, dx, dz, tx, tz float64) bool {
+	wx, wz := dx-x, dz-z
+	lx, lz := tx-x, tz-z
+	wl, ll := math.Hypot(wx, wz), math.Hypot(lx, lz)
+	if wl < 1e-6 || ll < 1e-6 {
+		return true
+	}
+	c := (wx*lx + wz*lz) / (wl * ll)
+	return c <= math.Cos(ChaseReaimAngle)
+}
+
+// BackOff is 0x4b0490's back-off test (READ, round 812): a follower dist
+// from its target, r the two collision radii (its own, vslot 0x560, plus the
+// target's when the target has one), stop the approach's stop distance
+// (+0xc), backs off when dist < r - 4 and stop > r -- it then walks r units
+// straight back from the target (0x4b0653..0x4b07d9: its position minus r x
+// the unit vector toward the target, a 0x7021). A target exactly on it has
+// no direction and is left (OURS).
+func BackOff(dist, r, stop float64) bool {
+	return dist > 1e-6 && dist < r-4 && stop > r
+}
 
 // monsterAIRuntime is the running monster AI, nil while -monster-ai is off.
 // An atomic pointer rather than a plain variable: RunMonsterAI stores it on
@@ -356,6 +385,16 @@ type brain struct {
 	// (round 554: a species with two skills has two).
 	lastSwing    time.Time
 	swungReuseMs int
+	// actionUntil is when the last swing's action ends (round 812): the
+	// swing is a 0x7070 skill command whose action holds the monster in
+	// phase 3 for the skill's PreparingTime + CastingTime + ActionDuration
+	// (combat.MonsterSkill.ActionMs), so until then BATTLE neither chases
+	// nor swings -- the monster stands through its swing, then follows.
+	actionUntil time.Time
+	// backingOff is true while the monster walks back out of a target it
+	// stood too deep inside (round 812, BackOff): the walk runs out before
+	// the swing, as the original's follow update leaves it.
+	backingOff bool
 	// armed is the attack skill the next swing fires -- the selector's +0x44,
 	// which PickSkill (0x561b00) fills through ArmNextAttack (0x5619e0) and
 	// Handler_0e8 (0x5472a0) reads first (its slot 4) before it asks for a
@@ -1437,6 +1476,13 @@ func (a *monsterAI) battleTick(b *brain) {
 	// give-up check or the target's exit releases it: Handler_0e8's
 	// failed-swing tail is not modelled (round 546), and no roster species
 	// reaches this (every roster skill's chance is 100 or 10).
+	// Round 812: a swing's action still running holds the monster where it
+	// stands (actionUntil): the original's swing is a skill command, and the
+	// command machine runs nothing else -- no walk -- before its phase 3
+	// ends (Push 0x4ad630 queues a new action behind one in phase 2 or 3).
+	if a.now.Before(b.actionUntil) {
+		return
+	}
 	sk, ok := a.armSkill(b, dist)
 	if !ok {
 		return
@@ -1454,8 +1500,24 @@ func (a *monsterAI) battleTick(b *brain) {
 	// reach at int(dist) <= 12; a Yeoha that drew MSKILL_CH_YEOHA_ATTACK03
 	// (range 100) is in reach from 100 + 11 + 4 + 2 units and walks nowhere.
 	stop, reach := combat.ApproachBand(b.m.BCRadius, combat.PlayerBCRadius, combat.EffectiveRange(sk.Range, 0))
+	if b.backingOff {
+		if b.m.Moving {
+			return
+		}
+		b.backingOff = false
+	}
 	if !combat.InReach(dist, reach) {
 		a.chase(b, e.Pos, dist, stop)
+		return
+	}
+	// Round 812: standing too deep inside its target, it backs off first
+	// (READ 0x4b0490, BackOff).
+	if r := float64(b.m.BCRadius + combat.PlayerBCRadius); BackOff(dist, r, stop) {
+		mode := ai.MotionMode(ai.StateBattle, b.m.WalkSpeed, b.m.RunSpeed)
+		ux, uz := (e.Pos.X-b.m.X)/dist, (e.Pos.Z-b.m.Z)/dist
+		b.chaseAimed = false
+		b.backingOff = true
+		a.startLeg(b, b.m.X-ux*r, b.m.Z-uz*r, mode, "BATTLE back off")
 		return
 	}
 	// In reach: a monster still on a leg stops here, with the zone's stop.
@@ -1482,6 +1544,7 @@ func (a *monsterAI) battleTick(b *brain) {
 		return
 	}
 	b.lastSwing, b.swungReuseMs = a.now, sk.ReuseMs
+	b.actionUntil = a.now.Add(time.Duration(sk.ActionMs) * time.Millisecond)
 	b.hasArmed = false
 	a.queueStrike(b, e.CharacterID, sk)
 }
@@ -1538,11 +1601,12 @@ func (a *monsterAI) armSkill(b *brain, dist float64) (combat.MonsterSkill, bool)
 // from the target on the line back to the monster, in the clip Handler_110
 // gives BATTLE -- 1, the run clip (FUN_00541820 at BATTLE::OnEnter 0x55a04a;
 // ai.MotionMode) -- at the speed that clip walks (startLeg's inference). The
-// leg is re-issued when the monster is standing, or when the target has moved
-// ChaseReaimDistance since the last aim. A species with no speed to chase at
-// stands where it is and swings only when the target comes to it.
+// leg is re-issued when the monster is standing, or when its walk points
+// ChaseReaimAngle or more off the line to the target (READ 0x4b0490, round
+// 812). A species with no speed to chase at stands where it is and swings
+// only when the target comes to it.
 func (a *monsterAI) chase(b *brain, target world.Position, dist, stop float64) {
-	if b.m.Moving && b.chaseAimed && math.Hypot(target.X-b.chaseAimX, target.Z-b.chaseAimZ) < ChaseReaimDistance {
+	if b.m.Moving && b.chaseAimed && !ChaseOffLine(b.m.X, b.m.Z, b.m.DestX, b.m.DestZ, target.X, target.Z) {
 		return
 	}
 	mode := ai.MotionMode(ai.StateBattle, b.m.WalkSpeed, b.m.RunSpeed)
@@ -2020,6 +2084,7 @@ func (a *monsterAI) enterBattle(b *brain) {
 	b.dwellMs = ai.BattleDwellMs
 	b.unheldTicks = 0
 	b.chaseAimed = false
+	b.backingOff = false
 	if !a.battle && b.m.Moving {
 		if m, ok := a.monsters.StopMotion(b.id); ok {
 			b.m = m

@@ -1040,6 +1040,13 @@ type MonsterSkill struct {
 	// (statuseffect.ParseRuns reads it): what a blow of this skill applies to
 	// the character it lands on (round 659). "" applies nothing.
 	Status string
+	// ActionMs is how long the swing holds the monster: skilldata's
+	// PreparingTime + CastingTime + ActionDuration (cols 7-9). READ: a
+	// monster's swing is a 0x7070 skill command (Handler_0e8 0x5472a0 ->
+	// 0x5411a0), whose action stands in phase 3 until now - phaseStart >
+	// CastingTime + ActionDuration (the server's CastingTime includes
+	// PreparingTime, auto_command.md) before anything else runs. Round 812.
+	ActionMs int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the

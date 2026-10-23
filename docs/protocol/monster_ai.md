@@ -2372,9 +2372,23 @@ re-read in `srv.asm` for this round):**
      1; rounds 254/256 for BATTLE's use of it): the destination is that many units from the target
      on the line back to the monster, in the clip `Handler_110` gives BATTLE -- 1, the run clip
      (`FUN_00541820` at `BATTLE::OnEnter` `0x55a04a`, `ai.MotionMode`) -- at the run speed (the
-     mode-to-speed inference above), pushed as an `OpMonsterMoved`. The leg is re-issued when the
-     monster is standing, or when the target has moved `ChaseReaimDistance` (1 unit, own design)
-     since the last aim.
+     mode-to-speed inference above), pushed as an `OpMonsterMoved`. **Round 812 (READ, the follow
+     update `0x4b0490`, from `CGObjChar::Update` `0x4a89e9` at most every 100 ms):** the leg is
+     re-issued when the monster is standing, or when its walk points 0.2618 rad (15 degrees,
+     `0xb462b8`) or more off the line to the target (`ChaseReaimAngle`, `ChaseOffLine`); in reach
+     it does nothing; beyond 1000.0 (`0xb45c68`) it gives up the follow. Round 554's
+     `ChaseReaimDistance` (re-issue at every 1 unit the target moved, own design) pushed a new
+     leg every tick behind a running player. **The back-off** (`0x4b0653..0x4b07d9`): closer than
+     the two collision radii less 4 (vslot `0x560` of each) with the stop beyond the radii, the
+     follower walks the two radii straight back from the target (`BackOff`).
+   - **The swing's action (round 812, READ).** The swing is a 0x7070 skill command
+     (`Handler_0e8` `0x5472a0` -> `0x5411a0`), whose phase 3 stands until `now - phaseStart >
+     CastingTime + ActionDuration` (the server's CastingTime includes PreparingTime;
+     `auto_command.md`), a new action queued behind it (`Push` `0x4ad630`). So BATTLE neither
+     chases nor swings until the swing's PreparingTime + CastingTime + ActionDuration (skilldata
+     cols 7-9, `combat.MonsterSkill.ActionMs`; 2400 ms for a Mangyang, 1500 for a White Tiger,
+     MEASURED) has run: the monster stands through its swing, then follows. Before, a target
+     stepping out of reach mid-swing was chased on the next tick, cutting the swing short.
    - **In the band: the stop and the swing.** A monster still on a leg is stopped with one stop
      push. The first swing is immediate: `BATTLE::OnEnter` arms timer 5 fired (`0x55a018`, round
      545's timer read), and so does every re-arm after a swing (`0x547342`), so what spaces the

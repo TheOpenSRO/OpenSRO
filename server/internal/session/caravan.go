@@ -64,10 +64,10 @@ type CaravanDeps struct {
 	// clock (s:0x60bc80) but its wave spawns nothing. The NPC hunters'
 	// waves round a thief's or hunter's caravan are not affected.
 	NPCThieves bool
-	Hub       *world.Hub
-	Monsters  *combat.Hub
-	Logger    *slog.Logger
-	Rand      *rand.Rand
+	Hub        *world.Hub
+	Monsters   *combat.Hub
+	Logger     *slog.Logger
+	Rand       *rand.Rand
 }
 
 type caravan struct {
