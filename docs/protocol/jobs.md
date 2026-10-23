@@ -364,6 +364,18 @@ the target window is `CIFTargetWindowJobPlayer`.
   the class title `UIIT_STT_CLASS_[EU_]X_<job level>` (the race's table, as
   CIFPlayerInfo picks it) in the title colour, one space left of `*alias`,
   and the mark right of the name. Off is the original's plate.
+- **How the original lays out a title (READ, round 811).** FUN_009d0a80
+  (c:0x9d0c1d..0x9d0d2b) draws the title item (+0x1b0) centred at the point
+  + round((title w + name w + 2) x -0.5) + round(title w x 0.5), then the
+  name item (+0x12c) title w / 2 + name w / 2 + 2 further right (0xde24f8 =
+  -0.5, 0xe1b7d0 = 0.5, read out of the PE image): title and name are
+  centred together, 2 px apart, after the title's own trailing L" " (the
+  title setter appends 0xe19330). The title item's style flags are 3
+  (FUN_008b4400(5, 3)): a 1-px black shadow (bit 0, FUN_008b2290 draws the
+  glyph at +1, +1 first) and the bold glyph set (bit 1, FUN_008b39e0). The
+  selection's name gets bit 1 alone (c:0x9d0b0b). Every item has the
+  0x40000000 box (NamePlates.BOX_COLOUR). Round 805 had centred the name
+  alone and hung the title off its left, so the plate sat left of its owner.
 
 ### A dropped good's owner (round 805)
 

@@ -7483,12 +7483,56 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
-## Eight-hundred-and-eleventh round: a safe 1-star trade still meets NPC thieves
+## Eight-hundred-and-eleventh round: the original's name plates; a safe 1-star trade still meets NPC thieves
 
-The user (2026-10-22), on v0.1.571: "Also I did a 1 star trade and I still had thieves kill me -_-", the
-safe-trade banner at 1/8.
+The user (2026-10-22), on v0.1.571: "Also player names should be in a box likes mobs, bigger, and seem like they
+expand the width of mounts or more. Like the mount is considered the center? Double check the code of course"
+(a private-server screenshot of traders on horses), then "Also I did a 1 star trade and I still had thieves kill
+me -_-", the safe-trade banner at 1/8.
 
-- **Who killed him (MEASURED, prod log and DB).** deadass3 (level 140, 45976 HP, trader, `safe_count 1`)
+### The plates
+
+- **Every character's plate is the monsters' (READ).** The name setter every CICharactor shares (slot 29,
+  FUN_009cbb90) and the title setter (slot 30, FUN_009c28a0) render through FUN_008b3bd0: font 0 and the box
+  colour 0x40000000 (+0xc); the text draw FUN_008b48b0 fills the item's rect + 1 px with it (texture factor,
+  SRCALPHA / INVSRCALPHA) before the glyphs, and FUN_008b4d90 centres the item on its point. So players, NPCs
+  and COS have the box the monsters had since round 673, at FontIndex 0's 12 px drawn 1:1 -- ours drew them
+  with NAME_PLATE_PIXEL_SIZE 0.0004, a few pixels tall, outlined. MEASURED in the user's picture (upscaled 2x):
+  the name's cap 9 rows, 1-px stems, no shadow -- the monsters' 12 px face. `_retail_plate_look`; the box's
+  geometry is `NamePlates.box_rect` (round 673's MEASURED pad, height and raise), its alpha now the READ
+  64/255 (round 673 measured 0.29). NamePlateBatch draws it for other players (one quad of a white texel a
+  plate, its own material one priority under the text).
+- **A player's name is white (READ, c:0x9cfd50 `FUN_009c1920(0xffffffff)`)**; the pale NAME_PLATE_COLOUR was
+  ours and stays only on NPCs (their colour is not traced, OPEN).
+- **Title and name are centred together (READ, FUN_009d0a80 c:0x9d0c1d..0x9d0d2b; 0xde24f8 = -0.5, 0xe1b7d0 =
+  0.5 read out of the PE).** The title from point - (title w + name w + 2) / 2, the name 2 px after it, after
+  the title's trailing L" " (0xe19330, appended by the title setter). Round 805 centred the name alone and hung
+  the title left, which put the whole plate left of the rider: the "is the mount the centre" the user saw. The
+  point is the rider's own position (+0x90..+0x98), which is the mount's while riding. One box runs under both
+  (the original's two boxes touch: 2 px apart, 1 px each).
+- **The title is bold with a shadow (READ: style flags 3, FUN_008b4400(5, 3); bit 0 draws each glyph at +1, +1
+  in black first, FUN_008b2290; bit 1 selects the font's style 2 in FUN_008b39e0, INFERRED the weight-600
+  face, MEASURED 2-px stems and a dark pixel right and below in the picture).** OURS: FontOversampling.bold at
+  1.4 and 1 px of glyph spacing (the picture's "Amateur Trader" is 98 px, 87 emboldened alone); the shadow is
+  a child Label3D.
+- **The selection's name is bold (READ, c:0x9d0ae6..0x9d0b2d: FUN_008b44b0(5, 2) when the selected id is the
+  object's +0xf8, else FUN_008b4560(5, 2)).** OURS: the selection is the ground ring's key
+  (`_step_selected_plate`).
+- **The job mark is 16 x 16 screen px (READ c:0x9dec35)**, 4 px clear of the name; it had been sized to the
+  text's line height.
+- **Render (MEASURED, the round-810 ox run, Tess as *Merchy on COS_T_COW3, 960x540):** "Amateur Trader *Merchy"
+  plus the mark over the rider at 40.1, title offset -25.0 against the name, one box; the NPC Hwajung's name
+  bold while talked to (selected). An offline lineup body's batched plate on its box.
+- **Tests:** `sit_move_test` (the layout: centred together, the gap, one box, the shadow, the mark both sides,
+  the selection key), `crowd_main_thread_test` (the batch's box quad over box_rect, its material, none for an
+  empty name), `mob_ui_test` (the READ alpha).
+- **Perf gate:** `--base ef818c87 --sites jangan,crowd --frames 60000`, 1280x720, median of 3: jangan frame 0.86 /
+  0.85 SAME, entry 8667 / 8570 SAME, freeze 2776 / 2738 SAME, hitches 4 / 4; crowd frame 2.97 / 2.99 SAME,
+  entry 11002 / 11110 SAME, freeze 3441 / 3481 SAME, hitches 5 / 5. GATE EXIT 0. Tests: 350 suites, 0 failing.
+
+### The thieves
+
+- **Who killed the character (MEASURED, prod log and DB).** deadass3 (level 140, 45976 HP, trader, `safe_count 1`)
   closed a specialty dialog at 21:32:19 (`caravan: trader registered ... trade_risk=1`); at 21:33:29 a wave
   of two NPC thieves (`value=510 scale=1 count=2`, MOB_THIEF_NPC rows of level 136-139, 84k-100k HP); dead
   by 21:33:38. No other session was connected (the same PC's earlier one closed at 21:28:33), so no player
