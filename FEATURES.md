@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.577** plus what is merged on `dev`; updated 2026-10-23.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.578** plus what is merged on `dev`; updated 2026-10-23.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -98,7 +98,7 @@ Retail NPCs in their retail spots, with talk menus, shops, storage and quests.
 
 | Feature | Status | Notes |
 |---|---|---|
-| NPC spawns and models | ✅ Supported | Every retail NPC position spawned with its own model |
+| NPC spawns and models | ✅ Supported | Every retail NPC position spawned with its own model; props such as the storage keepers' chests stand still beside them, as in the original |
 | NPC facing | 🟡 Partial | 230 of 257 NPCs face their retail direction; 27 use a fallback |
 | NPC talk window | ✅ Supported | Retail talk box titled with the NPC's name and service lines |
 | NPC shops | ✅ Supported | Retail goods and prices; buy, sell, buyback, Ctrl+click quick-sell |

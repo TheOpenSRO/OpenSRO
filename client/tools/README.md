@@ -862,6 +862,14 @@ remote_godot.sh script res://tools/probe_map_anim_pose.gd -- --pk2=$PK2/Data.pk2
 remote_godot.sh script res://tools/census_bsk_bind.gd -- --pk2=$PK2/Data.pk2
 ```
 
+`census_unskinned_pieces.gd` (round 816) lists every animated skeletal model's pieces with no bone
+palette -- the ones the original draws still in the model's own space (the storage keepers' chests)
+-- and `render_npc.gd --frame=N --yaw=D` renders a model posed, from any side.
+
+```
+remote_godot.sh script res://tools/census_unskinned_pieces.gd -- --pk2=$PK2/Data.pk2
+```
+
 `OPENSRO_QA_NOWATER=1` builds no block water, for a pixel diff that measures what the water draws
 (round 648's water-on/off diff). A lane that must not stop other lanes' renders runs its client with
 `xvfb-run -a ... --write-movie` under its own lock instead of `qa_shot.sh`, whose start-up reap

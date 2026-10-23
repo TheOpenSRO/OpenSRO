@@ -12,7 +12,7 @@ extends SceneTree
 ##   xvfb-run -a vglrun -d egl0 godot4 --path client --rendering-driver opengl3 \
 ##     --script res://tools/render_npc.gd -- \
 ##     --pk2=/path/Data.pk2 --model="npc\\npc\\chinaquest_priest.bsr" \
-##     [--out=/var/tmp/npc.png]
+##     [--out=/var/tmp/npc.png] [--frame=N] [--yaw=degrees]
 
 func _arg(flag: String, fallback: String = "") -> String:
 	for a in OS.get_cmdline_user_args():
@@ -95,7 +95,11 @@ func _initialize() -> void:
 	var extent: float = maxf(bounds.size.length(), 1.0)
 	var centre := bounds.get_center()
 	var cam := Camera3D.new()
-	var cam_pos := centre + Vector3(extent * 0.55, extent * 0.12, extent * 0.95)
+	# --yaw=<degrees> (round 816) turns the viewpoint about the model's
+	# vertical axis, to see a piece another one hides.
+	var offset := Vector3(extent * 0.55, extent * 0.12, extent * 0.95).rotated(
+		Vector3.UP, deg_to_rad(float(_arg("--yaw", "0"))))
+	var cam_pos := centre + offset
 	cam.position = cam_pos
 	cam.look_at_from_position(cam_pos, centre, Vector3.UP)
 	cam.far = extent * 20.0

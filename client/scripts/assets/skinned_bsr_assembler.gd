@@ -30,7 +30,10 @@ const ENV_MAPPED_META := "opensro_env_mapped"
 ## fallback.** `.bms` carries per-vertex skinning -- a bone palette and two
 ## weighted influences per vertex (BMS_FORMAT.md, hundred-and-tenth round)
 ## -- and a piece that has it is bound to the skeleton by name. A piece
-## without it attaches rigidly to the bone nearest its vertex centroid,
+## with no palette at all stands still in the model's own space, as the
+## original draws it (round 816, READ: palette entry 0 is the identity;
+## still_piece_mesh). Only a piece whose palette names bones the skeleton
+## lacks still attaches rigidly to the bone nearest its vertex centroid,
 ## which is the computation MonsterAssembler once held as a hand-derived
 ## dictionary per creature (7/7 pieces for golem, 3/3 for scorpion,
 ## `client/tools/check_piece_bones.gd`).
@@ -95,6 +98,33 @@ static func idle_animation_path(paths: Array) -> String:
 			if (path as String).to_lower().contains(hint):
 				return path
 	return paths[0] if not paths.is_empty() else ""
+
+## Round 816: `mesh`, a piece with no bone palette, as BmsReader.to_array_mesh
+## builds it plus a skin weight putting every vertex wholly on `bone` -- the
+## skin's index of OBJECT_SPACE_BONE (0 for a one-bind skin; the skeleton's
+## own index under canonical_skin). That bone never moves, so the piece is
+## drawn where its vertices say, as the original draws it on palette entry 0
+## (see assemble_from_archive). Kept as a skinned piece, not a plain child of
+## the skeleton, so every path that copies or draws a body's pieces
+## (MonsterDraw's clone, CrowdGpu) takes it as it takes any other.
+static func still_piece_mesh(mesh: BmsReader.ParsedMesh, bone: int) -> ArrayMesh:
+	var arrays := BmsReader.to_arrays(mesh)
+	var n: int = (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+	var bones := PackedInt32Array()
+	bones.resize(n * 4)
+	bones.fill(0)
+	var weights := PackedFloat32Array()
+	weights.resize(n * 4)
+	weights.fill(0.0)
+	for k in range(n):
+		bones[k * 4] = bone
+		weights[k * 4] = 1.0
+	arrays[Mesh.ARRAY_BONES] = bones
+	arrays[Mesh.ARRAY_WEIGHTS] = weights
+	var am := BmsReader.mesh_from_arrays(arrays)
+	am.set_meta(BmsReader.KEPT_ARRAYS_META, arrays)
+	BmsReader.tag_cloth(am, mesh)
+	return am
 
 ## Assembles the model at bsr_path. Returns null if the file isn't a
 ## character, if its skeleton is missing, or if no mesh piece could be
@@ -216,8 +246,24 @@ static func assemble_from_archive(
 		# layout concluded there was none. With it, a humanoid deforms
 		# properly and can be animated; without it, every piece hangs
 		# rigidly off one bone and animating tears the model apart.
-		if mesh.is_skinned():
-			var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
+		#
+		# Round 816 (READ): a piece with NO palette is not hung off a bone.
+		# The original's builder (ResObject::FUN_00be2f80) gives every vertex
+		# of a mesh with an empty skin array palette entries 0/0 at blend
+		# weight 1.0, and the renderer loads entry 0 -- c26, the first of
+		# vss2.c's VSC_COMMON palette -- with the identity
+		# (CObjRendererVS 0xbeeaa0; the bones start at c29, 0xbf0310). So the
+		# piece stands still in the model's own space whatever the skeleton
+		# does: the storage keepers' chests and chain, which hanging off the
+		# nearest bone made bob with a clavicle or swing with a calf.
+		var still := not mesh.is_skinned() and mesh.vertex_count() > 0
+		if mesh.is_skinned() or still:
+			var skin: Skin = null
+			if still:
+				skin = Skin.new()
+				skin.add_bind(Skeleton3DBuilder._object_space_bone(skeleton), Transform3D.IDENTITY)
+			else:
+				skin = Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
 			if skin != null:
 				var mi := MeshInstance3D.new()
 				# Named after the piece and tagged with its index in the file's
@@ -226,7 +272,9 @@ static func assemble_from_archive(
 				# template keeps the meta; an unnamed node's generated name it
 				# does not.
 				mi.name = piece
-				if result.canonical_skin != null:
+				if still:
+					mi.mesh = still_piece_mesh(mesh, skin.get_bind_bone(0) if result.canonical_skin != null else 0)
+				elif result.canonical_skin != null:
 					mi.mesh = Skeleton3DBuilder.canonical_mesh(mesh, skin)
 				else:
 					mi.mesh = BmsReader.to_array_mesh(mesh, true)

@@ -176,8 +176,23 @@ Per vertex that builder does this:
 
 So an empty slot, or a vertex whose weights sum to 0, lands on entry 0. `BmsReader` models entry
 0 as `OBJECT_SPACE`: the vertex keeps its bind position in the model's own space, bound to a
-still bone that `Skeleton3DBuilder.build_skin` adds. That entry 0 is the object's own transform is
-INFERRED from the `+ 1`.
+still bone that `Skeleton3DBuilder.build_skin` adds.
+
+**Entry 0 is the identity (round 816, READ).** The skinning shader `shader\vss2.c` (Data.pk2) reads
+each vertex's two entries as `c[a0.x + VSC_COMMON]`, `VSC_COMMON` = 26, three registers an entry
+(the index scaled by `765.01` = 3 x 255). `CObjRendererVS::FUN_00bf0310` uploads the bone matrices
+from register `0x1d` (29) on, so the bones are entries 1 and up; `0xbeeaa0` fills a 4x4 with 1.0 on
+the diagonal and 0 elsewhere and uploads it at register `0x1a` (26), entry 0. The shader then
+takes the blended position through `VSC_WORLD_VIEW_PROJECTION` alone. So a vertex on entry 0 is
+drawn at its own coordinates in the model's space, whatever the skeleton does.
+
+**A mesh with no palette (round 816, READ).** When the mesh's skin array (`+0xc4`) is empty, the
+builder skips the loop above and writes entries 0/0 at blend weight **1.0** (`LAB_00be3436`): every
+vertex is on entry 0. Such a piece of a skeletal object is drawn still in the model's own space; it
+is never tied to a bone. `SkinnedBsrAssembler.still_piece_mesh` builds it so. 75 of Data.pk2's
+1,252 animated skeletal models carry 365 such pieces (`client/tools/census_unskinned_pieces.gd`,
+MEASURED): the storage keepers' chests and chain, stablemen's tongs, smiths' trees, the village
+headman's chair, the stall booths, the tower defence crystals.
 
 `ResObject::FUN_00be28d0` is the builder for the other object types. It differs in one way: it
 does not reset the entries per vertex, so an empty slot keeps the previous vertex's entry. The

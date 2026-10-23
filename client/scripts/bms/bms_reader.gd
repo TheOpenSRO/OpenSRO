@@ -612,8 +612,9 @@ static func _parse_skin(
 		# sum is 0), and D3D gives entry 1 the rest. So a slot that is
 		# empty, or a vertex whose weights sum to 0, lands on entry 0 --
 		# which this reader models as OBJECT_SPACE: the vertex keeps its
-		# bind position in the model's own space (INFERRED: entry 0 is the
-		# slot no bone was given). Degree-11 armour writes a few vertices
+		# bind position in the model's own space (READ, round 816: the
+		# renderer loads entry 0 with the identity, CObjRendererVS 0xbeeaa0;
+		# BMS_FORMAT.md). Degree-11 armour writes a few vertices
 		# with an empty first slot, (0xFF, 0, bone, 0xFFFF): 3 of
 		# heavy_11_la.bms's 876, 1 of heavy_11_ba.bms's 530 (MEASURED).
 		# Taking a 0xFF first slot for a misread palette threw the whole

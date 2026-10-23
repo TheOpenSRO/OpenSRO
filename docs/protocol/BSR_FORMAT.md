@@ -269,7 +269,7 @@ placements in motion.
 | Pose skip | `AniMixer::FUN_00c54200` skips frames when `DAT_01113194 != 0`. That global has no writer, so this is INFERRED off | asm 0xc54207 |
 | Skinning | The characters' path: AniMixer → runtime skeleton (compound+0xf4) → CObjRendererVS SKIN0/SKIN2 | as above |
 | After a one-shot | The mixer unlinks the finished clip (`AniMixer::FUN_00c53e80`). With no clip left, the pose evaluation `AniMixer::FUN_00c54200` only clears each bone's blend weights (`FUN_00c4c3f0` → `CRTBone::vslot_004`, asm 0xc47a20: +0x98 and +0x9c = 0); the apply (`vslot_005`) and the skeleton update (`FUN_00c4c320`) run only when a clip was evaluated, so the bones and skin matrices **keep their last pose** | as named |
-| Unskinned pieces of a skeletal object | OPEN (mesh+0x3c bit 0x400 selects a second triangle test) | |
+| Unskinned pieces of a skeletal object | Drawn still in the model's own space: a mesh with no skin array gets palette entry 0 at weight 1.0, and entry 0 is the identity (round 816, BMS_FORMAT.md). Never tied to a bone. (mesh+0x3c bit 0x400 selects a second triangle test: OPEN) | `ResObject::FUN_00be2f80` `LAB_00be3436`; `CObjRendererVS` 0xbeeaa0 (c26), 0xbf0310 (bones from c29) |
 
 **How this client runs them (round 647; OURS on the READ rules above).** `MapAnimation.Driver`
 keeps retail's per-object pause and per-frame dt and saves work three exact ways:

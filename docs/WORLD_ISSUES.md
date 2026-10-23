@@ -7483,6 +7483,52 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixteenth round: a skeletal model's boneless pieces stand still (the storage chests)
+
+The user (2026-10-23): "can you fix the bug where the storage chest moves up and down. It's been a long
+standing bug", then "Also some storage models are bugged into their chest, fix that too".
+
+- **Cause (MEASURED).** The storage keepers' `.bsr` files carry the chest (and on the China and West China men
+  a chain) as mesh pieces with **no bone palette** (`dump_bms_skin.gd`: `chinasystem_warehousekeeper_box.bms`
+  150 vertices, palette of 0 bones; `_chain` 1216 vertices, 0). `SkinnedBsrAssembler` hung such a piece
+  rigidly off the bone nearest its centroid: the China man's box off `Bip01 R Clavicle` (6.07 away), the chain
+  off `Bip01 L Clavicle`, so both rose and fell with his breathing; the Khotan and Central Asia women's box off
+  `Bip01 R Calf`, so it swung with the leg she sits with and she sank into it (renders at idle frame 30).
+- **The original (READ).** `ResObject::FUN_00be2f80`, with the mesh's skin array (`+0xc4`) empty, writes
+  palette entries 0/0 at blend weight 1.0 for every vertex (`LAB_00be3436`). The skinning shader
+  (`shader\vss2.c`, Data.pk2) reads entry `i` at `c[3i + 26]` (`VSC_COMMON`) and then applies
+  `VSC_WORLD_VIEW_PROJECTION` only; `CObjRendererVS::FUN_00bf0310` uploads the bones from register `0x1d`
+  (entry 1) on, and `0xbeeaa0` uploads the identity at `0x1a` (entry 0). So such a piece is drawn still, at its
+  own coordinates in the model's space; nothing ties it to a bone. This also turns round 626's INFERRED "entry
+  0 is the object's own space" into READ (BMS_FORMAT.md, BSR_FORMAT.md's OPEN row answered).
+- **Fix.** `SkinnedBsrAssembler.still_piece_mesh`: the piece is skinned wholly to `OBJECT_SPACE_BONE` (the
+  still bone `build_skin` already adds for entry 0), canonical or not. It stays a skinned piece, so MonsterDraw's
+  clone and CrowdGpu take it as any other; the rigid path is left for a palette naming bones the skeleton lacks.
+  Test: `still_piece_test.gd` (8 checks: weights, the kept arrays, still under a posed root and clavicle, the
+  canonical index).
+- **Reach (MEASURED, `census_unskinned_pieces.gd`).** 75 of Data.pk2's 1,252 animated skeletal models carry 365
+  bare pieces: the storage keepers' boxes (China, West China, Khotan, Central Asia, Arabia, the SD areas), the
+  stablemen's tongs, the smiths' trees, the village headman's chair, the gambler's stick, the shaman's tiger,
+  the stall booths, tower-defence crystals, Celestius `demonwarrior` (two pieces, no skinned one: it now stands
+  still as the original draws it), and `pet2` / `COS` placeholders whose other pieces do not parse.
+- **The keeper on the chest is retail.** Jangan places `NPC_CH_WAREHOUSE_M` (Storage-Keeper Wangu) and
+  `NPC_CH_WAREHOUSE_W` (named "Magic POP Guide Gori") at one spot: npcpos 2013 (980.80, 989.13) and 2014
+  (980.35, 989.19); the shard's `tab_refnest` nests 54 and 55, both direction 16565 (READ). The woman's model is
+  authored up on the man's 20-unit box (bounds centre y 32 against his 10), so she sits on it. Live shot
+  (`/var/tmp/r816shot` frame 400): she sits on Wangu's chest; the chest's corner is pixel-identical between
+  frames 300 and 400.
+- **Tools.** `render_npc.gd --yaw=D`; `census_unskinned_pieces.gd`.
+- **Gates.** `check` ALL LOAD (933 scripts), `tests` "ran 353 suite(s), 0 failing". Perf gate vs 4e920ce5:
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 0.85 -> 0.86 SAME | 8551 -> 8605 SAME | 2745 -> 2758 SAME | 5 -> 5 SAME |
+| crowd (head da8e00af, a clean copy) | 3.06 -> 2.85 SAME | 11012 -> 10947 SAME | 3457 -> 3398 SAME | 5 -> 5 SAME |
+
+  The first crowd run, against the working-tree copy, read entry 10955 -> 12276 (SLOWER) with every build time
+  in its log equal (monster bodies 10.5-11.1 s both sides, NPC placement and cells within 3 ms); the clean-copy
+  rerun above is SAME, so the copy, not the change, cost it.
+
 ## Eight-hundred-and-fifteenth round: a pet's owner line follows the suit; grant names at any guild level
 
 The user (2026-10-23), on v0.1.575: "I don't see the guild name above me for the guild Verzion? Also my pet
