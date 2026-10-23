@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // InventorySizeStore is each character's own bag size: the engine's

@@ -16,7 +16,7 @@ package buff
 // 136..139, a missing 'cr'; round 785's read).
 
 import (
-	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
 )
 
 // Param ids the stat writes and their readers use (param_registry.md).

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/quest/luabc"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/quest/luabc"
 )
 
 // Call is one host-function call a quest's setup made.

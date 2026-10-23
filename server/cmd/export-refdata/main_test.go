@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"strconv"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
 )
 
 // A synthetic itemdata row with the Copper Sword's real, verified values at

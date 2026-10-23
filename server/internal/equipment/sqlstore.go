@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 const schema = `

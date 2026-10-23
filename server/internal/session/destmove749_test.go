@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // Round 749: moving by destination (destmove.go). Aria and Bram enter the

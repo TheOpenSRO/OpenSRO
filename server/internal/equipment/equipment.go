@@ -6,7 +6,7 @@ package equipment
 import (
 	"context"
 	"errors"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // Slot identifies one equipment slot, numbered in the game's own order.

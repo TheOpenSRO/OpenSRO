@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/retailgw"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/retailgw"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 // patchedKey marks a gateway session whose 0x6100 was accepted.

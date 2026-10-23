@@ -58,7 +58,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
 )
 
 // The run-speed params, 'hste'/'hst2'/'hst3' publish both

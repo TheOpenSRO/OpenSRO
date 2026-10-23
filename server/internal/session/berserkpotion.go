@@ -4,13 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // The berserk potion (round 632): TypeID 3/3/1/8. In Media.pk2's itemdata

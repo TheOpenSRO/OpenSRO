@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/safezone"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // The round-674 shim: everything safezone674_test.go needs of the round's new

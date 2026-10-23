@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // Round 786 (damage numbers): the client draws retail's "Resist" word for an

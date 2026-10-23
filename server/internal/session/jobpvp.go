@@ -8,17 +8,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
-	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
-	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/charmsg"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // Job PvP (round 802; docs/protocol/jobs.md "Job PvP"). A player in a job

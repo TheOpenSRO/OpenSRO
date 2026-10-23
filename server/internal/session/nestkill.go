@@ -3,9 +3,9 @@ package session
 import (
 	"sync/atomic"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/party"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // The kill's word to the nests (round 660, internal/nest; round 712). The

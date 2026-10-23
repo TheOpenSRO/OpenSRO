@@ -1,8 +1,8 @@
 package session
 
 import (
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // sendToPeer sends p to another player's session from a handler serving a

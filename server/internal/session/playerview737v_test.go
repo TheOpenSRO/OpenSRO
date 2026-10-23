@@ -8,12 +8,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // Round 737's verification: the regressions its findings N1-N5 name, kept as

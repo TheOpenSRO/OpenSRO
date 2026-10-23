@@ -1,6 +1,6 @@
 package equipment
 
-import "github.com/OpenSRO/OpenSRO/server/internal/refdata"
+import "github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 
 // Item sets: which pieces belong together, and when a character is wearing a
 // whole one.

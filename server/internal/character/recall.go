@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // RecallStore keeps each character's designated return point (round 686): the

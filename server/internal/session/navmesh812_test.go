@@ -4,9 +4,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/ai"
-	"github.com/OpenSRO/OpenSRO/server/internal/navmesh"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/ai"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // wallRegion is a flat synthetic region with a wall (flag 3) along local

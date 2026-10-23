@@ -3,10 +3,10 @@ package session
 import (
 	"context"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
-	"github.com/OpenSRO/OpenSRO/server/internal/skill"
-	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skill"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
 )
 
 // rowHasMAAT reports whether ref carries 'getv MAAT', the only writer of

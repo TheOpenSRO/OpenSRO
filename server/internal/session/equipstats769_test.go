@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/magicopt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // Round 769: a worn item's plus and blue options count. One character wears

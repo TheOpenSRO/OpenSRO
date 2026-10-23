@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // The engine's own rule for spending stat points, GObjPC_SpendStatPoints

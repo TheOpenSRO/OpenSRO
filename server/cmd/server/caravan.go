@@ -4,12 +4,12 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
-	"github.com/OpenSRO/OpenSRO/server/internal/nest"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
-	"github.com/OpenSRO/OpenSRO/server/internal/species"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // waveTacticsIDs are the _RefTactics rows the waves run under (s:0x60bfe2:

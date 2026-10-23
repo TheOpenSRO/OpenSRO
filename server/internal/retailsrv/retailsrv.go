@@ -13,9 +13,9 @@ import (
 	"encoding/hex"
 	"log/slog"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/retailgw"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/retailgw"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 // Config is both listeners' settings.

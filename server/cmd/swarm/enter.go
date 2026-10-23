@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 // login sends the login and reads its result: errFull when the server is

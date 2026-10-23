@@ -29,8 +29,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 //go:embed test_items.json

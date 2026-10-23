@@ -3,7 +3,7 @@ package world
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // fakeSession returns a *gateway.Session usable only for its ID() in these

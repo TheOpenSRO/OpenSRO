@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
 )
 
 // TestRetailCensus runs the coverage census over the player's own

@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/cos"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/cos"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // cosBagCapacity is a COS bag's size: its record's (round 795; 28 for an

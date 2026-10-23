@@ -27,7 +27,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
 )
 
 func main() {

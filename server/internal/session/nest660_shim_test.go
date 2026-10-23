@@ -1,6 +1,6 @@
 package session
 
-import "github.com/OpenSRO/OpenSRO/server/internal/combat"
+import "github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 
 // spawnWithTactics660 spawns sp at (x, z) running a tactics row with the given
 // sight, aggression type, give-up distance and roam radius (round 660). The

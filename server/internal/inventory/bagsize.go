@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // The bag's pages, READ from the client (round 633). IFInventory 0x6b6620

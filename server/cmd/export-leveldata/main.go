@@ -26,7 +26,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
 )
 
 // Column indices in leveldata.txt: level, then the exp to advance from it.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
 )
 
 // Round 778: refoptionalteleport.txt, when given, goes out as the fifth CSV

@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // Round 762 (READ, CMsgBlock slot 2 0x534340 and FUN_00533910): a full

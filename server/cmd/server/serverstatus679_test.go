@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Round 679 (OURS): the real server answers the server list's status

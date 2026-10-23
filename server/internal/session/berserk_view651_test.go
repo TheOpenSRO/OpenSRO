@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // bodyModesUntilQuiet reads conn until it stays quiet for 300 ms and returns

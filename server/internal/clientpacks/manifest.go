@@ -22,7 +22,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
 )
 
 // Version is the manifest's first byte. OURS.

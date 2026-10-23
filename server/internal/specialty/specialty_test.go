@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 )
 
 // The shard's own row shape (MEASURED: BaseQuot = LB = UB = 1.1, stocks

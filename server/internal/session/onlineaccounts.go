@@ -4,7 +4,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // OnlineAccounts is the server's table of logged-in accounts (round 788):

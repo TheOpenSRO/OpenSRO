@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 // The login flags (round 788): the defaults pass and become the rules; a

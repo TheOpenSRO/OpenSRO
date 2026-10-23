@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // item builds a synthetic item (OURS test fixture: invented ids, code names

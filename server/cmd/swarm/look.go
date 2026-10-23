@@ -12,8 +12,8 @@ package main
 import (
 	"math/rand"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 // look is what a bot is created as.

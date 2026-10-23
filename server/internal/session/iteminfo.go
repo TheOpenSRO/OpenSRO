@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
-	"github.com/OpenSRO/OpenSRO/server/internal/cos"
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
-	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/avatar"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/cos"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // ItemInfo is one container slot's item instance, as the original's item

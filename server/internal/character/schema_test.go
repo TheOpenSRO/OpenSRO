@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/persistence"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/persistence"
 )
 
 // The column list here must stay the one the binary declares. Holding it equal

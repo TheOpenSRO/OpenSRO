@@ -3,8 +3,8 @@ package session
 import (
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // holdArrival registers the character just filed held by the hub (EnterHeld,

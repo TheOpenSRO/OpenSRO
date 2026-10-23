@@ -18,8 +18,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/magicopt"
 )
 
 var dropOptions struct {

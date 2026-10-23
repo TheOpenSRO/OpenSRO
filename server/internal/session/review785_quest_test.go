@@ -11,17 +11,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/npctalk"
-	"github.com/OpenSRO/OpenSRO/server/internal/quest"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
-	"github.com/OpenSRO/OpenSRO/server/internal/trade"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npctalk"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/quest"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // reviewHookInv is a bag whose AddItem runs a hook first (the window

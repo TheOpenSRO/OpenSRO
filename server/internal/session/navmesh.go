@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/navmesh"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
 )
 
 // The server's navigation mesh (round 812, internal/navmesh): cmd/server's

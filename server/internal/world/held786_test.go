@@ -3,7 +3,7 @@ package world
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // Round 786: a held character (Entity.Held) is in no message block until

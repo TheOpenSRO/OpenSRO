@@ -9,10 +9,10 @@ import (
 	"math"
 	"sort"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
-	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // The efr flag bits (value[5], READ 0x58a020 and siblings).

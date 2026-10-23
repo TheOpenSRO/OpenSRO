@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/nest"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
 )
 
 func unhex(t *testing.T, s string) []byte {

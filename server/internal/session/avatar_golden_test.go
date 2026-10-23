@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pcspawn"
 )
 
 // avatarGoldenPath is the vector file the client's avatar net tests read too

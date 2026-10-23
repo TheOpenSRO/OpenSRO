@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
 )
 
 func write(t *testing.T, root, rel, data string) {

@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/ai"
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/cos"
-	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/ai"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/cos"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // Monsters against a COS (round 804). READ in SR_GameServer.exe:

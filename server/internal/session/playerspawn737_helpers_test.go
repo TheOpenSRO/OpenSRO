@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Test helpers for round 737's player spawns (playerview.go): the players in

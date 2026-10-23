@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gm"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gm"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Round 764: a zone change's request may carry the spot the client will stand

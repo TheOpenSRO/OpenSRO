@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/clientpacks"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/clientpacks"
 )
 
 // startClientPacks turns the -client-packs flags into the manifest the

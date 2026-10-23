@@ -5,8 +5,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // MemStore is an in-memory Store, for tests and for running the server

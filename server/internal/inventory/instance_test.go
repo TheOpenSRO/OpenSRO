@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
 )
 
 // a lookup that gives one item id a durability range and everything else none.

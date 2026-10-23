@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/ai"
-	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/ai"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
 )
 
 var threats = struct {

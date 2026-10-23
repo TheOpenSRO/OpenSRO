@@ -4,7 +4,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/nest"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
 )
 
 // Row is one npcpos row (the client's own placement table, READ).

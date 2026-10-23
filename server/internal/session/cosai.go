@@ -10,14 +10,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/cos"
-	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/species"
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/cos"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // What a COS does on its own (round 795; docs/protocol/pets.md, "Round

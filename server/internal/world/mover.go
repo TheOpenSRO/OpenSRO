@@ -4,8 +4,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // Moving by destination (round 749, docs/protocol/crowd_scale.md C3).

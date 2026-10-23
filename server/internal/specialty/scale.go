@@ -1,6 +1,6 @@
 package specialty
 
-import "github.com/OpenSRO/OpenSRO/server/internal/jobs"
+import "github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 
 // The trade scale and the transport's bag (READ, SR_GameServer.exe).
 

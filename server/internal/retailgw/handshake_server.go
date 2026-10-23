@@ -12,7 +12,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // DefaultServerFlags is the hello's flag set retail sends: Blowfish, the

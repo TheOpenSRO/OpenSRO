@@ -1,8 +1,8 @@
 package session
 
 import (
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // Round 786's test helpers over the hub's hold (world.Entity.Held), apart

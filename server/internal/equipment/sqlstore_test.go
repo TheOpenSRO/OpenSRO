@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 )
 
 func testDSN() string {

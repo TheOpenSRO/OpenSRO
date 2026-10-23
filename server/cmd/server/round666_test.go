@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Round 666 (M2): a skills store with no status params -- a table imported

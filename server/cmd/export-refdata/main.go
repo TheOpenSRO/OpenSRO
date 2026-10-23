@@ -47,16 +47,16 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
-	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
-	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
-	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/specialty"
-	"github.com/OpenSRO/OpenSRO/server/internal/species"
-	"github.com/OpenSRO/OpenSRO/server/internal/statuseffect"
-	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/safezone"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/specialty"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/statuseffect"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
 )
 
 // Field indices into a tab-split itemdata row (0-indexed; field 0 is the

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/OpenSRO/OpenSRO/server/internal/skillparam"
+import "github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
 
 // Status is what the server does with each code (round 785). Kept here so the
 // census prints it beside the counts; docs/protocol/skill_census.md is the

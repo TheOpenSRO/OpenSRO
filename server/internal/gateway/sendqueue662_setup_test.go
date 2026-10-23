@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // The round-662 API the queue tests use, kept in this one file so that the

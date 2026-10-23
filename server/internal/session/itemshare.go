@@ -3,9 +3,9 @@ package session
 import (
 	"math"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/party"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // The Item Auto Share party's pick-ups (round 712, party lane S2). READ, GS;

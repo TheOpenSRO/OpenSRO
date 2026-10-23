@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // schema is OURS (the feature is). Two tables, keyed by account id: the PIN

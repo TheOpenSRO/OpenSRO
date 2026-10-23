@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // A client's claim about where its character is (round 749's review, F1).

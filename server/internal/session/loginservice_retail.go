@@ -10,8 +10,8 @@ package session
 import (
 	"errors"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // The late refusals AdmitSession can give.

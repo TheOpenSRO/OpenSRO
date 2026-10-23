@@ -37,7 +37,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/retailgw"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/retailgw"
 )
 
 func main() {

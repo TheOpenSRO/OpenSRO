@@ -1,7 +1,7 @@
 package refdata
 
 import (
-	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
 	"strconv"
 	"strings"
 )

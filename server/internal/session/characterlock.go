@@ -12,9 +12,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/charlock"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/charlock"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // The PIN opcodes (OURS). 0x0118..0x011F were free on 2026-10-15 (the

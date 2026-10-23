@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/party"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 type matchPage struct {

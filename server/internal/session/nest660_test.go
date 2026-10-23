@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/ai"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/ai"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // Round 660: a monster runs its own tactics row (a _RefTactics row, EXTERNAL,

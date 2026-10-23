@@ -8,16 +8,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/ai"
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
-	"github.com/OpenSRO/OpenSRO/server/internal/nest"
-	"github.com/OpenSRO/OpenSRO/server/internal/npctalk"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/ai"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npctalk"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/safezone"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // The caravans and their waves (round 804; docs/protocol/jobs.md "NPC

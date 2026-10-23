@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/testdb"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/testdb"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 

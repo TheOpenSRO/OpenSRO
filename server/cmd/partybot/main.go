@@ -70,18 +70,18 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/charmsg"
 	"net"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/party"
-	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 type bot struct {

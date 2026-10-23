@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // ReturnPointStore keeps the two places the reverse return scroll can send a

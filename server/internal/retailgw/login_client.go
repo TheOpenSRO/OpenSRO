@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Opcodes of the login (READ: the client builds 0x6102 in CClientNet::vslot_004

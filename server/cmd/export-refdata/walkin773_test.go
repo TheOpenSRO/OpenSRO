@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
 )
 
 // A synthetic objectstring.ifo (own names and positions): the bits of 960.5,

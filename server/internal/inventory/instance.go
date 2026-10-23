@@ -4,7 +4,7 @@ import (
 	"context"
 	"math/rand"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
 )
 
 // globalRand draws from math/rand's goroutine-safe top-level source; stores

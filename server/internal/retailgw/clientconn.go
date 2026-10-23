@@ -13,7 +13,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // ClientConn is one retail connection, client side, after the handshake

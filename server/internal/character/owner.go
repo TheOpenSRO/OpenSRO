@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // OwnerStore finds a character by name, online or not (round 788): the GM

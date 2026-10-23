@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/testdb"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/testdb"
 )
 
 // TestMain holds the shared test-database lock for the whole package run, so

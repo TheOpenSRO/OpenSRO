@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
 )
 
 // DefaultTokenTTL is how long a login the gateway admitted waits for the

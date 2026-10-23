@@ -9,7 +9,7 @@ package session
 import (
 	"sync"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 var activeRows = struct {

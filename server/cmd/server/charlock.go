@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/charlock"
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/charlock"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // The account PIN, "Character Lock" (round 788, lane P; OURS throughout --

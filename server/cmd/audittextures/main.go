@@ -21,13 +21,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/bms"
-	"github.com/OpenSRO/OpenSRO/server/internal/bmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/bsr"
-	"github.com/OpenSRO/OpenSRO/server/internal/cpd"
-	"github.com/OpenSRO/OpenSRO/server/internal/ddj"
-	"github.com/OpenSRO/OpenSRO/server/internal/objidx"
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/bms"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/bmt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/bsr"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/cpd"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/ddj"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/objidx"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
 )
 
 type failure struct {

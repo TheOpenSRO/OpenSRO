@@ -4,10 +4,10 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
-	"github.com/OpenSRO/OpenSRO/server/internal/testnpc"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/testnpc"
 )
 
 // testItemsNPCSpec is the Test Items NPC resolved against the loaded item

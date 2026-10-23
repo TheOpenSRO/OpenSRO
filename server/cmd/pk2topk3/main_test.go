@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2/pk2test"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2/pk2test"
 )
 
 // A synthetic pk2 (never game data) converts to a pack that serves every

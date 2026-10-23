@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/quest/luabc"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/quest/luabc"
 )
 
 // The fixtures are made-up quests in the shape of the server script's setup

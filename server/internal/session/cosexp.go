@@ -3,11 +3,11 @@ package session
 import (
 	"context"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/cos"
-	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
-	"github.com/OpenSRO/OpenSRO/server/internal/rates"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/cos"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/rates"
 )
 
 // A growth pet's experience (round 795; docs/protocol/pets.md, "Round 795",

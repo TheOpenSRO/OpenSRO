@@ -14,11 +14,11 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/alchemy"
-	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
-	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/alchemy"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/avatar"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/magicopt"
 )
 
 // TestShopPlus is the plus the Test Items NPC's equipment carries.

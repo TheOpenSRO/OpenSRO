@@ -34,8 +34,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
 )
 
 func main() {

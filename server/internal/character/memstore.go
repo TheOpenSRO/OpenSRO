@@ -2,7 +2,7 @@ package character
 
 import (
 	"context"
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 	"sort"
 	"sync"
 )

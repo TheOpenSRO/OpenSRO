@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/retailgw"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/retailgw"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 func TestRetailPathLoginRules(t *testing.T) {

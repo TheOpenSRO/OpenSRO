@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
 )
 
 // The bytes client/scripts/net/user_spawn_test.gd reads (round 737): one

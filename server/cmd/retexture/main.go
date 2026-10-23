@@ -17,9 +17,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/bmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/bsr"
-	"github.com/OpenSRO/OpenSRO/server/internal/retexture"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/bmt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/bsr"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/retexture"
 )
 
 type sets []retexture.Replacement

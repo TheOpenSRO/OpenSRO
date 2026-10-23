@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/assetfs"
 )
 
 // Options say where the packs are and where clients fetch them from.

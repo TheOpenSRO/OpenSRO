@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // Round 728 (review): a sale is booked at the back, the sell answers the

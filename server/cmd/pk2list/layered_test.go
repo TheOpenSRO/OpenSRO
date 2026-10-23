@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2/pk2test"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2/pk2test"
 )
 
 // The layered view (round 789): -layers, -which, -overrides, listing and

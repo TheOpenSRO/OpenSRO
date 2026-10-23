@@ -63,8 +63,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 type config struct {

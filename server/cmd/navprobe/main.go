@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/navmesh"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 func floats(s string) []float64 {

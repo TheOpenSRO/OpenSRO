@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 func TestCategoryOfMirrorsEngineVocabulary(t *testing.T) {

@@ -23,7 +23,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 func main() {

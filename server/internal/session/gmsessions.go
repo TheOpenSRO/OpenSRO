@@ -3,7 +3,7 @@ package session
 import (
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // GMSessions is the GM console's hold on live connections (gm.Sessions,

@@ -1,8 +1,8 @@
 package retailsrv
 
 import (
-	"github.com/OpenSRO/OpenSRO/server/internal/retailgw"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/retailgw"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 // The retail login's opcodes (READ: RESEARCH section 1, gateway.md).

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
 )
 
 // Limits are the zip-bomb guards a pack is checked against when it is

@@ -1,4 +1,4 @@
-module github.com/OpenSRO/OpenSRO/server
+module github.com/TheOpenSRO/OpenSRO/server
 
 go 1.25.0
 

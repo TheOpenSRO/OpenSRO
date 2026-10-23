@@ -1,6 +1,6 @@
 package session
 
-import "github.com/OpenSRO/OpenSRO/server/internal/refdata"
+import "github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 
 // testCatalogue is a synthetic creatable set for the lobby tests: real ids
 // as references, with the type, country and sex fields the rule reads (the

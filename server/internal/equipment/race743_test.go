@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/testdb"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/testdb"
 )
 
 // raceTwice runs op twice at once while lockQuery's row is held, until both

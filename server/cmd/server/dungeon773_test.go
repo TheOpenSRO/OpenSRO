@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
-	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // With the cave served (a main-world teleport point stands in 0x8001), its

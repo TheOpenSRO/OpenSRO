@@ -2,7 +2,7 @@ package skill
 
 import (
 	"context"
-	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
 	"sort"
 	"sync"
 	"time"

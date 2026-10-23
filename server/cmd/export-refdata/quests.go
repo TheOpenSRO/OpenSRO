@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/quest"
 )
 
 // exportQuests builds the quest catalogue (round 785, internal/quest) from

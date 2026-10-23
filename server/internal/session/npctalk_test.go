@@ -6,13 +6,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/character"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
-	"github.com/OpenSRO/OpenSRO/server/internal/npctalk"
-	"github.com/OpenSRO/OpenSRO/server/internal/trade"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/npctalk"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // The retail NPC interaction over a real socket (round 727): select, open,

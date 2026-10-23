@@ -19,9 +19,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/navmesh"
-	"github.com/OpenSRO/OpenSRO/server/internal/objidx"
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/objidx"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
 )
 
 func main() {

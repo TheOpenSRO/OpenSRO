@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // Record is one COS's saved state: retail's _CHARCOS row (round 795, READ

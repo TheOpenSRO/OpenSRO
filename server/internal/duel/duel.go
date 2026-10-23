@@ -15,7 +15,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // ErrCannotChallengeSelf is returned by Hub.Challenge when challenger and

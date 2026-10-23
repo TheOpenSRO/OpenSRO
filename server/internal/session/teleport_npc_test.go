@@ -13,15 +13,15 @@ import (
 	"context"
 
 	"fmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
 	"math"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // A synthetic network of NPC-hosted points, shaped on the retail rows (each

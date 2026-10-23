@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/avatar"
 )
 
 const avatarUsage = "usage: /avatar (list the avatar slots) | /avatar spirit <bag slot> <seconds|0> (a devil's spirit in the bag: awake for that long, or 0 not awakened)"

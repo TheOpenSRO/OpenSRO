@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // Round 732: an item's plus, blue options and advanced elixir go onto the

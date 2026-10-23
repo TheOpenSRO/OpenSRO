@@ -179,7 +179,7 @@ server depends on, so a server installed before it needs moving once, by hand:
 | Environment variables | `SRREVAMP_*` | `OPENSRO_*` (a clean break: the old names are not read) |
 | Updater units | `srrevamp-update.service` / `.timer` | `opensro-update.service` / `.timer` |
 | Host, user, checkout, data | `srrevamp-01`, `srrevamp`, `~/srrevamp`, `~/srrevamp-data` | `opensro-01`, `opensro`, `~/opensro`, `~/opensro-data` |
-| Repository | `github.com/OpenSRO/srrevamp` | `github.com/OpenSRO/OpenSRO` |
+| Repository | `github.com/OpenSRO/srrevamp` | `github.com/OpenSRO/OpenSRO`, since 2026-10-13 `github.com/TheOpenSRO/OpenSRO` |
 
 **Stop the old updater first, before the rename reaches `dev`.** Left running, it pulls the
 renamed commit by itself, and `docker compose up` then builds a second stack (project `opensro`,
@@ -261,10 +261,10 @@ git remote get-url origin
 git config --get core.sshCommand
 grep -n -A4 -i 'github\|IdentityFile' ~/.ssh/config
 #    Keep whatever alias it uses, and change only the repository's name, e.g.
-#    git@github-deploy:OpenSRO/srrevamp.git -> git@github-deploy:OpenSRO/OpenSRO.git.
+#    git@github-deploy:OpenSRO/srrevamp.git -> git@github-deploy:TheOpenSRO/OpenSRO.git.
 #    An IdentityFile or core.sshCommand that names /home/srrevamp/... must name /home/opensro/...
 #    after B (or say ~/.ssh/...). Without an alias:
-git remote set-url origin git@github.com:OpenSRO/OpenSRO.git
+git remote set-url origin git@github.com:TheOpenSRO/OpenSRO.git
 git pull --ff-only                       # to a commit that has `name: opensro`
 rm -f .git/update-held                   # a hold left by an update rolled back before A, if any
 

@@ -22,10 +22,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/mapm"
-	"github.com/OpenSRO/OpenSRO/server/internal/mapo"
-	"github.com/OpenSRO/OpenSRO/server/internal/objidx"
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mapm"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mapo"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/objidx"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
 )
 
 const (

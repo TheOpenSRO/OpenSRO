@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 )
 
 // TestMatchListPagesOverTheWire (round 752; the user, with thousands of swarm

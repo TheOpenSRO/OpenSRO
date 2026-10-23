@@ -21,7 +21,7 @@ import (
 	"image/png"
 	"os"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/ddj"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/ddj"
 )
 
 func main() {

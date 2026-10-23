@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/txn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // schema is _CharTrijob, _OldTrijob, _TrijobRewards and the Tab_RefRanking_*

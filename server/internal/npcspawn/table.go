@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/species"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
 )
 
 // CSVColumns is the header cmd/export-refdata -mode npcs writes and LoadCSV

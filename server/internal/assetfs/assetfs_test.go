@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2/pk2test"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2/pk2test"
 )
 
 // All archives here are synthetic, built at test time: no game data.

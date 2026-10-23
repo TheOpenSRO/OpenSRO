@@ -8,8 +8,8 @@ package session
 import (
 	"fmt"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/account"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // Opcodes for this project's own protocol. Unrelated to (and much simpler

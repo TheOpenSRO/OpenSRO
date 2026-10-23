@@ -3,7 +3,7 @@ package equipment
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
 func setPiece(id int64, setID, family, piece int) *refdata.Item {

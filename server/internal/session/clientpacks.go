@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/clientpacks"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/clientpacks"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
 // The packs a client needs (round 789, lane U; docs/protocol/asset_packs.md,

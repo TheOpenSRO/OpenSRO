@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // benchSetup656 installs what cmd/server runs since round 656 for

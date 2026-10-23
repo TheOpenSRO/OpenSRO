@@ -7,8 +7,8 @@ package session
 import (
 	"math"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
-	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // groundMove is the move a 'tele' or 'tel2' row makes toward a ground point:

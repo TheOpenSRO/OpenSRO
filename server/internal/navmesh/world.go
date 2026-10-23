@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // The export's layout (cmd/export-navmesh): dir/nvm/nv_xxxx.nvm, the user's

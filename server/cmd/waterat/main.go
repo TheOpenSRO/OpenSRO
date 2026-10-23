@@ -27,8 +27,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/mapm"
-	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mapm"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pk2"
 )
 
 const (

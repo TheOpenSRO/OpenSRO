@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/charmsg"
 )
 
 // fixtureDir is the golden fixtures' home (round 710), under client/ so the

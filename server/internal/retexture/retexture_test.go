@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/bmt"
-	"github.com/OpenSRO/OpenSRO/server/internal/bsr"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/bmt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/bsr"
 )
 
 // Synthetic fixtures only (never game data): an item .bsr laid out the way

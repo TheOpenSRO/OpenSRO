@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // flatRegion is a synthetic region: flat ground at height h, the tiles left

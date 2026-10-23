@@ -14,9 +14,9 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/retailsrv"
-	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/retailsrv"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 )
 
 // retailFlags are the retail listeners' settings.
