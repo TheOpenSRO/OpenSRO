@@ -45,7 +45,10 @@ import (
 //     Both registered in the client's dispatch table (0xb021 ->
 //     FUN_008a5750, 0xb023 -> FUN_008a4f80).
 //
-// OURS, disclosed (the server has no navigation mesh for players, round 744):
+// OURS, disclosed (round 744; since round 812 the server walks a destination
+// leg on its navigation mesh with -navmesh-dir and ends it at the first wall
+// with a 0xB023, as retail's CGObjMoverByDest stops at a blocked step --
+// navmesh.go, world.MoveOrder.Wall):
 //
 //   - The server does not step the mover: world.Mover keeps the leg and
 //     computes the position, and moverPass refiles the movers whose position
@@ -337,6 +340,17 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 		if !e.HeightAllows(x, y, z, claimHeight, claimSanity) {
 			return nil
 		}
+		// Round 812: the server walks the leg on its navigation mesh (READ:
+		// CGObjMoverByDest steps on the server's navmesh; a blocked step
+		// stops the mover and sends 0xB023). The echo still names the
+		// client's destination, as retail's does; the server's leg ends at
+		// the wall (world.MoveOrder.Wall).
+		if w, ok := navWalk(e.Zone, e.Pos.X, e.Pos.Y, e.Pos.Z, x, z); ok && w.Blocked {
+			order.Dest = world.Position{X: w.X, Y: w.Y, Z: w.Z}
+			order.Wall = true
+		}
+		traceMove("move: leg", "character", e.CharacterID, "from_x", e.Pos.X, "from_y", e.Pos.Y, "from_z", e.Pos.Z,
+			"to_x", x, "to_z", z, "wall", order.Wall, "end_x", order.Dest.X, "end_z", order.Dest.Z)
 	}
 	now := time.Now()
 	// Round 640, OURS: a character its own protection wall holds does not
@@ -657,8 +671,10 @@ func moverPass(hub *world.Hub) {
 		afterRelocate(r.Entity.Session, r, false, nil)
 	}
 	// A heading run past world.HeadingRunLimit ended (round 749's review,
-	// F10): the window and the mover hear where the server stopped it.
+	// F10), or a leg its navigation-mesh wall ended (round 812): the window
+	// and the mover hear where the server stopped it.
 	for _, r := range pass.Ended {
+		traceMove("move: ended by the server", "character", r.Entity.CharacterID, "x", r.Entity.Pos.X, "z", r.Entity.Pos.Z)
 		motions.walking(r.Entity.CharacterID, time.Now())
 		stopRelay(r.Entity.Session, r, true)
 	}

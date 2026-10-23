@@ -48,7 +48,7 @@ func TestSeqSourceDrawsTheGivenCRandValues(t *testing.T) {
 // order.
 func TestPickWanderLegDrawOrder(t *testing.T) {
 	rng, src := seqRand(1, 39, 90, 2)
-	dx, dz, h, ok := PickWanderLeg(rng, 10, 20, 0, 22)
+	dx, dz, h, ok := PickWanderLeg(rng, 10, 20, 0, 22, nil)
 	if !ok {
 		t.Fatal("a monster running at 22 u/s must get a leg")
 	}
@@ -65,7 +65,7 @@ func TestPickWanderLegDrawOrder(t *testing.T) {
 
 	// The shortest leg: s1 even (-1), rand % 40 = 39 -> 46; t = +45 degrees.
 	rng, _ = seqRand(0, 39, 0, 1)
-	dx, dz, _, _ = PickWanderLeg(rng, 0, 0, math.Pi/2, 22)
+	dx, dz, _, _ = PickWanderLeg(rng, 0, 0, math.Pi/2, 22, nil)
 	if l := math.Hypot(dx, dz); math.Abs(l-46) > 1e-9 {
 		t.Errorf("the shortest leg is %v units; want 46", l)
 	}
@@ -84,7 +84,7 @@ func TestPickWanderLegLengthsAndTurns(t *testing.T) {
 	for i := 0; i < 4000; i++ {
 		heading := float64(i%360) * math.Pi / 180
 		x, z := float64(i%17)*10, -float64(i%13)*10
-		dx, dz, h, ok := PickWanderLeg(rng, x, z, heading, 55)
+		dx, dz, h, ok := PickWanderLeg(rng, x, z, heading, 55, nil)
 		if !ok {
 			t.Fatal("a moving monster was refused a leg")
 		}
@@ -115,7 +115,7 @@ func TestPickWanderLegLengthsAndTurns(t *testing.T) {
 func TestPickWanderLegNeedsARunSpeed(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	for _, run := range []float64{0, -5, 1e-6} {
-		if x, z, h, ok := PickWanderLeg(rng, 3, 4, 1, run); ok || x != 3 || z != 4 || h != 1 {
+		if x, z, h, ok := PickWanderLeg(rng, 3, 4, 1, run, nil); ok || x != 3 || z != 4 || h != 1 {
 			t.Errorf("run speed %v: (%v, %v, %v, %v); want a refusal that leaves the monster as it is", run, x, z, h, ok)
 		}
 	}

@@ -218,3 +218,13 @@ pre-644 all-edges rule. See WORLD_ISSUES.md's six-hundred-and-forty-fourth round
 - A terrain mover already inside an outline (a teleport, a gap in an outline) is let back out
   through a wall; the client's entry test has no notion of sides and would refuse. A disclosed
   choice against traps in states the game itself cannot reach.
+
+
+## The server's copy (round 812)
+
+`server/internal/navmesh` ports the client's `NavGraph` field walk (this file's rules) to Go for
+the server, which the original also walks every mover on (`docs/protocol/opcodes/movement.md`).
+The data comes from `server/cmd/export-navmesh`; `-navmesh-dir` turns it on. The walk is the
+no-slide one, a unit at a time (`navmesh.WalkStep`, OURS), the footing settled per leg and per
+region crossing (`SurfaceAt`) -- retail's carried cell is not modelled on either side. Parity with
+the client is measured by `TestClientWalkParity` against `client/tools/walk_probe.gd --sweep`.

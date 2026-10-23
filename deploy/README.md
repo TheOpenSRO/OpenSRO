@@ -2030,6 +2030,28 @@ stones. Two things on the server need refreshing for it:
 Elixirs, powders and stones come from drops or `/give`; a GM can test with
 `/give <item id> [qty]` (the weapon elixir `ITEM_ETC_ARCHEMY_REINFORCE_RECIPE_WEAPON_A` is id 3675 in a retail archive).
 
+## Server collision: the navigation meshes (round 812)
+
+The server walks every mover on the game's own navigation mesh when `-navmesh-dir`
+(`OPENSRO_NAVMESH_DIR`) names a directory `export-navmesh` wrote from a client's archives. The
+data is the user's, never committed. On the render box (where the archives are):
+
+```
+go build -o export-navmesh ./server/cmd/export-navmesh
+./export-navmesh -data /opt/sro-files/client/Data.pk2 -map /opt/sro-files/client/Map.pk2 -out navdata
+tar czf navdata.tgz navdata          # 790 MB -> about 220 MB
+```
+
+Copy `navdata.tgz` to the server host, unpack it (the prod Mac mini: `~/opensro/data/navmesh`) and
+add `-navmesh-dir="$D/navmesh"` to `run.sh`. The boot log says `navigation meshes: movers walk the
+original's navmesh ... objects=2044`; without the flag, `no navigation meshes`. `server/cmd/navprobe`
+asks the export about a world point (`-dir DIR -zone jangan -at X,Z[,Y] [-to X,Z]`).
+
+What changes for players: a 0x7021 walk into a wall ends there on the server too, with a 0xB023;
+a client that walked further is put back. Clients from v0.1.574 walk to the point they send (the
+truncated destination, as retail's walks the echoed one), so they stop where the server does.
+Monsters stop at walls and turn back from one 30 units ahead while wandering.
+
 ## Towns (round 674)
 
 `-regions-csv` (env `OPENSRO_REGIONS_CSV`) gives the server the game's region table, `_RefRegion`,

@@ -84,6 +84,10 @@ func IdleNext(rng *rand.Rand) State {
 	return StateWander
 }
 
+// WanderProbe is how far ahead the wander probes for a wall (READ, the
+// double 30.0 at 0xb45e58).
+const WanderProbe = 30.0
+
 // PickWanderLeg is CAIState_WANDER::PickWanderLeg (0x00545860) for a monster
 // at (x, z) facing heading (radians) with run speed runSpeed (its +0x170). It
 // refuses (ok false) unless runSpeed > 1e-6 (fcomp 0xb45c84 at 0x545877; the
@@ -114,11 +118,12 @@ func IdleNext(rng *rand.Rand) State {
 // Not modelled, and disclosed: the ctx+0x14c term, which adds a unit vector
 // toward that object when it resolves (0x5459f0..0x545a50; what +0x14c holds
 // is unread, and for a nest monster it is unverified that it is empty); and
-// the blocked-probe reversal, which probes position + direction * 30
+// the blocked-probe reversal: the engine probes position + direction * 30
 // (0xb45e58) through the world singleton's slot 12 and reverses the
-// direction (* -1.0, 0xb45e68) when bit 0 or bit 28 reports it blocked --
-// OpenSRO's server holds no collision world to ask.
-func PickWanderLeg(rng *rand.Rand, x, z, heading, runSpeed float64) (destX, destZ, legHeading float64, ok bool) {
+// direction (* -1.0, 0xb45e68) when bit 0 or bit 28 reports it blocked.
+// Round 812: `blocked` is that probe (session.navBlocked, the server's
+// navigation mesh); nil, or a server without one, never reverses.
+func PickWanderLeg(rng *rand.Rand, x, z, heading, runSpeed float64, blocked func(tx, tz float64) bool) (destX, destZ, legHeading float64, ok bool) {
 	if !(runSpeed > WanderMinRunSpeed) {
 		return x, z, heading, false
 	}
@@ -128,6 +133,9 @@ func PickWanderLeg(rng *rand.Rand, x, z, heading, runSpeed float64) (destX, dest
 	s2 := crandSign(rng)
 	t := float64(s2*m) * math.Pi / 180
 	dx, dz := WanderLegDirection(math.Cos(heading), math.Sin(heading), t)
+	if blocked != nil && blocked(x+dx*WanderProbe, z+dz*WanderProbe) {
+		dx, dz = -dx, -dz
+	}
 	return x + dx*dist, z + dz*dist, math.Atan2(dz, dx), true
 }
 

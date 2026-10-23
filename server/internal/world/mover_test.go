@@ -242,3 +242,28 @@ func mustByChar(t *testing.T, h *Hub, id int64) Entity {
 	}
 	return e
 }
+
+// Round 812: a leg the server's navigation mesh ended at a wall (MoveOrder.
+// Wall) is reported when it arrives, with its watchers, for their 0xB023; an
+// ordinary arrival is not.
+func TestAdvanceMoversEndsAWallLeg(t *testing.T) {
+	h, c := clockedHub()
+	a, b := fakeSession(1), fakeSession(2)
+	h.Enter(a, 100, "Aria", 1, "jangan", Position{X: 10, Z: 10})
+	h.Enter(b, 200, "Bram", 1, "jangan", Position{X: 60, Z: 10})
+	h.StartMove(a, MoveOrder{Dest: Position{X: 30, Z: 10}, Speed: 100, Wall: true})
+	c.add(100 * time.Millisecond) // x 20: still walking
+	if out := h.AdvanceMovers(nil).Ended; len(out) != 0 {
+		t.Fatalf("ended before the wall: %+v", out)
+	}
+	c.add(time.Second)
+	out := h.AdvanceMovers(nil).Ended
+	if len(out) != 1 || out[0].Entity.CharacterID != 100 || out[0].Entity.Pos.X != 30 || len(out[0].Watchers) != 1 {
+		t.Fatalf("the wall's arrival: %+v", out)
+	}
+	h.StartMove(a, MoveOrder{Dest: Position{X: 40, Z: 10}, Speed: 100})
+	c.add(time.Second)
+	if out := h.AdvanceMovers(nil).Ended; len(out) != 0 {
+		t.Fatalf("an ordinary arrival was reported as a wall's: %+v", out)
+	}
+}

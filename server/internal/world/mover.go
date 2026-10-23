@@ -50,6 +50,8 @@ type Mover struct {
 	Speed float64
 	// dist is the destination form's ground length.
 	dist float64
+	// Wall is MoveOrder.Wall.
+	Wall bool
 }
 
 // At is the position the leg gives at now: Src plus the travel direction times
@@ -133,6 +135,11 @@ type MoveOrder struct {
 	Command        byte
 	WireAngle      uint16
 	Speed          float64
+	// Wall: Dest is where the server's navigation mesh stops the walk short
+	// of the client's destination (round 812, session.navWalk): its arrival
+	// ends the leg with a 0xB023 to the window, as the original server's
+	// mover stopped by a blocking edge sends one (READ, movement.md).
+	Wall bool
 }
 
 // MoveStatus is what StartMove did.
@@ -287,6 +294,7 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 		e.Heading = o.HeadingRadians
 	} else {
 		m.Dest = o.Dest
+		m.Wall = o.Wall
 		m.dist = math.Hypot(o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
 		e.noteClientY(o.Dest.X, o.Dest.Y, o.Dest.Z) // the clicked ground's height
 		e.Heading = HeadingToward(e.Heading, o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
@@ -349,7 +357,8 @@ const HeadingRunLimit = 60 * time.Second
 
 // Pass is what one AdvanceMovers did: the crossings (Gained and Lost; no
 // Watchers -- the crossing's deliveries need none) and the heading runs it
-// ended at HeadingRunLimit (with Watchers, for their 0xB023).
+// ended at HeadingRunLimit and the legs a wall ended (round 812), with
+// Watchers, for their 0xB023.
 type Pass struct {
 	Crossings []MoveResult
 	Ended     []MoveResult
@@ -396,7 +405,11 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 	now := h.clock()
 	out.Moved = make([]Entity, 0, len(h.moving))
 	for _, e := range h.moving {
+		wall := e.Move != nil && e.Move.Wall
 		h.settleLocked(e, now)
+		if wall && e.Move == nil {
+			ended = append(ended, e) // stopped at the wall (round 812)
+		}
 		out.Moved = append(out.Moved, outLocked(e, now))
 		if m := e.Move; m != nil {
 			if s := speeds[e.CharacterID]; s > 0 {

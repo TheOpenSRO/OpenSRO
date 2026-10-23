@@ -21637,6 +21637,16 @@ func _sync_move_order() -> void:
 		"dest":
 			var sent := NetClient.move_order_destination(_move_target)
 			if sent != Vector3.INF:
+				# Round 812: a click walk goes to the point sent -- the local
+				# coordinates truncated (FUN_009ec080) -- as retail's client
+				# walks the destination 0xB021 echoes; the server walks that
+				# point on its navigation mesh, and a walk to the exact click
+				# can pass a wall corner the server's meets (MEASURED: 0.87
+				# units off over 150, from 0.01 off cj_luxury's wall).
+				# Approaches re-aim every tick and keep their point.
+				if _pending_attack.is_empty() and _pending_friend_cast.is_empty() and _pending_pvp.is_empty():
+					_move_target.x = sent.x
+					_move_target.z = sent.z
 				_move_sync.sent_destination(sent, now_ms)
 				_order_end_blocked = false
 				_time_since_send = 0.0

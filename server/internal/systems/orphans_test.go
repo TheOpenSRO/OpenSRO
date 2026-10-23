@@ -43,6 +43,8 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 812: the navigation mesh's in-memory constructor.
+	"NewWorld": "round 812: navmesh.NewWorld builds a World from regions already in memory for the tests (the server opens an export with navmesh.Open).",
 	// Round 799: the job formulas the trade (round 801) and the job death
 	// (round 802) call; recovered and tested here first (internal/jobs).
 	"PutOldJob": "round 799: jobs.MemStore.PutOldJob seeds a previous-job row in tests; retail's writer of _OldTrijob is not known (docs/protocol/jobs.md).",

@@ -2041,7 +2041,10 @@ func (a *monsterAI) enterIdle(b *brain) {
 // (FUN_00541730 at 0x559e95).
 func (a *monsterAI) enterWander(b *brain) {
 	b.target = 0
-	destX, destZ, _, ok := ai.PickWanderLeg(a.rng, b.m.X, b.m.Z, b.heading, b.m.RunSpeed)
+	m0 := b.m
+	destX, destZ, _, ok := ai.PickWanderLeg(a.rng, b.m.X, b.m.Z, b.heading, b.m.RunSpeed, func(tx, tz float64) bool {
+		return navBlocked(m0.Zone, m0.X, m0.Y, m0.Z, tx, tz)
+	})
 	if !ok {
 		b.dwellMs = ai.WanderNoLegTimeoutMs
 		return
@@ -2134,6 +2137,17 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 	speed, may := statusSpeed(b.id, speed)
 	if !may {
 		return
+	}
+	// Round 812: the leg ends where the navigation mesh stops it (READ: the
+	// server steps its mover on its own navmesh and stops it at a blocking
+	// edge, CGObjMoverByDest; navWalk). A wall right ahead leaves no leg.
+	if cx, cz, clipped := navClipLeg(b.m.Zone, b.m.X, b.m.Y, b.m.Z, destX, destZ); clipped {
+		if math.Hypot(cx-b.m.X, cz-b.m.Z) < navMinLeg {
+			a.tracef("ai: monster %d %s to (%.0f,%.0f) blocked at once", b.id, what, destX, destZ)
+			return
+		}
+		a.tracef("ai: monster %d %s to (%.0f,%.0f) stops at a wall at (%.1f,%.1f)", b.id, what, destX, destZ, cx, cz)
+		destX, destZ = cx, cz
 	}
 	m, ok := a.monsters.SetMotion(b.id, destX, destZ, speed, mode)
 	if !ok {

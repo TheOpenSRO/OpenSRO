@@ -7483,7 +7483,7 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
-## Eight-hundred-and-twelfth round: NPC thieves off by default; a monster stands through its swing
+## Eight-hundred-and-twelfth round: NPC thieves off by default; a monster stands through its swing; server collision
 
 The user (2026-10-22), on v0.1.572: "Let's make NPC thieves a toggable feature and let's disable it for now.
 Also let's fully implement collision like the original game", then "Also fix the bug where mobs keep attacking
@@ -7510,10 +7510,36 @@ Tigers at the user's ox, 30 fps: crouched sliding for about a second between pou
   hold. A standing, mounted player in a box repro (`/goto mangyang; /spawn white tiger 2`, a horse) drew no
   legs at all on the old server, so the exact trigger in the user's fight is not reproduced (OPEN); the
   three READ rules above remove both ways a fight produced them.
-- **Collision (surveyed, not built this round).** The client walks the navmesh as the original does (the
-  rule READ, the carried cell INFERRED); the server has no geometry at all: monsters walk straight through
-  walls, the server cannot refuse a walk through a wall, `.cpd` objects have no navmesh, doors and gates
-  never change. Characters do not block each other in our client, and no read says the original does.
+- **Server collision (the user: "go ahead").** READ (docs/protocol/opcodes/movement.md): the original
+  server steps every mover on its own navigation mesh and stops it at a blocking edge. OpenSRO's server
+  had no geometry. Built:
+  - `server/internal/navmesh`: the `.nvm` reader, the `.bms` collision section, and a port of the
+    client's `NavGraph` field walk (`place`, `build`, `surface_at`, `landing_height_at`, `step_tracked`
+    with the in-object cell walk and the no-slide terrain stop). Parity MEASURED: the client's own
+    `walk_probe --sweep=200` on 97/168 and 98/168 (300 one-unit steps each, sliding) replayed in Go --
+    395 of 400 end within 0.05 on the same footing with the same wall count; the five others are long
+    wall slides drifting by float precision (Godot's 32-bit Vector2). Heights agree (`--column`).
+  - `World.Walk`: world frame -> region-local (worldmap.FromWorld; a world +Z is a local -Z), a unit
+    at a time with the footing carried, settled on each region crossing (`WalkStep`, OURS: MEASURED,
+    one 69.5-unit segment over cj_luxury stopped at 56.1 where one-unit steps walk on -- the client
+    steps a frame at a time). A 150-unit walk about 60 us.
+  - `cmd/export-navmesh` (6,279 `.nvm`, 773 MB, 2,044 of 3,307 objects with a mesh, a second);
+    `-navmesh-dir`; `cmd/navprobe`.
+  - Monsters: every leg ends at the first wall (`startLeg`, `navClipLeg`); the wander's 30-unit probe
+    reverses from a wall (READ 0xb45e58 / 0xb45e68, `ai.PickWanderLeg`). Live: a field leg stopped
+    at a wall (`stops at a wall`).
+  - Players: a 0x7021 leg ends at the wall (`world.MoveOrder.Wall`), its arrival a 0xB023 to the
+    window (`AdvanceMovers` `Ended`). `OPENSRO_MOVE_TRACE=1` logs legs, claims and wall arrivals.
+  - **The client walks the point it sends** (World3D `_sync_move_order`): the 0x7021 destination's
+    local coordinates are truncated (READ FUN_009ec080), and retail's client walks the echoed point;
+    ours walked the exact click. MEASURED (real time, Jangan, 13 clicks into cj_luxury's walls):
+    before, one click from 0.01 off the building's west wall ran 0.87 units differently over 150 and
+    the client passed a corner the server met -- snapped back 12 units; after, 7 walls, the server's
+    stop and the client's within 0.04 every time, no correction.
+  - Memory: 190 MB resident with a player in the Mangyang field (regions load on first use).
+  - Left (docs/TODO.md, "Server collision"): `.cpd` objects, doors and gates, dungeons, the heading
+    run, the carried cell. Characters do not block each other on either side, and no read says the
+    original's do.
 - **Tests:** `monsterswing812_test.go` (the hold: no move 2.4 s into a swing, one chase leg after; fails
   with ActionMs 0; the 15-degree test; the back-off), the existing battle suite, `go test ./...` all ok.
 

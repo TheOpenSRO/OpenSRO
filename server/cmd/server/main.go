@@ -39,6 +39,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/namefilter"
+	"github.com/OpenSRO/OpenSRO/server/internal/navmesh"
 	"github.com/OpenSRO/OpenSRO/server/internal/nest"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -983,6 +984,12 @@ func main() {
 			"magicoptionassign.txt, round 770): which blue options each kind of item can drop with. With it and "+
 			"-magic-options-csv a monster's equipment drop gets blue options as the original server gives them; "+
 			"without either, drops carry none. A configured path that does not load is fatal.")
+	navmeshDir := flag.String("navmesh-dir", os.Getenv("OPENSRO_NAVMESH_DIR"),
+		"the game's navigation meshes, as cmd/export-navmesh writes them from a client's own Data.pk2 and Map.pk2 "+
+			"(env OPENSRO_NAVMESH_DIR; round 812). With it the server walks every mover on them as the original "+
+			"server does: a monster's leg and a player's 0x7021 leg end at the first wall, a wall-stopped player "+
+			"leg ends with a 0xB023 to the window, and a wandering monster reverses from a wall 30 ahead. Without "+
+			"it movers keep straight legs. A configured directory that does not open is fatal.")
 	regionsCSV := flag.String("regions-csv", os.Getenv("OPENSRO_REGIONS_CSV"),
 		"path to the game's region table as CSV (env OPENSRO_REGIONS_CSV; from cmd/export-refdata -mode regions "+
 			"on a client's own server_dep\\silkroad\\textdata\\refregion.txt, round 674). Its IsBattleField 0 regions "+
@@ -1971,6 +1978,19 @@ func main() {
 		}
 	} else {
 		logger.Info("no region table (-regions-csv / OPENSRO_REGIONS_CSV): no region is a town, and a monster follows a player into one")
+	}
+	// Round 812: the navigation meshes.
+	if *navmeshDir != "" {
+		nav, err := navmesh.Open(*navmeshDir)
+		if err != nil {
+			logger.Error("opening the navigation meshes", "path", *navmeshDir, "err", err)
+			os.Exit(1)
+		}
+		session.SetNavmesh(nav)
+		logger.Info("navigation meshes: movers walk the original's navmesh, a wall ends a leg (regions load on first use)",
+			"path", *navmeshDir, "objects", nav.Objects())
+	} else {
+		logger.Info("no navigation meshes (-navmesh-dir / OPENSRO_NAVMESH_DIR): movers walk straight legs through walls")
 	}
 	// The magic option table (round 768): the alchemy stones' blue options.
 	var magicOptions *magicopt.Table

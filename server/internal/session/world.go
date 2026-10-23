@@ -1996,6 +1996,8 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}
+	traceMove("move: claim", "character", self.CharacterID, "stopped", req.Stopped, "relocated", req.Relocated,
+		"x", pos.X, "y", pos.Y, "z", pos.Z, "taken", admitted, "server_x", moved.Entity.Pos.X, "server_z", moved.Entity.Pos.Z)
 	if !admitted {
 		correctMover(sess, hub)
 		return nil

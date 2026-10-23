@@ -10,6 +10,28 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+
+## Server collision (round 812) -- **built: the server walks every mover on the game's navigation mesh; these are left**
+
+`server/internal/navmesh` is a port of the client's `NavGraph` (the field walk; parity: 395 of 400
+of the client's own `walk_probe --sweep` walks end within 0.05, the five others are 300-step wall
+slides that drift by float precision). `cmd/export-navmesh` writes the data from the user's own
+archives; prod reads it with `-navmesh-dir`. A monster's leg and a player's 0x7021 leg end at the
+first wall, a wall-stopped player leg ends with a 0xB023, and the wander probes 30 ahead.
+
+- [ ] **`.cpd` compound objects** (105) still have no navigation mesh on either side (OPEN in the
+      client too: `MapLoader::FUN_0042bc00` is not read).
+- [ ] **Doors and gates**: the event objects' state (fortress gates, dungeon doors, arena pads).
+- [ ] **Dungeons on the server**: `navWalk` skips a dungeon zone (the client walks `build_dungeon`).
+- [ ] **The heading run** (sky click, arrow keys) is not walked by the server; its client still
+      reports where a wall stopped it.
+- [ ] **The carried cell**: the server settles its footing per leg (`SurfaceAt`) and steps a unit
+      at a time (`navmesh.WalkStep`, OURS) as the client steps a frame at a time; retail carries
+      its cell pointer.
+- [ ] **The retail mover's own pacing** (`CGObjMoverByDest`'s 160-unit step cap) and its stop at
+      the step that blocks; OpenSRO clips the leg at the wall when the order arrives.
+- [ ] **Characters do not block each other** on either side; no read says retail's do.
+
 ## The job system (rounds 799-804; docs/protocol/jobs.md)
 
 The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off
@@ -541,9 +563,9 @@ In order. Each is checked off here when it ships in a release, with its round in
         mob-threat-retarget. Live check not feasible with one driven client.
       - Then the threat table's retarget rules (round 259, `ai.ThreatTable`, mob-threat-retarget),
         the AI-skill triggers (round 260, mob-ai-skill-triggers; the second attack skill is built,
-        round 554), the HOMING wobble, and the server-side blocked probe that stops legs
-        crossing walls (mob-server-geometry-probe; whether to turn the flag on before it exists is
-        a user decision).
+        round 554) and the HOMING wobble. ~~The server-side blocked probe that stops legs crossing
+        walls (mob-server-geometry-probe)~~ -- built in round 812 (`-navmesh-dir`, `internal/navmesh`:
+        legs end at the first wall, the wander's 30-unit probe reverses).
       Background, still true: a monster moves in retail by issuing the client's own movement
       request `0x7021` (`FUN_00540f70`; payload in `docs/protocol/opcodes/movement.md`, round 364),
       the retail shape OpenSRO's placeholder push will eventually give way to
