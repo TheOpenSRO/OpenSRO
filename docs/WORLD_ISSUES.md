@@ -7483,6 +7483,27 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eleventh round: a safe 1-star trade still meets NPC thieves
+
+The user (2026-10-22), on v0.1.571: "Also I did a 1 star trade and I still had thieves kill me -_-", the
+safe-trade banner at 1/8.
+
+- **Who killed him (MEASURED, prod log and DB).** deadass3 (level 140, 45976 HP, trader, `safe_count 1`)
+  closed a specialty dialog at 21:32:19 (`caravan: trader registered ... trade_risk=1`); at 21:33:29 a wave
+  of two NPC thieves (`value=510 scale=1 count=2`, MOB_THIEF_NPC rows of level 136-139, 84k-100k HP); dead
+  by 21:33:38. No other session was connected (the same PC's earlier one closed at 21:28:33), so no player
+  thief. `safe_status` is now false: the transport's death dropped the goods and the scale left 1.
+- **The original does the same (READ, objdump of SR_GameServer.exe; `jobs.md`, "A safe trade does not stop
+  them").** The safe-trade Status (TrijobMgr +0x1fb4 -> +0x8 -> +0x20) is read only through s:0x60e4d0,
+  called by the 0x34D5 sender, the player-thief caravan rule (s:0x52b760) and the grant. The registration
+  (s:0x60c5a0 via s:0x418100) follows the grant on the same dialog close with no Status or scale test. The
+  tick (s:0x60bc80/0x60bd40) and the wave (s:0x60bf30) test none, and a 1-star base 1 / "0 counts 1"
+  (s:0x60c1c8, 0x60c468) always sends one. The NPC thieves' target filter (AITactics selector 3,
+  s:0x546790, and CGObjMob::vslot_394 s:0x529110) tests job states only. So the safe trade keeps player
+  thieves off (0x3024) and nothing else.
+- **No rule changed.** OpenSRO already matched; `TestRound804CaravanWave` now runs under a granted safe trade
+  at scale 1 and asserts the wave comes. No client change, no server binary change (a test and docs only).
+
 ## Eight-hundred-and-tenth round: rider plates back from the ground; the ice star's life
 
 The user (2026-10-22), on v0.1.570: "Now it's too high up lol" (a screenshot of ours: the plate a rider's

@@ -9259,6 +9259,8 @@ func _refresh_player_name_plate() -> void:
 	if js >= 1 and js <= 3 and _plate_alias != "":
 		who = _plate_alias
 	var plate := _name_plate(job_plate_text(who, js), top)
+	# Round 811: the original's plate (_retail_plate_look), white (c:0x9cfd50).
+	_retail_plate_look(plate, PLAYER_NAME_COLOUR)
 	player.add_child(plate)
 	_plate_job_level = NetClient.job_level
 	_job_plate_decor(plate, plate, js, NetClient.job_level, _race_of_body(_player_body) == 1, false)
@@ -9388,8 +9390,8 @@ static func job_plate_text(name: String, job_state: int) -> String:
 	return name
 
 ## The job mark over `label` (a child of `holder`, swept with it), or null for
-## job state 4.
-func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool, right: bool = false) -> Sprite3D:
+## job state 4. Placed by _layout_job_decor.
+func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool) -> Sprite3D:
 	var old := holder.get_node_or_null("JobMark")
 	if old != null:
 		if swept:
@@ -9410,19 +9412,8 @@ func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool, righ
 	mark.no_depth_test = true
 	mark.render_priority = label.render_priority
 	mark.layers = OverlayView.BIT
+	mark.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	mark.position = label.position if holder != label else Vector3.ZERO
-	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
-	var text_size := font.get_string_size("Ag", HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
-	var name_w := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
-	var k := text_size.y / JOB_MARK_PX
-	mark.pixel_size = label.pixel_size * k * JOB_MARK_PX / float(tex.get_height())
-	var tex_px := float(tex.get_height()) / JOB_MARK_PX
-	# Round 805: beside the name, not over it -- the quad's left 20 px left of
-	# the name box's left (READ, c:0x9debe3 `fsub 20.0` on the box's x, +16.0
-	# its right; the y kept), so 4 px clear of it, as the party mark (round
-	# 660). right (the OURS job title layout) mirrors it past the name's end.
-	var side := 1.0 if right else -1.0
-	mark.offset = Vector2(side * (name_w * 0.5 / k + JOB_MARK_GAP_PX + JOB_MARK_PX * 0.5) * tex_px, 0.0)
 	holder.add_child(mark)
 	if swept:
 		_plate_sweep.add(mark)
@@ -9436,8 +9427,9 @@ func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool, righ
 ##   - On, OURS (the user's private-server reference): the class title
 ##     UIIT_STT_CLASS_[EU_]X_<job level> (JobText.class_key, the race's table
 ##     as CIFPlayerInfo picks it) in the original's title colour #FFE65B
-##     (READ, 0xffffe65b at c:0x9c28ed), one space left of "*alias", and the
-##     mark right of the name.
+##     (READ, 0xffffe65b at c:0x9c28ed) left of "*alias", laid out as the
+##     original lays out any title (_layout_job_decor), and the mark right of
+##     the name.
 ## Job state 4 (no suit) has neither.
 func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level: int, europe: bool, swept: bool) -> void:
 	var old := holder.get_node_or_null("JobTitle")
@@ -9450,23 +9442,117 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 	var title_text := ""
 	if titled:
 		title_text = _resolve_any_text(JobText.class_key(job_state, job_level, europe), "")
-	_job_mark(label, holder, job_state, swept, title_text != "")
-	if title_text == "":
+	_job_mark(label, holder, job_state, swept)
+	if title_text != "":
+		var title := _name_plate(title_text, 0.0, false)
+		title.name = "JobTitle"
+		title.remove_from_group("name_plates")
+		title.position = label.position if holder != label else Vector3.ZERO
+		# Round 811: the title setter's text item (READ c:0x9c28a0): font 0
+		# with the box (FUN_008b3bd0), its style flags 3 (FUN_008b4400(5, 3)):
+		# bit 0 the shadow, the glyph drawn first at +1, +1 in black at the
+		# colour's alpha (FUN_008b2290's param_5, from FUN_008b48b0's `+0x60 &
+		# 1`), bit 1 the bold glyph set (FUN_008b39e0: +0x60 & 2 selects the
+		# font's style 2 -- INFERRED the client's weight-600 variant, MEASURED
+		# 2-px stems in the user's private-server picture).
+		_retail_plate_look(title, JOB_TITLE_COLOUR, false)
+		var bold := _plate_bold_font()
+		if bold != null:
+			title.font = bold
+		title.render_priority = label.render_priority + 1
+		var shadow := Label3D.new()
+		shadow.name = "Shadow"
+		shadow.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		shadow.fixed_size = true
+		shadow.no_depth_test = true
+		shadow.outline_size = 0
+		shadow.modulate = Color(0.0, 0.0, 0.0, JOB_TITLE_COLOUR.a)
+		shadow.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		shadow.render_priority = label.render_priority
+		shadow.layers = OverlayView.BIT
+		title.add_child(shadow)
+		holder.add_child(title)
+		if swept:
+			_plate_sweep.add(title)
+	_layout_job_decor(label, holder)
+
+## The gap between a title and its name (READ, FUN_009d0a80 c:0x9d0c3f: the
+## title's left at the point - (title w + name w + 2) x 0.5, the name 2 px
+## right of the title's end) after the title's own trailing space (READ: the
+## title setter appends L" " -- 0xe19330 -- to a title it draws).
+const JOB_TITLE_GAP_PX := 2.0
+
+## Lays out a plate's name, title and job mark from their widths now (round
+## 811): with a title, title and name are centred TOGETHER on the plate's
+## point (READ, FUN_009d0a80 0x9d0c1d..0x9d0d2b, the constants 0xde24f8 =
+## -0.5 and 0xe1b7d0 = 0.5 read out of the PE image) -- round 805 centred the
+## name alone and hung the title off its left, so the plate sat left of its
+## owner -- and the name's box runs under both. The mark (16 x 16, READ
+## c:0x9dec35, 1:1 on screen) sits JOB_MARK_GAP_PX clear of the name: left
+## of it (the original's), or right of it with a title (OURS, round 805).
+## Called again when a width changes: the selection's bold, a UI re-scale.
+func _layout_job_decor(label: Label3D, holder: Node3D) -> void:
+	if label == null or holder == null:
 		return
-	var title := _name_plate(title_text, 0.0, false)
-	title.name = "JobTitle"
-	title.remove_from_group("name_plates")
-	title.position = label.position if holder != label else Vector3.ZERO
-	title.modulate = JOB_TITLE_COLOUR
+	var title := holder.get_node_or_null("JobTitle") as Label3D
+	var mark := holder.get_node_or_null("JobMark") as Sprite3D
+	var fk := _plate_fk(label)
+	var name_w := _plate_text_width(label, label.text)
+	var was := Vector2(label.offset.x, float(label.get_meta(NamePlates.BOX_LEFT_META, 0.0)))
+	var ext := 0.0
+	label.offset.x = 0.0
+	if title != null:
+		var title_w := _plate_text_width(title, title.text)
+		var gap := _plate_text_width(title, " ") + JOB_TITLE_GAP_PX * fk
+		var total := title_w + gap + name_w
+		label.offset.x = total * 0.5 - name_w * 0.5
+		title.offset = Vector2(-total * 0.5 + title_w * 0.5, label.offset.y)
+		ext = title_w + gap
+		var shadow := title.get_node_or_null("Shadow") as Label3D
+		if shadow != null:
+			shadow.text = title.text
+			shadow.font = title.font
+			shadow.font_size = title.font_size
+			shadow.pixel_size = title.pixel_size
+			shadow.offset = title.offset + Vector2(fk, -fk)
+	label.set_meta(NamePlates.BOX_LEFT_META, ext)
+	_fit_monster_name_box(label)
+	if mark != null and mark.texture != null:
+		var mpx := label.pixel_size * fk * JOB_MARK_PX / float(mark.texture.get_height())
+		mark.pixel_size = mpx
+		var side := 1.0 if title != null else -1.0
+		var cx := label.offset.x + side * (name_w * 0.5 + (JOB_MARK_GAP_PX + JOB_MARK_PX * 0.5) * fk)
+		var cy := label.offset.y + NamePlates.BOX_RAISE_PX * fk
+		mark.offset = Vector2(cx, cy) * (label.pixel_size / mpx)
+	if _plate_batch != null and _plate_batch.has(label) and was != Vector2(label.offset.x, ext):
+		_plate_batch.reshape(label)
+
+## A plate's text width in its font pixels.
+static func _plate_text_width(label: Label3D, text: String) -> float:
 	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
-	var name_w := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
-	var title_w := font.get_string_size(title_text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
-	var gap := font.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
-	title.offset = Vector2(-(name_w * 0.5 + gap + title_w * 0.5), 0.0)
-	title.render_priority = label.render_priority
-	holder.add_child(title)
-	if swept:
-		_plate_sweep.add(title)
+	return font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
+
+## A plate's font pixels per pixel of the original (FontOversampling).
+static func _plate_fk(label: Label3D) -> float:
+	return FontOversampling.factor() if label.has_meta(FontOversampling.META) else 1.0
+
+## The plates' bold face: font 0's weight-600 stand-in, at the item
+## tooltip's embolden (OURS, 1.05 px more stem at 12 px; its note), each
+## glyph 1 px wider apart (OURS, MEASURED: "Amateur Trader" is 98 px in the
+## user's private-server picture, 87 px emboldened alone, 14 glyphs).
+const PLATE_BOLD_EMBOLDEN := 1.4
+const PLATE_BOLD_SPACING_PX := 1.0
+var _plate_bold: FontVariation = null
+
+func _plate_bold_font() -> Font:
+	if _plate_bold == null:
+		var base: Font = _ui_builder.font_at(0) if _ui_builder != null else null
+		if base == null:
+			return null
+		_plate_bold = FontOversampling.bold(base, PLATE_BOLD_EMBOLDEN)
+		# In the plate's font pixels (FontOversampling's factor at the time).
+		_plate_bold.spacing_glyph = int(roundf(PLATE_BOLD_SPACING_PX * FontOversampling.factor()))
+	return _plate_bold
 
 ## The OURS Job Titles on Names row (round 805), on unless set Off.
 func job_titles_on() -> bool:
@@ -9516,21 +9602,36 @@ func _own_job_state() -> int:
 ## Drawn 1:1: the plate's pixel_size makes one glyph texel one screen pixel
 ## times the UI scale (fixed_size: a font pixel spans pixel_size x depth world
 ## units, and the screen is 2 depth tan(fov/2) tall), the glyphs rasterised
-## at the UI scale as the HUD's are (round 672) and sampled NEAREST. The
-## other plates (players, NPCs) keep their look: the picture shows monsters.
+## at the UI scale as the HUD's are (round 672) and sampled NEAREST.
+## Round 811: every character's plate is this one (_retail_plate_look) --
+## the name setter that gives a monster its font and box is every
+## CICharactor's (NamePlates.BOX_COLOUR) -- and the box's alpha is the READ
+## 64/255, not the 0.29 measured here.
 const MONSTER_NAME_COLOUR := Color(1.0, 1.0, 1.0)
-const MONSTER_NAME_BOX_COLOUR := Color(0.0, 0.0, 0.0, 0.29)
-const MONSTER_NAME_BOX_PAD_PX := 2.0
-const MONSTER_NAME_BOX_HEIGHT_PX := 16.0
-const MONSTER_NAME_BOX_RAISE_PX := 1.0
-## The monster plates whose pixel_size follows the screen.
+const MONSTER_NAME_BOX_COLOUR := NamePlates.BOX_COLOUR
+const MONSTER_NAME_BOX_PAD_PX := NamePlates.BOX_PAD_PX
+const MONSTER_NAME_BOX_HEIGHT_PX := NamePlates.BOX_HEIGHT_PX
+const MONSTER_NAME_BOX_RAISE_PX := NamePlates.BOX_RAISE_PX
+## The plates whose pixel_size follows the screen (every _retail_plate_look).
 const MONSTER_PLATE_GROUP := "monster_name_plates"
 ## [window height, UI scale, camera fov] the monster plates were last sized
 ## for; _step_monster_plate_scale re-sizes them when any changes.
 var _monster_plate_basis := Vector3.ZERO
 
+## A player's name colour: white (READ, c:0x9cfd50 FUN_009c1920(0xffffffff)
+## for a player in no PK state; the hostile, PK, party and GM colours are
+## its other branches). Round 811; the pale NAME_PLATE_COLOUR was ours.
+const PLAYER_NAME_COLOUR := Color(1.0, 1.0, 1.0)
+
 func _monster_name_look(label: Label3D) -> void:
-	label.modulate = MONSTER_NAME_COLOUR
+	_retail_plate_look(label, MONSTER_NAME_COLOUR)
+
+## Round 811: the original's plate on a character's label: font 0 at 12 px,
+## 1:1 on screen, no outline, the box behind it (NamePlates.BOX_COLOUR), in
+## `colour`. `with_box` false leaves the box to NamePlateBatch (a batched
+## plate's Label3D is never drawn): the label still says it has one.
+func _retail_plate_look(label: Label3D, colour: Color, with_box: bool = true) -> void:
+	label.modulate = colour
 	label.outline_size = 0
 	var font: Font = _ui_builder.font_at(0) if _ui_builder != null else null
 	if font != null:
@@ -9541,47 +9642,50 @@ func _monster_name_look(label: Label3D) -> void:
 	# magnified (Godot 4.7.2's Label3D is not oversampled).
 	FontOversampling.label3d(label, UiBuilder.FONT_SIZES[0], 0, _monster_plate_pixel_size())
 	label.add_to_group(MONSTER_PLATE_GROUP)
-	var box := Sprite3D.new()
-	box.name = "NameBox"
-	box.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	box.fixed_size = true
-	box.no_depth_test = true
-	box.shaded = false
-	box.modulate = MONSTER_NAME_BOX_COLOUR
-	# Under the text: a lower render priority among the transparent overlays.
-	box.render_priority = label.render_priority - 1
-	box.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	box.layers = OverlayView.BIT
-	label.add_child(box)
+	label.set_meta(NamePlates.BOX_META, true)
+	if with_box:
+		_plate_box_sprite(label)
+
+## The label's NameBox (made once), fitted.
+func _plate_box_sprite(label: Label3D) -> void:
+	if label.get_node_or_null("NameBox") == null:
+		var box := Sprite3D.new()
+		box.name = "NameBox"
+		box.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		box.fixed_size = true
+		box.no_depth_test = true
+		box.shaded = false
+		box.modulate = MONSTER_NAME_BOX_COLOUR
+		# Under the text: a lower render priority among the transparent overlays.
+		box.render_priority = label.render_priority - 1
+		box.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		box.layers = OverlayView.BIT
+		label.add_child(box)
 	_fit_monster_name_box(label)
 
-## The box behind a monster's name: the text's own width plus the padding,
-## MONSTER_NAME_BOX_HEIGHT_PX tall, in the plate's font pixels (which the
-## plate's pixel_size makes screen pixels x the UI scale).
+## The box behind a plate's name: NamePlates.box_rect in the plate's font
+## pixels (which the plate's pixel_size makes screen pixels x the UI scale);
+## none behind an empty name.
 func _fit_monster_name_box(label: Label3D) -> void:
 	var box := label.get_node_or_null("NameBox") as Sprite3D
 	if box == null:
 		return
-	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
-	# In the plate's font pixels, which FontOversampling may have multiplied
-	# (round 760): the padding, height and raise follow.
-	var fk := FontOversampling.factor() if label.has_meta(FontOversampling.META) else 1.0
-	var w := int(ceil(font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x + 2.0 * MONSTER_NAME_BOX_PAD_PX * fk))
-	var h := int(roundf(MONSTER_NAME_BOX_HEIGHT_PX * fk))
-	var key := "%dx%d" % [w, h]
+	var r := NamePlates.box_rect(label)
+	var key := "%dx%d" % [int(r.size.x), int(r.size.y)]
 	var tex: Texture2D = _monster_name_box_textures.get(key)
 	if tex == null:
-		var img := Image.create(maxi(w, 1), h, false, Image.FORMAT_RGBA8)
+		var img := Image.create(int(r.size.x), int(r.size.y), false, Image.FORMAT_RGBA8)
 		img.fill(Color.WHITE)
 		tex = ImageTexture.create_from_image(img)
 		_monster_name_box_textures[key] = tex
 	box.texture = tex
 	box.pixel_size = label.pixel_size
+	box.visible = label.text != ""
 	_fit_party_mark(label, label.get_node_or_null("PartyMark") as Sprite3D)
 	# Centred on the plate the box sat one row low against the picture (3 rows
 	# above the cap top and 2 below the descender, MEASURED in round 673's
-	# render, against retail's 4 and 1): one font pixel up.
-	box.offset = Vector2(0.0, MONSTER_NAME_BOX_RAISE_PX * fk)
+	# render, against retail's 4 and 1): one font pixel up (box_rect).
+	box.offset = r.position
 var _monster_name_box_textures := {}
 
 ## One font pixel = one screen pixel x the UI scale, for a fixed-size plate
@@ -9615,6 +9719,22 @@ func _step_monster_plate_scale() -> void:
 			continue
 		FontOversampling.label3d_pixel_size(plate, size)
 		_fit_monster_name_box(plate)
+	# Round 811: a suited plate's title and mark follow their name, and a
+	# batched plate (NamePlateBatch) is shaped again at its new size.
+	var own_plate := player.get_node_or_null("Name") as Label3D if player != null else null
+	if own_plate != null:
+		_layout_job_decor(own_plate, own_plate)
+	for id in _other_bodies:
+		var ob: Node3D = _other_bodies[id]
+		if ob == null or not is_instance_valid(ob):
+			continue
+		var op := ob.get_node_or_null("Name") as Label3D
+		if op == null:
+			continue
+		if ob.get_node_or_null("JobMark") != null or ob.get_node_or_null("JobTitle") != null:
+			_layout_job_decor(op, ob)
+		if _plate_batch != null and _plate_batch.has(op):
+			_plate_batch.reshape(op)
 	# Round 797: a COS's owner line keeps its screen-pixel gap.
 	for uid in _cos_bodies:
 		var cb: Node3D = _cos_bodies[uid]
@@ -9622,6 +9742,74 @@ func _step_monster_plate_scale() -> void:
 			var ol := cb.get_node_or_null("OwnerLabel") as Label3D
 			if ol != null:
 				ol.offset.y = _cos_owner_offset(ol)
+				_fit_monster_name_box(ol)
+
+## Round 811: the selection's name is drawn bold (READ, FUN_009d0a80
+## c:0x9d0ae6..0x9d0b2d: when the selection's id -- FUN_00778b70 on
+## 0x110f80c -- is the object's +0xf8, its name item gets style bit 2 on
+## every side, FUN_008b44b0(5, 2); otherwise the bit is cleared,
+## FUN_008b4560(5, 2) -- the bold glyph set, as the title's). OURS: the
+## selection is the ground ring's (GroundMarkers.follow_key, the same click
+## sets both); checked once a rendered frame, a string compare.
+var _bold_plate_key := ""
+var _bold_plate: Label3D = null
+
+func _step_selected_plate() -> void:
+	var key := ""
+	if _ground_markers != null and is_instance_valid(_ground_markers) and _ground_markers.shown:
+		key = _ground_markers.follow_key
+	var label := _bold_plate if key == _bold_plate_key else null
+	if key == _bold_plate_key and (label == null or is_instance_valid(label)):
+		return
+	if _bold_plate != null and is_instance_valid(_bold_plate):
+		_set_plate_bold(_bold_plate, false)
+	_bold_plate_key = key
+	_bold_plate = _plate_of_key(key)
+	if _bold_plate != null:
+		_set_plate_bold(_bold_plate, true)
+
+## A selection key's name plate (the ring's keys), or null.
+func _plate_of_key(key: String) -> Label3D:
+	var parts := key.split(":")
+	if parts.size() != 2 or not parts[1].is_valid_int():
+		return null
+	var id := int(parts[1])
+	var holder: Node = null
+	var child := "Name"
+	match parts[0]:
+		"monster":
+			holder = _monster_bodies.get(id)
+			child = "Label"
+		"player":
+			holder = player if id == _own_id() or id == -1 else _other_bodies.get(id)
+		"cos":
+			holder = _cos_bodies.get(id)
+			child = "Label"
+		"npc":
+			holder = instance_from_id(id) as Node
+	if holder == null or not is_instance_valid(holder):
+		return null
+	return holder.get_node_or_null(child) as Label3D
+
+## A plate's name in the bold face or back in font 0, its box, title and
+## mark laid out again, a batched one shaped again.
+func _set_plate_bold(label: Label3D, on: bool) -> void:
+	if not label.has_meta(NamePlates.BOX_META):
+		return
+	var base: Font = _ui_builder.font_at(0) if _ui_builder != null else null
+	var want: Font = _plate_bold_font() if on else base
+	if want == null or label.font == want:
+		return
+	label.font = want
+	var holder: Node3D = label
+	if label.get_node_or_null("JobMark") == null and label.get_node_or_null("JobTitle") == null:
+		holder = label.get_parent() as Node3D
+	if holder != null and (holder.get_node_or_null("JobMark") != null or holder.get_node_or_null("JobTitle") != null):
+		_layout_job_decor(label, holder)
+	else:
+		_fit_monster_name_box(label)
+	if _plate_batch != null and _plate_batch.has(label):
+		_plate_batch.reshape(label)
 
 ## Where a name sits over a model, how large it draws, and in what colour.
 ##
@@ -10091,6 +10279,7 @@ func _plate_batch_switch(on: bool) -> void:
 		else:
 			if _plate_batch != null and _plate_batch.has(label):
 				_plate_batch.remove(label)
+			_plate_box_sprite(label)
 			_plate_sweep.add(label)
 
 ## Round 757: another player's plate over `node` at `top`: batched
@@ -10110,12 +10299,15 @@ func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	var job: Dictionary = NetClient.user_jobs.get(int(node.get_meta("character_id", -1)), {})
 	var js := int(job.get("state", UserSpawnNet.JOB_STATE_NONE))
 	var plate := _name_plate(job_plate_text(char_name, js), top, not batched)
+	# Round 811: the original's plate; a batched one's box is the batch's.
+	_retail_plate_look(plate, PLAYER_NAME_COLOUR, not batched)
 	# Round 802: an opposed job's name in the hostile colour (c:0x9cfd50).
 	if JobPvpNet.enemy_name(_own_job_state(), js):
 		plate.modulate = JobPvpNet.ENEMY_NAME_COLOUR
 	node.add_child(plate)
 	if batched and not _plate_batch_add(plate, node):
 		plate.visible = true
+		_plate_box_sprite(plate)
 		_plate_sweep.add(plate)
 	_job_plate_decor(plate, node, js, int(job.get("level", 0)), _other_is_europe(node), true)
 
@@ -10476,7 +10668,11 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	# CICharactor casts one in the original, NPCs included).
 	CharacterBlobs.register(holder, float(_bc_radius_by_code.get(code, 0.0)))
 	if npc_name != "":
-		holder.add_child(_name_plate(npc_name, bounds.y))
+		var npc_plate := _name_plate(npc_name, bounds.y)
+		# Round 811: the original's plate (every CICharactor's name setter
+		# gives it the box); the colour stays ours (NAME_PLATE_COLOUR).
+		_retail_plate_look(npc_plate, NAME_PLATE_COLOUR)
+		holder.add_child(npc_plate)
 	group.add_child(holder)
 	_light_character(holder)
 	_animate_skeleton(skeleton, idle_anim)
@@ -14091,7 +14287,7 @@ func _recolour_enemy_plates() -> void:
 func _colour_enemy_plate(body: Node3D, enemy: bool) -> void:
 	var label := body.get_node_or_null("Name") as Label3D
 	if label != null:
-		var want: Color = JobPvpNet.ENEMY_NAME_COLOUR if enemy else NAME_PLATE_COLOUR
+		var want: Color = JobPvpNet.ENEMY_NAME_COLOUR if enemy else PLAYER_NAME_COLOUR
 		if label.modulate == want:
 			return
 		label.modulate = want
@@ -21306,6 +21502,7 @@ func _physics_step(delta: float) -> void:
 		if player != null and player.is_inside_tree():
 			_plate_sweep.step(player.global_position)
 			_step_monster_plate_scale()
+			_step_selected_plate()
 		if FrameSplit.on:
 			FrameSplit.add("p_plates", Time.get_ticks_usec() - split_sw)
 		split_sw = Time.get_ticks_usec()
@@ -34413,9 +34610,12 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	body.add_child(_monster_collider(height))
 	var label := _name_plate("", height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	label.name = "Label"
+	# Round 811: both lines in the original's plate (_retail_plate_look).
+	_retail_plate_look(label, COS_NAME_COLOUR)
 	body.add_child(label)
 	var owner_label := _name_plate("", height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	owner_label.name = "OwnerLabel"
+	_retail_plate_look(owner_label, Color.WHITE)
 	owner_label.offset.y = _cos_owner_offset(owner_label)
 	body.add_child(owner_label)
 	_cos_label(body, rec)
@@ -34445,11 +34645,13 @@ func _cos_label(body: Node3D, rec: CosSpawnNet.Record) -> void:
 	if label != null:
 		label.text = "" if ridden else CosSpawnNet.plate_text(_cos_display_name(rec))
 		label.modulate = COS_NAME_COLOUR
+		_fit_monster_name_box(label)
 	var owner_label: Label3D = body.get_node_or_null("OwnerLabel")
 	if owner_label != null:
 		owner_label.text = "" if ridden else cos_owner_line(rec)
 		owner_label.modulate = Color.WHITE
 		owner_label.visible = owner_label.text != ""
+		_fit_monster_name_box(owner_label)
 
 func _cos_free_body(uid: int) -> void:
 	var body: Node3D = _cos_bodies.get(uid)

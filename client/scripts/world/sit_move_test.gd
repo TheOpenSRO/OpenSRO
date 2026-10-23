@@ -35,6 +35,7 @@ func _initialize() -> void:
 		await physics_frame
 		_test_seated(world)
 		_test_plates(world)
+		_test_plate_layout(world)
 		world.queue_free()
 		await process_frame
 	print("sit_move_test: %s (%d failure(s))" % ["PASS" if _failures == 0 else "FAIL", _failures])
@@ -108,6 +109,64 @@ func _test_seated(world: Node) -> void:
 	world.call("_try_set_move_target", Vector2(10, 10))
 	_check(int(world.get("toggles")) == 3, "standing, a click asks nothing")
 	npc.queue_free()
+
+## Round 811: a suited plate as the original lays out a title (FUN_009d0a80):
+## title and name centred together, 2 px + the title's space apart, the box
+## under both, the title's shadow 1 px right and down, the mark 16 px clear
+## of the name; the box READ black at 64/255.
+func _test_plate_layout(world: Node) -> void:
+	var body := Node3D.new()
+	world.add_child(body)
+	var plate := Label3D.new()
+	plate.name = "Name"
+	plate.text = "*Merchy"
+	body.add_child(plate)
+	world.call("_retail_plate_look", plate, Color.WHITE)
+	_check(plate.modulate == Color.WHITE and plate.outline_size == 0 and plate.font_size == UiBuilder.FONT_SIZES[0] * int(FontOversampling.factor())
+		and bool(plate.get_meta(NamePlates.BOX_META, false)), "a player's plate is the original's: white, no outline, font 0, on its box")
+	var box := plate.get_node_or_null("NameBox") as Sprite3D
+	_check(box != null and is_equal_approx(box.modulate.a, 64.0 / 255.0), "the box is black at 64/255")
+	var title := Label3D.new()
+	title.name = "JobTitle"
+	title.text = "Amateur Trader"
+	world.call("_retail_plate_look", title, Color.YELLOW, false)
+	var shadow := Label3D.new()
+	shadow.name = "Shadow"
+	title.add_child(shadow)
+	body.add_child(title)
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	var mark := Sprite3D.new()
+	mark.name = "JobMark"
+	mark.texture = ImageTexture.create_from_image(img)
+	body.add_child(mark)
+	world.call("_layout_job_decor", plate, body)
+	var fk := FontOversampling.factor()
+	var name_w := float(world.call("_plate_text_width", plate, plate.text))
+	var title_w := float(world.call("_plate_text_width", title, title.text))
+	var space := float(world.call("_plate_text_width", title, " "))
+	var t_left := title.offset.x - title_w * 0.5
+	var n_left := plate.offset.x - name_w * 0.5
+	var n_right := plate.offset.x + name_w * 0.5
+	_check(is_equal_approx(t_left, -n_right), "title and name are centred together on the point (%.1f .. %.1f)" % [t_left, n_right])
+	_check(is_equal_approx(n_left - (title.offset.x + title_w * 0.5), space + 2.0 * fk), "the name starts the title's space + 2 px after it")
+	var r := NamePlates.box_rect(plate)
+	_check(absf(r.position.x) < 1.0 and absf(r.size.x - ceilf(title_w + space + 2.0 * fk + name_w + 4.0 * fk)) < 0.01,
+		"one box under title and name (%s)" % str(r))
+	_check(box.offset.is_equal_approx(r.position), "the NameBox is drawn there")
+	_check(shadow.offset.is_equal_approx(title.offset + Vector2(fk, -fk)) and shadow.text == title.text, "the title's shadow is 1 px right and down")
+	var mark_x := mark.offset.x * mark.pixel_size / plate.pixel_size
+	_check(is_equal_approx(mark_x, n_right + (4.0 + 8.0) * fk), "the mark is 4 px right of the name with a title (%.1f)" % mark_x)
+	_check(is_equal_approx(mark.pixel_size * 16.0, plate.pixel_size * fk * 16.0), "and 16 px of the original")
+	body.remove_child(title)
+	title.free()
+	world.call("_layout_job_decor", plate, body)
+	mark_x = mark.offset.x * mark.pixel_size / plate.pixel_size
+	_check(plate.offset.x == 0.0 and is_equal_approx(mark_x, -(name_w * 0.5 + 12.0 * fk)), "without a title the name is centred and the mark left of it")
+	var me := world.get("player") as Node3D
+	if me != null:
+		_check(world.call("_plate_of_key", "player:-1") == me.get_node_or_null("Name"), "the own selection key finds the own plate")
+	_check(world.call("_plate_of_key", "monster:x") == null, "a malformed key finds none")
+	body.queue_free()
 
 func _test_plates(world: Node) -> void:
 	var body := Node3D.new()

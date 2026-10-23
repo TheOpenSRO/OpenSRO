@@ -116,7 +116,13 @@ func TestRound804CaravanWave(t *testing.T) {
 	js := jobs.NewMemStore()
 	SetJobDeps(JobDeps{Store: js, Chars: chars, Hub: hub})
 	t.Cleanup(func() { jobRT.Store(nil); jobStates.Delete(cid); jobRecs.Delete(cid); forgetTradeScale(cid) })
-	_ = js.Save(ctx, jobs.Record{CharID: cid, Kind: jobs.KindTrader, Level: 1})
+	// A safe-trading trader (Status 1, round 811): the safe trade does not
+	// stop a wave. READ: its Status (TrijobMgr record +0x20, getter
+	// s:0x60e4d0) is read only by the 0x34D5 sender (s:0x51a9f3..0x51ab3f),
+	// the player-thief caravan rule (s:0x52b7a1 / 0x52b7fa) and the grant
+	// (s:0x60e933) -- not by the caravan tick, the wave, its count or the
+	// monsters' target filters.
+	_ = js.Save(ctx, jobs.Record{CharID: cid, Kind: jobs.KindTrader, Level: 1, Safe: jobs.SafeTrade{Status: true, Count: 1}})
 	jobStates.Store(cid, jobs.StateTrader)
 	SetSpecialtyDeps(SpecialtyDeps{Items: items, Chars: chars})
 	t.Cleanup(func() { specialtyRT.Store(nil) })
@@ -166,10 +172,13 @@ func TestRound804CaravanWave(t *testing.T) {
 		t.Fatal("a registered caravan was registered again")
 	}
 
+	if v := tradeAmountOf(ctx, cid, 30); specialtyNow().d.Thresholds.Scale(v) != 1 || !jobRecord(ctx, cid).Safe.Status {
+		t.Fatalf("want a 1-star caravan under a safe trade: amount %d, safe %+v", v, jobRecord(ctx, cid).Safe)
+	}
 	rt.tick(ctx, 120000)
 	all := monsters.InZone("jangan")
 	if len(all) == 0 {
-		t.Fatal("no wave")
+		t.Fatal("no wave round a safe-trading 1-star caravan (the original sends one: 0 counts 1, s:0x60c468)")
 	}
 	cosWorld.mu.Lock()
 	tp := o.at(time.Now())

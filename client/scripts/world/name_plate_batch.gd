@@ -353,6 +353,11 @@ func _shape(p: Plate) -> void:
 		lines.append(ts.shaped_text_substr(shaped, breaks[i], breaks[i + 1] - breaks[i]))
 		i += 2
 	var px := label.pixel_size
+	# Round 811: the box behind the name (NamePlates.box_rect), as the
+	# label's NameBox Sprite3D draws it: one quad of the white texel in the
+	# box colour, one render priority under the text.
+	if bool(label.get_meta(NamePlates.BOX_META, false)) and label.text != "":
+		_box_quad(p, NamePlates.box_rect(label), px)
 	var total_h := 0.0
 	for line in lines:
 		total_h += (ts.shaped_text_get_size(line).y + label.line_spacing) * px
@@ -378,6 +383,51 @@ func _shape(p: Plate) -> void:
 		ts.free_rid(line)
 	ts.free_rid(shaped)
 	stats["glyphs"] = int(stats["glyphs"]) + glyphs
+
+## Round 811: a plate's box, `r` in its font pixels (centre, size).
+func _box_quad(p: Plate, r: Rect2, px: float) -> void:
+	var key := _box_key(p.label)
+	var part: Array = p.parts.get(key, [])
+	if part.is_empty():
+		part = [PackedVector3Array(), PackedVector2Array(), PackedColorArray(), PackedVector2Array()]
+		p.parts[key] = part
+	var x0 := (r.position.x - r.size.x * 0.5) * px
+	var x1 := (r.position.x + r.size.x * 0.5) * px
+	var y0 := (r.position.y - r.size.y * 0.5) * px
+	var y1 := (r.position.y + r.size.y * 0.5) * px
+	var v0 := Vector3(x0, y1, 0.0)
+	var v1 := Vector3(x1, y1, 0.0)
+	var v2 := Vector3(x1, y0, 0.0)
+	var v3 := Vector3(x0, y0, 0.0)
+	var uv := Vector2(0.5, 0.5)
+	append_quad(part, PackedVector3Array([v0, v1, v2, v0, v2, v3]), PackedVector2Array([uv, uv, uv, uv, uv, uv]), NamePlates.BOX_COLOUR, p.slot)
+
+## The one white texel every box samples.
+static var _white: ImageTexture = null
+
+static func white_texture() -> ImageTexture:
+	if _white == null:
+		var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		_white = ImageTexture.create_from_image(img)
+	return _white
+
+## The box's surface key: its own material, under the text's priority.
+func _box_key(label: Label3D) -> String:
+	var key := "box|0|%d|%d" % [label.texture_filter, label.render_priority]
+	if not _materials.has(key):
+		var mat := RenderingServer.material_create()
+		RenderingServer.material_set_shader(mat, _shader_for(false, label.texture_filter).get_rid())
+		RenderingServer.material_set_param(mat, "albedo", Color(1, 1, 1, 1))
+		RenderingServer.material_set_param(mat, "uv1_offset", Vector3(0, 0, 0))
+		RenderingServer.material_set_param(mat, "uv1_scale", Vector3(1, 1, 1))
+		RenderingServer.material_set_param(mat, "uv2_offset", Vector3(0, 0, 0))
+		RenderingServer.material_set_param(mat, "uv2_scale", Vector3(1, 1, 1))
+		RenderingServer.material_set_param(mat, "texture_albedo", white_texture().get_rid())
+		RenderingServer.material_set_render_priority(mat, label.render_priority - 1)
+		_anchor_bind(mat)
+		_materials[key] = mat
+	return key
 
 ## One glyph's quads (its `repeat` of them), as _generate_glyph_surfaces: two
 ## triangles (Label3D indexes 0,1,2 0,2,3 of its four corners), written out.

@@ -685,6 +685,10 @@ _CharTrijobSafeTrade row: AbleCount, Status, LastSafeTrade.
 - OURS, disclosed: the select reply's own safe-trade tail (option, num, count
   after the interaction ids, s:0x52b040) is not sent; the client reads the
   counts from 0x34D5.
+- **What it protects** (READ, round 811): only the caravan rule of Job PvP
+  reads the Status -- player thieves. NPC thief waves still come and still
+  target the trader ("NPC thieves and hunters", "A safe trade does not stop
+  them").
 
 ### Still OPEN
 
@@ -750,6 +754,61 @@ no wave this time. Else the wave.
   killing player). A job death by them is cause 1 (Job PvP above).
 - **How long they stay:** the spawn routine keeps no record of a wave and
   nothing removes one; it stays until killed.
+
+### A safe trade does not stop them (round 811)
+
+The user, on v0.1.571, after a 1-star trade under a granted safe trade (the
+"1/8" banner): "I still had thieves kill me". The killers were a wave of two
+NPC thieves (MEASURED, prod log: `caravan: wave ... value=510 scale=1
+count=2` 70 s after the registration, the death 8 s later, no other player
+connected). The original does the same (READ, objdump of SR_GameServer.exe):
+
+- **Every reader of the Status.** The safe-trade record is TrijobMgr
+  (CGObjPC +0x1fb4)'s +0x8, its Status the byte at +0x20, written only by
+  s:0x60e520 and read only through s:0x60e4d0, whose callers are: the
+  0x34D5 sender (s:0x51a9f3, 0x51aa3d, 0x51aa91, 0x51aaa1, 0x51aae0,
+  0x51ab3f), the player-thief caravan rule (s:0x52b7a1, 0x52b7fa) and the
+  grant (s:0x60e933). No function in 0x530000..0x560000 (the AI) calls into
+  the TrijobMgr or the caravan code or touches +0x1fb4. The trade scale
+  (s:0x60c330) is read by the spawn and status writers (s:0x4d1f72,
+  0x4e5cbe), the registration's log (s:0x510879), the scale change
+  (s:0x5237a7), the caravan rule, the wave (s:0x60bf3a) and the grant's
+  eligibility (s:0x60e8a6) -- by no target filter.
+- **The registration** (s:0x60c5a0, reached only through the thunk
+  s:0x418100 from s:0x4e9676, 0x4fa861, 0x510872) happens right after the
+  grant (s:0x510833) on the same dialog close, with no test of the Status or
+  the scale: NPC hunter / NPC thief, transport alive (vslot 0x30), holding
+  goods (vslot 0x2e8).
+- **The tick** (s:0x60bc80): the check (s:0x60bd40: player vslot 0x1c, his
+  +0x128, the transport, its +0x128, vslot 0x30, vslot 0x2e8), the town
+  test on the transport's region (+0x128 -> +0x10 -> byte +2, s:0x60bcd2),
+  then the wave, whose return is the tick's. No other test.
+- **The count:** a 1-star value (amount <= TRADESCALE1, 510 in the shard)
+  is base 1 (s:0x60c1c8); 0 counts 1 (`lea esi,[eax+1]`, s:0x60c468), so
+  every wave round a caravan with goods outside a town has at least one.
+- **Their targets:** NPC thief tactics 542 (bit 0x4) take AITactics
+  selector 3 (s:0x5479c5), whose candidate filter is s:0x546790 (the table
+  at AITactics +0x128 + 4 x selector, filled at s:0x53f0be..0x53f104):
+  the common kind test (s:0x540b90), the monster's vslot 0x58c (s:0x4a98a0,
+  the hostility check), then the job state (0x11c) only -- a thief (2) or
+  state 4 is passed by; a COS by its owner's (+0x1cd8) job; the nearest
+  wins, a trader or hunter (vslot 0x544) before anyone else. A COS found
+  is swapped for its owner when the owner's vslot 0x540 says so
+  (s:0x547a4c). CGObjMob::vslot_394 (s:0x529110) tests 0x3bc/0x544 and
+  0x3b4/0x548 (PC s:0x4e59c0: job 1, 3 or 4; s:0x4e59e0: job 2 or 4) and
+  no Status.
+
+So a safe trade only keeps player thieves off (0x3024; the client's
+UIIT_MSG_SKILL_USE_FAIL_CANT_ATTACK_CARAVAN_LEVEL1: "you cannot attack their
+transport nor the trader themselves"), and NPC thieves still come round a
+1-star caravan, one or two a wave (four at the 2 % double), at the trader's
+level - 4 + 0..3 (s:0x60c4b0 with scale 1). At level 140 that is
+MOB_THIEF_NPC rows of level 136-139 (MEASURED: 84k-100k HP each). OpenSRO
+already matched this; round 811 changed no rule and pins it in
+`TestRound804CaravanWave` (a safe-trading trader's 1-star caravan gets a
+wave). The transport's death drops the goods, the scale leaves 1 and the
+Status is cleared (s:0x5237da..0x5237f7), which is the `safe_status f`
+measured on prod after the death.
 
 ### Their bodies (round 805)
 

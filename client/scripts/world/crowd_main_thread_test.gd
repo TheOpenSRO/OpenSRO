@@ -299,6 +299,47 @@ func _test_plate_batch_unit() -> void:
 		"two glyph quads are 12 vertices, colours and slots in the part (%d)" % (part[0] as PackedVector3Array).size())
 	var joined := NamePlateBatch.concat([part, part])
 	_check((joined[0] as PackedVector3Array).size() == 24 and (joined[1] as PackedVector2Array).size() == 24, "and a chunk joins its plates' parts (%d)" % (joined[0] as PackedVector3Array).size())
+	# Round 811: a plate with the box (NamePlates.BOX_META) gets one quad of
+	# it, NamePlates.box_rect's, in the box colour, under the text's priority.
+	var boxed := Label3D.new()
+	boxed.text = "Abc"
+	boxed.pixel_size = 0.001
+	boxed.render_priority = 1
+	boxed.offset = Vector2(6, 0)
+	boxed.set_meta(NamePlates.BOX_META, true)
+	boxed.set_meta(NamePlates.BOX_LEFT_META, 10.0)
+	owner.add_child(boxed)
+	batch.add(boxed, owner)
+	var bp: NamePlateBatch.Plate = batch._plates[boxed]
+	var box_part: Array = []
+	for key in bp.parts:
+		if String(key).begins_with("box|"):
+			box_part = bp.parts[key]
+			_check(batch._materials.has(key) and NamePlateBatch.white_texture().get_image().get_pixel(0, 0) == Color.WHITE,
+				"the box has its own material, over the white texel")
+	_check(not box_part.is_empty() and (box_part[0] as PackedVector3Array).size() == 6, "a boxed plate has one box quad")
+	if not box_part.is_empty():
+		var r := NamePlates.box_rect(boxed)
+		var vs: PackedVector3Array = box_part[0]
+		var lo := Vector2(INF, INF)
+		var hi := Vector2(-INF, -INF)
+		for v in vs:
+			lo = Vector2(minf(lo.x, v.x), minf(lo.y, v.y))
+			hi = Vector2(maxf(hi.x, v.x), maxf(hi.y, v.y))
+		_check(lo.is_equal_approx((r.position - r.size * 0.5) * 0.001) and hi.is_equal_approx((r.position + r.size * 0.5) * 0.001),
+			"over box_rect at the plate's pixel size (%s .. %s)" % [str(lo), str(hi)])
+		_check(is_equal_approx(r.position.x, 6.0 - 5.0) and is_equal_approx(r.size.y, 16.0),
+			"the box follows the name's offset, reaches left over a title and is 16 rows (%s)" % str(r))
+		_check((box_part[2] as PackedColorArray)[0] == NamePlates.BOX_COLOUR and is_equal_approx(NamePlates.BOX_COLOUR.a, 64.0 / 255.0),
+			"in black at alpha 64/255 (READ 0x40000000)")
+	boxed.text = ""
+	batch.reshape(boxed)
+	var none := true
+	for key in (batch._plates[boxed] as NamePlateBatch.Plate).parts:
+		if String(key).begins_with("box|"):
+			none = false
+	_check(none, "an empty name has no box")
+	batch.remove(boxed)
 	holder.queue_free()
 
 func _test_sound_wheel(world: Node) -> void:

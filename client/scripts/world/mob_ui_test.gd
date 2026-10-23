@@ -20,7 +20,7 @@ extends SceneTree
 ##   one fixed way on every leg of round 673's live chase).
 ##
 ## - the name's look MEASURED from the user's retail screenshot: white, no
-##   outline, 12 px, on a black box at alpha 0.29, one font pixel one screen
+##   outline, 12 px, on a black box at alpha 64/255 (READ, round 811), one font pixel one screen
 ##   pixel x the UI scale;
 ##
 ## NEGATIVE, on the base (4104a11): the body carries an "HpBar", the plate's
@@ -153,7 +153,7 @@ func _test_monster(world: Node) -> void:
 	_check(absf(text_y - label.position.y * 0.9) < 0.001, "a damage number starts under the name, where the bar sat (%.2f)" % text_y)
 
 	# 1b. The name's look, MEASURED from the user's retail screenshot (round
-	# 673): white, no outline, FontIndex 0's 12 px, a black box at alpha 0.29
+	# 673): white, no outline, FontIndex 0's 12 px, a black box (alpha READ in round 811)
 	# two pixels wider than the text each side and 16 tall; one font pixel one
 	# screen pixel (x the UI scale) under the camera.
 	_check(label.modulate.is_equal_approx(Color(1, 1, 1)), "the name is white (%s)" % str(label.modulate))
@@ -162,7 +162,8 @@ func _test_monster(world: Node) -> void:
 	var box := label.get_node_or_null("NameBox") as Sprite3D
 	_check(box != null, "on a box")
 	if box != null:
-		_check(is_equal_approx(box.modulate.a, 0.29) and box.modulate.r == 0.0, "the box is black at alpha 0.29 (%s)" % str(box.modulate))
+		# Round 811: the alpha READ (FUN_008b3bd0's 0x40000000), not round 673's measured 0.29.
+		_check(is_equal_approx(box.modulate.a, 64.0 / 255.0) and box.modulate.r == 0.0, "the box is black at alpha 64/255 (%s)" % str(box.modulate))
 		var font: Font = label.font if label.font != null else ThemeDB.fallback_font
 		var text_w := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
 		var tex := box.texture

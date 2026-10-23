@@ -34,6 +34,42 @@ class_name NamePlates
 ## global byte 0xec4b58 that the overlay pass is drawn under. docs/TODO.md.
 const RANGE := 300.0
 
+## Round 811: the box behind a character's name. READ: every CICharactor's
+## name setter (vtable slot 29, GlobalDataManager::FUN_009cbb90 -- players,
+## NPCs, monsters and COS alike) and the title setter (slot 30, FUN_009c28a0)
+## render their text through FUN_008b3bd0, which gives the text item font 0
+## (FUN_00ba5460(0) -> +0x4) and the box colour 0x40000000 (FUN_008b2b90 ->
+## +0xc); the item's draw (FUN_008b48b0) fills (x - 1, y - 1) .. (x + w + 1,
+## y + h + 1) with that colour as the texture factor under SRCALPHA /
+## INVSRCALPHA (render states 0x13 = 5, 0x14 = 6 in FUN_008b4d90) before the
+## glyphs -- black at alpha 64/255. The text item is centred on its point
+## (FUN_008b4d90: x - w/2, y - h/2). The box's size against the ink stays
+## round 673's MEASURED one (2 px wider than the text each side, 16 rows,
+## one row up): the item's own w and h (+0x4c / +0x4e, from its glyph cells)
+## are not traced. Round 673 MEASURED the alpha at 0.29 off a screenshot.
+const BOX_COLOUR := Color(0.0, 0.0, 0.0, 64.0 / 255.0)
+const BOX_PAD_PX := 2.0
+const BOX_HEIGHT_PX := 16.0
+const BOX_RAISE_PX := 1.0
+## A label drawn with the box (World3D._retail_plate_look).
+const BOX_META := &"plate_box"
+## The box's extension left of the name, in the label's font pixels: a job
+## title's width and gap (World3D._layout_job_decor), whose own box touches
+## the name's in the original (2 px apart, 1 px each).
+const BOX_LEFT_META := &"plate_box_left"
+
+## The box behind `label`, in its font pixels (which FontOversampling may
+## have multiplied): `position` the box's centre against the label's origin
+## (y up, as Label3D's and Sprite3D's offsets), `size` whole pixels.
+static func box_rect(label: Label3D) -> Rect2:
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var fk := FontOversampling.factor() if label.has_meta(FontOversampling.META) else 1.0
+	var ext := float(label.get_meta(BOX_LEFT_META, 0.0))
+	var text_w := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
+	var w := ceilf(text_w + 2.0 * BOX_PAD_PX * fk + ext)
+	var h := roundf(BOX_HEIGHT_PX * fk)
+	return Rect2(Vector2(label.offset.x - ext * 0.5, label.offset.y + BOX_RAISE_PX * fk), Vector2(maxf(w, 1.0), h))
+
 ## Whether a plate on an owner at `owner` shows with the player at `player`:
 ## strictly nearer than `within` (0x9d0ac3 returns at 300 itself).
 static func shown(owner: Vector3, player: Vector3, within: float = RANGE) -> bool:
