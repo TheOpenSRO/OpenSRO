@@ -334,7 +334,11 @@ not in a town 0x18a2, a party 0x18a0, the job level below the suit's
 ReqLevel2 0x18a3. Taking it off: pending 0x1847, a full bag 0x1807, riding,
 the battle state (20 s) 0x1848, a transport out 0x185a, within 10 s of
 wearing 0x1847, a party, not in a town. On completion 0x3038 / 0x3039 go out,
-the job state is set and each owned COS tells it (`0x30CA {uid, 1, job}`).
+the job state is set and each owned COS tells it (`0x30CA {uid, 1, job}`). READ (round 815): the
+client's 0x30CA handler (`FUN_008a7690`) only stores the job byte (COS slot 44, `+0x50d`); a COS's owner
+line (`ICCos::FUN_009c5ea0`, `"*" + alias` in a suit) is built only at its spawn (`CICCos::vslot_025`),
+so how the original refreshed it after a suit change is OPEN. OURS (`setJobState`): each owned COS is
+also spawned again in place to everyone who holds it, so its owner line follows the suit.
 The spawn record carries the job type and level always and the alias as the
 name while a suit is worn.
 

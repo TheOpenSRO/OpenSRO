@@ -112,20 +112,7 @@ func TestRound814GrantNameFlow(t *testing.T) {
 	expectGuildLine(t, f, f.connB, f.rB, f.bram, "Verizon", "")
 	expectGuildLine(t, f, f.connA, f.rA, f.bram, "Verizon", "")
 
-	grant(f.connB, f.bram, "Roaster")
-	refusal(f.connB, f.rB, 0x4c51) // a level-1 guild (guild.MinLevelForNickname)
-	for {
-		g, _ := guilds.GetByCharacter(ctx, f.aria)
-		if g.Level >= guild.MinLevelForNickname {
-			break
-		}
-		if err := guilds.AddPoints(ctx, g.ID, f.aria, 10_000_000); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := guilds.LevelUp(ctx, f.aria, true, 1<<40, nil); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Round 815: no level gate -- Bram's level-1 guild may grant names.
 	grant(f.connA, f.bram, "Roaster") // the master naming Bram: OURS, refused
 	refusal(f.connA, f.rA, 0x4c1e)
 	grant(f.connB, f.bram, "ABCDEFGHIJKLM")

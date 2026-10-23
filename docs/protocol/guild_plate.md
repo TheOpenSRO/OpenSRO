@@ -97,8 +97,9 @@ CICUser slot 15, event 4 (`GlobalDataManager::FUN_009dea30`, asm 0x9df082..0x9df
 - **Store.** `guild.Member.Nickname` is `guild_members.nickname`, added with `ADD COLUMN IF NOT EXISTS`
   (MemStore and SQLStore).
   - `Store.SetNickname(actor, target, name, filter)` runs `guild.CheckNickname`: the retail order, with
-    the master test replaced by **actor == target** (OURS, refused `0x4c1e`). The level gate is one
-    constant, `guild.MinLevelForNickname` = 4.
+    the master test replaced by **actor == target** (OURS, refused `0x4c1e`). The original's level
+    gate (READ `GetLevel() < 4` -> `0x4c51`) is gone (OURS, the user, round 815: "Grant name can now be
+    any guild level").
   - An empty name clears it (OURS: INFERRED the original's handler takes length 0).
   - Leaving drops it with the membership.
 - **Server.**
@@ -119,8 +120,7 @@ CICUser slot 15, event 4 (`GlobalDataManager::FUN_009dea30`, asm 0x9df082..0x9df
   - Grant name: `/grantname <name>` (up to 12 bytes; nothing clears it), or the guild window's button
     40, which opens the box for the player's own name. This client fills no member rows yet, so the box
     is not tied to a row (OPEN). The result is shown in the chat (`ErrorText.grant_name_line`).
-  - GM tool (OURS): `/guildlevel <1-5>` raises the GM's guild through the store's own level-up, so a
-    grant name can be tried at level 4.
+  - GM tool (OURS): `/guildlevel <1-5>` raises the GM's guild through the store's own level-up.
 
 ## OPEN
 
@@ -128,4 +128,3 @@ CICUser slot 15, event 4 (`GlobalDataManager::FUN_009dea30`, asm 0x9df082..0x9df
 - The display option, and how the original drops a line.
 - The membership byte's meaning, and `0x4c51`'s text.
 - Member rows in the guild window.
-- Whether the level-4 gate stays: the user is asked.

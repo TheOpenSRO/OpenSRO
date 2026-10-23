@@ -339,6 +339,14 @@ func setJobState(ctx context.Context, characterID int64, state byte) {
 	invalidateLook(characterID)
 	for _, o := range cosWorld.owned(characterID) {
 		sendAboutCOS(o, cos.OpCOSOwnerState, cos.OwnerJobState(o.uid, state))
+		// Round 815 (OURS): the COS spawned again in place for everyone who
+		// holds it, so its owner line ("*alias" in a suit, the name out of
+		// one, ICCos::FUN_009c5ea0) is rebuilt. READ: the original client
+		// builds that line only at the COS's spawn (CICCos::vslot_025) and
+		// 0x30CA's mask 1 only stores the job byte (slot 44, +0x50d); how
+		// the original refreshed it after a suit change is OPEN (jobs.md).
+		// The user (round 815): a pet kept "*alias" after the suit came off.
+		cosAnnounce(o, cosSpawnTypeKnown)
 	}
 }
 

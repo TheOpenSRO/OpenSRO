@@ -7483,6 +7483,27 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifteenth round: a pet's owner line follows the suit; grant names at any guild level
+
+The user (2026-10-23), on v0.1.575: "I don't see the guild name above me for the guild Verzion? Also my pet
+still shows my trader name above it instead of my regular name after I took off my job suit", then "Grant
+name can now be any guild level", and "I'm 575 still".
+
+- **The guild line** is round 814's, in v0.1.576; the user was on v0.1.575, whose spawn reader reads the
+  guild fields and draws nothing. The v0.1.576 release build was still queued for a runner. No code change.
+- **The pet's owner line (READ, OPEN, OURS).** The client builds a COS's owner line (`ICCos::FUN_009c5ea0`,
+  `"*" + alias` while the owner's job state is not 4) only at the COS's spawn (`CICCos::vslot_025`, its one
+  caller); 0x30CA's handler (`FUN_008a7690`) stores the job byte through slot 44 (`+0x50d`) and nothing
+  else; slot 15 draws the stored label. So the original's refresh after a suit change is OPEN. OpenSRO's
+  client also ignored 0x30CA (decoded, never connected), and the server only sent 0x30CA. Fix (server only,
+  so the v0.1.575 client takes it): `setJobState` also spawns each owned COS again in place
+  (`cosAnnounce(o, cosSpawnTypeKnown)`, no summon effect), whose record carries the owner's name or alias
+  as the job now is; the client's in-place update re-labels it (`_on_cos_spawned` -> `_cos_label`).
+  Test: `TestRound815SuitChangeRespawnsTheCOS` (an ability pet: the alias in the suit, the name out of it).
+  Not checked live (a suit needs an alias and a town); the client half is the existing in-place path.
+- **Grant names at any guild level (OURS, the user).** `guild.CheckNickname` drops the level test (READ
+  `GetLevel() < 4` -> 0x4c51); `ErrNicknameGuildLevel` and `MinLevelForNickname` are gone; tests changed.
+
 ## Eight-hundred-and-fourteenth round: the guild line over a character; your own grant name
 
 The user (2026-10-23): "Also could you add guild support for the name plate above the character. You should

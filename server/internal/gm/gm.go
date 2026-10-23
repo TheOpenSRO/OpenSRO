@@ -1352,7 +1352,7 @@ func (d *Deps) jobWeek(ctx context.Context) Result {
 }
 
 // guildLevel raises the GM's own guild to level n (round 814, OURS, a test
-// tool: a grant name needs a level-4 guild, guild.MinLevelForNickname). It
+// tool: a guild's level gates its member cap and level-up costs). It
 // is the store's own level-up, one level at a time, with the guild points
 // each needs credited to the GM first and the gold not taken -- what it
 // skips is said in the reply. It never lowers a level.

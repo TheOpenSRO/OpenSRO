@@ -661,5 +661,5 @@ will have to be undone.
 A member's guild over their name -- `[Guild * Grant]` -- and the grant name (the member's nickname,
 `_GUILDMEMBER.Nickname`) have their own page: [guild_plate.md](guild_plate.md). In short: the original's
 request 0x7256 lets only the master name a member (`FUN_005c7560`: in a guild, guild level 4, the
-master, under 13 bytes and the name filter); OpenSRO lets each member name only themselves (OURS, the
-user's request), keeping the rest.
+master, under 13 bytes and the name filter); OpenSRO lets each member name only themselves, at any guild level
+(OURS, the user's requests, rounds 814 and 815), keeping the rest.

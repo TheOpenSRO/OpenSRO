@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.576** plus what is merged on `dev`; updated 2026-10-23.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.577** plus what is merged on `dev`; updated 2026-10-23.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -239,7 +239,7 @@ Chat, full party system, party matching and basic guilds.
 | Guild invites | 🟡 Partial | No retail invite flow yet |
 | Guild ranks and permissions | ❌ Not yet | Command buttons shown but disabled |
 | Guild window | 🟡 Partial | Name and master only; member list and notice blank; its grant-name button sets your own grant name (or `/grantname`) |
-| Guild names over characters | ✅ Supported | `[Guild * Grant]` (or `[Guild]`) 20 px above the name in the original's box, orange for you and blue for others, riding a mount with the name and hidden in a job suit; each member sets their own grant name (window button or /grantname), from guild level 4 |
+| Guild names over characters | ✅ Supported | `[Guild * Grant]` (or `[Guild]`) 20 px above the name in the original's box, orange for you and blue for others, riding a mount with the name and hidden in a job suit; each member sets their own grant name (window button or /grantname), at any guild level |
 | Guild points and levels | 🟡 Partial | Points earned, guild levels up; spending points not done |
 | Union | ❌ Not yet | No guild alliances yet |
 | Friends list | 🟡 Partial | Server complete; adding friends only from a developer tab |

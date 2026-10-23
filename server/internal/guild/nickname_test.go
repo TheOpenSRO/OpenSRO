@@ -21,8 +21,8 @@ func TestCheckNicknameLadder(t *testing.T) {
 		code          int
 	}{
 		{"not in a guild", false, 5, 1, 1, "Ace", ErrNotInGuild, 0x4c0d},
-		{"level 3", true, 3, 1, 1, "Ace", ErrNicknameGuildLevel, 0x4c51},
-		{"level before self", true, 3, 1, 2, "Ace", ErrNicknameGuildLevel, 0x4c51},
+		{"a level-1 guild (round 815: any level)", true, 1, 1, 1, "Ace", nil, 0},
+		{"level 1, another member's", true, 1, 1, 2, "Ace", ErrNicknameNotSelf, 0x4c1e},
 		{"another member's", true, 4, 1, 2, "Ace", ErrNicknameNotSelf, 0x4c1e},
 		{"13 bytes", true, 4, 1, 1, "ABCDEFGHIJKLM", ErrNicknameInvalid, 0x4c4d},
 		{"filtered", true, 4, 1, 1, "Bad!", ErrNicknameInvalid, 0x4c4d},
@@ -40,28 +40,6 @@ func TestCheckNicknameLadder(t *testing.T) {
 	}
 }
 
-// raiseToLevel levels leaderID's guild up to level, paying with plenty of
-// gold and guild points.
-func raiseToLevel(t *testing.T, store Store, guildID, leaderID int64, level int) {
-	t.Helper()
-	ctx := context.Background()
-	for {
-		g, err := store.Get(ctx, guildID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if g.Level >= level {
-			return
-		}
-		if err := store.AddPoints(ctx, guildID, leaderID, 10_000_000); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.LevelUp(ctx, leaderID, true, 1<<40, func(int64) error { return nil }); err != nil {
-			t.Fatalf("level up from %d: %v", g.Level, err)
-		}
-	}
-}
-
 func checkSetNickname(t *testing.T, store Store) {
 	ctx := context.Background()
 	g, err := store.Create(ctx, "Verizon", 1, "Ann")
@@ -71,10 +49,7 @@ func checkSetNickname(t *testing.T, store Store) {
 	if _, err := store.Join(ctx, g.ID, 2, "Bob"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetNickname(ctx, 2, 2, "Roaster", nil); !errors.Is(err, ErrNicknameGuildLevel) {
-		t.Fatalf("a level-1 guild: %v, want ErrNicknameGuildLevel", err)
-	}
-	raiseToLevel(t, store, g.ID, 1, MinLevelForNickname)
+	// Round 815: no level gate -- the guild stays at level 1 throughout.
 	if _, err := store.SetNickname(ctx, 1, 2, "Roaster", nil); !errors.Is(err, ErrNicknameNotSelf) {
 		t.Fatalf("the master naming Bob: %v, want ErrNicknameNotSelf", err)
 	}
