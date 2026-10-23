@@ -475,6 +475,11 @@ type Member struct {
 	// column at +0x58. The engine's field is a dword (`*(int *)(rec + 0x40)`);
 	// int64 is this store's width, not a claim about the engine's.
 	GPDonation int64
+	// Nickname is the member's grant name (round 814, nickname.go):
+	// _GUILDMEMBER.Nickname, the member record's +0x64
+	// (docs/protocol/db_bind_offsets.tsv), shown as `[Guild * Nickname]` on
+	// the member's guild line. "" for none.
+	Nickname string
 }
 
 // Guild is a persistent group of characters, one of whom is the leader.
@@ -565,6 +570,13 @@ type Store interface {
 	// can refuse (the gold may have been spent since the check), so it runs
 	// before the new level is kept.
 	LevelUp(ctx context.Context, characterID int64, alive bool, gold int64, pay func(gold int64) error) (*Guild, error)
+
+	// SetNickname sets targetID's grant name, asked by actorID (round 814):
+	// CheckNickname against the guild as stored -- actorID's membership, the
+	// guild's level, actorID == targetID (OURS: own name only), the name's
+	// length and allowed (the name filter; nil allows any). "" clears it.
+	// Returns the guild after the change.
+	SetNickname(ctx context.Context, actorID, targetID int64, nickname string, allowed func(string) bool) (*Guild, error)
 }
 
 // Where guild points come from -- read 2026-09-19 (round 272,

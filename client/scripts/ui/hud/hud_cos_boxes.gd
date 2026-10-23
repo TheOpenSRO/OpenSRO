@@ -47,6 +47,23 @@ const NAME_EDIT_RECT := Rect2(24, 78, 245, 16)
 const NAME_OK_AT := Vector2(72, 114)
 const NAME_CANCEL_AT := Vector2(160, 114)
 
+## Round 814: the guild's grant-name box -- the same MsgBoxInsertMsg box,
+## purpose 3 of UI_SILKMALL 0x641f40 (asm 0x642555..0x642748, READ), which
+## CNIFGuildWnd's fourth command button (47 -> 40, the dispatcher 0x5b63e0's
+## index 3) opens: 360x170; the static +0x8f4 at (67, 57), 225x14, the
+## formatted UIIT_MSG_GUILD_NAME_GRANT_INPUT (0xd9bd30) with the member's
+## name; control 11 at (51, 78) 260x28; control 12 at (55, 82) 252x20; the
+## edit +0x8f8 limited to 12 (0x634f80(0xc)), emptied, at (58, 82) 243x20,
+## style 2; OK +0x800 at (95, 124), Cancel +0x804 at (183, 124). The
+## static's colour is not set on this path (OURS: the naming box's).
+const GRANT_SIZE := Vector2(360, 170)
+const GRANT_TITLE_RECT := Rect2(67, 57, 225, 14)
+const GRANT_FRAME_RECT := Rect2(51, 78, 260, 28)
+const GRANT_BG_RECT := Rect2(55, 82, 252, 20)
+const GRANT_EDIT_RECT := Rect2(58, 82, 243, 20)
+const GRANT_OK_AT := Vector2(95, 124)
+const GRANT_CANCEL_AT := Vector2(183, 124)
+
 const CLEAN_SIZE := Vector2(388, 144)
 const CLEAN_SHIFT := 40.0
 
@@ -80,6 +97,36 @@ func build_name_input(builder: UiBuilder) -> bool:
 		edit.call_deferred("grab_focus")
 	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), NAME_OK_AT, press_ok)
 	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), NAME_CANCEL_AT, press_cancel)
+	return true
+
+## Builds the guild's grant-name box for `member` (round 814). False without
+## the layout. The title's key is formatted with the name when the archive's
+## text has one %s (else the key's text alone).
+func build_grant_name_input(builder: UiBuilder, member: String) -> bool:
+	name = "GuildGrantNameInput"
+	if not build_shell(builder, GRANT_SIZE, "UIIT_STT_INPUT_BOX", "UIIT_STT_INPUT_BOX", LAYOUT, "MsgBoxInsertMsg"):
+		return false
+	_add_background(builder, GRANT_SIZE)
+	var title := node("GDR_MB_INSERT_MSG_TITLE")
+	if title != null:
+		_place(title, GRANT_TITLE_RECT)
+		var fmt := text("UIIT_MSG_GUILD_NAME_GRANT_INPUT", "UIIT_MSG_GUILD_NAME_GRANT_INPUT")
+		var shown := fmt % member if fmt.count("%s") == 1 and fmt.count("%") == 1 else fmt
+		var l := builder.set_static_text(title, shown)
+		if l != null:
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			l.add_theme_color_override("font_color", NAME_TITLE_COLOUR)
+	_rebuild(builder, "MsgBoxInsertMsg", "GDR_MB_INSERT_MSG_EDIT_FRAME", GRANT_FRAME_RECT)
+	_place(node("GDR_MB_INSERT_MSG_EDIT_BG"), GRANT_BG_RECT)
+	edit = node("GDR_MB_INSERT_MSG_EDIT") as LineEdit
+	if edit != null:
+		_place(edit, GRANT_EDIT_RECT)
+		edit.max_length = NAME_MAX
+		edit.text = ""
+		edit.text_submitted.connect(func(_t: String) -> void: press_ok())
+		edit.call_deferred("grab_focus")
+	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), GRANT_OK_AT, press_ok)
+	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), GRANT_CANCEL_AT, press_cancel)
 	return true
 
 ## Builds the transport's terminate question. False without the layout.

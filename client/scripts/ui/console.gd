@@ -15,12 +15,12 @@ class_name Console
 ## from the original client, which had no slash console.
 
 ## Client-side commands the console runs itself.
-const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe", "layer"]
+const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe", "layer", "grantname"]
 
 ## GM commands the console forwards to the server, which gates and runs them.
 ## Listed so a typo gets the help line while a real GM word reaches the
 ## server (which refuses a non-GM). Mirrors server/internal/gm's dispatcher.
-const GM_COMMANDS := ["tp", "goto", "give", "item", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "hwan", "notice", "invsize", "speed", "hurt", "afflict"]
+const GM_COMMANDS := ["tp", "goto", "give", "item", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "hwan", "notice", "invsize", "speed", "hurt", "afflict", "guildlevel"]
 
 ## Set from the server's GM probe reply; decides whether help shows the GM
 ## line and its window shows the GM section.
@@ -112,6 +112,16 @@ func submit(line: String) -> bool:
 				_log("Usage: /layer <archive path> (which pack or archive serves it)")
 			else:
 				_log(AssetArchives.describe_which(AssetArchives.current().which(" ".join(args))))
+		"grantname":
+			# Round 814: the own grant name -- the guild line's "[guild * name]"
+			# (GuildPlateNet; a member names only themselves, OURS). Nothing
+			# after it clears the name. At most 12 bytes (READ, the server's
+			# `< 0xd`); the server also runs the name filter.
+			var nick := " ".join(args)
+			if nick.to_utf8_buffer().size() > GuildPlateNet.MAX_NICKNAME_BYTES:
+				_log("Usage: /grantname <name> (at most %d letters; nothing clears it)" % GuildPlateNet.MAX_NICKNAME_BYTES)
+			else:
+				_call("grant_name", [nick])
 		_:
 			if GM_COMMANDS.has(cmd):
 				_call("forward_gm", [body])
@@ -121,14 +131,14 @@ func submit(line: String) -> bool:
 
 ## The one-line help. The client commands always; the GM line only for a GM.
 func help_line() -> String:
-	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /layer <path> /w <name> <msg>"
+	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /layer <path> /w <name> <msg> /grantname <name>"
 	if is_gm:
 		return base + "\n" + gm_help_line()
 	return base
 
 ## The GM one-liner, shown to a GM in chat on enter-world and in the tooltip.
 func gm_help_line() -> String:
-	return "GM tools: /tp /give /item /level /spawn /spawnunique /heal /gold /durability /sp /kill /damage /goto /hwan /notice /invsize /speed /hurt /afflict -- type /help"
+	return "GM tools: /tp /give /item /level /spawn /spawnunique /heal /gold /durability /sp /kill /damage /goto /hwan /notice /invsize /speed /hurt /afflict /guildlevel -- type /help"
 
 func _whisper(args: PackedStringArray) -> void:
 	if args.size() < 2:

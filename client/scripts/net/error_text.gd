@@ -105,6 +105,9 @@ const UIIT_BY_CODE := {
 	0x1c15: "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT",
 	0x4c07: "UIIT_MSG_GUILDERR_IM_DEAD",
 	0x4c1e: "UIIT_MSG_GUILDERR_PERMISSION_DENIED",
+	# Round 814: a grant name refused (FUN_005c7560; docs/protocol/
+	# error_codes.md's row for the same switch).
+	0x4c4d: "UIIT_MSG_GUILD_ERROR_NAME_GRANT_SPECIAL_LETTER",
 	0x4c21: "UIIT_MSG_ERROR_GUILD_LEVEL_UP_FULL",
 	0x4c31: "UIIT_MSG_ERROR_GUILD_LEVEL_UP_GOLD_DEFICIT",
 	0x4c32: "UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT",
@@ -194,6 +197,23 @@ static func repair_line(code: int, table: UiTextTable) -> String:
 ## lacks, and for the server's own failures, which carry code 0.
 static func guild_level_up_line(code: int, table: UiTextTable, fallback: String) -> String:
 	return resolve(code, table, fallback)
+
+## A grant-name refusal in words (round 814; GuildPlateNet). The codes are
+## FUN_005c7560's: 0x4c0d no guild (the client has no text for it), 0x4c51 a
+## guild below level 4 (no name in the client's table), 0x4c1e another
+## member's name (OURS: a member names only themselves), 0x4c4d too long or
+## filtered. The archive's words where it has them, else ours.
+static func grant_name_line(code: int, table: UiTextTable) -> String:
+	match code:
+		0x4c0d:
+			return "You are not in a guild."
+		0x4c51:
+			return "A guild must be level 4 to grant names."
+		0x4c1e:
+			return resolve(code, table, "You can only set your own grant name.")
+		0x4c4d:
+			return resolve(code, table, "That grant name is not allowed.")
+	return "The grant name was refused (code 0x%x)." % code
 
 ## A teleport refusal in words (round 576). The codes are the server's
 ## (server/internal/session/teleport.go): the engine's 0x1c07 not enough gold

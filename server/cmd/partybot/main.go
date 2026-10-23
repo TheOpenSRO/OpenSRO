@@ -77,6 +77,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/guild"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/pcspawn"
@@ -163,6 +164,7 @@ func (b *bot) readSync(op uint16) (*proto.Packet, error) {
 
 // note learns names and ids from the world messages.
 func (b *bot) note(p *proto.Packet) {
+	b.noteGuild(p)
 	switch p.Opcode {
 	case session.OpSelfID:
 		if s, err := session.DecodeSelfID(p.Data); err == nil {
@@ -251,6 +253,58 @@ func (b *bot) saw(rec pcspawn.Record) {
 	b.mu.Unlock()
 	if watchViews {
 		fmt.Printf("%s [%s] WATCH spawn %s uid %d body mode %d\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.BodyMode)
+	}
+	// Round 814: a player's guild line as its spawn carries it.
+	if rec.GuildName != "" {
+		fmt.Printf("[%s] GUILD spawn %s uid %d guild %d %q grant %q\n", b.name, rec.Name, rec.UID, rec.GuildID, rec.GuildName, rec.Nickname)
+	}
+}
+
+// noteGuild prints the round-814 guild messages this bot is sent: a
+// character's guild line (0x30FF), a member's grant name (0x3256) and the
+// answer to its own grant-name request (0xB256).
+func (b *bot) noteGuild(p *proto.Packet) {
+	switch p.Opcode {
+	case session.OpEntityGuildUpdate, session.OpGuildNicknameUpdate, session.OpGuildGrantNameResult:
+		fmt.Printf("[%s] GUILD %#04x % x\n", b.name, p.Opcode, p.Data)
+	}
+}
+
+// botGuild (round 814, OURS, a QA aid): -guild-create founds a guild (the
+// bot raises itself to the founder's level and gold with the GM console),
+// -guild-join joins one by id, -guild-level raises it (/guildlevel), and
+// -grant-name sets the bot's own grant name (0x7256).
+var botGuild struct {
+	create string
+	join   int64
+	level  int
+	grant  string
+}
+
+// guildSteps runs botGuild's steps, in that order.
+func (b *bot) guildSteps(name string) {
+	gm := func(line string) {
+		b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: line}).Encode())
+		time.Sleep(300 * time.Millisecond)
+	}
+	if botGuild.create != "" {
+		gm(fmt.Sprintf("/level %d", guild.MinCreatorLevel))
+		gm(fmt.Sprintf("/gold %d", guild.CreateGoldRequired))
+		b.send(session.OpGuildCreate, (&session.GuildCreateRequest{CharacterName: name, GuildName: botGuild.create}).Encode())
+		fmt.Printf("[%s] -> found guild %q\n", name, botGuild.create)
+		time.Sleep(500 * time.Millisecond)
+	}
+	if botGuild.join != 0 {
+		b.send(session.OpGuildJoin, (&session.GuildJoinRequest{CharacterName: name, GuildID: botGuild.join}).Encode())
+		fmt.Printf("[%s] -> join guild %d\n", name, botGuild.join)
+		time.Sleep(500 * time.Millisecond)
+	}
+	if botGuild.level > 0 {
+		gm(fmt.Sprintf("/guildlevel %d", botGuild.level))
+	}
+	if botGuild.grant != "" {
+		b.send(session.OpGuildGrantName, (&session.GuildGrantNameRequest{TargetID: uint32(b.id), Nickname: botGuild.grant}).Encode())
+		fmt.Printf("[%s] -> 0x7256 grant name %q\n", name, botGuild.grant)
 	}
 }
 
@@ -800,6 +854,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	if tp != "" {
 		gmTP(tp)
 	}
+	b.guildSteps(name)
 	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
 	// can invite it beside the leader first and then move it away.
 	var tp2C <-chan time.Time
@@ -915,6 +970,10 @@ func main() {
 	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
 	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026), e.g. dungeon/32769")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
+	flag.StringVar(&botGuild.create, "guild-create", "", "bot: found a guild of this name once in the world (raises itself to the founder's level and gold; a GM account)")
+	flag.Int64Var(&botGuild.join, "guild-join", 0, "bot: join this guild id once in the world")
+	flag.IntVar(&botGuild.level, "guild-level", 0, "bot: raise its guild to this level with /guildlevel (a GM account)")
+	flag.StringVar(&botGuild.grant, "grant-name", "", "bot: set its own grant name (0x7256) once in its guild")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")

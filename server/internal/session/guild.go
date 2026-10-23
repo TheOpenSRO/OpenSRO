@@ -386,15 +386,22 @@ func guildLevelResult(g *guild.Guild, levelledUp bool) *GuildLevelResult {
 // OpGuildLevel against guilds. hub is the world hub whose life state the
 // founder's and the level-up's "must be alive" tests read (round 550); nil
 // leaves HP > 0 as the whole of that test, as before.
+//
+// Round 814: it also answers retail's grant-name request (OpGuildGrantName,
+// guildplate.go), and names guilds as the store every character's guild line
+// is read from (SetGuildPlateStore).
 func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gateway.Handler {
+	SetGuildPlateStore(guilds)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpGuildCreate:
 			return handleGuildCreate(ctx, sess, p, chars, guilds, hub)
 		case OpGuildJoin:
-			return handleGuildJoin(ctx, sess, p, chars, guilds)
+			return handleGuildJoin(ctx, sess, p, chars, guilds, hub)
 		case OpGuildLeave:
-			return handleGuildLeave(ctx, sess, p, chars, guilds)
+			return handleGuildLeave(ctx, sess, p, chars, guilds, hub)
+		case OpGuildGrantName:
+			return handleGuildGrantName(ctx, sess, p, guilds, hub)
 		case OpGuildInfo:
 			return handleGuildInfo(ctx, sess, p, chars, guilds)
 		case OpGuildPoints:
@@ -652,10 +659,16 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: msg}).Encode()})
 	}
 	result := &GuildResult{GuildID: g.ID, Name: g.Name, LeaderID: g.LeaderID, Members: guildMemberSnapshots(g.Members)}
-	return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: result.Encode()})
+	if err := sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: result.Encode()}); err != nil {
+		return err
+	}
+	// Round 814: the founder's guild line, to those who see it (READ: the
+	// create job's reply trs_sm_guildjob::FUN_005c8bf0 calls FUN_004ea2f0).
+	refreshGuildPlate(hub, characterID, g)
+	return nil
 }
 
-func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
+func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
 	req, err := DecodeGuildJoinRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: "malformed request"}).Encode()})
@@ -675,10 +688,16 @@ func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet
 		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})
 	}
 	result := &GuildResult{GuildID: g.ID, Name: g.Name, LeaderID: g.LeaderID, Members: guildMemberSnapshots(g.Members)}
-	return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: result.Encode()})
+	if err := sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: result.Encode()}); err != nil {
+		return err
+	}
+	// Round 814: the new member's line (READ: the join job's reply
+	// trs_sm_guildjob::FUN_005c8d40 calls FUN_004ea2f0).
+	refreshGuildPlate(hub, characterID, g)
+	return nil
 }
 
-func handleGuildLeave(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
+func handleGuildLeave(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
 	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{Reason: "malformed request"}).Encode()})
@@ -691,7 +710,12 @@ func handleGuildLeave(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if _, _, err := guilds.Leave(ctx, characterID); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{Reason: guildErrorMessage(err)}).Encode()})
 	}
-	return sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{OK: true}).Encode()})
+	if err := sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{OK: true}).Encode()}); err != nil {
+		return err
+	}
+	// Round 814: the line goes (OURS: the original's removal path is OPEN).
+	refreshGuildPlate(hub, characterID, nil)
+	return nil
 }
 
 func guildErrorMessage(err error) string {

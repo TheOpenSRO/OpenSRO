@@ -320,6 +320,11 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	r.TeleportState = scrollStateOf(e.CharacterID)
 	lk := lookOf(ctx, d, e.CharacterID)
 	r.RefObjID, r.Scale, r.Items, r.JobState = lk.ref, lk.scale, lk.items, lk.jobState
+	// Round 814: its guild line -- the name (written whatever the job
+	// state), and in the guild block the guild's id and the grant name
+	// (guildplate.go's cache, never the store on a spawn but the first).
+	gp := guildPlateOf(ctx, e.CharacterID)
+	r.GuildName, r.GuildID, r.Nickname = gp.Name, gp.ID, gp.Nickname
 	// Round 800: the job (CGObjPC::vslot_293 mode 2, s:0x4e5b00): the job
 	// record's kind and level always; the name is the alias while a suit is
 	// worn (job state != 4), when the character has one.

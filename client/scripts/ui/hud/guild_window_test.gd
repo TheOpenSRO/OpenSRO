@@ -341,6 +341,24 @@ func _run() -> void:
 		"a disabled command button draws its _disable piece")
 	var edit81 := _at(groot, [47, 222, 81]) as TextureButton
 	_check(edit81 != null and edit81.disabled, "the notice's edit button 47 -> 222 -> 81 is disabled (0x5b51f9)")
+	# Round 814: in a guild the grant-name button (47 -> 40, the dispatcher
+	# 0x5b63e0's index 3) is the one enabled -- the own grant name (OURS) --
+	# and OK on its box reaches the panels' guild_grant_name_requested.
+	if window.has_method("open_grant_name_box"):
+		window.call("set_guild", true, "Verizon", "Ann")
+		var g40 := _at(groot, [47, 40]) as TextureButton
+		var others_off := true
+		for id in [37, 38, 39, 41]:
+			others_off = others_off and (_at(groot, [47, id]) as TextureButton).disabled
+		_check(g40 != null and not g40.disabled and others_off, "in a guild 47 -> 40 (grant name) is enabled, the others not")
+		var asked := []
+		panels.connect("guild_grant_name_requested", func(n: String) -> void: asked.append(n))
+		window.emit_signal("grant_name_submitted", "Roaster")
+		_check(asked == ["Roaster"], "the box's name reaches guild_grant_name_requested (%s)" % [asked])
+		window.call("set_guild", false)
+		_check(g40.disabled, "out of the guild it is disabled again")
+	else:
+		print("(this tree has no grant-name button)")
 	var l66 := _at(groot, [47, 66]).get_node_or_null("Text") as Label if _at(groot, [47, 66]) else null
 	_check(l66 != null and l66.text == "No guild (text table)", "with no guild 47 -> 66 reads UIIT_STT_NO_GUILD (got %s)" % (l66.text if l66 else null))
 	_check(_hidden(_at(groot, [47, 150])), "with no guild the race mark 47 -> 150 is hidden (0x5b6266)")

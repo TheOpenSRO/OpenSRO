@@ -72,6 +72,14 @@ class Record:
 	var move_angle: int
 	## Round 795: the ridden COS's uid (ride state 1), 0 when it walks.
 	var mount_uid := 0
+	## Round 814: its guild line (GuildPlateNet.plate_text): the guild's name
+	## (READ: the string after the trade rank, which the client keeps at
+	## CICUser+0x7e4, c:0x9ddf4b), and in the guild block -- only without a
+	## job suit -- the guild's id and the member's grant name (+0x7c8,
+	## FUN_009dc520 at c:0x9de08c). "" / 0 for none.
+	var guild_name := ""
+	var guild_id := 0
+	var nickname := ""
 
 ## The item table the reader asks (World3D's own: RefItemID ->
 ## ItemTableReader.Item).
@@ -224,12 +232,12 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 	r.u8() # teleport state
 	var interact := r.u8()
 	rec.trade_rank = r.u8()
-	r.bytes(r.u16()) # guild name
+	rec.guild_name = r.bytes(r.u16()).get_string_from_utf8()
 	rec.job_state = types.job_state(rec.items) if types != null else JOB_STATE_NONE
 	if rec.job_state == JOB_STATE_NONE:
-		r.u32() # guild id
-		r.bytes(r.u16()) # member nickname
-		r.bytes(12) # three u32
+		rec.guild_id = r.u32()
+		rec.nickname = r.bytes(r.u16()).get_string_from_utf8()
+		r.bytes(12) # three u32: crest revision, union id, union crest revision (OPEN in OpenSRO)
 		r.u8() # membership
 		r.u8() # fortress role
 	if interact == 4 and r.error == "":

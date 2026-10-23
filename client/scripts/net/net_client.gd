@@ -276,6 +276,15 @@ var job_alias := ""
 ## {state, kind, level, trade_rank}. Retail updates it only from the spawn:
 ## a suit put on or taken off in view changes no observer's state.
 var user_jobs := {}
+## Round 814: each player in view's guild line by uid -- {guild_id,
+## guild_name, nickname} -- from its spawn record, 0x30FF and 0x3256
+## (GuildPlateNet); and this player's own (the server's 0x30FF about it).
+var user_guilds := {}
+var own_guild_line := {}
+## A character's guild line changed (uid; World3D re-draws its line).
+signal guild_line_changed(uid: int)
+## 0xB256: {ok, code, guild_id, target, nickname} (GuildPlateNet).
+signal guild_grant_result(d: Dictionary)
 ## Round 800: 0x3041 type 2 sub 2 / 0x3042 -- a job suit's 10 seconds starting
 ## and cancelled (uid, seconds; uid, the cancel byte).
 signal strip_started(uid: int, seconds: int)
@@ -842,9 +851,11 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_attack_targets_in_flight.clear()
 	_attack_types_in_flight.clear()
 	own_character_id = -1
+	own_guild_line = {}
 	buff_roster.clear()
 	npc_roster.clear()
 	user_roster.clear()
+	user_guilds.clear()
 	character_states.clear()
 	_zone_arrivals.clear()
 	zone_departures.clear()
@@ -938,11 +949,13 @@ func disconnect_from_server() -> void:
 	_attack_types_in_flight.clear()
 	_pending_learns.clear()
 	own_character_id = -1
+	own_guild_line = {}
 	cos_own = {}
 	safe_trade_last = {}
 	buff_roster.clear()
 	npc_roster.clear()
 	user_roster.clear()
+	user_guilds.clear()
 	character_states.clear()
 	_zone_arrivals.clear()
 	zone_departures.clear()
@@ -1128,6 +1141,7 @@ func enter_world(char_name: String) -> void:
 	_forget_session_lists()
 	# The OpSelfId that answers this entry names the character entering now.
 	own_character_id = -1
+	own_guild_line = {}
 	# Start (round 682): 0x7001, answered by 0xB001 and, when it is OK, the
 	# enter-world result.
 	_send(LobbyNet.OP_START, LobbyNet.encode_start(char_name))
@@ -1875,6 +1889,7 @@ func cos_kind_of(ref_id: int) -> int:
 ## records' coordinates are in frame (the result's FrameRegion).
 func _start_user_view(frame: String) -> void:
 	user_roster.clear()
+	user_guilds.clear()
 	cos_roster.clear()
 	_pending_spawns.clear()
 	_group_job = null
@@ -2152,6 +2167,8 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	# state, +0x7be / +0x7bf, +0x50e): the plate, the target window.
 	user_jobs[rec.uid] = {"state": rec.job_state, "kind": rec.job_kind, "level": rec.job_level,
 		"trade_rank": rec.trade_rank}
+	# Round 814: its guild line as the record carries it.
+	user_guilds[rec.uid] = {"guild_id": rec.guild_id, "guild_name": rec.guild_name, "nickname": rec.nickname, "name": rec.name}
 	var mode := WorldNet.StateChange.new()
 	mode.object_id = rec.uid
 	mode.kind = WorldNet.STATE_KIND_BODY_MODE
@@ -2184,9 +2201,50 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	entity_entered.emit(snap)
 
 ## A player went out of view (0x3016, or a type-2 group): as OpEntityLeft.
+## Round 814: 0x30FF -- one character's guild line, this player's own or a
+## player's in view.
+func _guild_line_update(d: Dictionary) -> void:
+	if d.is_empty():
+		return
+	var uid := int(d["uid"])
+	var line := {"guild_id": int(d["guild_id"]), "guild_name": String(d["guild_name"]), "nickname": String(d["nickname"])}
+	if own_character_id >= 0 and uid == (own_character_id & 0xffffffff):
+		own_guild_line = line
+	elif user_roster.has(uid):
+		line["name"] = String((user_guilds.get(uid, {}) as Dictionary).get("name", ""))
+		user_guilds[uid] = line
+	else:
+		return
+	guild_line_changed.emit(uid)
+
+## Round 814: 0x3256 -- a guild member's grant name, by the member's name
+## (READ FUN_008905d0: the character found by name gets the nickname).
+func _guild_nickname_update(d: Dictionary) -> void:
+	if d.is_empty():
+		return
+	var who := String(d["name"])
+	if who == current_character_name and not own_guild_line.is_empty():
+		own_guild_line["nickname"] = String(d["nickname"])
+		if own_character_id >= 0:
+			guild_line_changed.emit(own_character_id & 0xffffffff)
+		return
+	for uid in user_guilds:
+		var g: Dictionary = user_guilds[uid]
+		if String(g.get("name", "")) == who:
+			g["nickname"] = String(d["nickname"])
+			guild_line_changed.emit(int(uid))
+
+## Round 814: the own grant name (0x7256, the target this player's own id --
+## OURS: a member names only themselves).
+func send_guild_grant_name(nickname: String) -> void:
+	if own_character_id < 0:
+		return
+	_send(GuildPlateNet.OP_GRANT_NAME, GuildPlateNet.encode_grant(own_character_id, nickname))
+
 func _user_left(uid: int) -> void:
 	user_roster.erase(uid)
 	user_jobs.erase(uid)
+	user_guilds.erase(uid)
 	buff_roster.drop(BuffRoster.key_of(uid, SkillNet.OWNER_CHARACTER))
 	body_modes.erase(uid)
 	character_states.erase(uid)
@@ -2699,6 +2757,14 @@ func _dispatch(p: Packet) -> void:
 			guild_points_result.emit(GuildNet.decode_points_result(p.data))
 		GuildNet.OP_LEVEL_RESULT:
 			guild_level_result.emit(GuildNet.decode_level_result(p.data))
+		GuildPlateNet.OP_ENTITY_GUILD:
+			_guild_line_update(GuildPlateNet.decode_entity(p.data))
+		GuildPlateNet.OP_NICKNAME_UPDATE:
+			_guild_nickname_update(GuildPlateNet.decode_nickname(p.data))
+		GuildPlateNet.OP_GRANT_NAME_RESULT:
+			var gr := GuildPlateNet.decode_grant_result(p.data)
+			if not gr.is_empty():
+				guild_grant_result.emit(gr)
 		UniqueNoticeNet.OP_UNIQUE_NOTICE:
 			# Round 801: a word the unique notices do not carry (0x0c01, the
 			# thief's town veto) goes to its own signal.

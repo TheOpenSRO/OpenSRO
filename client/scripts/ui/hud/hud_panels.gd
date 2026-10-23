@@ -724,6 +724,8 @@ signal npc_window_hidden(panel_id: String)
 ## The guild name prompt (open_guild_name_prompt, round 521) was submitted
 ## with this name. World3D sends it to the server (NetClient.create_guild).
 signal guild_create_requested(guild_name: String)
+## Round 814: the guild window's grant-name box was accepted (own name).
+signal guild_grant_name_requested(nickname: String)
 ## The guild leave prompt (open_guild_leave_prompt, round 521) was confirmed.
 ## World3D sends the leave request (NetClient.leave_guild).
 signal guild_leave_requested
@@ -1339,6 +1341,7 @@ func _guild_window() -> GuildWindow:
 	# The window's own left-menu buttons switch views; ask for that view's
 	# data as U and the community button do.
 	window.view_changed.connect(func(view: String) -> void: _populate(view))
+	window.grant_name_submitted.connect(func(nick: String) -> void: guild_grant_name_requested.emit(nick))
 	_windows[GUILD_WINDOW_KEY] = window
 	return window
 
@@ -6944,6 +6947,7 @@ func _apply_guild(window: GuildWindow) -> void:
 		if m.role == GuildNet.ROLE_LEADER or (r.leader_id != 0 and m.character_id == r.leader_id):
 			master = m.member_name
 			break
+	window.own_name = NetClient.current_character_name
 	window.set_guild(true, r.guild_name, master)
 
 ## The character pane's own control names, from resinfo\\ifplayerinfo_trijob2.txt,

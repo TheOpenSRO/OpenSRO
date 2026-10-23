@@ -33,6 +33,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/guild"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
@@ -248,6 +249,9 @@ type Deps struct {
 	AccountLookup account.AccountLookup
 	IsGMAccount   func(username string) bool
 	Now           func() time.Time
+	// Guilds is what /guildlevel raises (round 814, a test tool); nil
+	// refuses it.
+	Guilds guild.Store
 }
 
 // ClockControl is /hour's hook into the game clock (round 786): retail's
@@ -295,7 +299,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /jobexp <n>, /jobweek"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /jobexp <n>, /jobweek, /guildlevel <1-5>"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -366,6 +370,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.jobExp(ctx, actor, args)
 	case "jobweek":
 		res = d.jobWeek(ctx)
+	case "guildlevel":
+		res = d.guildLevel(ctx, actor, args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -1343,4 +1349,39 @@ func (d *Deps) jobWeek(ctx context.Context) Result {
 		return refuse("the weekly job procedure failed: " + err.Error())
 	}
 	return Result{Text: "the weekly job procedure ran: rewards shared, rankings rebuilt, contributions reset"}
+}
+
+// guildLevel raises the GM's own guild to level n (round 814, OURS, a test
+// tool: a grant name needs a level-4 guild, guild.MinLevelForNickname). It
+// is the store's own level-up, one level at a time, with the guild points
+// each needs credited to the GM first and the gold not taken -- what it
+// skips is said in the reply. It never lowers a level.
+func (d *Deps) guildLevel(ctx context.Context, actor Actor, args []string) Result {
+	if len(args) != 1 {
+		return refuse(fmt.Sprintf("usage: /guildlevel <%d-%d>", guild.FoundingLevel, guild.MaxLevel))
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil || n < guild.FoundingLevel || n > guild.MaxLevel {
+		return refuse(fmt.Sprintf("usage: /guildlevel <%d-%d>", guild.FoundingLevel, guild.MaxLevel))
+	}
+	if d.Guilds == nil {
+		return refuse("no guild store")
+	}
+	g, err := d.Guilds.GetByCharacter(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("you are not in a guild")
+	}
+	for g.Level < n {
+		_, gp, ok := guild.LevelUpCost(g.Level)
+		if !ok {
+			return refuse(fmt.Sprintf("level %d has no level-up cost", g.Level))
+		}
+		if err := d.Guilds.AddPoints(ctx, g.ID, actor.CharacterID, gp); err != nil {
+			return refuse("crediting guild points failed: " + err.Error())
+		}
+		if g, err = d.Guilds.LevelUp(ctx, actor.CharacterID, true, math.MaxInt64, nil); err != nil {
+			return refuse("the level-up failed: " + err.Error())
+		}
+	}
+	return Result{Text: fmt.Sprintf("%s is level %d (the guild points were credited to you; no gold was taken)", g.Name, g.Level)}
 }

@@ -7483,6 +7483,84 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fourteenth round: the guild line over a character; your own grant name
+
+The user (2026-10-23): "Also could you add guild support for the name plate above the character. You should
+see it in previous screenshots I sent. Also let me set my grant name instead of the guild leader, that's an
+old feature we don't want." The reference is the original's line "[Verizon * GayRoasters]" in orange over
+"Old Road Booster <Old Road Pass> Pain" (round 813's pegasus screenshot). Spec:
+docs/protocol/guild_plate.md.
+
+- **READ (client).**
+  - The spawn keeps the guild name at CICUser +0x7e4 and the grant name at +0x7c8 (`FUN_009ddc40`,
+    `FUN_009dc520`).
+  - The draw (`FUN_009dea30` event 4) builds `"[" + guild + " * " + grant + "]"`, or `"[" + guild + "]"`
+    (constants 0xe18b24 / 0xde3050 / 0xe18b28). It is drawn 20.0 px above the name's point (`fsub
+    [0xe1b830]` at 0x9df0c0), font 0 in the 0x40000000 box (`FUN_008b3bd0`).
+  - It is drawn only with job state 4. The own player's is orange 0xfffead2e (0x9dc4d4); others are light
+    blue 0xff66b9ff, or green or red by two of the guild manager's lists (`FUN_009a4f40`; INFERRED allies
+    and war enemies, OPEN here).
+  - The `(…)` suffix is the fortress role (`UI_FORT::FUN_009dc590`), not the union.
+  - MEASURED in the screenshot: 20 px native apart, centred together.
+- **READ (server).**
+  - 0x7256 = u32 target, name.
+  - `FUN_005c7560` checks: in a guild 0x4c0d, guild level ≥ 4 0x4c51, the master 0x4c1e, < 13 bytes and
+    the filter 0x4c4d.
+  - Replies: 0xB256 (`u8 1`, u32, u32 target, name | `u8 2`, u16 code), 0x3256 (u32, member, name) and
+    0x30FF (`FUN_0088a420`: uid, guild id, name[, grant, 3 x u32, role, byte]).
+  - The window's button 47 → 40 opens the grant box (`0x641f40` purpose 3, its geometry read).
+- **OURS.**
+  - A member sets only their own grant name (`guild.CheckNickname`: actor == target, refused 0x4c1e). The
+    master's grant over others is gone.
+  - The level-4 gate is kept as one constant, `guild.MinLevelForNickname`; the user is asked.
+  - 0x30FF to viewers on every change (the original: create and join), and the own line on entering the
+    world.
+  - The client drops a line on an empty 0x30FF.
+  - The grant button needs no member row: this client fills none yet.
+  - `/grantname <name>` (nothing clears it).
+  - A GM `/guildlevel <1-5>` for QA.
+- **Built.**
+  - Server:
+    - `guild_members.nickname` (both stores) with `Store.SetNickname`;
+    - `session/guildplate.go`: 0x7256 / 0xB256 / 0x3256 / 0x30FF, the per-character line cache
+      `guildPlateOf` behind `playerRecord`;
+    - `pcspawn`'s guild block (encode and decode);
+    - partybot's `-guild-create / -guild-join / -guild-level / -grant-name` and its GUILD log lines;
+    - swarm decodes guild records.
+  - Client:
+    - `GuildPlateNet`; NetClient's `user_guilds` / `own_guild_line`;
+    - `UserSpawnNet` keeps the guild fields;
+    - World3D's `_apply_guild_line` (the "GuildLine" Label3D) and `_on_guild_line_changed`;
+    - the guild window's button 40 and `HudCosBox.build_grant_name_input`;
+    - the console's `/grantname` and `/guildlevel`;
+    - `ErrorText.grant_name_line`.
+- **Tests.**
+  - Go:
+    - `guild` `TestCheckNicknameLadder`, `Test{Mem,SQL}StoreSetNickname`;
+    - `pcspawn` `TestGuildBlockRoundTrip`;
+    - `session` `TestGuildPlateMessagesBytes`, `TestRound814GrantNameFlow` (two clients: create, join,
+      every refusal in order, the grant, 0x3256 and 0x30FF to both, the spawn record, the own line,
+      leave);
+    - `gm` `TestGuildLevelRaisesTheGMsGuild`.
+  - Client: `world/guild_plate_test.gd` (29 checks), `net/user_spawn_test.gd` (a guild member's 0x3015),
+    `ui/hud/guild_window_test.gd` (button 40).
+- **Live (render box, a live server, `OPENSRO_QA_GUILD`, `/var/tmp/r814/qa814.sh`).** The QA client
+  founds Verizon (the QA-only command line `guild create <name>`), `/guildlevel 4`, `/grantname
+  GayRoasters`, then rides a pegasus; partybot's Rook founds QABots at level 4 with the grant name
+  Knight beside it. Measured lines: own `[Verizon]` then `[Verizon * GayRoasters]`, colour (254, 173,
+  46); Rook's `[QABots * Knight]`, colour (102, 185, 255); both 20.0 px above their names, fixed size.
+  The bot's 0xB256 / 0x3256 / 0x30FF bytes are the layouts above. A frame shows both lines boxed over
+  their names, Tess's over the mount.
+- **Perf gate** (`--base fec1b4ca --sites jangan,crowd --frames 60000`, median of 3): SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.86 -> 0.86 | 8772 -> 8696 | 2788 -> 2786 | 5 -> 4 |
+  | crowd | 2.91 -> 2.96 | 12032 -> 11004 | 3277 -> 3371 | 5 -> 5 |
+
+- **OPEN.** Green and red lines, crests, fortress roles, the display option, how the original drops a
+  line, the membership byte, 0x4c51's text, member rows.
+
 ## Eight-hundred-and-thirteenth round: monsters and mounts lean with the slope; a chaser swings between passes
 
 The user (2026-10-23), on v0.1.574, with an original and an OpenSRO screenshot of a mount on a hillside:

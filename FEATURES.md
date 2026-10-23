@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.575** plus what is merged on `dev`; updated 2026-10-23.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.576** plus what is merged on `dev`; updated 2026-10-23.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -16,7 +16,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
-| [Social](#social) | 9 | 4 |  | 5 | 18 |
+| [Social](#social) | 10 | 4 |  | 5 | 19 |
 | [Job / trade](#job--trade) | 6 |  |  |  | 6 |
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
@@ -27,7 +27,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **157** | **32** | **1** | **36** | **226** |
+| **All** | **158** | **32** | **1** | **36** | **227** |
 
 ## Biggest gaps
 
@@ -238,7 +238,8 @@ Chat, full party system, party matching and basic guilds.
 | Guild creation | ✅ Supported | Create a guild at the guild manager |
 | Guild invites | 🟡 Partial | No retail invite flow yet |
 | Guild ranks and permissions | ❌ Not yet | Command buttons shown but disabled |
-| Guild window | 🟡 Partial | Name and master only; member list and notice blank |
+| Guild window | 🟡 Partial | Name and master only; member list and notice blank; its grant-name button sets your own grant name (or `/grantname`) |
+| Guild names over characters | ✅ Supported | `[Guild * Grant]` (or `[Guild]`) 20 px above the name in the original's box, orange for you and blue for others, riding a mount with the name and hidden in a job suit; each member sets their own grant name (window button or /grantname), from guild level 4 |
 | Guild points and levels | 🟡 Partial | Points earned, guild levels up; spending points not done |
 | Union | ❌ Not yet | No guild alliances yet |
 | Friends list | 🟡 Partial | Server complete; adding friends only from a developer tab |

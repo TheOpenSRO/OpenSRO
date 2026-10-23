@@ -535,6 +535,9 @@ func arrivePlayer(d viewDeps, arrived world.Entity) {
 	// Its job (round 799, jobguild.go): the 0x3013 job section, OURS'
 	// OpJobInfo, to its own client.
 	sendJobInfo(d.ctx, arrived.Session, arrived.CharacterID)
+	// Round 814: its own guild line (OURS: retail's own-character data is not
+	// modelled; the line's message, OpEntityGuildUpdate, is).
+	sendOwnGuildLine(d.ctx, arrived.Session, arrived.CharacterID)
 	// Round 802: a trader's safe trade (vslot_391's report).
 	safeTradeAtLogin(d.ctx, arrived.Session, arrived.CharacterID)
 	// Its COS arrive with it (round 795, cossummon.go): before the spawns

@@ -2256,6 +2256,9 @@ func _ready() -> void:
 	NetClient.guild_join_result.connect(_on_guild_result)
 	NetClient.guild_leave_result.connect(_on_guild_leave_result)
 	NetClient.guild_info_result.connect(_on_guild_result)
+	# Round 814: a character's guild line changed (0x30FF / 0x3256).
+	NetClient.guild_line_changed.connect(_on_guild_line_changed)
+	NetClient.guild_grant_result.connect(_on_guild_grant_result)
 	NetClient.guild_points_result.connect(_on_guild_points_result)
 	NetClient.guild_level_result.connect(_on_guild_level_result)
 
@@ -2785,6 +2788,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.npc_window_hidden.connect(_on_npc_window_hidden)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
+	# Round 814: the guild window's grant name (0x7256, own name only).
+	_hud_panels.guild_grant_name_requested.connect(func(nick: String) -> void: NetClient.send_guild_grant_name(nick))
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
 	# The party window's requests and the invitation box (round 711).
 	_wire_party_panels()
@@ -9264,6 +9269,8 @@ func _refresh_player_name_plate() -> void:
 	player.add_child(plate)
 	_plate_job_level = NetClient.job_level
 	_job_plate_decor(plate, plate, js, NetClient.job_level, _race_of_body(_player_body) == 1, false)
+	# Round 814: its own guild line, in the own colour.
+	_apply_guild_line(plate, plate, NetClient.own_guild_line, js, true, false)
 	# Round 808: a plate re-made on a mount (a suit worn, the alias landing)
 	# goes straight over it, not into it for a frame.
 	var own := _own_id()
@@ -9476,6 +9483,101 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 			_plate_sweep.add(title)
 	_layout_job_decor(label, holder)
 
+## Round 814: the guild line over a character's name (docs/protocol/
+## guild_plate.md), READ from the original's draw (CICUser slot 15 event 4,
+## GlobalDataManager::FUN_009dea30, asm 0x9df0b2..0x9df21f) and its plate
+## (FUN_009dc460 -> FUN_009a4f40):
+## - the text GuildPlateNet.plate_text: "[guild * grant]" or "[guild]";
+## - its own plate item (FUN_008b4f30) through the name setter FUN_008b3bd0:
+##   font 0 with the 0x40000000 box, as the name's (_retail_plate_look);
+## - drawn at the name's projected point less 20.0 px in y (`fsub
+##   [0xe1b830]`, 20.0, on +0x4f4 at 0x9df0c0): GUILD_LINE_RAISE_PX above the
+##   name line, centred where the name block is (the plate's point), so it
+##   rides a mount with the name (_set_plate_y);
+## - only while the job state is 4 (no suit; vslot 0xac at 0x9df099) -- a
+##   suit's record carries no guild block either;
+## - the own player's in GUILD_LINE_OWN_COLOUR (an exact CICPlayer,
+##   0x9dc4d4), another's in GUILD_LINE_COLOUR. The original's green
+##   0xffa0fe68 and red 0xffff0000 are for guild names in two lists of its
+##   guild manager (+0x98, FUN_00996d60; +0xa4, FUN_00992a90) -- INFERRED
+##   allies and war enemies; OpenSRO forms neither, so they are OPEN;
+## - the option byte that also gates it (FUN_004f9d00()+0x10) is OPEN: on;
+## - the crests drawn left of it (+0x34, +0x38) are OPEN (no crests).
+const GUILD_LINE_RAISE_PX := 20.0
+const GUILD_LINE_OWN_COLOUR := Color8(254, 173, 46)
+const GUILD_LINE_COLOUR := Color8(102, 185, 255)
+
+## Re-makes the guild line under `holder` for `label` (the "Name" plate) from
+## `line` ({guild_name, nickname}); none without a guild or in a job suit.
+func _apply_guild_line(label: Label3D, holder: Node3D, line: Dictionary, job_state: int, own: bool, swept: bool) -> void:
+	if label == null or holder == null:
+		return
+	var old := holder.get_node_or_null("GuildLine")
+	if old != null:
+		if swept:
+			_plate_sweep.drop(old as Node3D)
+		holder.remove_child(old)
+		old.queue_free()
+	var text := GuildPlateNet.plate_text(String(line.get("guild_name", "")), String(line.get("nickname", "")))
+	if text == "" or job_state != UserSpawnNet.JOB_STATE_NONE:
+		return
+	var g := _name_plate(text, 0.0, false)
+	g.name = "GuildLine"
+	g.remove_from_group("name_plates")
+	g.position = label.position if holder != label else Vector3.ZERO
+	_retail_plate_look(g, GUILD_LINE_OWN_COLOUR if own else GUILD_LINE_COLOUR)
+	g.render_priority = label.render_priority
+	holder.add_child(g)
+	if swept:
+		_plate_sweep.add(g)
+	_layout_guild_line(label, holder)
+
+## Puts the guild line GUILD_LINE_RAISE_PX above the name line, centred on the
+## plate's point (the name block is centred there, _layout_job_decor).
+func _layout_guild_line(label: Label3D, holder: Node3D) -> void:
+	if label == null or holder == null:
+		return
+	var g := holder.get_node_or_null("GuildLine") as Label3D
+	if g == null:
+		return
+	g.pixel_size = label.pixel_size
+	g.offset = Vector2(0.0, label.offset.y + GUILD_LINE_RAISE_PX * _plate_fk(label))
+	_fit_monster_name_box(g)
+
+## 0xB256: the own grant name set or refused, in the chat. OK: the
+## archive's UIIT_MSG_GUILD_NAME_GRANT_RESULT (READ FUN_0088f9e0 shows it,
+## formatted with the member's name) when it has it, else ours.
+func _on_guild_grant_result(d: Dictionary) -> void:
+	if not bool(d.get("ok", false)):
+		_log_system(ErrorText.grant_name_line(int(d.get("code", 0)), _ui_text_table))
+		return
+	var nick := String(d.get("nickname", ""))
+	var line := "Your grant name is now %s." % nick if nick != "" else "Your grant name is cleared."
+	if _ui_text_table != null and _ui_text_table.has("UIIT_MSG_GUILD_NAME_GRANT_RESULT") and nick != "":
+		var fmt := _ui_text_table.get_text("UIIT_MSG_GUILD_NAME_GRANT_RESULT").strip_edges()
+		if fmt.contains("%s") and fmt.count("%") == 1:
+			line = fmt % NetClient.current_character_name
+	_log_system(line)
+
+## A character's guild line changed (NetClient.guild_line_changed): the own
+## plate re-made, or that player's line.
+func _on_guild_line_changed(uid: int) -> void:
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		_refresh_player_name_plate()
+		return
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) != uid:
+			continue
+		var node: Node3D = _other_bodies[id]
+		if node == null or not is_instance_valid(node):
+			return
+		var plate := node.get_node_or_null("Name") as Label3D
+		if plate == null:
+			return
+		var job: Dictionary = NetClient.user_jobs.get(uid, {})
+		_apply_guild_line(plate, node, NetClient.user_guilds.get(uid, {}), int(job.get("state", UserSpawnNet.JOB_STATE_NONE)), false, true)
+		return
+
 ## The gap between a title and its name (READ, FUN_009d0a80 c:0x9d0c3f: the
 ## title's left at the point - (title w + name w + 2) x 0.5, the name 2 px
 ## right of the title's end) after the title's own trailing space (READ: the
@@ -9526,6 +9628,7 @@ func _layout_job_decor(label: Label3D, holder: Node3D) -> void:
 		mark.offset = Vector2(cx, cy) * (label.pixel_size / mpx)
 	if _plate_batch != null and _plate_batch.has(label) and was != Vector2(label.offset.x, ext):
 		_plate_batch.reshape(label)
+	_layout_guild_line(label, holder)
 
 ## A plate's text width in its font pixels.
 static func _plate_text_width(label: Label3D, text: String) -> float:
@@ -10310,6 +10413,8 @@ func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 		_plate_box_sprite(plate)
 		_plate_sweep.add(plate)
 	_job_plate_decor(plate, node, js, int(job.get("level", 0)), _other_is_europe(node), true)
+	# Round 814: its guild line over the name.
+	_apply_guild_line(plate, node, NetClient.user_guilds.get(int(node.get_meta("character_id", -1)), {}), js, false, true)
 
 ## Whether another player's body (its "body" meta) is a European one.
 func _other_is_europe(node: Node) -> bool:
@@ -16951,7 +17056,8 @@ func _update_blob_shadow() -> void:
 ##                          round 717: maplog (the party's minimap marks and
 ##                          world-map dots), wmap (the world map opened)
 ##   OPENSRO_QA_COMMANDS="/a;/b"  feed these lines through the chat console
-##                          ("wait <seconds>" pauses the list, round 642)
+##                          ("wait <seconds>" pauses the list, round 642;
+##                          "guild create <name>" founds a guild, round 814)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
 ##   OPENSRO_QA_AUTOPOT="<tick>:<step>;..."  (round 786) the auto potion's
@@ -24671,6 +24777,8 @@ func _console_host() -> Dictionary:
 		"set_camera_mode": Callable(self, "_console_set_camera"),
 		"whisper": func(n: String, m: String) -> void: NetClient.whisper(n, m),
 		"unstuck": func() -> void: _unstuck_player(),
+		# Round 814: /grantname -- the own grant name (0x7256).
+		"grant_name": func(nick: String) -> void: NetClient.send_guild_grant_name(nick),
 		"ground_probe": Callable(self, "_run_ground_probe"),
 		"forward_gm": func(line: String) -> void: NetClient.gm_command(NetClient.current_character_name, line, _last_attack_target if _last_attack_target > 0 else 0),
 	}
@@ -24917,6 +25025,12 @@ func _run_qa_commands(list: String) -> void:
 			await get_tree().create_timer(maxf(float(line.substr(5)), 0.0)).timeout
 			continue
 		print("QA COMMAND: %s" % line)
+		# Round 814 (QA only): "guild create <name>" founds a guild the way the
+		# guild NPC's create prompt does (NetClient.create_guild), so a QA run
+		# can stand in a guild without walking to the NPC.
+		if line.begins_with("guild create "):
+			NetClient.create_guild(NetClient.current_character_name, line.substr(13).strip_edges())
+			continue
 		if line.begins_with("/") and _console != null:
 			_console.submit(line)
 		else:
@@ -27882,6 +27996,8 @@ func _step_slope_tilts(delta: float) -> void:
 				_slope_hot.erase(key)
 	if _qa_slope_due():
 		_qa_slope_report()
+	if _qa_guild_on and Engine.get_process_frames() % 60 == 0:
+		_qa_guild_report()
 
 ## The [NavGraph, group] a body stands in: the one it stood in last when the
 ## point is still inside it, else the lookup (_nav_graph_for).
@@ -27938,6 +28054,31 @@ func _slope_tilt_body(e: Array, delta: float) -> bool:
 		if ride != null and ride.ride_type == SoundTable.RIDE_DUMMY and is_instance_valid(ride.root):
 			ride.root.transform = model.transform
 	return st.stale or (st.enabled and not (st.n_done and st.k_done))
+
+## OPENSRO_QA_GUILD (round 814): every 60 frames, every guild line drawn --
+## its text, its colour (8-bit), and how far above its name line it sits on
+## the screen (a fixed-size plate's offsets are screen pixels times the font
+## factor, _plate_fk).
+var _qa_guild_on := OS.get_environment("OPENSRO_QA_GUILD") != ""
+func _qa_guild_report() -> void:
+	var holders: Array = [player]
+	for id in _other_bodies:
+		holders.append(_other_bodies[id])
+	for h in holders:
+		if h == null or not is_instance_valid(h):
+			continue
+		var g := (h as Node).find_child("GuildLine", true, false) as Label3D
+		if g == null:
+			continue
+		var name_label := g.get_parent().get_node_or_null("Name") as Label3D
+		if name_label == null and g.get_parent() is Label3D:
+			name_label = g.get_parent() as Label3D
+		var fk := _plate_fk(g)
+		var gap := (g.offset.y - name_label.offset.y) / fk if name_label != null else NAN
+		var c := g.modulate
+		print("QA GUILD: %s '%s' colour (%d, %d, %d) %.1f px above its name (fixed size %s), shown %s" % [
+			"own" if h == player else String((h as Node).name), g.text, roundi(c.r8), roundi(c.g8), roundi(c.b8),
+			gap, g.fixed_size, g.is_visible_in_tree()])
 
 ## OPENSRO_QA_SLOPE: every 60 frames, the tilting bodies nearest the player --
 ## the ground's normal, the eased one, the factors and the model's lean.
@@ -34982,7 +35123,7 @@ func _set_plate_y(holder: Node3D, plate: Label3D, y: float) -> void:
 			_plate_batch.moved(plate)
 	if holder == null or holder == plate:
 		return
-	for decor in ["JobMark", "JobTitle"]:
+	for decor in ["JobMark", "JobTitle", "GuildLine"]:
 		var n := holder.get_node_or_null(decor) as Node3D
 		if n != null and n.get_parent() == holder and not is_equal_approx(n.position.y, y):
 			n.position.y = y

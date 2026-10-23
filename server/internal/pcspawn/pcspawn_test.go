@@ -124,3 +124,46 @@ func TestAppendRefusesUnreadableForms(t *testing.T) {
 		}
 	}
 }
+
+// Round 814: a guild member's record carries the guild's name before the
+// block and its id and the member's grant name first in it (READ
+// s:0x4e5d3b..0x4e5eb3, c:0x9ddfbe..0x9de08c), and decodes back; the rest of
+// the block stays 0.
+func TestGuildBlockRoundTrip(t *testing.T) {
+	a := plain()
+	a.GuildName, a.GuildID, a.Nickname = "Verizon", 7, "Roaster"
+	buf, err := Append(nil, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w bytes.Buffer
+	le := func(v any) { _ = binary.Write(&w, binary.LittleEndian, v) }
+	le(uint16(7))
+	w.WriteString("Verizon")
+	le(uint32(7))
+	le(uint16(7))
+	w.WriteString("Roaster")
+	le(uint32(0))
+	le(uint32(0))
+	le(uint32(0))
+	w.Write([]byte{0, 0, 0, 0xff})
+	if !bytes.HasSuffix(buf, w.Bytes()) {
+		t.Fatalf("the guild tail\n got % x\nwant suffix % x", buf, w.Bytes())
+	}
+	d, rest, err := Decode(buf, nil)
+	if err != nil || len(rest) != 0 || d.GuildName != "Verizon" || d.GuildID != 7 || d.Nickname != "Roaster" {
+		t.Fatalf("decoded %+v rest %d err %v", d, len(rest), err)
+	}
+	// A job suit drops the block: the name alone stays (the original writes
+	// it before the job-state test).
+	b := a
+	b.JobState = 2
+	sb, err := Append(nil, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d2, _, err := Decode(sb, suit{2})
+	if err != nil || d2.GuildName != "Verizon" || d2.GuildID != 0 || d2.Nickname != "" {
+		t.Fatalf("suit record %+v err %v", d2, err)
+	}
+}

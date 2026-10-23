@@ -148,6 +148,20 @@ const MEMBER_ROW_PARTS := [64, 68, 69, 70, 71, 231]
 ## Emitted when the window's own left-menu buttons (220 / 221) switch the
 ## view, so the owner can ask for that view's data.
 signal view_changed(view: String)
+## Round 814: OK on the grant-name box -- the player's own grant name (""
+## clears it).
+signal grant_name_submitted(nickname: String)
+
+## Round 814: the grant-name button, CNIFGuildWnd's fourth command button (47
+## -> 40; READ, the dispatcher 0x5b63e0's index 3 opens UI_SILKMALL
+## 0x641f40's grant-name box for the member selected at +0x79c). OURS: a
+## member names only themselves, so it opens for the player's own name with
+## no row chosen (this client fills no member rows yet, OPEN), and it is the
+## one command button enabled -- whenever the player is in a guild.
+const GRANT_NAME_BUTTON := 40
+var grant_box: HudCosBox
+## The player's own name, for the box's title (the owner sets it).
+var own_name := ""
 
 var _twodt: TwoDtBuilder
 ## The guild window's own node (176). panel_root is the same node.
@@ -354,6 +368,9 @@ func _command_buttons() -> void:
 	var edit := _at(NOTICE_EDIT) as BaseButton
 	if edit != null:
 		edit.disabled = true
+	var grant := _at([ID_INFO, GRANT_NAME_BUTTON]) as BaseButton
+	if grant != null:
+		grant.disabled = not _has_guild
 
 ## The guild window's ShowWindow (CNIFGuildWnd::vslot_023, 0x5bb150), for
 ## a show: 0x5bb0a0 first -- the grant window hidden (0x5bb0bf), the command
@@ -437,6 +454,24 @@ func set_guild(in_guild: bool, guild_name: String = "", master_name: String = ""
 	_guild_master = master_name if in_guild else ""
 	if visible:
 		_guild_info()
+		_command_buttons()
+
+## Round 814: the grant-name box for the player's own name (any open one is
+## closed first). Does nothing outside a guild or without the layout.
+func open_grant_name_box() -> void:
+	if not _has_guild or _builder == null:
+		return
+	if grant_box != null and is_instance_valid(grant_box):
+		grant_box.queue_free()
+	grant_box = HudCosBox.new()
+	if not grant_box.build_grant_name_input(_builder, own_name):
+		grant_box.free()
+		grant_box = null
+		return
+	grant_box.accepted.connect(func(nick: String) -> void: grant_name_submitted.emit(nick))
+	var host: Node = get_parent() if get_parent() != null else self
+	host.add_child(grant_box)
+	grant_box.centre_on(get_viewport_rect().size)
 
 ## 0x798c50: the window moved so that x = (screen width >> 1) - (width >> 1)
 ## and y = (screen height >> 1) - (height >> 1) -- integer halves, read from
@@ -498,6 +533,9 @@ func _wire() -> void:
 		to_community.pressed.connect(func() -> void:
 			show_community_view()
 			view_changed.emit("community"))
+	var grant := _at([ID_INFO, GRANT_NAME_BUTTON]) as BaseButton
+	if grant != null:
+		grant.pressed.connect(open_grant_name_box)
 	# The window's ShowWindow(1) (0x5bb150).
 	visibility_changed.connect(func() -> void:
 		if visible and not _shown_flag:

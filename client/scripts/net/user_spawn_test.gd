@@ -13,6 +13,11 @@ extends SceneTree
 const GROUP := "01030073070000220000006d023b0e000000300e00000705000001000000a86100807a440000604000007f44004000010000400100040100008041000048420000c8420004004172696100000000000000000000000000000000000000000000000000000000000000ffd00700000100007fa861000061440000000000806d44000000010000000100000000000000000000000000c84200020207091b3a0000440000006d03ea2900000d3e000000f82a00000005000002000000a961000020410000000000d0ee4400c000010000c00100000000008041000096420000c8420004004272616d0000000000000000000000ff"
 const SINGLE := "73070000220000006d023b0e000000300e00000705000001000000a86100807a440000604000007f44004000010000400100040100008041000048420000c8420004004172696100000000000000000000000000000000000000000000000000000000000000ff04"
 const DESPAWN := "0202000100000002000000"
+## Round 814: SINGLE with Aria in guild 7 "Verizon" under the grant name
+## "Roaster" -- the guild name after the trade rank, the guild block's id and
+## grant name (the bytes server/internal/pcspawn TestGuildBlockRoundTrip
+## writes; the rest of the block 0).
+const GUILD_SINGLE := "73070000220000006d023b0e000000300e00000705000001000000a86100807a440000604000007f44004000010000400100040100008041000048420000c8420004004172696100000000000000000700566572697a6f6e070000000700526f6173746572000000000000000000000000000000ff04"
 
 var _failures := 0
 
@@ -183,8 +188,19 @@ func _test_net_client() -> void:
 	_check(not nc.character_states.has(1), "a player's states go with its despawn")
 	nc.free()
 
+## Round 814: a guild member's record keeps its guild line (the client's
+## +0x7e4 and +0x7c8); a plain one has none.
+func _test_guild_record() -> void:
+	var types := UserSpawnNet.Types.new(_rows())
+	var one := UserSpawnNet.decode_single_spawn(GUILD_SINGLE.hex_decode(), types)
+	_check(one != null and one.name == "Aria" and one.guild_name == "Verizon" and one.guild_id == 7 and one.nickname == "Roaster" and one.spawn_type == 4,
+		"a guild member's 0x3015 keeps its guild and grant name")
+	var plain := UserSpawnNet.decode_single_spawn(SINGLE.hex_decode(), types)
+	_check(plain != null and plain.guild_name == "" and plain.guild_id == 0 and plain.nickname == "", "a plain one has no guild")
+
 func _init() -> void:
 	_test_records()
+	_test_guild_record()
 	_test_avatars()
 	_test_net_client()
 	if _failures > 0:

@@ -42,6 +42,12 @@ ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS gp_donation BIGINT NOT NULL D
 -- guild.FoundingLevel, so a guild stored before the column existed reads as
 -- level 1, the cap it has always had here.
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS lvl INTEGER NOT NULL DEFAULT 1;
+
+-- A member's grant name (round 814): _GUILDMEMBER.Nickname (+0x64,
+-- docs/protocol/db_bind_offsets.tsv), at most guild.MaxNicknameBytes. ''
+-- for none, so a database made before the column reads every member as
+-- having none.
+ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT '';
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver).
@@ -319,7 +325,7 @@ func getGuild(ctx context.Context, q querier, guildID int64) (*Guild, error) {
 	}
 
 	rows, err := q.QueryContext(ctx,
-		`SELECT character_id, character_name, role, gp_donation FROM guild_members WHERE guild_id = $1 ORDER BY joined_at ASC`,
+		`SELECT character_id, character_name, role, gp_donation, nickname FROM guild_members WHERE guild_id = $1 ORDER BY joined_at ASC`,
 		guildID)
 	if err != nil {
 		return nil, fmt.Errorf("guild: listing members: %w", err)
@@ -328,7 +334,7 @@ func getGuild(ctx context.Context, q querier, guildID int64) (*Guild, error) {
 
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.CharacterID, &m.Name, &m.Role, &m.GPDonation); err != nil {
+		if err := rows.Scan(&m.CharacterID, &m.Name, &m.Role, &m.GPDonation, &m.Nickname); err != nil {
 			return nil, fmt.Errorf("guild: scanning member: %w", err)
 		}
 		g.Members = append(g.Members, m)
@@ -473,4 +479,46 @@ func (s *SQLStore) LevelUp(ctx context.Context, characterID int64, alive bool, g
 
 func isUniqueConstraintErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint")
+}
+
+// SetNickname implements Store: CheckNickname against the actor's guild as
+// one transaction holds it (the guild row locked, so a level read and the
+// write agree), then the target's row.
+func (s *SQLStore) SetNickname(ctx context.Context, actorID, targetID int64, nickname string, allowed func(string) bool) (*Guild, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("guild: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var guildID int64
+	var level int
+	err = tx.QueryRowContext(ctx,
+		`SELECT g.id, g.lvl FROM guild_members gm JOIN guilds g ON g.id = gm.guild_id
+		 WHERE gm.character_id = $1 FOR UPDATE OF g`, actorID).Scan(&guildID, &level)
+	inGuild := true
+	if errors.Is(err, sql.ErrNoRows) {
+		inGuild = false
+	} else if err != nil {
+		return nil, fmt.Errorf("guild: looking up membership: %w", err)
+	}
+	if err := CheckNickname(inGuild, level, actorID, targetID, nickname, allowed); err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE guild_members SET nickname = $1 WHERE guild_id = $2 AND character_id = $3`, nickname, guildID, targetID)
+	if err != nil {
+		return nil, fmt.Errorf("guild: setting grant name: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrNotInGuild
+	}
+	g, err := getGuild(ctx, tx, guildID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("guild: committing: %w", err)
+	}
+	return g, nil
 }

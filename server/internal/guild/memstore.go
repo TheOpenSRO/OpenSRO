@@ -233,3 +233,27 @@ func (m *MemStore) LevelUp(_ context.Context, characterID int64, alive bool, gol
 	g.Level++
 	return m.copy(g), nil
 }
+
+// SetNickname implements Store.
+func (m *MemStore) SetNickname(_ context.Context, actorID, targetID int64, nickname string, allowed func(string) bool) (*Guild, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	guildID, in := m.ofChar[actorID]
+	var g *Guild
+	level := 0
+	if in {
+		g = m.byID[guildID]
+		level = g.Level
+	}
+	if err := CheckNickname(in, level, actorID, targetID, nickname, allowed); err != nil {
+		return nil, err
+	}
+	for i := range g.Members {
+		if g.Members[i].CharacterID == targetID {
+			g.Members[i].Nickname = nickname
+			return m.copy(g), nil
+		}
+	}
+	return nil, ErrNotInGuild
+}

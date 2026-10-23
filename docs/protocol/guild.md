@@ -655,3 +655,11 @@ will have to be undone.
 - **What a level-up spends in guild points.** The ShardManager decides it, and
   it is not in `SR_GameServer.exe`; OpenSRO spends the checked cost as a
   disclosed stand-in ("What a level-up spends (round 528)" above).
+
+## The guild line and the grant name (round 814)
+
+A member's guild over their name -- `[Guild * Grant]` -- and the grant name (the member's nickname,
+`_GUILDMEMBER.Nickname`) have their own page: [guild_plate.md](guild_plate.md). In short: the original's
+request 0x7256 lets only the master name a member (`FUN_005c7560`: in a guild, guild level 4, the
+master, under 13 bytes and the name filter); OpenSRO lets each member name only themselves (OURS, the
+user's request), keeping the rest.

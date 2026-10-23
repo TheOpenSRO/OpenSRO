@@ -2409,7 +2409,7 @@ func main() {
 		Chars: chars, Inv: inv, Equip: eq, Avatars: avatars, Items: refItems, Skills: skills,
 		Monsters: monsters, World: hub, Mana: manaTracker, Berserk: zerkTracker, Levels: levelTable,
 		Species: gmSpecies(), Zones: gmZones(), Logger: logger,
-		Uniques: gmUniques(), Parties: parties,
+		Uniques: gmUniques(), Parties: parties, Guilds: guilds,
 	}
 	if speciesTable != nil {
 		gmDeps.LookupSpecies = gmSpeciesLookup(speciesTable, speciesSkills)
