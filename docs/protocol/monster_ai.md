@@ -2381,6 +2381,21 @@ re-read in `srv.asm` for this round):**
      leg every tick behind a running player. **The back-off** (`0x4b0653..0x4b07d9`): closer than
      the two collision radii less 4 (vslot `0x560` of each) with the stop beyond the radii, the
      follower walks the two radii straight back from the target (`BackOff`).
+     **Round 813 (READ): the reach is tested every frame.** The skill command's phase 1
+     (`Tick_UseSkill` `0x4ae590`, from `CGObjChar::Update`) calls `Action_IsTargetWithinReach`
+     (`0x4ad4a0`, `int(dist) <= reach + 2`) on every server update, at the target's current place
+     (vslot `0x3e0`'s other path is the fortress structures'); a swing does not restart the follow
+     (`MoveTowardObject` skips a target already at `+0x1bfc`). OpenSRO's pass tests once per 100 ms,
+     after the mover step: a chaser that met its leg's end mid-step stood there while a runner ran
+     on, was out of the band by the pass's end, and re-aimed again -- behind a runner it never
+     swung. `reachedDuringStep` (OURS: the frames' answer in the limit; INFERRED that a frame is
+     finer than the pass) takes the closest the two came over the step, the monster walking to its
+     arrival then standing, the target straight from its last BATTLE sample (a jump over
+     `combat.MoverMaxStep` is a teleport: the pass's own distance), and swings when that was in
+     reach. INFERRED from these rules (a timing model, `chase_sim.py`, not a capture): a 120-speed
+     chaser always reaches a 50-speed runner; a 75-speed one (MOB_CH_TIGER: RunSpeed 75, BCRadius
+     15, skill range 9 -> stop 26, reach `int(dist) <= 30`, MEASURED) settles about 32.7 behind a
+     straight runner and never swings, in the original as here (OPEN against the original running).
    - **The swing's action (round 812, READ).** The swing is a 0x7070 skill command
      (`Handler_0e8` `0x5472a0` -> `0x5411a0`), whose phase 3 stands until `now - phaseStart >
      CastingTime + ActionDuration` (the server's CastingTime includes PreparingTime;

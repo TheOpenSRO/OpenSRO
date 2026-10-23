@@ -214,6 +214,49 @@ func BackOff(dist, r, stop float64) bool {
 	return dist > 1e-6 && dist < r-4 && stop > r
 }
 
+// reachedDuringStep is the closest the monster came to its target over one
+// pass's step of dt seconds (round 813): the monster from (fromX, fromZ) to
+// (toX, toZ) -- at speed, standing from the moment it arrived when the step
+// ended its leg (moving false), else walking all step -- and the target
+// straight from (t0x, t0z) to (t1x, t1z) at an even pace. The original tests
+// the reach every main-loop frame (Tick_UseSkill phase 1 0x4ae590 ->
+// Action_IsTargetWithinReach 0x4ad4a0, READ); the pass sees only the step's
+// ends, so this is the frames' answer in the limit (INFERRED: the frame
+// period is not read, and a frame finer than the pass is all it needs). A
+// target that jumped more than combat.MoverMaxStep in one pass was put
+// there, not walked: the pass's own distance then stands.
+func reachedDuringStep(fromX, fromZ, toX, toZ float64, moving bool, speed, t0x, t0z, t1x, t1z, dt float64) float64 {
+	end := math.Hypot(t1x-toX, t1z-toZ)
+	if !(dt > 0) || math.Hypot(t1x-t0x, t1z-t0z) > combat.MoverMaxStep {
+		return end
+	}
+	moved := math.Hypot(toX-fromX, toZ-fromZ)
+	ta := dt
+	if !moving && speed > 0 {
+		ta = math.Min(dt, moved/speed)
+	}
+	// The relative place target - monster: piecewise linear, one piece while
+	// the monster walks (to ta) and one after it stood.
+	tvx, tvz := (t1x-t0x)/dt, (t1z-t0z)/dt
+	mvx, mvz := 0.0, 0.0
+	if ta > 0 {
+		mvx, mvz = (toX-fromX)/ta, (toZ-fromZ)/ta
+	}
+	best := end
+	seg := func(rx, rz, vx, vz, span float64) {
+		t := 0.0
+		if v2 := vx*vx + vz*vz; v2 > 0 {
+			t = math.Max(0, math.Min(span, -(rx*vx+rz*vz)/v2))
+		}
+		best = math.Min(best, math.Hypot(rx+vx*t, rz+vz*t))
+	}
+	seg(t0x-fromX, t0z-fromZ, tvx-mvx, tvz-mvz, ta)
+	if ta < dt {
+		seg(t0x+tvx*ta-toX, t0z+tvz*ta-toZ, tvx, tvz, dt-ta)
+	}
+	return best
+}
+
 // monsterAIRuntime is the running monster AI, nil while -monster-ai is off.
 // An atomic pointer rather than a plain variable: RunMonsterAI stores it on
 // the boot goroutine while session readers and keep-up goroutines load it
@@ -306,6 +349,9 @@ type monsterAI struct {
 	roamRadius  float64
 	last, now   time.Time
 	tickN       uint64
+	// dt is this pass's step in seconds (round 813: the reach test over the
+	// step, reachedDuringStep).
+	dt float64
 	// battle is -monster-battle as this pass read it (monsterBattle), once,
 	// so one pass runs one BATTLE or the other throughout; aggro is
 	// -monster-aggro the same way (monsterAggro).
@@ -395,6 +441,16 @@ type brain struct {
 	// stood too deep inside (round 812, BackOff): the walk runs out before
 	// the swing, as the original's follow update leaves it.
 	backingOff bool
+	// Round 813 (reachedDuringStep): where this pass's mover step started the
+	// monster -- its snapshot as the last pass left it, taken before the
+	// pass refreshes b.m (stepTick is the pass that took it) -- and where the
+	// target was at the last BATTLE pass (sampleTick, sampleID).
+	stepFromX, stepFromZ float64
+	stepMoving           bool
+	stepTick             uint64
+	sampleX, sampleZ     float64
+	sampleID             int64
+	sampleTick           uint64
 	// armed is the attack skill the next swing fires -- the selector's +0x44,
 	// which PickSkill (0x561b00) fills through ArmNextAttack (0x5619e0) and
 	// Handler_0e8 (0x5472a0) reads first (its slot 4) before it asks for a
@@ -669,6 +725,7 @@ func (a *monsterAI) tick(now time.Time) {
 		dt = now.Sub(a.last).Seconds()
 	}
 	a.last, a.now = now, now
+	a.dt = dt
 	a.tickN++
 	a.battle = monsterBattle.Load()
 	a.aggro = monsterAggro.Load()
@@ -744,6 +801,9 @@ func (a *monsterAI) tick(now time.Time) {
 	for i := range live {
 		m := &live[i]
 		if b := a.brains[m.ID]; b != nil {
+			// Round 813: where the step started it (b.m is still the last
+			// pass's snapshot: its leg start, or where a stop left it).
+			b.stepFromX, b.stepFromZ, b.stepMoving, b.stepTick = b.m.X, b.m.Z, b.m.Moving, a.tickN
 			b.m = *m
 			b.seenTick = a.tickN
 			continue
@@ -1443,6 +1503,10 @@ func (a *monsterAI) battleTick(b *brain) {
 	}
 	dist := math.Hypot(e.Pos.X-b.m.X, e.Pos.Z-b.m.Z)
 	fromHome := math.Hypot(b.m.X-b.m.HomeX, b.m.Z-b.m.HomeZ)
+	// Round 813: the target's place at the last BATTLE pass, for the reach
+	// test over the step (reachedDuringStep); this pass's is kept for the next.
+	prevX, prevZ, prevOK := b.sampleX, b.sampleZ, b.sampleID == b.target && b.sampleTick+1 == a.tickN
+	b.sampleX, b.sampleZ, b.sampleID, b.sampleTick = e.Pos.X, e.Pos.Z, b.target, a.tickN
 
 	// 2. The reach test. Every OpenSRO placement is a nest -- its DB nest's
 	// position and radius (round 660), or a stand-in's spawn point and
@@ -1506,7 +1570,23 @@ func (a *monsterAI) battleTick(b *brain) {
 		}
 		b.backingOff = false
 	}
-	if !combat.InReach(dist, reach) {
+	inReach := combat.InReach(dist, reach)
+	// Round 813: the original tests the reach every frame (Tick_UseSkill
+	// phase 1, 0x4ae590 -> Action_IsTargetWithinReach 0x4ad4a0, from
+	// CGObjChar::Update each main-loop frame), not once a pass: a chaser
+	// that reached its leg's end mid-step, `stop` from where the target was,
+	// stood there while a fleeing target ran on, and by the pass's end was
+	// out of the band again -- so behind a runner it re-aimed forever and
+	// never swung. The step's closest approach answers what the frames
+	// would have.
+	if !inReach && prevOK && b.stepTick == a.tickN && b.stepMoving {
+		inReach = combat.InReach(reachedDuringStep(b.stepFromX, b.stepFromZ, b.m.X, b.m.Z, b.m.Moving, b.m.MoveSpeed,
+			prevX, prevZ, e.Pos.X, e.Pos.Z, a.dt), reach)
+		if inReach {
+			a.tracef("ai: monster %d reached its target during the step (%.1f away at the pass)", b.id, dist)
+		}
+	}
+	if !inReach {
 		a.chase(b, e.Pos, dist, stop)
 		return
 	}
