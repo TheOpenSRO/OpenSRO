@@ -21,7 +21,7 @@ var waveTacticsIDs = []int64{2001, 2002, 2003, 2004, 2011, 2012, 2013, 2014}
 // and level) and the waves' tactics rows, and starts the caravans' tick
 // (round 804, session/caravan.go). No species table: no waves.
 func installCaravans(ctx context.Context, logger *slog.Logger, table *species.Table, lookup species.SkillLookup,
-	db *nest.DB, hub *world.Hub, monsters *combat.Hub, monFactor uint32) {
+	db *nest.DB, hub *world.Hub, monsters *combat.Hub, monFactor uint32, npcThieves bool) {
 	if table == nil {
 		logger.Info("caravans: no monster table (-monsters-csv): no NPC thieves or hunters round a caravan")
 		return
@@ -54,10 +54,10 @@ func installCaravans(ctx context.Context, logger *slog.Logger, table *species.Ta
 		}
 	}
 	session.SetCaravanDeps(session.CaravanDeps{Thieves: &thieves, Hunters: &hunters, Specs: specs, Tactics: tactics,
-		MonFactor: monFactor, Hub: hub, Monsters: monsters, Logger: logger})
+		MonFactor: monFactor, NPCThieves: npcThieves, Hub: hub, Monsters: monsters, Logger: logger})
 	session.RunCaravans(ctx)
 	logger.Info("caravans: NPC thieves and hunters round a trade transport (s:0x60bf30)", "thief_rows", nThief,
-		"hunter_rows", nHunter, "tactics_rows", len(tactics), "trade_mon_factor", monFactor)
+		"hunter_rows", nHunter, "tactics_rows", len(tactics), "trade_mon_factor", monFactor, "npc_thieves", npcThieves)
 	if len(tactics) < len(waveTacticsIDs) {
 		logger.Warn("caravans: the waves' _RefTactics rows 2001-2004 / 2011-2014 are missing (-nest-db-dir): the waves run the stand-in tactics",
 			"found", len(tactics))

@@ -1103,6 +1103,10 @@ func main() {
 	maxPerIP := flag.Int("max-users-per-ip", maxPerIPEnv,
 		"accounts that may be logged in from one address at once; 0 is no limit "+
 			"(env OPENSRO_MAX_USERS_PER_IP; retail's MaxUserForNonePCBangIP; default 0)")
+	npcThievesEnv, npcThievesEnvErr := envBool("OPENSRO_NPC_THIEVES")
+	npcThieves := flag.Bool("npc-thieves", npcThievesEnv,
+		"send waves of NPC thieves round a trader's caravan, as the original does (env OPENSRO_NPC_THIEVES). "+
+			"Default OFF (OURS, round 812): a trader's caravan meets none; the NPC hunters round a thief's caravan still come")
 	monsterAI := flag.Bool("monster-ai", monsterAIEnv,
 		"run the monster AI (env OPENSRO_MONSTER_AI): monsters idle, wander, run home past their "+
 			"roam radius, and stand where a blow found them while any player in the zone has an "+
@@ -1338,6 +1342,10 @@ func main() {
 	if monsterAIEnvErr != nil {
 		logger.Warn("OPENSRO_MONSTER_AI is not a boolean; the monster AI stays off unless -monster-ai is given",
 			"err", monsterAIEnvErr)
+	}
+	if npcThievesEnvErr != nil {
+		logger.Warn("OPENSRO_NPC_THIEVES is not a boolean; NPC thieves stay off unless -npc-thieves is given",
+			"err", npcThievesEnvErr)
 	}
 	if strikePushEnvErr != nil {
 		logger.Warn("OPENSRO_MONSTER_STRIKE_PUSH is not a boolean; the strike push stays off unless -monster-strike-push is given",
@@ -2302,7 +2310,7 @@ func main() {
 	}
 	go respawns.run(ctx)
 	// Round 804: the NPC thieves' and hunters' waves round a caravan.
-	installCaravans(ctx, logger, speciesTable, speciesSkills, nestDB, hub, monsters, uint32(*tradeMonFactor))
+	installCaravans(ctx, logger, speciesTable, speciesSkills, nestDB, hub, monsters, uint32(*tradeMonFactor), *npcThieves)
 
 	// The monster's own BATTLE (round 546), behind its own flag, which needs
 	// the tick (the chase runs in it) and the strike push (a swing nobody is

@@ -58,6 +58,12 @@ type CaravanDeps struct {
 	Tactics map[int64]*combat.Tactics
 	// MonFactor is TRADE_MON_FACTOR (specialty.ShardMonFactor by default).
 	MonFactor uint32
+	// NPCThieves sends the NPC thieves' waves round a trader's caravan (the
+	// original always does). OURS, round 812: a server switch, off by
+	// default at the user's request; off, a trader's caravan still runs its
+	// clock (s:0x60bc80) but its wave spawns nothing. The NPC hunters'
+	// waves round a thief's or hunter's caravan are not affected.
+	NPCThieves bool
 	Hub       *world.Hub
 	Monsters  *combat.Hub
 	Logger    *slog.Logger
@@ -234,6 +240,12 @@ func (rt *caravanRuntime) wave(ctx context.Context, e world.Entity, zone string,
 	n := jobs.WaveCount(base, dice)
 	tacticsID := jobs.WaveTacticsID(job, dice)
 	kind := jobs.WaveMobKind(job)
+	if kind == jobs.MobNPCThief && !rt.d.NPCThieves {
+		rt.mu.Unlock()
+		rt.d.Logger.Info("caravan: wave skipped, NPC thieves are off (-npc-thieves)", "character", e.CharacterID,
+			"value", value, "scale", scale, "count", n)
+		return
+	}
 	table := rt.d.Hunters
 	if kind == jobs.MobNPCThief {
 		table = rt.d.Thieves

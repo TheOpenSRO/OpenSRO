@@ -710,6 +710,13 @@ corpse).
 
 ## NPC thieves and hunters (round 804)
 
+**OURS, round 812: off by default.** The server's `-npc-thieves` switch (env
+`OPENSRO_NPC_THIEVES`) turns the NPC thieves' waves round a trader's caravan
+on; by default (the user's choice, 2026-10-22) a trader's caravan keeps its
+clock but its waves spawn nothing (logged `caravan: wave skipped`). The NPC
+hunters round a thief's or hunter's caravan still come. The original always
+sends both.
+
 `server/internal/jobs/caravan.go` (the rules), `server/internal/session/
 caravan.go` (the caravans and their waves), `session/mobcos.go` (monsters
 against a COS), `cmd/server/caravan.go` (the tables). READ in

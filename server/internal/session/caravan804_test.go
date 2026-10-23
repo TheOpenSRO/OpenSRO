@@ -144,7 +144,7 @@ func TestRound804CaravanWave(t *testing.T) {
 		tactics[id] = &combat.Tactics{ID: id, SightRange: 250, Flags: 542, RoamRadius: MonsterRoamRadius}
 	}
 	SetCaravanDeps(CaravanDeps{Thieves: &thieves, Hunters: &hunters, Specs: specs, Tactics: tactics, Hub: hub,
-		Monsters: monsters, Rand: rand.New(rand.NewSource(7))})
+		Monsters: monsters, Rand: rand.New(rand.NewSource(7)), NPCThieves: true})
 
 	// No transport: nothing registers.
 	caravanOnEnd(ctx, sess, hub, 0, 6)
@@ -175,6 +175,20 @@ func TestRound804CaravanWave(t *testing.T) {
 	if v := tradeAmountOf(ctx, cid, 30); specialtyNow().d.Thresholds.Scale(v) != 1 || !jobRecord(ctx, cid).Safe.Status {
 		t.Fatalf("want a 1-star caravan under a safe trade: amount %d, safe %+v", v, jobRecord(ctx, cid).Safe)
 	}
+	// Round 812: -npc-thieves off (the server's default) -- the caravan's
+	// clock runs, its wave spawns nothing.
+	rt.d.NPCThieves = false
+	rt.tick(ctx, 120000)
+	if n := len(monsters.InZone("jangan")); n != 0 {
+		t.Fatalf("%d NPC thieves came with -npc-thieves off", n)
+	}
+	rt.mu.Lock()
+	_, kept := rt.list[cid]
+	rt.mu.Unlock()
+	if !kept {
+		t.Fatal("with NPC thieves off the caravan itself was dropped")
+	}
+	rt.d.NPCThieves = true
 	rt.tick(ctx, 120000)
 	all := monsters.InZone("jangan")
 	if len(all) == 0 {
