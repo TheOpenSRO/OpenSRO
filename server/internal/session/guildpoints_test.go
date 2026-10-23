@@ -217,7 +217,7 @@ func TestKillCreditsGuildPoints(t *testing.T) {
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
 		CombatHandler(chars, eq, items, hub, monsters, quest.NewMemStore(), inv, NewGuildPointSkills(inner, guilds, chars), nil, nil, nil),
-		GuildHandler(chars, guilds, nil),
+		testGuildHandler(t, chars, guilds, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

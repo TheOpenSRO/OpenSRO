@@ -31,6 +31,7 @@ command always answers with the help line — it never stays silent.
 | `/unstuck` | Returns you to the zone's entry point if you wedge into geometry. |
 | `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The Shift+F3 panel's **Ground probe** button does the same. |
 | `/w <name> <message>` | Whispers another player. |
+| `/grantname <name>` | Sets your own grant name in your guild, the second part of the `[Guild * Grant]` line over your name (round 814; at most 12 letters and the name filter applies; any guild level since round 815). `/grantname` alone clears it. The guild window's grant-name button does the same. |
 | `/layer <path>` | Which layer of the game's archives serves an archive path (round 789): the loose `custom/` folder, an asset pack (`.pk3`, by its file name) or a base archive (`base Data.pk2`, `base Media.pk3`, ...), and which layers under it hold the same path, e.g. `/layer prim\mtrl\foo.ddj` -> `z_assets.pk3 (...); also in assets.pk3, base Data.pk2`. Paths are matched case-insensitively, `/` and `\` alike, empty segments ignored. |
 
 ## Asset packs: which layer served a file (round 789)
@@ -103,6 +104,7 @@ and changes nothing.
 | `/durability <slot> <n>` | Sets a worn item's durability. Slots: 0 helm, 1 mail, 2 shoulder, 3 gauntlet, 4 pants, 5 boots, 6 weapon, 7 shield, 8 job suit. |
 | `/sp <n>` | Adds skill points (a negative number takes them away). |
 | `/hwan <0-5>` | Sets the berserk orbs held (round 629; a test tool, not a retail command). Five light the ready circle. |
+| `/guildlevel <1-5>` | Raises your own guild to that level through the normal level-up, crediting you the guild points it needs and taking no gold (round 814; a test tool, not a retail command). It never lowers a level. |
 | `/notice <text>` | Sends a GM notice to every player (round 634): a pink "(Notice):" line in every chat tab and the notice banner at the top of the screen for 7 seconds. The command is ours; the line and banner are the game's. |
 | `/invsize [1-96\|default]` | Shows or sets your bag's size in slots (round 633; a test tool, not a retail command). The bag shows 32 slots a page, up to three pages, and locks the slots of the last page past the size. `default` goes back to the server's `-inventory-size` (96 unless the operator set another). Refused below a slot that holds an item. |
 | `/hurt <hp> [mp]` | Takes *hp* (and *mp*) off your own character, never below 1 HP (round 786; a test tool, not a retail command) -- for the auto potion. |

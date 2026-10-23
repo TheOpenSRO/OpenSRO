@@ -120,7 +120,7 @@ func TestGuildFullFlow(t *testing.T) {
 	qualifyFounder(t, chars, aria)
 
 	guilds := openTestGuildStore(t)
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, chars, guilds, nil))
 
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -195,7 +195,7 @@ func TestGuildInfoFlow(t *testing.T) {
 	qualifyFounder(t, chars, aria)
 
 	guilds := openTestGuildStore(t)
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, chars, guilds, nil))
 
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -253,7 +253,7 @@ func TestGuildCreateRejectsBadNameLength(t *testing.T) {
 	// A founder who passes FUN_00514b20, so the length test is what answers.
 	qualifyFounder(t, chars, aria)
 
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guild.NewMemStore(), nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, chars, guild.NewMemStore(), nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 
@@ -312,7 +312,7 @@ func TestGuildCreateRequiresLevelAndGold(t *testing.T) {
 	cyra, _ := chars.Create(ctx, 1, "Cyra")
 	guilds := guild.NewMemStore()
 
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, chars, guilds, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -438,7 +438,7 @@ func TestGuildCreateRollsBackWhenGoldCannotBeTaken(t *testing.T) {
 	qualifyFounder(t, chars, aria)
 	guilds := guild.NewMemStore()
 
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(spentGoldStore{chars}, guilds, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, spentGoldStore{chars}, guilds, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -510,7 +510,7 @@ func TestGuildPointsFlow(t *testing.T) {
 	aria, _ := chars.Create(ctx, 1, "Aria")
 	guilds := guild.NewMemStore()
 
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, chars, guilds, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -622,7 +622,7 @@ func TestGuildLevelFlow(t *testing.T) {
 	bram, _ := chars.Create(ctx, 2, "Bram")
 	guilds := guild.NewMemStore()
 
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, chars, guilds, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	login := func(user, pass string) (net.Conn, *bufio.Reader) {
@@ -767,7 +767,7 @@ func TestGuildLevelUpGoldIsNotLost(t *testing.T) {
 				t.Fatalf("AddPoints: %v", err)
 			}
 
-			handle := gateway.Chain(LoginHandler(accounts), GuildHandler(tc.chars(chars), tc.guilds(mem), nil))
+			handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, tc.chars(chars), tc.guilds(mem), nil))
 			addr, cleanup := startTestServer(t, handle)
 			defer cleanup()
 			conn := dialTestServer(t, addr)
@@ -861,7 +861,7 @@ func TestGuildLevelUpRefundSurvivesAStop(t *testing.T) {
 	}
 
 	stopping := &stopAfterPayGuilds{Store: guilds}
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(ctxGoldChars{mem}, stopping, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, ctxGoldChars{mem}, stopping, nil))
 	addr, stop := startTestServer(t, handle)
 	defer stop()
 	stopping.stop = stop
@@ -936,7 +936,7 @@ func TestGuildCreateRollbackSurvivesAStop(t *testing.T) {
 	guilds := guild.NewMemStore()
 
 	stopping := &stopAfterCreateGuilds{Store: guilds}
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(ctxGoldChars{mem}, stopping, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, ctxGoldChars{mem}, stopping, nil))
 	addr, stop := startTestServer(t, handle)
 	defer stop()
 	stopping.stop = stop

@@ -94,7 +94,7 @@ func TestGuildCreateNameFilter(t *testing.T) {
 	qualifyFounder(t, chars, aria)
 	guilds := guild.NewMemStore()
 
-	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds, nil))
+	handle := gateway.Chain(LoginHandler(accounts), testGuildHandler(t, chars, guilds, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)

@@ -1140,7 +1140,7 @@ func (s *failingPoolStore) RespawnHP(ctx context.Context, id int64) error {
 func TestGuildWorkIsRefusedWhileDead(t *testing.T) {
 	guilds := guild.NewMemStore()
 	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
-		return GuildHandler(chars, guilds, hub)
+		return testGuildHandler(t, chars, guilds, hub)
 	})
 	ctx := context.Background()
 	aria, _ := f.chars.GetByID(ctx, f.aria)
