@@ -159,8 +159,9 @@ func _test_line(world: Node) -> void:
 	if g == null:
 		return
 	var fk := FontOversampling.factor()
-	_check(g.modulate == Color8(102, 185, 255) and g.outline_size == 0 and bool(g.get_meta(NamePlates.BOX_META, false))
-		and g.get_node_or_null("NameBox") != null, "light blue, font 0, on its own box")
+	# Round 823, OURS: no box behind the guild line (the user's reference).
+	_check(g.modulate == Color8(102, 185, 255) and g.outline_size == 0 and not bool(g.get_meta(NamePlates.BOX_META, false))
+		and g.get_node_or_null("NameBox") == null, "light blue, font 0, with no box")
 	_check(is_equal_approx(g.offset.y - plate.offset.y, 20.0 * fk) and is_zero_approx(g.offset.x) and g.pixel_size == plate.pixel_size,
 		"20 px over the name, centred on the plate's point (%.2f)" % (g.offset.y - plate.offset.y))
 	# Re-laid out with the name (a title, a UI re-scale): it follows.

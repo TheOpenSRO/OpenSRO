@@ -7483,6 +7483,20 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-third round: the guild line without a box (OURS)
+
+The user (2026-10-24): "the guild above the name plate doesn't have a background box around it like the
+name ... I've sent you screenshots before of what the guild text above the player looks like".
+
+- **Their reference** (round 817's `svm_guild.png` / `svm.png`): every name, pet name and title sits on
+  the translucent box, and `[Verizon * GayRoasters]` / `[Tequi...` above them have none.
+- **The retail binary (READ again).** The guild line's text goes through `FUN_008b3bd0` (0x9df21f /
+  0x9df33a), which stores 0x40000000 at the item's +0xc, the same as the name's `FUN_008b3b90`; the draw
+  `FUN_008b4d90 -> FUN_008b48b0` fills the box whenever +0xc is non-zero and the item has a width
+  (0x8b4913, 0x8b4929). So the shipped client boxes it; the reference client's builds do not.
+- **Change (OURS, the user's call).** `World3D.GUILD_LINE_BOX` false: the guild line has no box and no
+  box meta (so the crowd batch draws none either). `guild_plate_test.gd` checks it.
+
 ## Eight-hundred-and-twenty-second round: guild membership as the original's, and riding under a bridge
 
 The user (2026-10-24): "fully support all guild functionality" (this round: create, invite, leave,

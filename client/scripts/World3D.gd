@@ -9501,7 +9501,11 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 ## (FUN_009dc460 -> FUN_009a4f40):
 ## - the text GuildPlateNet.plate_text: "[guild * grant]" or "[guild]";
 ## - its own plate item (FUN_008b4f30) through the name setter FUN_008b3bd0:
-##   font 0 with the 0x40000000 box, as the name's (_retail_plate_look);
+##   font 0 with the 0x40000000 box, as the name's (READ: FUN_008b48b0 fills
+##   the box whenever +0xc is set). Round 823, OURS (GUILD_LINE_BOX): drawn
+##   with no box, as the user's reference client draws it (`[Verizon *
+##   GayRoasters]` bare over a boxed name, rounds 817 and 823) -- the user's
+##   call over the retail binary's box;
 ## - drawn at the name's projected point less 20.0 px in y (`fsub
 ##   [0xe1b830]`, 20.0, on +0x4f4 at 0x9df0c0): GUILD_LINE_RAISE_PX above the
 ##   name line, centred where the name block is (the plate's point), so it
@@ -9516,6 +9520,8 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 ## - the option byte that also gates it (FUN_004f9d00()+0x10) is OPEN: on;
 ## - the crests drawn left of it (+0x34, +0x38) are OPEN (no crests).
 const GUILD_LINE_RAISE_PX := 20.0
+## Round 823, OURS: the guild line has no box (retail's has one; see above).
+const GUILD_LINE_BOX := false
 const GUILD_LINE_OWN_COLOUR := Color8(254, 173, 46)
 const GUILD_LINE_COLOUR := Color8(102, 185, 255)
 
@@ -9537,7 +9543,10 @@ func _apply_guild_line(label: Label3D, holder: Node3D, line: Dictionary, job_sta
 	g.name = "GuildLine"
 	g.remove_from_group("name_plates")
 	g.position = label.position if holder != label else Vector3.ZERO
-	_retail_plate_look(g, GUILD_LINE_OWN_COLOUR if own else GUILD_LINE_COLOUR)
+	_retail_plate_look(g, GUILD_LINE_OWN_COLOUR if own else GUILD_LINE_COLOUR, GUILD_LINE_BOX)
+	if not GUILD_LINE_BOX:
+		# No box anywhere: the batch draws one for a label carrying the meta.
+		g.remove_meta(NamePlates.BOX_META)
 	g.render_priority = label.render_priority
 	holder.add_child(g)
 	if swept:
