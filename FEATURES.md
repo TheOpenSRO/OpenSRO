@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.581** plus what is merged on `dev`; updated 2026-10-24.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.582** plus what is merged on `dev`; updated 2026-10-24.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -16,7 +16,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
-| [Social](#social) | 10 | 4 |  | 5 | 19 |
+| [Social](#social) | 11 | 4 |  | 4 | 19 |
 | [Job / trade](#job--trade) | 6 |  |  |  | 6 |
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
@@ -27,14 +27,14 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **158** | **32** | **1** | **36** | **227** |
+| **All** | **159** | **32** | **1** | **35** | **227** |
 
 ## Biggest gaps
 
 - No player stalls, consignment or item mall
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
-- Guilds are basic: no ranks, invites, storage or unions
+- Guilds: no ranks, notice, storage, unions or wars yet
 - Exchange window not yet retail; players cannot drop items
 - No key rebinding
 
@@ -105,7 +105,7 @@ Retail NPCs in their retail spots, with talk menus, shops, storage and quests.
 | Storage (warehouse) | ✅ Supported | Per-account items and gold with deposit fee |
 | Repair NPCs | 🟡 Partial | Repair and Repair All cover worn gear only, not bag items |
 | Quests | 🟡 Partial | 564 of 696 quests reachable, NPC quest marks; the original's talk pages (Accept/Refuse, OK closes the talk, the reward's "Quest completed." notice), party-only quests and their refusals; timed and job quests missing |
-| Guild manager NPC | 🟡 Partial | Create and leave a guild; other guild lines not done |
+| Guild manager NPC | 🟡 Partial | Create, leave and disband (the master) with the original's confirm boxes; level-up, master hand-over and the other lines not done |
 | Test Items NPC | ✅ Supported | Jangan NPC; free +12 full-blue gear, elixirs, stones; server option |
 | Test Items NPC: level-101 Nova | ✅ Supported | Sells the unlocked level-101 Seal of Nova instead of level 111 |
 | Test Items NPC: +12 full-blue listing | ✅ Supported | Store slots and tooltips show the +12 full-blue piece you get |
@@ -236,9 +236,9 @@ Chat, full party system, party matching and basic guilds.
 | Party HUD | ✅ Supported | Live member HP/MP boxes, party window, minimap and world map marks |
 | Party matching | ✅ Supported | Register, browse, request to join and answer |
 | Guild creation | ✅ Supported | Create a guild at the guild manager |
-| Guild invites | 🟡 Partial | No retail invite flow yet |
-| Guild ranks and permissions | ❌ Not yet | Command buttons shown but disabled |
-| Guild window | 🟡 Partial | Name and master only; member list and notice blank; its grant-name button sets your own grant name (or `/grantname`) |
+| Guild invites | ✅ Supported | Invite the selected player from the guild window, the original's Agreement box, accept or refuse, 30 s timeout; ban a member; 72 h penalty after leaving, a ban or a disband |
+| Guild ranks and permissions | 🟡 Partial | Invite and Ban follow your permission bits (the master has all); granting rights, union chat and the notice not done |
+| Guild window | 🟡 Partial | Level, GP, members n / cap, notice title and the member list (online lamps, ranks, GP), live updates as members join, leave, log on and off; select a member to ban; its grant-name button sets your own grant name (or `/grantname`) |
 | Guild names over characters | ✅ Supported | `[Guild * Grant]` (or `[Guild]`) 20 px above the name in the original's box, orange for you and blue for others, riding a mount with the name and hidden in a job suit; each member sets their own grant name (window button or /grantname), at any guild level |
 | Guild points and levels | 🟡 Partial | Points earned, guild levels up; spending points not done |
 | Union | ❌ Not yet | No guild alliances yet |
