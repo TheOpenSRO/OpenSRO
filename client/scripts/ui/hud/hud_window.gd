@@ -462,6 +462,91 @@ func _on_close_pressed() -> void:
 	hide()
 	closed.emit()
 
+## Round 818: a window takes the mouse over everything it draws, not only
+## over its own rect. Retail sends the world nothing under a window (a window
+## under the mouse that is not the interface itself takes the message,
+## FUN_00b9dc00 != CGInterface, READ, round 697), and its side tabs are child
+## windows of their own. Here the window's rect is what stops the mouse
+## (STOP), and a few layouts draw past it -- the guild and community windows'
+## side tabs (MainFrame176 Static1300, 223, 224), the alchemy window's
+## (Static2), the character pane's HP and MP text -- so a click there walked
+## the player and the wheel zoomed (round 818, tools/audit_input_bleed.gd).
+## Each such control gets a catcher: a bare PASS control on its rect, the
+## window's FIRST child so it is drawn first and hit-tested last -- it takes
+## only a point nothing else in the window wanted, and hands it to the
+## window, which stops it (and raises itself, as a click on it does).
+const OVERHANG_META := &"overhang_catcher"
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and is_visible_in_tree():
+		_catch_overhang_soon()
+
+## After the layout has settled (_settle runs over the next few frames).
+func _catch_overhang_soon() -> void:
+	if not is_inside_tree():
+		return
+	for i in 3:
+		await get_tree().process_frame
+		if not is_inside_tree():
+			return
+	if is_visible_in_tree():
+		catch_overhang()
+
+## Re-makes the catchers for what the window draws now.
+func catch_overhang() -> void:
+	for c in get_children():
+		if c.has_meta(OVERHANG_META):
+			remove_child(c)
+			c.queue_free()
+	var rects: Array[Rect2] = []
+	var own := get_global_rect().abs()
+	var view := get_viewport_rect()
+	for child in get_children():
+		_overhang_rects(child, own, view, Rect2(-1e7, -1e7, 2e7, 2e7), rects)
+	var inv := get_global_transform().affine_inverse()
+	for r in rects:
+		var catcher := Control.new()
+		catcher.name = "OverhangCatcher"
+		catcher.set_meta(OVERHANG_META, true)
+		catcher.mouse_filter = Control.MOUSE_FILTER_PASS
+		catcher.position = inv * r.position
+		catcher.size = inv.basis_xform(r.size).abs()
+		add_child(catcher)
+		move_child(catcher, 0)
+
+## The drawn controls under `node` that reach past `own` and into `view`,
+## clipped as their clipping ancestors clip them.
+static func _overhang_rects(node: Node, own: Rect2, view: Rect2, clip: Rect2, out: Array[Rect2]) -> void:
+	if node.has_meta(OVERHANG_META):
+		return
+	if node is CanvasItem and not (node as CanvasItem).is_visible_in_tree():
+		return
+	if node is Control:
+		var c := node as Control
+		var r := c.get_global_rect().abs().intersection(clip)
+		if r.size.x >= 1.0 and r.size.y >= 1.0 and draws_something(c) \
+				and not own.encloses(r) and r.intersects(view):
+			out.append(r)
+		if c.clip_contents:
+			clip = clip.intersection(c.get_global_rect().abs())
+	for child in node.get_children():
+		_overhang_rects(child, own, view, clip, out)
+
+## Whether `c` draws something a player would take for the window.
+static func draws_something(c: Control) -> bool:
+	if c is TextureRect:
+		return (c as TextureRect).texture != null
+	if c is NinePatchRect:
+		return (c as NinePatchRect).texture != null
+	if c is TextureButton:
+		return (c as TextureButton).texture_normal != null
+	if c is Label:
+		return (c as Label).text != ""
+	if c is RichTextLabel:
+		return (c as RichTextLabel).text != ""
+	return c is ColorRect or c is Panel or c is PanelContainer or c is Button \
+		or c is LineEdit or c is TextEdit or c is ItemList or c is Range
+
 ## Drag by the title strip, and raise on any click so a click brings the
 ## window to the front the way every other window manager behaves.
 func _gui_input(event: InputEvent) -> void:

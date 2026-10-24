@@ -870,6 +870,14 @@ palette -- the ones the original draws still in the model's own space (the stora
 remote_godot.sh script res://tools/census_unskinned_pieces.gd -- --pk2=$PK2/Data.pk2
 ```
 
+`audit_input_bleed.gd` (round 818) opens every game window and pushes a mouse motion (and, with
+`--wheel=1`, a wheel step) at every few pixels of each on-screen drawn control, counting what reaches
+`_unhandled_input` -- where the world walks and zooms. It should print `TOTAL leaking points: 0`.
+
+```
+remote_godot.sh script res://tools/audit_input_bleed.gd -- --pk2=$PK2/Media.pk2 --wheel=1 [--panel=guild] [--step=4]
+```
+
 `OPENSRO_QA_NOWATER=1` builds no block water, for a pixel diff that measures what the water draws
 (round 648's water-on/off diff). A lane that must not stop other lanes' renders runs its client with
 `xvfb-run -a ... --write-movie` under its own lock instead of `qa_shot.sh`, whose start-up reap

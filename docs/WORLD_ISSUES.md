@@ -7483,6 +7483,33 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eighteenth round: the mouse no longer reaches the world through a window
+
+The user (2026-10-24): "when I'm interacting with menus in the game like scrolling it also affects the game
+behind it like I'll zoom in and out at the same time or move around".
+
+- **Cause 1, the wheel (MEASURED).** Godot (4.3 on) gives every Control `mouse_force_pass_scroll_events`,
+  default on: a wheel event goes up through a STOP control to its parent and on to `_unhandled_input`. A
+  STOP square in `audit_input_bleed.gd`'s probe took the motion and still let the wheel through, so every
+  wheel step over any window zoomed the camera. Fix: `World3D.wheel_over_window`, a STOP control on the
+  chain of the control under the mouse, asked in `_input` before the GUI has the step (a list the step
+  scrolls can move the row out from under the mouse: the skill board did, 5 points).
+- **Cause 2, clicks and motion past a window's rect (MEASURED).** A window stops the mouse over its own
+  rect; the guild and community windows' side tabs (`MainFrame176` Static1300, 223, 224, 314 points), the
+  alchemy window's (Static2, 208) and the character pane's HP/MP text (6) are drawn past it, so a click
+  there walked the player. Fix: `HudWindow.catch_overhang`, on each show: a bare PASS control on each
+  drawn control's rect that reaches past the window, the window's first child (hit-tested last, so it
+  never takes a button's click) handing the point to the window.
+- **Retail (READ, round 697):** a window under the mouse that is not the interface itself takes the
+  message (`FUN_00b9dc00 != CGInterface`); the world gets nothing under a window.
+- **Tool.** `client/tools/audit_input_bleed.gd` opens all 21 windows and pushes a motion (routed as a
+  click is) and, with `--wheel=1`, a wheel step at every 4-6 px of every on-screen drawn control; a sink
+  at the root's end counts what reaches `_unhandled_input`. Before: 6,060 on-screen points (motion) plus
+  every point (wheel); after: 0 and 0. Controls parked off the screen (the exchange's at x 10832) are not
+  sampled.
+- **Test.** `input_bleed_test.gd` (12 checks). `check` ALL LOAD, `tests` 354 suites, 0 failing. UI-only:
+  no perf gate.
+
 ## Eight-hundred-and-seventeenth round: the plate box hangs from the baseline, as the original's
 
 The user (2026-10-23): "the name plates on everything. There's slightly too much padding between the top and

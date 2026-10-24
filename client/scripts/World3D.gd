@@ -25277,15 +25277,36 @@ func _unhandled_input(event: InputEvent) -> void:
 					(" to (%.1f, %.1f, %.1f)" % [_move_target.x, _move_target.y, _move_target.z]) if took == "walk" and _has_move_target and not _move_heading_run else ""])
 			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			_camera_wheel(event.factor if event.factor > 0.0 else 1.0)
+			if not _wheel_on_window:
+				_camera_wheel(event.factor if event.factor > 0.0 else 1.0)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			_camera_wheel(-(event.factor if event.factor > 0.0 else 1.0))
+			if not _wheel_on_window:
+				_camera_wheel(-(event.factor if event.factor > 0.0 else 1.0))
 		# Only the right button orbits the camera (READ: vslot_017 case 0x200
 		# tests the right byte +0x25a, or the middle +0x259 with the swap
 		# flag; never the left +0x258). A held left button does nothing.
 		_camera_orbiting = _right_button_held
 	# The orbit's motion is not read here: _input turns the camera, so a drag
 	# keeps orbiting over a STOP control (see orbit_motion_applies).
+
+## Round 818: whether a wheel step at the mouse is over a window, so the
+## camera does not zoom. Godot (4.3 on) passes a wheel event up through a
+## STOP control while its mouse_force_pass_scroll_events is set -- the
+## default -- so every wheel step over a window reached _unhandled_input and
+## zoomed the camera while a list scrolled (MEASURED, round 818: a STOP
+## square takes the motion and still lets the wheel through). Retail sends
+## the world nothing under a window (FUN_00b9dc00 != CGInterface, READ, round
+## 697). `hovered` is the viewport's control under the mouse; a STOP control
+## on its chain is a window (HudWindow and every HUD surface are STOP).
+var _wheel_on_window := false
+
+static func wheel_over_window(hovered: Control) -> bool:
+	var c: Node = hovered
+	while c is Control:
+		if (c as Control).mouse_filter == Control.MOUSE_FILTER_STOP:
+			return true
+		c = c.get_parent()
+	return false
 
 ## Whether a mouse motion turns the camera. Asked in _input, not in
 ## _unhandled_input, because a right drag that began on the world loses its
@@ -25358,6 +25379,12 @@ var _hover_reached_world := false
 func _input(event: InputEvent) -> void:
 	if title_mode:
 		return
+	# Round 818: whether this wheel step is a window's, asked before the GUI
+	# has it -- a list it scrolls can move the row out from under the mouse,
+	# and the control under it then is no window's (wheel_over_window).
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		_wheel_on_window = wheel_over_window(get_viewport().gui_get_hovered_control())
 	# The orbit turns the camera here, before the GUI can consume the motion
 	# (orbit_motion_applies has why). The event is not marked handled: the
 	# control under the cursor still sees it, as before.
