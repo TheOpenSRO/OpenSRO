@@ -102,8 +102,8 @@ var (
 	reLimit    = regexp.MustCompile(`\(\(int\)param_1 \+ 0x2d\) = (0x[0-9a-f]+|\d+);`)
 	// reDivide is the divide type at the quest's +0x2e (a byte, or a word
 	// whose low byte it is); reDiffStr the condition block's +0x1d.
-	reDivide  = regexp.MustCompile(`\(\(int\)param_1 \+ 0x2e\) = (0x[0-9a-f]+|\d+);`)
-	reDiffStr = regexp.MustCompile(`\(param_1\[0xc2\] \+ 0x1d\) = (0x[0-9a-f]+|\d+);`)
+	reDivide   = regexp.MustCompile(`\(\(int\)param_1 \+ 0x2e\) = (0x[0-9a-f]+|\d+);`)
+	reDiffStr  = regexp.MustCompile(`\(param_1\[0xc2\] \+ 0x1d\) = (0x[0-9a-f]+|\d+);`)
 	reQNPC     = regexp.MustCompile(`\(param_1\[0xc4\] \+ (0x[0-9a-f]+|\d+)\) = "([A-Z0-9_]+)";`)
 	rePush     = regexp.MustCompile(`FUN_00401fc0\("([A-Z0-9_]+)",`)
 	reSlot     = regexp.MustCompile(`param_1\[(0x[0-9a-f]+)\] = \(int\)"([A-Za-z0-9_]+)";`)
@@ -158,6 +158,15 @@ func ParseDecomp(r io.Reader, dataFloat func(va uint32) (float64, bool)) map[str
 			}
 		}
 		if mis != nil {
+			// Round 819: a quest-specific helper (0x24 bytes, e.g. the temple
+			// quests' QNO_TQ_BAEKRYOUNG_10) can be allocated before the
+			// mission: the mission is the LAST allocation before
+			// FUN_009173b0 (MEASURED: 24 quests filed their mission as class
+			// 0x24 before).
+			if m := reAlloc.FindStringSubmatch(line); m != nil {
+				mis = &compiledMission{size: num(m[1]), fields: map[int]string{}}
+				continue
+			}
 			if reEnd.MatchString(line) {
 				mis.floats = floatVars
 				cur.Missions = append(cur.Missions, *mis)

@@ -2294,6 +2294,9 @@ func main() {
 	if *uniqueRespawn > 0 {
 		logger.Info(fmt.Sprintf("unique respawn override: a unique reappears %v after its death (-unique-respawn, OURS, for testing)", *uniqueRespawn))
 	}
+	// Round 819: the species something here spawns, for the quests'
+	// HideUnspawnedQuestMonsters.
+	spawnedCodes := map[string]bool{}
 	if *fullMap {
 		// Round 660: every field monster row as a nest, replacing the roster's
 		// placements (the roster's species are rows of npcpos too).
@@ -2304,6 +2307,9 @@ func main() {
 		slots, rep := fullMapSlots(npcPlacements, speciesTable, speciesSkills, nestDB)
 		for _, sl := range slots {
 			respawns.addSlot(sl)
+			if d, ok := sl.Data.(*hatchData); ok && d != nil {
+				spawnedCodes[d.spec.CodeName] = true
+			}
 		}
 		logFullMap(logger, rep, nestDB != nil)
 		logUniques(logger, rep.uniques, *uniqueRespawn, nestDB != nil && nestDB.Skills != nil)
@@ -2311,6 +2317,7 @@ func main() {
 		for _, spec := range monsterSpecs {
 			for _, inst := range rosterInstances(spec, logger) {
 				respawns.add(inst)
+				spawnedCodes[inst.CodeName] = true
 			}
 		}
 	}
@@ -2469,6 +2476,10 @@ func main() {
 		items, _ := refItems.(session.QuestItems)
 		if items == nil {
 			logger.Warn("the item store cannot look items up by code name: quest items and item rewards are not given")
+		}
+		if hidden := cat.HideUnspawnedQuestMonsters(func(code string) bool { return spawnedCodes[code] }); len(hidden) > 0 {
+			logger.Info("quests not offered: their monsters are spawned by quest handlers OpenSRO does not model",
+				"quests", len(hidden), "codes", strings.Join(hidden, " "))
 		}
 		session.InstallQuests(cat, session.QuestDeps{Store: quests, Chars: chars, Inv: inv, Items: items,
 			Skills: skills, Hub: hub, Parties: parties, MP: manaTracker, Logger: logger})

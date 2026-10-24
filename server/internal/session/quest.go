@@ -64,7 +64,7 @@ type QuestDeps struct {
 	// party anywhere.
 	Parties *party.Hub
 	MP      *mana.Tracker
-	Logger *slog.Logger
+	Logger  *slog.Logger
 	// Roll answers a gather mission's drop roll (rate in percent); nil uses
 	// math/rand.
 	Roll func(rate float64) bool

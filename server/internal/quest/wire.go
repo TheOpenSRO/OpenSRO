@@ -277,5 +277,5 @@ const (
 	// AbandonGiveUp is the refusal while an NPC talk is open (the PC's
 	// +0x1ca0, which EndInteraction clears for a talk; s:0x571d66).
 	AbandonGiveUp = 5 // UIIT_STT_QUEST_GIVEUP_1
-	RewardError       = 2 // UIIT_STT_QUESTREWARD_ERROR
+	RewardError   = 2 // UIIT_STT_QUESTREWARD_ERROR
 )

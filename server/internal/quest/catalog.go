@@ -183,11 +183,14 @@ type Quest struct {
 	// +0x85d; the condition block's +0x1d): a quest cleared before offers
 	// itself with BASIC_MENUSTRING_ACCEPT_AFTER_ONE_CLEAR (s:0x920110).
 	DifferentString bool
-	Missions    []Mission
-	Menus       map[string][]MenuText
-	Reward      Reward
+	Missions        []Mission
+	Menus           map[string][]MenuText
+	Reward          Reward
 	// Unhandled counts setup calls this catalogue does not model.
 	Unhandled []string
+	// NoSpawn names the quest-spawned monsters (MOB_QT_*) a mission needs
+	// and nothing here spawns (HideUnspawnedQuestMonsters, round 819).
+	NoSpawn []string
 	// scriptReward is the script's own LuaSetAchievedItem values, kept for
 	// the exporter's comparison with the reward table (not exported).
 	scriptReward *Reward
@@ -197,6 +200,9 @@ type Quest struct {
 // quest with a start NPC, every mission of a modelled type.
 func (q *Quest) Playable() bool {
 	if (q.Source != SourceScript && q.Source != SourceCompiled) || len(q.StartNPCs) == 0 || len(q.Missions) == 0 {
+		return false
+	}
+	if len(q.NoSpawn) > 0 {
 		return false
 	}
 	for _, m := range q.Missions {
@@ -346,4 +352,42 @@ func hasString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// QuestMonsterPrefix starts the code of a monster a quest's own handlers
+// spawn (e.g. QNO_TQ_STONEBOARD_4::OnAfterActivated for
+// MOB_QT_TQ_TOMBGENERAL4, READ): none has a nest, and OpenSRO models no such
+// handler.
+const QuestMonsterPrefix = "MOB_QT_"
+
+// HideUnspawnedQuestMonsters takes out of play every quest with a kill or
+// gather mission whose targets are all quest-spawned monsters that spawns
+// says nothing here spawns (OURS, round 819: such a quest could be taken
+// and never finished). A mission naming any other monster is left alone --
+// a field monster missing from the operator's spawn data is that data's
+// gap. Returns the codes taken out.
+func (c *Catalog) HideUnspawnedQuestMonsters(spawns func(code string) bool) []string {
+	var out []string
+	for _, q := range c.ByID {
+		for _, m := range q.Missions {
+			if m.Type != MissionKillMonster && m.Type != MissionGatherFromMonster || len(m.Targets) == 0 {
+				continue
+			}
+			all := true
+			for _, t := range m.Targets {
+				if !strings.HasPrefix(t, QuestMonsterPrefix) || spawns(t) {
+					all = false
+					break
+				}
+			}
+			if all {
+				q.NoSpawn = append(q.NoSpawn, m.Targets...)
+			}
+		}
+		if len(q.NoSpawn) > 0 {
+			out = append(out, q.Code)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

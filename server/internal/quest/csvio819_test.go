@@ -59,3 +59,27 @@ func TestApply819Setters(t *testing.T) {
 		t.Fatalf("%+v", q)
 	}
 }
+
+// A quest killing only quest-spawned monsters nothing spawns is out of play;
+// one naming a field monster (spawned or not) stays.
+func TestHideUnspawnedQuestMonsters(t *testing.T) {
+	mk := func(id int64, code string, targets ...string) *Quest {
+		return &Quest{ID: id, Code: code, Source: SourceScript, Race: -1, StartNPCs: []string{"NPC_A"},
+			Missions: []Mission{{Type: MissionKillMonster, Targets: targets, Count: 1}}}
+	}
+	cat := NewCatalog([]*Quest{
+		mk(1, "QT_SPAWNED", "MOB_QT_A"),
+		mk(2, "QT_HANDLER", "MOB_QT_B", "MOB_QT_B_CLON"),
+		mk(3, "QT_FIELD", "MOB_CA_MONKEY"),
+		mk(4, "QT_MIXED", "MOB_QT_C", "MOB_CH_TIGER"),
+	})
+	spawns := map[string]bool{"MOB_QT_A": true}
+	got := cat.HideUnspawnedQuestMonsters(func(c string) bool { return spawns[c] })
+	if len(got) != 1 || got[0] != "QT_HANDLER" {
+		t.Fatalf("hidden %v", got)
+	}
+	if cat.ByCode["QT_HANDLER"].Playable() || !cat.ByCode["QT_SPAWNED"].Playable() ||
+		!cat.ByCode["QT_FIELD"].Playable() || !cat.ByCode["QT_MIXED"].Playable() {
+		t.Fatal("playable flags")
+	}
+}

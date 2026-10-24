@@ -31,9 +31,9 @@ var (
 		"DivideType", "DifferentString"}
 	// questColumnsRequired is how many of QuestColumns a catalogue must have.
 	questColumnsRequired = 26
-	MissionColumns    = []string{"Code", "Index", "Type", "Text", "Targets", "Rates", "Count", "MonsterClass", "Item", "NPC", "Deliver", "Talk"}
-	MenuColumns       = []string{"Code", "NPC", "Key", "Text"}
-	RewardItemColumns = []string{"Code", "Item", "Count", "Choice"}
+	MissionColumns       = []string{"Code", "Index", "Type", "Text", "Targets", "Rates", "Count", "MonsterClass", "Item", "NPC", "Deliver", "Talk"}
+	MenuColumns          = []string{"Code", "NPC", "Key", "Text"}
+	RewardItemColumns    = []string{"Code", "Item", "Count", "Choice"}
 )
 
 func join(s []string) string { return strings.Join(s, ";") }

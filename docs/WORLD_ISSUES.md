@@ -7483,6 +7483,29 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twentieth round: the compiled quests' missions, and quests no monster can finish
+
+- **The exporter (MEASURED).** A compiled quest can allocate a helper object (0x24 bytes) before
+  its mission (`CQNO_TQ_BAEKRYOUNG_10::DeclareQuestContent`: `FUN_009dd2bc(0x24)`, then
+  `FUN_009dd2bc(0xa7)`, the dialog, then `FUN_009173b0`). `ParseDecomp` filed the mission under the
+  first allocation's class (0x24, unmodelled): 24 quests. The mission is now the last allocation
+  before `FUN_009173b0`. Coverage: playable 618 -> 626, reachable 564 -> 577.
+- **Quest-spawned monsters (READ, MEASURED).** Six of the eight quests that became playable kill
+  `MOB_QT_*` monsters that no nest spawns (`MOB_QT_TQ_TOMBGENERAL4`, `MOB_QT_CH_SOLDIER_01_1`, ...):
+  the original spawns them from the quest's own handlers (`QNO_TQ_STONEBOARD_4::OnAfterActivated`
+  and its kin), which OpenSRO does not model. OURS: `Catalog.HideUnspawnedQuestMonsters` takes out
+  of play a quest whose kill or gather mission names only `MOB_QT_*` monsters nothing here spawns
+  (the server measures it from its own spawn slots at boot, and logs the codes). Before this,
+  QNO_EU_ADVENTURER_1 and QNO_EU_FERRY2_1 (`MOB_QT_01_CRAB`) were offered and could not be
+  finished.
+- **A data gap, not changed (MEASURED).** The operator's nest tables (the shard dump's
+  `tab_refnest`, the same on the box and prod: 16,381 rows, 11,853 nests hatched) have no nest for
+  many field species with tactics rows: `MOB_CA_MONKEY` (tactics 28500), `MOB_RM_ROC` (35600),
+  `MOB_SD_PETBE` (38460), and `MOB_EU_KYKLOPES` has no tactics row. 174 offered quests name such a
+  monster. They stay offered: the gap is the dump's (a full shard database would fill it), and
+  hiding them is the user's call.
+- **Tests.** `TestParseCompiledHelperAlloc`, `TestHideUnspawnedQuestMonsters`.
+
 ## Eight-hundred-and-nineteenth round: the quest talk as the original's -- OK closes it
 
 The user (2026-10-24): "When I hit confirm on the quest it doesn't close the window. Not only that

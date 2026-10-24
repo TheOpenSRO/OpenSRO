@@ -32,7 +32,9 @@ type reviewHookInv struct {
 	add func(ctx context.Context, c, id int64, n int) error
 }
 
-func (h reviewHookInv) AddItem(ctx context.Context, c, id int64, n int) error { return h.add(ctx, c, id, n) }
+func (h reviewHookInv) AddItem(ctx context.Context, c, id int64, n int) error {
+	return h.add(ctx, c, id, n)
+}
 
 func reviewMixCatalog() *quest.Catalog {
 	q := &quest.Quest{ID: 911, Code: "QT_MIX", Level: 1, Source: quest.SourceScript, Race: -1,

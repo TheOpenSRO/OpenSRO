@@ -100,3 +100,38 @@ func TestParseCompiledSetup(t *testing.T) {
 		t.Fatal("a compiled quest of modelled missions is playable")
 	}
 }
+
+// Round 819: a helper object allocated before the mission (0x24 bytes, the
+// temple quests' shape) -- the mission is the last allocation before
+// FUN_009173b0, not the first.
+const fakeDecompHelper = `===FUNC=== 00900800 CQNO_T_TEMPLE::DeclareQuestContent size=600
+
+bool __fastcall CQNO_T_TEMPLE::DeclareQuestContent(int *param_1)
+{
+  iVar4 = FUN_009dd2bc(0x24);
+  if (iVar4 != 0) {
+    *(undefined4 *)(iVar4 + 4) = 7;
+  }
+  iVar4 = FUN_009dd2bc(0xa7);
+  *(undefined4 *)((int)puVar6 + 9) = 6;
+  *(undefined1 *)(puVar6 + 2) = 0;
+  *(char **)((int)puVar6 + 0x15) = "NPC_T_SAGE";
+  *(char **)((int)puVar6 + 0xd) = "SN_CON_QNO_T_TEMPLE_01";
+  FUN_009173b0();
+  return iVar4 != 0;
+}
+
+
+===FUNC=== 00900c00 CQNO_T_TEMPLE::FUN_00900c00 size=10
+`
+
+func TestParseCompiledHelperAlloc(t *testing.T) {
+	got := ParseDecomp(strings.NewReader(fakeDecompHelper), nil)["QNO_T_TEMPLE"]
+	if got == nil || len(got.Missions) != 1 {
+		t.Fatalf("%+v", got)
+	}
+	m, ok := got.Missions[0].mission()
+	if got.Missions[0].size != 0xa7 || !ok || m.Type != MissionDialog || m.NPC != "NPC_T_SAGE" {
+		t.Fatalf("class 0x%x: %+v %v", got.Missions[0].size, m, ok)
+	}
+}
