@@ -65,7 +65,7 @@ func (m *MemStore) Create(_ context.Context, name string, leaderID int64, leader
 	m.seq++
 	g := &Guild{
 		ID: m.nextID, Name: name, LeaderID: leaderID, Level: FoundingLevel,
-		Members: []Member{{CharacterID: leaderID, Name: leaderName, Role: RoleLeader}},
+		Members: []Member{{CharacterID: leaderID, Name: leaderName, Role: RoleLeader, Permission: PermAll}},
 	}
 	m.byID[g.ID] = g
 	m.names[key] = g.ID
@@ -136,6 +136,7 @@ func (m *MemStore) Leave(_ context.Context, characterID int64) (int64, *Guild, e
 			g.Members[i].Role = RoleMember
 		}
 		g.Members[successor].Role = RoleLeader
+		g.Members[successor].Permission = PermAll
 		g.LeaderID = g.Members[successor].CharacterID
 	}
 	return guildID, m.copy(g), nil

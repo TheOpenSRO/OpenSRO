@@ -538,6 +538,10 @@ func arrivePlayer(d viewDeps, arrived world.Entity) {
 	// Round 814: its own guild line (OURS: retail's own-character data is not
 	// modelled; the line's message, OpEntityGuildUpdate, is).
 	sendOwnGuildLine(d.ctx, arrived.Session, arrived.CharacterID)
+	// Round 821: its guild's block (the window's data, s:0x5c8d40), and
+	// its fellow members see it come online.
+	sendOwnGuildBlock(d.ctx, arrived.Session, arrived.CharacterID)
+	guildMemberPresence(d.ctx, arrived.CharacterID, true)
 	// Round 802: a trader's safe trade (vslot_391's report).
 	safeTradeAtLogin(d.ctx, arrived.Session, arrived.CharacterID)
 	// Its COS arrive with it (round 795, cossummon.go): before the spawns

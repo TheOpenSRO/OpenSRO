@@ -216,6 +216,12 @@ func (s *GuildPointSkills) request(ctx context.Context, guildID, characterID int
 	if err := s.guilds.AddPoints(ctx, guildID, characterID, points); err != nil {
 		slog.Error("guild points not credited", "character_id", characterID,
 			"guild_id", guildID, "points", points, "error", err)
+		return
+	}
+	// Round 821: the guild's GP and the member's donation to the members in
+	// the world.
+	if g, err := s.guilds.Get(ctx, guildID); err == nil {
+		broadcastGuildBlock(ctx, g)
 	}
 }
 

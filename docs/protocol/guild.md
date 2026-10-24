@@ -663,3 +663,40 @@ A member's guild over their name -- `[Guild * Grant]` -- and the grant name (the
 request 0x7256 lets only the master name a member (`FUN_005c7560`: in a guild, guild level 4, the
 master, under 13 bytes and the name filter); OpenSRO lets each member name only themselves, at any guild level
 (OURS, the user's requests, rounds 814 and 815), keeping the rest.
+
+## The guild block and the guild window (round 821)
+
+The window's data is the original's guild record, which the server sends as a block (all READ,
+`sro_client.exe`):
+
+- **0x34B3** begins it (the buffer reset, `FUN_0087fcd0`), **0x3101** appends its bytes
+  (`FUN_00883060 -> 0x833380`, read in pieces of at most 0x1000), **0x34B4** parses it
+  (`FUN_00887300 -> 0x885550 -> CharacterDependentData::FUN_009965e0`) and refreshes the guild
+  window, the guild line and the plates. The original's server sends it at world entry and to a
+  joining member (`s:0x5c8d40`).
+- **Layout** (`FUN_009965e0`): u32 guild id, str name, u8 level, u32 GP, str notice title, str
+  notice body, u32 crest revision, u8 soldier flags, u8 n x member, u8 n x {u32, u8, u32}
+  (`FUN_0099d7e0`; OpenSRO sends 0). A member (stored by `UI_FORT::FUN_009961a0`): u32 character
+  id, str name, u8 class (0 master, 5 staff, 10 member), u8 level, u32 GP donated, u32 permission,
+  u32 contribution, u32 war kills, u32 war deaths, str grant name, u32 RefObjID, u8 siege role,
+  u8 offline (record +0x26: 0 draws `gil_contact_on`, 1 `gil_contact_off`, `0x5b6b40`).
+- **The information** (`0x5b5eb0`): 66 the name, 115 "Level %d" (UTF-16 at 0xd92bb0), 124 the
+  master's name (the class-0 member), 150 the master's race mark (`0x98caa0(.., race, 1)`, the
+  16-px `com_kindred_*16`), 126 "%d / %d" members over the cap (table at 0xd92384 + level x 4: 15,
+  20, 25, 35, 50), 116 "%d / %d" GP over the next level's (0xd92398 + level x 4: 5400, 50400,
+  135000, 378000, 0), 121 "%d%%" GP / next x 100.0 (0xe1b7d8), truncated, and the gauge 120 the
+  ratio; both 0 at level 5 (`0x5b617a`). The notice line 222 -> 117: the title, or
+  `UIIT_MSG_GUILD_COMMON_NOTEXIST`.
+- **The rows** (`0x5ba310 -> 0x5b8580 -> 0x5b6b40`; parts from `CNIFGuildUserSlot`'s OnCreate
+  `0x5b9870`): 64 the lamp, 231 the race mark, 68 the name (display mode +0x7a1: 0 the name, 1 the
+  grant name, 2 the fortress role, `0x5b4a00`), 69 the level ("%d"), 70 the rank
+  (`UIIT_STT_LEADER` / `_GUILD_STAFF` / `_GUILDSMAN`), 71 the GP donated ("%d"). Text colour (0x475d10
+  state 5): the master 0xffffb541, the rest white; an offline member's row is put in the disabled
+  state (0x475dd0(3)): 0xffa17233 / 0xff808080. Sorted by the window's mode +0x7a0 (0 the default:
+  by name; 1-3 the column headers', OPEN).
+- **OpenSRO** sends the block at world entry, after a create, a join, a level-up, a grant name and
+  a GP credit (to the members in the world), and again to the others when a member comes or goes
+  (OURS until 0x38F5's member update is built). New columns: `guild_members.permission` (the master
+  0xffffffff, a member 0 -- both INFERRED: the stored procedures' defaults are not read),
+  `contribution`, `war_kill`, `war_killed`, `siege_authority`; `guilds.notice_title`,
+  `notice_body`, `crest_rev`, `soldier_flags`.

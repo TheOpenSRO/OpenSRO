@@ -264,7 +264,7 @@ func doSend(t *testing.T, c net.Conn, r *bufio.Reader, opcode uint16, data []byt
 		t.Fatalf("Write: %v", err)
 	}
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	resp, err := proto.Read(r, nil, nil)
+	resp, err := readSkippingGuildBlock(r)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}

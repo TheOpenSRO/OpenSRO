@@ -7483,6 +7483,29 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-first round: the guild window shows the guild (the original's guild block)
+
+The user (2026-10-24): "let's fully support all guild functionality". This round is the base the
+rest stands on: the guild window drew only the name and the master, every other field blank, the
+member list empty.
+
+- **READ** (docs/protocol/guild.md, "The guild block and the guild window"): the original sends the
+  guild record as 0x34B3 / 0x3101 / 0x34B4 (`CharacterDependentData::FUN_009965e0` parses it); the
+  window draws it in `0x5b5eb0` (level, master, members n / cap, GP n / next, %, gauge, notice
+  title) and the rows in `0x5b6b40` (lamp, race mark, name, level, rank, GP donated; gold for the
+  master, grey for an offline member; sorted by name).
+- **Server.** `guild.EncodeBlock`; the block at world entry, after create, join, level-up, grant
+  name and a GP credit, and to the members in the world when one comes or goes (OURS until the
+  0x38F5 member update). The member and guild records carry the original's fields (permission,
+  contribution, war counters, siege role, notice, crest revision, soldier flags): additive columns.
+- **Client.** `GuildData` (0x34B3/0x3101/0x34B4, the record); `GuildWindow` fills the information
+  and the rows from it.
+- **Live (`/var/tmp/r821/g1`, frame 1200).** QABots, "Level 2", master Rook with his race mark,
+  "2 / 20", "0 / 50400" and 0% (the level-up spent the GP), "You have no notes.", the rows Rook (gold,
+  Master, 110, 5400) and Tess (white, Member, 30, 0), both lamps on.
+- **Tests.** `guild.TestEncodeBlock`; client `guild_data_test.gd` (9), `guild_window_test.gd`'s
+  block checks (8). The session tests' readers skip the block (`readSkippingGuildBlock`).
+
 ## Eight-hundred-and-twentieth round: the compiled quests' missions, and quests no monster can finish
 
 - **The exporter (MEASURED).** A compiled quest can allocate a helper object (0x24 bytes) before

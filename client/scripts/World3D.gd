@@ -25033,6 +25033,11 @@ func _run_qa_commands(list: String) -> void:
 		if line.begins_with("guild create "):
 			NetClient.create_guild(NetClient.current_character_name, line.substr(13).strip_edges())
 			continue
+		# Round 821 (QA only): "guild join <id>" joins a guild by id (the
+		# placeholder join, until the invite is built).
+		if line.begins_with("guild join "):
+			NetClient.join_guild(NetClient.current_character_name, int(line.substr(11).strip_edges()))
+			continue
 		if line.begins_with("/") and _console != null:
 			_console.submit(line)
 		else:

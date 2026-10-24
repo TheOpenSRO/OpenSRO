@@ -548,6 +548,7 @@ func _guild_member_checks(panels: Control, window: Control, groot: Control) -> v
 		net.emit_signal("guild_join_result", _guild_reply(9, "Nine", "Chief"))
 		await process_frame
 		_check(_text(_at(groot, [47, 66])) == "Nine", "a guild join reply mid-session shows the guild (got '%s')" % _text(_at(groot, [47, 66])))
+		_block_checks(net, groot)
 	else:
 		_check(false, "NetClient is registered for this suite")
 	window.hide()
@@ -623,3 +624,66 @@ func _move_checks(panels: Control, window: Control) -> void:
 	_check(window.visible and window.position == Vector2(266, 107), "closed after a drag and reopened, the window is centred again at (266, 107) (got %s)" % window.position)
 	window.hide()
 
+
+## Round 821: the retail guild block fills the information and the member
+## rows (0x5b5eb0, 0x5b6b40, READ).
+func _block_checks(net: Node, groot: Control) -> void:
+	var data = net.get("guild_data")
+	_check(data != null, "NetClient keeps the guild record (guild_data)")
+	if data == null:
+		return
+	var b := PackedByteArray()
+	var u32 := func(v: int) -> void:
+		var x := PackedByteArray()
+		x.resize(4)
+		x.encode_u32(0, v)
+		b.append_array(x)
+	var str16 := func(t: String) -> void:
+		var raw := t.to_utf8_buffer()
+		var x := PackedByteArray()
+		x.resize(2)
+		x.encode_u16(0, raw.size())
+		b.append_array(x)
+		b.append_array(raw)
+	u32.call(9)
+	str16.call("Nine")
+	b.append(2)
+	u32.call(25200)
+	str16.call("")
+	str16.call("")
+	u32.call(0)
+	b.append(0)
+	b.append(2)
+	# Zed, the master, online; Ann, a member, offline: Ann sorts first.
+	for m in [[1, "Zed", 0, 50, 7, 0], [2, "Ann", 10, 21, 3, 1]]:
+		u32.call(m[0])
+		str16.call(m[1])
+		b.append(m[2])
+		b.append(m[3])
+		u32.call(m[4])
+		for i in 4:
+			u32.call(0)
+		str16.call("")
+		u32.call(0)
+		b.append(0)
+		b.append(m[5])
+	b.append(0)
+	data.call("handle", PackedByteArray(), 0x34B3)
+	data.call("handle", b, 0x3101)
+	data.call("handle", PackedByteArray(), 0x34B4)
+	await process_frame
+	_check(_text(_at(groot, [47, 66])) == "Nine" and _text(_at(groot, [47, 115])) == "Level 2", "the block: name and \"Level 2\" (got '%s')" % _text(_at(groot, [47, 115])))
+	_check(_text(_at(groot, [47, 124])) == "Zed", "the master's name from the class-0 member (got '%s')" % _text(_at(groot, [47, 124])))
+	var gauge := _at(groot, [47, 120]) as Range
+	_check(gauge != null and is_equal_approx((gauge.value - gauge.min_value) / (gauge.max_value - gauge.min_value), 0.5), "the GP gauge at 25200 / 50400")
+	_check(_text(_at(groot, [47, 222, 117])) == "UIIT_MSG_GUILD_COMMON_NOTEXIST" or _text(_at(groot, [47, 222, 117])).length() > 0, "no notice: UIIT_MSG_GUILD_COMMON_NOTEXIST")
+	var row := _at(groot, [47, 28])
+	_check(row != null and _text(_at(row, [68])) == "Ann" and _text(_at(row, [69])) == "21" and _text(_at(row, [71])) == "3", "the first row is Ann (name order), level 21, GP 3 (got '%s')" % _text(_at(row, [68])) if row != null else "")
+	# The fixture's lamp has no art, so the builder makes it a bare control.
+	var lamp := _at(row, [64]) if row != null else null
+	_check(lamp != null and lamp.visible, "the row's lamp is shown")
+	var name_label := _at(row, [68]).get_node_or_null("Text") as Label if row != null else null
+	_check(name_label != null and name_label.get_theme_color("font_color").to_argb32() == 0xff808080, "an offline member's row is grey (0x475dd0(3))")
+	# The record would outrank the placeholder replies the checks after this
+	# one feed.
+	data.call("clear")

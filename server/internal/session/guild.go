@@ -392,6 +392,7 @@ func guildLevelResult(g *guild.Guild, levelledUp bool) *GuildLevelResult {
 // is read from (SetGuildPlateStore).
 func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gateway.Handler {
 	SetGuildPlateStore(guilds)
+	setGuildBlockDeps(chars, hub)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpGuildCreate:
@@ -562,6 +563,8 @@ func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		}
 		return reply(&GuildLevelResult{Error: msg, Code: uint16(guild.LevelUpCode(err))})
 	}
+	// Round 821: the new level, cap and GP to the members in the world.
+	broadcastGuildBlock(ctx, g)
 	return reply(guildLevelResult(g, true))
 }
 
@@ -665,6 +668,8 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	// Round 814: the founder's guild line, to those who see it (READ: the
 	// create job's reply trs_sm_guildjob::FUN_005c8bf0 calls FUN_004ea2f0).
 	refreshGuildPlate(hub, characterID, g)
+	// Round 821: the guild's block, the window's data.
+	sendGuildBlock(ctx, sess, g)
 	return nil
 }
 
@@ -694,6 +699,9 @@ func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet
 	// Round 814: the new member's line (READ: the join job's reply
 	// trs_sm_guildjob::FUN_005c8d40 calls FUN_004ea2f0).
 	refreshGuildPlate(hub, characterID, g)
+	// Round 821: the block, to the new member (s:0x5c8d40) and the members
+	// in the world.
+	broadcastGuildBlock(ctx, g)
 	return nil
 }
 

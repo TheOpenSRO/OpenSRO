@@ -1338,6 +1338,13 @@ func _guild_window() -> GuildWindow:
 		_unavailable[GUILD_WINDOW_KEY] = true
 		return null
 	window.hide()
+	# Round 821: the guild record the window draws, and the race lookup its
+	# marks use (the party pane's).
+	window.data = NetClient.guild_data
+	window.race_of_model = func(ref_id: int) -> int:
+		var c: Callable = party_hooks.get("race_of_model", Callable())
+		return int(c.call(ref_id)) if c.is_valid() else -1
+	NetClient.guild_data.changed.connect(window.refresh_guild)
 	# Centred on every show by the window itself (GuildWindow.place_centred,
 	# 0x798c50), not once here.
 	_apply_guild(window)
@@ -6952,6 +6959,7 @@ func _on_guild_info_result(result: GuildNet.Result) -> void:
 ## A successful leave: no guild.
 func _on_guild_leave_result(ok: bool, _reason: String) -> void:
 	if ok:
+		NetClient.guild_data.clear()
 		_on_guild_info_result(GuildNet.Result.new())
 
 func _apply_guild(window: GuildWindow) -> void:

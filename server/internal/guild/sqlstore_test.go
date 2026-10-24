@@ -283,3 +283,48 @@ func TestSQLLevelUp(t *testing.T) {
 func TestSQLLevelRaisesMemberCap(t *testing.T) {
 	checkLevelRaisesMemberCap(t, openTestSQLStore(t))
 }
+
+// Round 821: the guild block's fields round-trip; the master reads the full
+// mask, a member none, and a master stored before the column existed is
+// given the mask when the schema runs again.
+func TestSQLRound821Fields(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	g, err := store.Create(ctx, "Verizon", 1, "Tess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Join(ctx, g.ID, 2, "Rook"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm := map[int64]Permission{}
+	for _, m := range got.Members {
+		perm[m.CharacterID] = m.Permission
+	}
+	if perm[1] != PermAll || perm[2] != 0 {
+		t.Fatalf("permissions %v", perm)
+	}
+	if got.NoticeTitle != "" || got.CrestRev != 0 || got.SoldierFlags != 0 {
+		t.Fatalf("new guild fields %+v", got)
+	}
+	// A master from before round 821.
+	if _, err := store.db.ExecContext(ctx, `UPDATE guild_members SET permission = 0 WHERE character_id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSQLStore(store.db); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = store.Get(ctx, g.ID)
+	for _, m := range got.Members {
+		if m.CharacterID == 1 && m.Permission != PermAll {
+			t.Fatalf("the old master after the upgrade: %#x", uint32(m.Permission))
+		}
+		if m.CharacterID == 2 && m.Permission != 0 {
+			t.Fatalf("the member after the upgrade: %#x", uint32(m.Permission))
+		}
+	}
+}

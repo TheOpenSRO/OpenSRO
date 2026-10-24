@@ -144,6 +144,32 @@ const NOTICE_TEXT := [ID_INFO, 222, 117]
 ## A member row's parts that its fill 0x5b6b40 hides for a row past the list
 ## (0x5b6b87..0x5b6bd9): 64, 68, 69, 70, 71 and 231.
 const MEMBER_ROW_PARTS := [64, 68, 69, 70, 71, 231]
+## The row's parts by what CNIFGuildUserSlot's OnCreate (0x5b9870, READ)
+## stores them as: 64 the contact lamp (+0x4ec), 68 the name (+0x4f4), 69 the
+## level (+0x4f8), 70 the rank (+0x4fc), 71 the GP donated (+0x500), 231 the
+## race mark (+0x4f0).
+const ROW_LAMP := 64
+const ROW_NAME := 68
+const ROW_LEVEL := 69
+const ROW_RANK := 70
+const ROW_GP := 71
+const ROW_RACE := 231
+## The row fill 0x5b6b40 (READ round 821): the four texts' colour, all
+## states (0x475d10 state 5) and the disabled one (state 3, which an offline
+## member's row is put in, 0x475dd0(3)): the master gold, the rest white.
+const ROW_MASTER_COLOUR := 0xffffb541
+const ROW_MASTER_OFF_COLOUR := 0xffa17233
+const ROW_MEMBER_COLOUR := 0xffffffff
+const ROW_MEMBER_OFF_COLOUR := 0xff808080
+const ROW_RANK_KEYS := {0: "UIIT_STT_LEADER", 5: "UIIT_STT_GUILD_STAFF", 10: "UIIT_STT_GUILDSMAN"}
+## The 16-px race marks, 0x98caa0(.., race, 1) (READ: both the rows and the
+## master's mark 150 pass 1).
+const RACE_ART := ["interface\\ifcommon\\com_kindred_china16.ddj", "interface\\ifcommon\\com_kindred_europe16.ddj"]
+## The info texts' formats (READ, UTF-16 at 0xd92bb0, 0xd92ba0, 0xd8a948).
+const LEVEL_FORMAT := "Level %d"
+const RATIO_FORMAT := "%d / %d"
+const PERCENT_FORMAT := "%d%%"
+const NOTICE_NONE := "UIIT_MSG_GUILD_COMMON_NOTEXIST"
 
 ## Emitted when the window's own left-menu buttons (220 / 221) switch the
 ## view, so the owner can ask for that view's data.
@@ -183,6 +209,11 @@ var _shown_flag := false
 ## The friend list the rows are drawn from (0x5a85c0 reads the pane's own
 ## list; this is the last friend list this client received).
 var _friends: Array = []
+## Round 821: the guild record the information and the member rows are drawn
+## from (NetClient.guild_data; the owner sets it), and the model -> race
+## lookup the race marks use.
+var data: GuildData
+var race_of_model: Callable
 
 ## Builds the window from the archive's `.2dt` files, in the order the
 ## client's classes do, and leaves it in the state their OnCreates leave it.
@@ -423,6 +454,10 @@ func _on_shown() -> void:
 ##   carries no level, points or notice, so these are left blank ("" and 0)
 ##   rather than filled with a guess. **Open.**
 func _guild_info() -> void:
+	if data != null and data.in_guild:
+		_guild_info_from(data)
+		fill_members()
+		return
 	var name_node := _at([ID_INFO, INFO_NAME])
 	if name_node != null:
 		_twodt.set_text(name_node, _guild_name if _has_guild else _builder.resolve_text(NO_GUILD_TEXT))
@@ -444,6 +479,115 @@ func _guild_info() -> void:
 	var notice := _at(NOTICE_TEXT)
 	if notice != null and notice.get_node_or_null(TwoDtBuilder.TEXT_NODE) != null:
 		_twodt.set_text(notice, "")
+	fill_members()
+
+## Round 821: 0x5b5eb0's in-guild branch, READ, from the guild record: 66
+## the name, 115 "Level %d", 150 the master's race mark, 124 the master's
+## name, 126 members "%d / %d" over the level's cap, 116 GP "%d / %d" over
+## the next level's, 121 "%d%%" (GP / next x 100.0, truncated) and the gauge
+## 120 the same ratio -- both 0 at level 5 (0x5b617a) -- and the notice line
+## 117: the notice's title, or UIIT_MSG_GUILD_COMMON_NOTEXIST.
+func _guild_info_from(d: GuildData) -> void:
+	_set_info(INFO_NAME, d.guild_name)
+	_set_info(115, LEVEL_FORMAT % d.level)
+	var master := d.master()
+	_set_info(INFO_MASTER, master.member_name if master != null else "")
+	var race := _at([ID_INFO, INFO_RACE])
+	if race != null:
+		race.visible = true
+		var art := _race_art(master.ref_obj_id if master != null else 0)
+		_set_texture(race, art)
+	_set_info(126, RATIO_FORMAT % [d.members.size(), d.max_members()])
+	var next := d.level_up_gp()
+	_set_info(116, RATIO_FORMAT % [d.gp, next])
+	var ratio := 0.0
+	if next > 0 and d.level < GuildData.MAX_MEMBERS.size():
+		ratio = float(d.gp) / float(next)
+	_set_info(121, PERCENT_FORMAT % int(ratio * 100.0))
+	var gauge := _at([ID_INFO, INFO_GAUGE]) as Range
+	if gauge != null:
+		gauge.value = clampf(ratio, 0.0, 1.0) * (gauge.max_value - gauge.min_value) + gauge.min_value
+	var notice := _at(NOTICE_TEXT)
+	if notice != null:
+		_twodt.set_text(notice, d.notice_title if d.notice_title != "" else _builder.resolve_text(NOTICE_NONE))
+
+func _set_info(id: int, text: String) -> void:
+	var c := _at([ID_INFO, id])
+	if c != null:
+		_twodt.set_text(c, text)
+
+## The race mark for a model (16 px), or "" when the model has no race row.
+func _race_art(ref_obj_id: int) -> String:
+	var race: int = int(race_of_model.call(ref_obj_id)) if race_of_model.is_valid() and ref_obj_id != 0 else -1
+	return RACE_ART[race] if race >= 0 and race < RACE_ART.size() else ""
+
+## The member rows (0x5ba310 -> 0x5b8580 -> 0x5b6b40, READ round 821): the
+## members sorted by the list's mode +0x7a0 -- 0, the default, orders them by
+## name (the multimap 0x57f260 keyed by the shown name); modes 1-3, the column
+## headers', are not built -- each row filled in the rows' order, a row past
+## the list cleared (MEMBER_ROW_PARTS hidden). The scroll (+0x380) is not
+## built: the first rows show.
+func fill_members() -> void:
+	var rows := member_rows()
+	var list: Array = []
+	if data != null and data.in_guild:
+		list = data.members.duplicate()
+		list.sort_custom(func(a: GuildData.Member, b: GuildData.Member) -> bool: return a.member_name < b.member_name)
+	for i in rows.size():
+		_fill_row(rows[i], list[i] if i < list.size() else null)
+
+## The CNIFGuildUserSlot rows, top to bottom.
+func member_rows() -> Array[Control]:
+	var out: Array[Control] = []
+	if guild_root == null:
+		return out
+	for node in _named(guild_root):
+		if str(node.get_meta(TwoDtBuilder.META_CLASS)) == "CNIFGuildUserSlot":
+			out.append(node)
+	out.sort_custom(func(a: Control, b: Control) -> bool: return a.position.y < b.position.y)
+	return out
+
+## One row (0x5b6b40): null clears it; a member shows its lamp (gil_contact_
+## on / off by the record's +0x26), its race mark, name, level, rank and GP
+## donated, in the master's gold or white, the disabled colour when offline.
+func _fill_row(row: Control, m: GuildData.Member) -> void:
+	row.set_meta("guild_member", m.character_id if m != null else 0)
+	if m == null:
+		for id in MEMBER_ROW_PARTS:
+			var part := TwoDtBuilder.child(row, id)
+			if part != null:
+				part.visible = false
+		return
+	var master := m.member_class == GuildData.CLASS_MASTER
+	var colour: int
+	if m.online:
+		colour = ROW_MASTER_COLOUR if master else ROW_MEMBER_COLOUR
+	else:
+		colour = ROW_MASTER_OFF_COLOUR if master else ROW_MEMBER_OFF_COLOUR
+	_set_texture(TwoDtBuilder.child(row, ROW_LAMP), FRIEND_LAMP_ON if m.online else FRIEND_LAMP_OFF)
+	_set_art(TwoDtBuilder.child(row, ROW_RACE), _race_art(m.ref_obj_id))
+	var rank_key: String = ROW_RANK_KEYS.get(m.member_class, "")
+	var texts := [[ROW_NAME, m.member_name], [ROW_LEVEL, "%d" % m.level],
+		[ROW_RANK, _builder.resolve_text(rank_key) if rank_key != "" else ""], [ROW_GP, "%d" % m.gp_donation]]
+	for pair in texts:
+		var c := TwoDtBuilder.child(row, int(pair[0]))
+		if c == null:
+			continue
+		var label := _twodt.set_text(c, str(pair[1]))
+		if label != null:
+			label.add_theme_color_override("font_color", TwoDtBuilder.argb(colour))
+	for id in MEMBER_ROW_PARTS:
+		var part := TwoDtBuilder.child(row, id)
+		if part != null:
+			part.visible = true
+
+## Redraws the information and the rows from the record (GuildData.changed).
+func refresh_guild() -> void:
+	if data != null:
+		_has_guild = data.in_guild or _has_guild
+	if visible:
+		_guild_info()
+		_command_buttons()
 
 ## The player's guild as the last guild reply said (guild_info, create or
 ## join; a leave sets it to none): whether they are in one, its name and its
@@ -517,6 +661,26 @@ func _tooltips(root: Control, table: Array) -> void:
 		node.tooltip_text = _builder.resolve_text(entry[1])
 		if node.mouse_filter == Control.MOUSE_FILTER_IGNORE:
 			node.mouse_filter = Control.MOUSE_FILTER_PASS
+
+## _set_texture for a control the layout gives no art (a row's race mark
+## 231 is authored bare): a picture child of its size carries it, as the
+## party pane's race mark does.
+func _set_art(node: Control, path: String) -> void:
+	if node == null:
+		return
+	if node is TextureRect:
+		_set_texture(node, path)
+		return
+	var pic := node.get_node_or_null("Art") as TextureRect
+	if pic == null:
+		pic = TextureRect.new()
+		pic.name = "Art"
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		node.add_child(pic)
+	pic.size = node.size
+	pic.texture = _builder.load_texture(path) if path != "" else null
 
 func _set_texture(node: Control, path: String) -> void:
 	if node is TextureRect:

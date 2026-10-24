@@ -137,7 +137,7 @@ func TestGuildFullFlow(t *testing.T) {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
+		resp, err := readSkippingGuildBlock(r)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -209,7 +209,7 @@ func TestGuildInfoFlow(t *testing.T) {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
+		resp, err := readSkippingGuildBlock(r)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -266,7 +266,7 @@ func TestGuildCreateRejectsBadNameLength(t *testing.T) {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
+		resp, err := readSkippingGuildBlock(r)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}

@@ -103,6 +103,20 @@ const (
 	PermNotice Permission = 1 << 4
 )
 
+// PermAll is every bit: the master's mask (INFERRED, round 821).
+const PermAll Permission = 0xffffffff
+
+// MemberClass is the member's class byte in the guild block (READ, the
+// guild window's row fill 0x5b6b40: 0 UIIT_STT_LEADER, 5
+// UIIT_STT_GUILD_STAFF, 10 UIIT_STT_GUILDSMAN). OpenSRO has no vice
+// master (no 1.188 sender sets class 5).
+func (m Member) MemberClass() uint8 {
+	if m.Role == RoleLeader {
+		return 0
+	}
+	return 10
+}
+
 // Has reproduces the engine's test: EVERY bit of required must be set, which is
 // why it is an equality against the mask and not a non-zero check.
 func (p Permission) Has(required Permission) bool {
@@ -467,6 +481,17 @@ type Member struct {
 	CharacterID int64
 	Name        string
 	Role        Role
+	// Permission is the member's _GUILDMEMBER.Permission mask (round 821),
+	// sent in the guild block: PermAll for the master, 0 for a new member
+	// (both INFERRED -- the stored procedures' defaults are not read; the
+	// master must pass the invite bit's test, s:0x514f10).
+	Permission Permission
+	// Contribution, WarKill and WarKilled are the guild war's counters
+	// (_GUILDMEMBER, round 821; the war is not built, so they stay 0).
+	Contribution, WarKill, WarKilled int64
+	// SiegeAuthority is the member's fortress role (UIIT_STT_FORT_GUILD_*,
+	// UI_FORT::FUN_009961a0); 0 none.
+	SiegeAuthority uint8
 	// GPDonation is the guild points this member has earned the guild:
 	// _GUILDMEMBER.GP_Donation, the member record's +0x40
 	// (docs/protocol/db_bind_offsets.tsv, `_GUILDMEMBER GP_Donation 0x40`),
@@ -487,6 +512,13 @@ type Guild struct {
 	ID       int64
 	Name     string
 	LeaderID int64
+	// NoticeTitle and NoticeBody are the guild's notice (round 821; the
+	// guild block's two strings, CharacterDependentData::FUN_009965e0).
+	NoticeTitle, NoticeBody string
+	// CrestRev is the guild's crest revision (0 none) and SoldierFlags the
+	// guild soldier abilities (round 821; both in the guild block).
+	CrestRev     uint32
+	SoldierFlags uint8
 	Members  []Member
 	// GatheredSP is the guild's points total: _GUILD.GatheredSP, the guild
 	// record's +0x3c (docs/protocol/db_bind_offsets.tsv, `_GUILD GatheredSP

@@ -48,6 +48,22 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS lvl INTEGER NOT NULL DEFAULT 1;
 -- for none, so a database made before the column reads every member as
 -- having none.
 ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT '';
+
+-- The guild block's other fields (round 821): _GUILDMEMBER.Permission,
+-- Contribution, the war counters and the siege role; _GUILD's notice, crest
+-- revision and soldier flags. Defaults read as "none".
+ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS permission BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS contribution BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS war_kill BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS war_killed BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS siege_authority INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS notice_title TEXT NOT NULL DEFAULT '';
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS notice_body TEXT NOT NULL DEFAULT '';
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS crest_rev BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS soldier_flags INTEGER NOT NULL DEFAULT 0;
+-- A master stored before round 821 gets the master's mask.
+UPDATE guild_members gm SET permission = 4294967295 FROM guilds g
+ WHERE g.id = gm.guild_id AND g.leader_id = gm.character_id AND gm.permission = 0;
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver).
@@ -138,8 +154,8 @@ func (s *SQLStore) Create(ctx context.Context, name string, leaderID int64, lead
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO guild_members (guild_id, character_id, character_name, role) VALUES ($1, $2, $3, $4)`,
-		id, leaderID, leaderName, RoleLeader); err != nil {
+		`INSERT INTO guild_members (guild_id, character_id, character_name, role, permission) VALUES ($1, $2, $3, $4, $5)`,
+		id, leaderID, leaderName, RoleLeader, int64(PermAll)); err != nil {
 		return nil, fmt.Errorf("guild: inserting leader membership: %w", err)
 	}
 
@@ -152,7 +168,7 @@ func (s *SQLStore) Create(ctx context.Context, name string, leaderID int64, lead
 		Name:     name,
 		LeaderID: leaderID,
 		Level:    level,
-		Members:  []Member{{CharacterID: leaderID, Name: leaderName, Role: RoleLeader}},
+		Members:  []Member{{CharacterID: leaderID, Name: leaderName, Role: RoleLeader, Permission: PermAll}},
 	}, nil
 }
 
@@ -261,7 +277,7 @@ func (s *SQLStore) Leave(ctx context.Context, characterID int64) (int64, *Guild,
 			return 0, nil, fmt.Errorf("guild: promoting new leader: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE guild_members SET role = $1 WHERE guild_id = $2 AND character_id = $3`,
+			`UPDATE guild_members SET role = $1, permission = 4294967295 WHERE guild_id = $2 AND character_id = $3`,
 			RoleLeader, guildID, newLeaderID); err != nil {
 			return 0, nil, fmt.Errorf("guild: updating new leader's role: %w", err)
 		}
@@ -316,7 +332,8 @@ type querier interface {
 func getGuild(ctx context.Context, q querier, guildID int64) (*Guild, error) {
 	g := &Guild{ID: guildID}
 	err := q.QueryRowContext(ctx,
-		`SELECT name, leader_id, gathered_sp, lvl FROM guilds WHERE id = $1`, guildID).Scan(&g.Name, &g.LeaderID, &g.GatheredSP, &g.Level)
+		`SELECT name, leader_id, gathered_sp, lvl, notice_title, notice_body, crest_rev, soldier_flags FROM guilds WHERE id = $1`,
+		guildID).Scan(&g.Name, &g.LeaderID, &g.GatheredSP, &g.Level, &g.NoticeTitle, &g.NoticeBody, &g.CrestRev, &g.SoldierFlags)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrGuildNotFound
 	}
@@ -325,7 +342,8 @@ func getGuild(ctx context.Context, q querier, guildID int64) (*Guild, error) {
 	}
 
 	rows, err := q.QueryContext(ctx,
-		`SELECT character_id, character_name, role, gp_donation, nickname FROM guild_members WHERE guild_id = $1 ORDER BY joined_at ASC`,
+		`SELECT character_id, character_name, role, gp_donation, nickname, permission, contribution, war_kill, war_killed, siege_authority
+		 FROM guild_members WHERE guild_id = $1 ORDER BY joined_at ASC`,
 		guildID)
 	if err != nil {
 		return nil, fmt.Errorf("guild: listing members: %w", err)
@@ -334,9 +352,11 @@ func getGuild(ctx context.Context, q querier, guildID int64) (*Guild, error) {
 
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.CharacterID, &m.Name, &m.Role, &m.GPDonation, &m.Nickname); err != nil {
+		var perm int64
+		if err := rows.Scan(&m.CharacterID, &m.Name, &m.Role, &m.GPDonation, &m.Nickname, &perm, &m.Contribution, &m.WarKill, &m.WarKilled, &m.SiegeAuthority); err != nil {
 			return nil, fmt.Errorf("guild: scanning member: %w", err)
 		}
+		m.Permission = Permission(uint32(perm))
 		g.Members = append(g.Members, m)
 	}
 	return g, rows.Err()

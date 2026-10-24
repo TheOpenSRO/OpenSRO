@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/guild"
 	"net"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 func readFrame737(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
 	t.Helper()
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	p, err := proto.Read(r, nil, nil)
+	p, err := readSkippingGuildBlock(r)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -226,4 +227,22 @@ func startPlayerView(characterID int64, sess *gateway.Session, d viewDeps) *play
 	v := openedView(sess, d)
 	playerViews.Store(characterID, v)
 	return v
+}
+
+// readSkippingGuildBlock reads r's next packet past any guild block message
+// (0x34B3 / 0x3101 / 0x34B4, round 821): the guild flows send the block
+// beside their replies, and the tests that read replies in order ask for
+// the block, when they want it, by opcode.
+func readSkippingGuildBlock(r *bufio.Reader) (*proto.Packet, error) {
+	for {
+		p, err := proto.Read(r, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		switch p.Opcode {
+		case guild.OpBlockBegin, guild.OpBlockChunk, guild.OpBlockEnd:
+			continue
+		}
+		return p, nil
+	}
 }

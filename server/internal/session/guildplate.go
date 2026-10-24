@@ -164,6 +164,7 @@ func SetGuildPlateStore(s guild.Store) {
 	})
 	if s == nil {
 		guildPlateStore.Store(nil)
+		setGuildBlockDeps(nil, nil)
 		return
 	}
 	guildPlateStore.Store(&guildStoreBox{s: s})
@@ -273,6 +274,8 @@ func handleGuildGrantName(ctx context.Context, sess *gateway.Session, p *proto.P
 	}
 	guildNicknameToMembers(hub, g, e.Name, req.Nickname)
 	refreshGuildPlate(hub, e.CharacterID, g)
+	// Round 821: the member rows' grant names.
+	broadcastGuildBlock(ctx, g)
 	return nil
 }
 

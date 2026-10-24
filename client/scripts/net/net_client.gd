@@ -427,6 +427,9 @@ var party := PartyState.new()
 ## The quest log and its messages (round 785, QuestState; the opcodes are
 ## routed through register_handler at _init).
 var quest := QuestState.new()
+## Round 821: the player's guild as the original keeps it (the guild block,
+## GuildData), which the guild window draws.
+var guild_data := GuildData.new()
 ## The game clock (round 786, GameClock): kept here so it outlives a scene
 ## change, as retail keeps it in its CGame config object.
 var game_clock := GameClock.new()
@@ -852,6 +855,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_attack_types_in_flight.clear()
 	own_character_id = -1
 	own_guild_line = {}
+	guild_data.clear()
 	buff_roster.clear()
 	npc_roster.clear()
 	user_roster.clear()
@@ -1666,6 +1670,7 @@ func _init() -> void:
 	# The quest messages (round 785).
 	quest.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
 	quest.register_with(self)
+	guild_data.register_with(self)
 	# The game clock (round 786, GameClock): 0x3020 at world entry, 0x3027
 	# when an operator sets the hour.
 	for op in [GameClock.OP_POSITION, GameClock.OP_UPDATE]:
