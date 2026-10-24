@@ -28,6 +28,7 @@ func _initialize() -> void:
 	# it is not, and the sweep measures only owners in the tree.
 	await process_frame
 	_test_rule()
+	_test_box()
 	await _test_sweep()
 	await _test_many()
 	if _failures == 0:
@@ -59,6 +60,61 @@ func _owner_with_plate(parent: Node, at: Vector3) -> Array:
 	label.position = Vector3(0.0, 18.0, 0.0)
 	owner.add_child(label)
 	return [owner, label]
+
+## Round 817: the box hangs from the baseline (READ: its top is 1 row over
+## the glyph cell, the cell's top the face's ascent over the baseline; 16
+## rows), wherever the label's offset puts the line and at any font size.
+func _test_box() -> void:
+	var font := ThemeDB.fallback_font
+	for size in [12, 24]:
+		var label := Label3D.new()
+		label.font = font
+		label.font_size = size
+		label.text = "Pain"
+		label.offset = Vector2(3.0, -2.0)
+		var r := NamePlates.box_rect(label)
+		var ascent := NamePlates.cell_ascent(font, size)
+		# Label3D: the line (ascent + descent) centred on the offset.
+		var baseline := label.offset.y + (font.get_descent(size) - font.get_ascent(size)) * 0.5
+		var top := r.position.y + r.size.y * 0.5
+		var bottom := r.position.y - r.size.y * 0.5
+		_check(is_equal_approx(top - baseline, ascent + 1.0),
+			"%d px: the box's top is the ascent + 1 over the baseline (%.1f)" % [size, top - baseline])
+		_check(r.size.y == 16.0 and is_equal_approx(baseline - bottom, 15.0 - ascent),
+			"%d px: 16 rows, %.1f under the baseline" % [size, baseline - bottom])
+		label.free()
+	# The cell's ascent is GDI's: usWinAscent / unitsPerEm x em, to nearest.
+	# A head (upm 2048) and an OS/2 (usWinAscent 2049, Tahoma's) only.
+	var ttf := PackedByteArray()
+	ttf.resize(12 + 32 + 54 + 78)
+	ttf.encode_u32(0, 0x00000100)  # 0x00010000, big-endian
+	ttf[4] = 0; ttf[5] = 2
+	var head := 12 + 32
+	var os2 := head + 54
+	for rec in [[12, "head", head], [28, "OS/2", os2]]:
+		var tag: PackedByteArray = (rec[1] as String).to_ascii_buffer()
+		for k in range(4):
+			ttf[rec[0] + k] = tag[k]
+		ttf[rec[0] + 10] = (rec[2] >> 8) & 0xff
+		ttf[rec[0] + 11] = rec[2] & 0xff
+	ttf[head + 18] = 0x08; ttf[head + 19] = 0x00
+	ttf[os2 + 74] = 0x08; ttf[os2 + 75] = 0x01
+	_check(NamePlates.win_ascent_of(ttf) == Vector2i(2048, 2049), "the face's unitsPerEm and usWinAscent are read")
+	var face := FontFile.new()
+	_win_face(face, ttf)
+	_check(NamePlates.cell_ascent(face, 12) == 12.0 and NamePlates.cell_ascent(face, 24) == 24.0,
+		"Tahoma's 2049/2048 em is a 12-row cell at 12 px (Godot rounds it up to 13), 24 at 24")
+	var bold := FontVariation.new()
+	bold.base_font = face
+	_check(NamePlates.cell_ascent(bold, 12) == 12.0, "and so under the bold variation")
+	var bare := FontFile.new()
+	_check(NamePlates.win_ascent_of(PackedByteArray()) == Vector2i.ZERO and NamePlates.cell_ascent(bare, 12) == bare.get_ascent(12),
+		"no tables: Godot's own ascent")
+
+## Gives `face` the bytes as its data without asking FreeType to load them
+## (a header-only file is no font): the cache is keyed by the instance.
+func _win_face(face: FontFile, ttf: PackedByteArray) -> void:
+	NamePlates._win_ascent[face.get_instance_id()] = NamePlates.win_ascent_of(ttf)
 
 func _test_sweep() -> void:
 	var holder := Node3D.new()

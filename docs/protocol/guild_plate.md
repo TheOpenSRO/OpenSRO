@@ -42,6 +42,8 @@ CICUser slot 15, event 4 (`GlobalDataManager::FUN_009dea30`, asm 0x9df082..0x9df
   - OpenSRO draws no role: it has no fortress roles.
 - **Plate.** It is its own plate item (`FUN_008b4f30`), set through the name setter `FUN_008b3bd0`. That
   is font 0 with the box 0x40000000, the same plate the name uses (round 811).
+  - The setter (asm 0x8b3bd0) sets both for any non-empty text, so retail boxes the line. MEASURED (round 817):
+    the user's private-server picture draws it without a box; OpenSRO keeps retail's.
 - **Position.** It is drawn at the name plate's projected point less **20.0 px** in y (`fsub [0xe1b830]`,
   20.0, on `+0x4f4` at 0x9df0c0). So it is 20 px above the name line and centred where the name block is
   centred.

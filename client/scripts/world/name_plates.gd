@@ -43,14 +43,27 @@ const RANGE := 300.0
 ## y + h + 1) with that colour as the texture factor under SRCALPHA /
 ## INVSRCALPHA (render states 0x13 = 5, 0x14 = 6 in FUN_008b4d90) before the
 ## glyphs -- black at alpha 64/255. The text item is centred on its point
-## (FUN_008b4d90: x - w/2, y - h/2). The box's size against the ink stays
-## round 673's MEASURED one (2 px wider than the text each side, 16 rows,
-## one row up): the item's own w and h (+0x4c / +0x4e, from its glyph cells)
-## are not traced. Round 673 MEASURED the alpha at 0.29 off a screenshot.
+## (FUN_008b4d90: x - w/2, y - h/2). Round 817, READ, the box's size and
+## place against the ink: the item's h (+0x4e, FUN_008b3910) is its line
+## gap +0x30 (5, the constructor FUN_008b46d0) plus the font's +4, the POINT
+## size GNFontChar was made with (9 for font 0; FUN_00baa110 keeps it at +4
+## and makes the 12 px em from it) -- 14, so the box is 16 rows; and each
+## glyph cell is drawn from the item's y down (FUN_008b2290, no per-glyph
+## rise), so the cell top is y and the baseline the face's ascent below it:
+## the box's top is 1 row above the cell, ascent + 1 above the baseline.
+## MEASURED on the user's private-server picture (2x): 4 rows above Tahoma's
+## 9-row caps, 3 below the baseline. Rounds 673-816 centred a 16-row box on
+## the label's line (ascent + descent) and raised it a row, which put it half
+## a row high under Tahoma (ascent 12, descent 3) -- 4.5 rows over the caps,
+## 2 under the baseline, MEASURED on the user's v0.1.577 capture -- and a row
+## low under the Arial fallback. Width: round 673's MEASURED 2 px either side
+## of the text. Round 673 MEASURED the alpha at 0.29 off a screenshot.
 const BOX_COLOUR := Color(0.0, 0.0, 0.0, 64.0 / 255.0)
 const BOX_PAD_PX := 2.0
+## The item's 14 rows (line gap 5 + font 0's 9) and a row either side.
 const BOX_HEIGHT_PX := 16.0
-const BOX_RAISE_PX := 1.0
+## The box's top over the glyph cell's.
+const BOX_OVER_CELL_PX := 1.0
 ## A label drawn with the box (World3D._retail_plate_look).
 const BOX_META := &"plate_box"
 ## The box's extension left of the name, in the label's font pixels: a job
@@ -60,15 +73,71 @@ const BOX_LEFT_META := &"plate_box_left"
 
 ## The box behind `label`, in its font pixels (which FontOversampling may
 ## have multiplied): `position` the box's centre against the label's origin
-## (y up, as Label3D's and Sprite3D's offsets), `size` whole pixels.
+## (y up, as Label3D's and Sprite3D's offsets), `size` whole pixels. Hung
+## from the text's baseline: Label3D centres the line (Godot's ascent +
+## descent) on its offset, so the baseline is (descent - ascent) / 2 from it;
+## the cell's top is cell_ascent over that.
 static func box_rect(label: Label3D) -> Rect2:
 	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
 	var fk := FontOversampling.factor() if label.has_meta(FontOversampling.META) else 1.0
 	var ext := float(label.get_meta(BOX_LEFT_META, 0.0))
 	var text_w := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
+	var baseline := label.offset.y + (font.get_descent(label.font_size) - font.get_ascent(label.font_size)) * 0.5
 	var w := ceilf(text_w + 2.0 * BOX_PAD_PX * fk + ext)
 	var h := roundf(BOX_HEIGHT_PX * fk)
-	return Rect2(Vector2(label.offset.x - ext * 0.5, label.offset.y + BOX_RAISE_PX * fk), Vector2(maxf(w, 1.0), h))
+	var top := baseline + cell_ascent(font, label.font_size) + BOX_OVER_CELL_PX * fk
+	return Rect2(Vector2(label.offset.x - ext * 0.5, top - h * 0.5), Vector2(maxf(w, 1.0), h))
+
+## The glyph cell's height over the baseline for `font` at an em of `size`
+## px: GDI's tmAscent, which the original's cell is (FUN_00baa110 asks
+## GetTextMetricsA of a CreateFontIndirectA with lfHeight -em). INFERRED,
+## GDI's rule, and MEASURED to match (Tahoma 12 px: 12, 4 rows over its
+## 9-row caps in the user's picture): the face's OS/2 usWinAscent over its
+## head unitsPerEm, times the em, rounded to nearest. Not Godot's ascent,
+## which FreeType rounds UP -- Tahoma's 2049/2048 x 12 = 12.006 is 13 there,
+## a row too many. A face whose tables cannot be read keeps Godot's.
+static func cell_ascent(font: Font, size: int) -> float:
+	var base := font
+	while base is FontVariation and (base as FontVariation).base_font != null:
+		base = (base as FontVariation).base_font
+	var m: Vector2i = _win_ascent.get(base.get_instance_id(), Vector2i(-1, -1)) if base != null else Vector2i.ZERO
+	if m.x == -1:
+		m = win_ascent_of((base as FontFile).data) if base is FontFile else Vector2i.ZERO
+		_win_ascent[base.get_instance_id()] = m
+	if m.x <= 0 or m.y <= 0:
+		return font.get_ascent(size)
+	return roundf(float(m.y) * float(size) / float(m.x))
+
+static var _win_ascent := {}
+
+## [unitsPerEm, usWinAscent] of a TrueType/OpenType file (the first face of
+## a collection), or zero when it has no head or OS/2 table.
+static func win_ascent_of(data: PackedByteArray) -> Vector2i:
+	var at := 0
+	if data.size() >= 16 and data.slice(0, 4).get_string_from_ascii() == "ttcf":
+		at = _u32(data, 12)
+	if data.size() < at + 12:
+		return Vector2i.ZERO
+	var upm := 0
+	var win := 0
+	var n := _u16(data, at + 4)
+	for i in range(n):
+		var rec := at + 12 + i * 16
+		if data.size() < rec + 16:
+			break
+		var tag := data.slice(rec, rec + 4).get_string_from_ascii()
+		var off := _u32(data, rec + 8)
+		if tag == "head" and data.size() >= off + 20:
+			upm = _u16(data, off + 18)
+		elif tag == "OS/2" and data.size() >= off + 76:
+			win = _u16(data, off + 74)
+	return Vector2i(upm, win)
+
+static func _u16(d: PackedByteArray, at: int) -> int:
+	return (d[at] << 8) | d[at + 1]
+
+static func _u32(d: PackedByteArray, at: int) -> int:
+	return (d[at] << 24) | (d[at + 1] << 16) | (d[at + 2] << 8) | d[at + 3]
 
 ## Whether a plate on an owner at `owner` shows with the player at `player`:
 ## strictly nearer than `within` (0x9d0ac3 returns at 300 itself).

@@ -9624,7 +9624,7 @@ func _layout_job_decor(label: Label3D, holder: Node3D) -> void:
 		mark.pixel_size = mpx
 		var side := 1.0 if title != null else -1.0
 		var cx := label.offset.x + side * (name_w * 0.5 + (JOB_MARK_GAP_PX + JOB_MARK_PX * 0.5) * fk)
-		var cy := label.offset.y + NamePlates.BOX_RAISE_PX * fk
+		var cy := NamePlates.box_rect(label).position.y
 		mark.offset = Vector2(cx, cy) * (label.pixel_size / mpx)
 	if _plate_batch != null and _plate_batch.has(label) and was != Vector2(label.offset.x, ext):
 		_plate_batch.reshape(label)
@@ -9709,12 +9709,12 @@ func _own_job_state() -> int:
 ## Round 811: every character's plate is this one (_retail_plate_look) --
 ## the name setter that gives a monster its font and box is every
 ## CICharactor's (NamePlates.BOX_COLOUR) -- and the box's alpha is the READ
-## 64/255, not the 0.29 measured here.
+## 64/255, not the 0.29 measured here. Round 817: the box's rows are READ
+## too, and it hangs from the text's baseline (NamePlates.box_rect).
 const MONSTER_NAME_COLOUR := Color(1.0, 1.0, 1.0)
 const MONSTER_NAME_BOX_COLOUR := NamePlates.BOX_COLOUR
 const MONSTER_NAME_BOX_PAD_PX := NamePlates.BOX_PAD_PX
 const MONSTER_NAME_BOX_HEIGHT_PX := NamePlates.BOX_HEIGHT_PX
-const MONSTER_NAME_BOX_RAISE_PX := NamePlates.BOX_RAISE_PX
 ## The plates whose pixel_size follows the screen (every _retail_plate_look).
 const MONSTER_PLATE_GROUP := "monster_name_plates"
 ## [window height, UI scale, camera fov] the monster plates were last sized
@@ -9785,9 +9785,7 @@ func _fit_monster_name_box(label: Label3D) -> void:
 	box.pixel_size = label.pixel_size
 	box.visible = label.text != ""
 	_fit_party_mark(label, label.get_node_or_null("PartyMark") as Sprite3D)
-	# Centred on the plate the box sat one row low against the picture (3 rows
-	# above the cap top and 2 below the descender, MEASURED in round 673's
-	# render, against retail's 4 and 1): one font pixel up (box_rect).
+	# Hung from the text's baseline, as the original's (round 817, box_rect).
 	box.offset = r.position
 var _monster_name_box_textures := {}
 

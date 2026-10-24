@@ -7483,6 +7483,48 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventeenth round: the plate box hangs from the baseline, as the original's
+
+The user (2026-10-23): "the name plates on everything. There's slightly too much padding between the top and
+the text. Check the original and the screenshots I sent you", then "also looks like there's 0 padding at the
+bottom of some plates? Double check them all".
+
+- **MEASURED, the original** (the user's 2x private-server picture, `svm`): every boxed plate is 16 rows, 4
+  above Tahoma's 9-row caps and 3 under the baseline; `< Monkey >`'s "y" ends one row above the box's bottom.
+  **Ours** (the user's v0.1.577 capture, 2x): 4.5 rows over the caps, 2 under the baseline; the "y" of
+  `< Jeremy >` ran one row past the box (0 padding).
+- **The original (READ).** The text item's h (`+0x4e`, `FUN_008b3910`) is its line gap `+0x30` (5, set by the
+  constructor `FUN_008b46d0`) plus the font's `+4`, the point size GNFontChar keeps (9 for font 0;
+  `FUN_00baa110` makes the 12 px em from it): 14 rows, so the box (`FUN_008b48b0`, 1 px round the item) is 16.
+  Each glyph cell is drawn from the item's y down (`FUN_008b2290`, no per-glyph rise), so the box's top is one
+  row above the cell's, and the cell's top is the face's tmAscent above the baseline.
+- **Cause.** `NamePlates.box_rect` centred the 16-row box on the label's line (Godot's ascent + descent) and
+  raised it a row (round 673's measurement, under the Arial fallback). Under Tahoma (ascent 12, descent 3)
+  that is half a row high.
+- **Fix.** The box hangs from the baseline: top = cell ascent + 1 over it. The cell ascent is GDI's tmAscent
+  (`NamePlates.cell_ascent`): OS/2 usWinAscent / unitsPerEm x em, rounded to nearest (INFERRED as GDI's rule,
+  MEASURED to match: Tahoma 12 px gives 12, and the picture's caps sit 4 rows down). Godot's own ascent is
+  FreeType's rounded UP (Tahoma 2049/2048 x 12 = 12.006 -> 13), a row too many. Every plate takes it: names,
+  titles, pets, NPCs, monsters, the guild line and the batched crowd plates; the job mark stays top-aligned with
+  the box.
+- **The guild line's box (READ, against the picture).** `FUN_009dea30` sets the guild line through
+  `FUN_008b3bd0` (0x9df21f / 0x9df33a), which gives any non-empty text font 0 and the box 0x40000000, so the
+  retail client boxes it. The private server in the user's picture draws it without one (`[Verizon * ...]`,
+  `[Tequi...`). OpenSRO keeps retail's box.
+- **Test.** `name_plates_test.gd`: the top is the cell ascent + 1 over the baseline, 16 rows, at 12 and 24 px;
+  usWinAscent and unitsPerEm read from a file; Tahoma's metrics give 12 at 12 px and 24 at 24, under a bold
+  variation too; a face without tables keeps Godot's ascent.
+- **Live shot** (`/var/tmp/r817/p1`, the render box's Arial fallback, cell 11): names, both guild lines and the
+  NPCs boxed 16 rows, one clear row under the "g" of `[QABots * Knight]` and "Hwajung".
+- **Gates.** `check` ALL LOAD (933), `tests` 353 suites, `seated_spawn_test` failing once under load and
+  passing alone twice. Perf gate vs db4e46cb (`--frames 60000`; the default 3,000 ends about 70 frames after
+  entry):
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 0.86 -> 0.86 SAME | 10024 -> 8627 SAME | 2747 -> 2702 SAME | 5 -> 5 SAME |
+| crowd | 3.15 -> 3.17 SAME | 11329 -> 11362 SAME | 3405 -> 3482 SAME | 5 -> 5 SAME |
+
 ## Eight-hundred-and-sixteenth round: a skeletal model's boneless pieces stand still (the storage chests)
 
 The user (2026-10-23): "can you fix the bug where the storage chest moves up and down. It's been a long
