@@ -171,6 +171,26 @@ const RATIO_FORMAT := "%d / %d"
 const PERCENT_FORMAT := "%d%%"
 const NOTICE_NONE := "UIIT_MSG_GUILD_COMMON_NOTEXIST"
 
+## Round 822: the command buttons the dispatcher 0x5b63e0 serves -- index 0
+## (37) invites the selected player (0x81fb70(0)), index 2 (39) asks
+## "Will you ban [%s]from the guild?" about the selected member row.
+const INVITE_BUTTON := 37
+const EXPEL_BUTTON := 39
+## The row bars (0x5b7090: the slot's art is com_bar01select_ for the
+## selected member's row, com_bar01_ for the rest).
+const ROW_SELECT_BAR := "SelectBar"
+## Invite pressed (the owner sends 0x70F3 for the selected player).
+signal invite_requested
+## The ban question's Yes for a member (the owner sends 0x70F4); a refusal
+## the client makes itself (0x4c1f) comes as expel_refused.
+signal expel_requested(member_name: String)
+signal expel_refused(code: int)
+## +0x79c, the selected member's id (0 none): a left press on a filled row
+## (CNIFGuildUserSlot 0x5b8790 -> 0x5b86c0).
+var selected_member := 0
+## +0x800, the open ban question (one at a time, 0x5b6550).
+var _expel_box: Control
+
 ## Emitted when the window's own left-menu buttons (220 / 221) switch the
 ## view, so the owner can ask for that view's data.
 signal view_changed(view: String)
@@ -389,6 +409,16 @@ func _apply_create_state() -> void:
 ## **Open:** for a guild member the client enables some of them by the
 ## member's rights (0x5b531b..0x5b5433); this client does not carry the
 ## rights, so they stay disabled for everyone.
+##
+## Round 822, the in-guild part (0x5b5223..0x5b5442, READ): the player's own
+## member record's permission (+0x2c) enables 37 for bit 0x01 (invite), 39
+## for 0x02 (expel), 40 for 0x04 and 38 for 0x10000000, and the notice's edit
+## button for 0x10. In a guild 38 is then enabled with UIIT_CTL_GUILD_UNION_
+## CHAT_GRANT (the master) or _CONFIRM; for the master 40 follows the guild's
+## level >= 4 and 41 is enabled; for anyone else 40 is disabled. 38's and
+## 41's own requests (union chat, the dispatcher's index 1 and 4) have no
+## server here, so they stay disabled (OURS), and 40 keeps round 814's rule
+## (the grant name, any member). The notice edit has no server yet either.
 func _command_buttons() -> void:
 	for id in COMMAND_BUTTONS:
 		var b := _at([ID_INFO, id])
@@ -399,9 +429,30 @@ func _command_buttons() -> void:
 	var edit := _at(NOTICE_EDIT) as BaseButton
 	if edit != null:
 		edit.disabled = true
+	var perm := own_permission()
+	var invite := _at([ID_INFO, INVITE_BUTTON]) as BaseButton
+	if invite != null:
+		invite.disabled = perm & GuildData.PERM_INVITE == 0
+	var expel := _at([ID_INFO, EXPEL_BUTTON]) as BaseButton
+	if expel != null:
+		expel.disabled = perm & GuildData.PERM_EXPEL == 0
 	var grant := _at([ID_INFO, GRANT_NAME_BUTTON]) as BaseButton
 	if grant != null:
 		grant.disabled = not _has_guild
+
+## The player's own member record's permission bits (0 outside a guild).
+func own_permission() -> int:
+	if data == null or not data.in_guild:
+		return 0
+	for m in data.members:
+		if m.member_name == _me():
+			return m.permission
+	return 0
+
+## The player's name: the record's (NetClient sets it at world entry), else
+## the one the owner set.
+func _me() -> String:
+	return data.own_name if data != null and data.own_name != "" else own_name
 
 ## The guild window's ShowWindow (CNIFGuildWnd::vslot_023, 0x5bb150), for
 ## a show: 0x5bb0a0 first -- the grant window hidden (0x5bb0bf), the command
@@ -535,6 +586,69 @@ func fill_members() -> void:
 		list.sort_custom(func(a: GuildData.Member, b: GuildData.Member) -> bool: return a.member_name < b.member_name)
 	for i in rows.size():
 		_fill_row(rows[i], list[i] if i < list.size() else null)
+	# A member who left takes the selection with them (OURS); the rest keep
+	# their marks.
+	if selected_member != 0 and (data == null or data.member(selected_member) == null):
+		selected_member = 0
+	for row in rows:
+		_mark_row(row, selected_member != 0 and int(row.get_meta("guild_member", 0)) == selected_member)
+
+## 0x5b86c0: the selection moves to `id`, every row's bar following it.
+func select_member(id: int) -> void:
+	if id == selected_member:
+		return
+	for row in member_rows():
+		_mark_row(row, id != 0 and int(row.get_meta("guild_member", 0)) == id)
+	selected_member = id
+
+## 0x5b7090 on one row: the selected bar over its own.
+func _mark_row(row: Control, on: bool) -> void:
+	var bar := row.get_node_or_null(ROW_SELECT_BAR) as Control
+	if bar == null and on and _builder != null:
+		var before := row.get_child_count()
+		_builder._add_row_bar_from(row, UiBuilder.ROW_BAR_SELECTED_DDJ, row.size)
+		if row.get_child_count() > before:
+			bar = row.get_child(row.get_child_count() - 1) as Control
+			bar.name = ROW_SELECT_BAR
+			bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.move_child(bar, 0)
+	if bar != null:
+		bar.visible = on
+
+## CNIFGuildUserSlot 0x5b8790: a left press on a row with a member selects it.
+func _on_row_input(event: InputEvent, row: Control) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var id := int(row.get_meta("guild_member", 0))
+	if id != 0:
+		select_member(id)
+
+## Index 2 (39): needs a selected member and no question open (0x5b6544,
+## 0x5b6550). Yes runs 0x824190, which refuses the master and the player
+## with 0x4c1f (0x8241e7..0x824276) and otherwise sends the name.
+func open_expel_question() -> void:
+	if selected_member == 0 or is_instance_valid(_expel_box) or data == null:
+		return
+	var m := data.member(selected_member)
+	if m == null:
+		return
+	var box := GuildMsgBox.expel_question(_builder, m.member_name)
+	if box == null:
+		return
+	var id := m.character_id
+	box.confirmed.connect(func() -> void:
+		var target := data.member(id) if data != null else null
+		if target == null:
+			return
+		if target.member_class == GuildData.CLASS_MASTER or target.member_name == _me():
+			expel_refused.emit(GuildOpsNet.CODE_EXPEL_NOT_ALLOWED)
+			return
+		expel_requested.emit(target.member_name))
+	var host: Node = get_parent() if get_parent() != null else self
+	host.add_child(box)
+	box.centre_on(get_viewport_rect().size)
+	_expel_box = box
 
 ## The CNIFGuildUserSlot rows, top to bottom.
 func member_rows() -> Array[Control]:
@@ -584,7 +698,7 @@ func _fill_row(row: Control, m: GuildData.Member) -> void:
 ## Redraws the information and the rows from the record (GuildData.changed).
 func refresh_guild() -> void:
 	if data != null:
-		_has_guild = data.in_guild or _has_guild
+		_has_guild = data.in_guild
 	if visible:
 		_guild_info()
 		_command_buttons()
@@ -700,6 +814,15 @@ func _wire() -> void:
 	var grant := _at([ID_INFO, GRANT_NAME_BUTTON]) as BaseButton
 	if grant != null:
 		grant.pressed.connect(open_grant_name_box)
+	var invite := _at([ID_INFO, INVITE_BUTTON]) as BaseButton
+	if invite != null:
+		invite.pressed.connect(func() -> void: invite_requested.emit())
+	var expel := _at([ID_INFO, EXPEL_BUTTON]) as BaseButton
+	if expel != null:
+		expel.pressed.connect(open_expel_question)
+	for row in member_rows():
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
+		row.gui_input.connect(_on_row_input.bind(row))
 	# The window's ShowWindow(1) (0x5bb150).
 	visibility_changed.connect(func() -> void:
 		if visible and not _shown_flag:

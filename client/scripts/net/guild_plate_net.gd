@@ -24,6 +24,9 @@ const OP_GRANT_NAME := 0x7256
 const OP_GRANT_NAME_RESULT := 0xB256
 const OP_NICKNAME_UPDATE := 0x3256
 const OP_ENTITY_GUILD := 0x30FF
+## Round 822: 0x3100 {u32 uid} -- that player's guild record dropped (the
+## client's FUN_008819b0 -> FUN_009db110, READ): the line goes.
+const OP_GUILD_LEFT := 0x3100
 
 ## The longest grant name, in bytes (READ: the server's `< 0xd` test in
 ## FUN_005c7560; the client's input box takes 12 -- FUN_00641f40 case 3,

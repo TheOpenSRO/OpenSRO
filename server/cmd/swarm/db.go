@@ -223,6 +223,7 @@ var cleanupRefs = []ownerRef{
 	{"character_default_quests", "character_id", false},
 	{"character_quest_state", "character_id", false}, // round 785
 	{"guild_members", "character_id", false},
+	{"guild_penalties", "character_id", false}, // round 822, the 72 h penalty
 	{"friendships", "character_id", false},
 	{"friendships", "friend_id", false},
 	{"friend_requests", "requester_id", false},

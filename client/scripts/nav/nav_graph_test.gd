@@ -176,6 +176,32 @@ func _bridge_over_its_own_pier(region: NvmReader.ParsedRegion) -> void:
 	_check(not diag.blocked and diag.standing_on == 0 and absf(diag.position.x - 128.0) < 0.01,
 		"a move along the deck's diagonal ends on the deck (x %.2f, z %.2f, on %d)" % [diag.position.x, diag.position.z, diag.standing_on])
 
+## Round 822: a point the server names for this player (its 0xB023) on a
+## bridge deck 40 up, with the server's guessed height 0 under it: near the
+## player's own walk the player's height decides, so a rider on the deck stays
+## on it (the old reference, the server's height, put them on the ground under
+## the bridge); far from it, or with no own position, the server's height, as
+## before; and someone on the ground under the deck stays on the ground.
+func _correction_on_a_deck(region: NvmReader.ParsedRegion) -> void:
+	var g := NavGraph.build(region, _placed_list(NavGraph.place(_deck_over_pier(), 0, Vector3(100.0, 0.0, 200.0), 0.0)))
+	var at := Vector2(115.0, 220.0)
+	var on_deck := g.correction_surface(at.x, at.y, 0.0, Vector3(115.0, 40.0, 215.0))
+	_check(on_deck.object_index == 0 and absf(on_deck.height - 40.0) < 0.01,
+		"a correction near a rider on the deck, with the server's height under it, stays on the deck (y %.2f, on %d)" % [on_deck.height, on_deck.object_index])
+	var old_way := g.surface_at(at.x, at.y, 0.0)
+	_check(old_way.object_index == NavGraph.ON_TERRAIN and absf(old_way.height) < 0.01,
+		"the server's height alone picks the ground under the deck (the round 822 bug; y %.2f)" % old_way.height)
+	var far := g.correction_surface(at.x, at.y, 0.0, Vector3(115.0 + NavGraph.CORRECTION_OWN_REACH + 1.0, 40.0, 220.0))
+	_check(far.object_index == NavGraph.ON_TERRAIN,
+		"a correction farther than CORRECTION_OWN_REACH from the player takes the server's height (on %d)" % far.object_index)
+	var none := g.correction_surface(at.x, at.y, 0.0, Vector3(NAN, NAN, NAN))
+	_check(none.object_index == NavGraph.ON_TERRAIN, "with no own position, the server's height (on %d)" % none.object_index)
+	var under := g.correction_surface(at.x, at.y, 40.0, Vector3(115.0, 0.0, 215.0))
+	_check(under.object_index == NavGraph.ON_TERRAIN and absf(under.height) < 0.01,
+		"someone on the ground under the deck stays on the ground whatever the server's height (y %.2f)" % under.height)
+	var low := g.correction_surface(300.0, 500.0, -50.0, Vector3(NAN, NAN, NAN))
+	_check(absf(low.height) < 0.01, "a server height under the terrain is measured from the terrain (y %.2f)" % low.height)
+
 ## Round 644 review: the inferred-cell walk's guards, each pinned by a case
 ## that fails without it (the FAIL lines are quoted in WORLD_ISSUES.md).
 func _inferred_cell_guards(region: NvmReader.ParsedRegion) -> void:
@@ -594,6 +620,7 @@ func _initialize() -> void:
 		"landing_height_at comes to rest on top of it instead (got %.2f)" % landing)
 
 	_bridge_over_its_own_pier(region)
+	_correction_on_a_deck(region)
 	_inferred_cell_guards(region)
 	_walk_on_the_ice()
 

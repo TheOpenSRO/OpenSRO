@@ -302,6 +302,20 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	}
 	// The walk speed while the run flag is cleared (round 781, motionSpeed).
 	order := world.MoveOrder{Speed: motionSpeed(e.CharacterID)}
+	// Round 822: the leg starts at the height the server's walk has the
+	// character at (world.LegGround: the leg in progress walked on the
+	// navigation mesh from its origin), not the straight line's guess. A
+	// heading run kept its start's height across a whole ride, so a click on
+	// Jangan's west bridge (deck 82-107 over a river bed at 6-57) seeded the
+	// walk on the river bed under it, whose wall ended the leg there and put
+	// the rider under the bridge (MEASURED, round 822). Standing, the height
+	// is the stored one (a taken claim's: the client's own).
+	if navWorld.Load() != nil {
+		order.SrcY, order.HasSrcY = e.Pos.Y, true
+		if y, ok := world.LegGround(e); ok {
+			order.SrcY = y
+		}
+	}
 	if m.Kind == proto.MovementKindHeading {
 		// The heading form steps only while the command's bit 0 is set
 		// (READ, CGObjMoverByCmd::vslot_004). Round 808: the client's
@@ -345,11 +359,15 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 		// stops the mover and sends 0xB023). The echo still names the
 		// client's destination, as retail's does; the server's leg ends at
 		// the wall (world.MoveOrder.Wall).
-		if w, ok := navWalk(e.Zone, e.Pos.X, e.Pos.Y, e.Pos.Z, x, z); ok && w.Blocked {
+		fromY := e.Pos.Y
+		if order.HasSrcY {
+			fromY = order.SrcY
+		}
+		if w, ok := navWalk(e.Zone, e.Pos.X, fromY, e.Pos.Z, x, z); ok && w.Blocked {
 			order.Dest = world.Position{X: w.X, Y: w.Y, Z: w.Z}
 			order.Wall = true
 		}
-		traceMove("move: leg", "character", e.CharacterID, "from_x", e.Pos.X, "from_y", e.Pos.Y, "from_z", e.Pos.Z,
+		traceMove("move: leg", "character", e.CharacterID, "from_x", e.Pos.X, "from_y", fromY, "from_z", e.Pos.Z,
 			"to_x", x, "to_z", z, "wall", order.Wall, "end_x", order.Dest.X, "end_z", order.Dest.Z)
 	}
 	now := time.Now()

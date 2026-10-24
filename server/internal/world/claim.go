@@ -177,6 +177,11 @@ func (h *Hub) Claim(sess *gateway.Session, pos Position, kind MoveKind, heading 
 	}
 	h.placeLocked(e, now, pos, kind, heading, &r)
 	e.allow -= paid
+	// Round 822: the trusted point's height is the claim's own -- bounded
+	// above (HeightAllows) from the client's last height -- not the anchor's,
+	// which is the leg's straight-line guess: a stop on a bridge deck kept a
+	// height under it, and the next leg started there.
+	trusted.Y = pos.Y
 	e.Trusted = trusted
 	e.noteClientY(pos.X, pos.Y, pos.Z)
 	r.Entity = *e

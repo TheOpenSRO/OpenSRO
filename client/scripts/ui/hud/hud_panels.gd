@@ -728,6 +728,11 @@ var quest_answer_in_flight := false
 signal guild_create_requested(guild_name: String)
 ## Round 814: the guild window's grant-name box was accepted (own name).
 signal guild_grant_name_requested(nickname: String)
+## Round 822: the guild window's Invite (37) and the ban question's Yes (39),
+## and the client's own refusal of a ban (0x4c1f).
+signal guild_invite_requested
+signal guild_expel_requested(member_name: String)
+signal guild_expel_refused(code: int)
 ## The guild leave prompt (open_guild_leave_prompt, round 521) was confirmed.
 ## World3D sends the leave request (NetClient.leave_guild).
 signal guild_leave_requested
@@ -1353,6 +1358,11 @@ func _guild_window() -> GuildWindow:
 	# data as U and the community button do.
 	window.view_changed.connect(func(view: String) -> void: _populate(view))
 	window.grant_name_submitted.connect(func(nick: String) -> void: guild_grant_name_requested.emit(nick))
+	# Round 822: Invite and the ban question's Yes.
+	window.own_name = NetClient.current_character_name
+	window.invite_requested.connect(func() -> void: guild_invite_requested.emit())
+	window.expel_requested.connect(func(who: String) -> void: guild_expel_requested.emit(who))
+	window.expel_refused.connect(func(code: int) -> void: guild_expel_refused.emit(code))
 	_windows[GUILD_WINDOW_KEY] = window
 	return window
 
@@ -1850,35 +1860,58 @@ func open_guild_name_prompt(npc_name: String) -> void:
 	])
 	_show_talk_prompt(window, panel, name_edit)
 
-## The confirmation behind the guild NPC's leave line (round 521): the line's
-## own text, then Leave and Cancel. Leave emits guild_leave_requested and
-## closes the prompt, so one misclick on the talk line leaves no guild. The
-## real client does not leave on the click either. Its item 0x1c case in
-## CIF_NPCTalk::FUN_007020c0 (0x702ba9: index byte 0x12 at 0x703d48, entry
-## 0x703cb4 of the jump table at 0x703c6c) tests FUN_009870e0 again and then
-## opens a window of kind 0x14 (0x702bf9 push 0x14; 0x702c0e call 0x6ec5d0,
-## which builds a centred 0x134 x 0x94 gwnd, 0x6ec689-0x6ec6e2), and the
-## block holds no call to Net_SendRequestPacket. Item 0x1d's case sends its
-## request at once (0x702c31 push 0x7046; call 0x841780,
-## Net_SendRequestPacket). What that window shows and how it goes on to the
-## leave were not read, so this prompt, its layout and its button text are
-## this project's own design.
+## The confirmation behind the guild NPC's leave line: round 822 makes it
+## the original's box 0x14 (CIF_NPCTalk::FUN_007020c0 case 0x1c opens it
+## with 0x6ec5d0; GuildMsgBox has its text). OK emits guild_leave_requested.
 func open_guild_leave_prompt(npc_name: String) -> void:
-	var window: HudWindow = _windows.get("npctalk")
-	if window == null:
-		return
-	print("GUILDPROMPT %s: leave prompt opened" % npc_name)
-	# The heading is the leave line's own text (UIIT_CTL_GUILD_SECESSION).
-	var panel := _talk_prompt(window, "GuildLeavePrompt",
-		_resolve_ui(NpcServiceReader.GUILD_SECESSION_STRID, "Leave guild."))
-	var confirm := func() -> void:
-		guild_leave_requested.emit()
-		panel.queue_free()
-	_talk_prompt_buttons(panel, [
-		["Leave", "Leave", confirm],
-		["Cancel", "Cancel", func() -> void: panel.queue_free()],
-	])
-	_show_talk_prompt(window, panel, null)
+	print("GUILDPROMPT %s: leave box 0x14 opened" % npc_name)
+	var box := open_guild_box(GuildMsgBox.Kind.LEAVE)
+	if box != null:
+		box.accepted.connect(func(_t: String) -> void: guild_leave_requested.emit())
+
+## Round 822: one of the guild's CMessageBoxManager boxes (GuildMsgBox.Kind)
+## over the HUD, placed as 0x6ec5d0 places it; null without the layout. The
+## caller connects `accepted`. An open box of the same kind is closed first.
+func open_guild_box(kind: int, what: String = "", who: String = "") -> GuildMsgBox:
+	if _builder == null:
+		return null
+	var old: GuildMsgBox = _guild_boxes.get(kind)
+	if is_instance_valid(old):
+		old.close()
+	var box := GuildMsgBox.new()
+	if not box.build_guild_box(_builder, kind, who, what):
+		box.free()
+		return null
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_guild_boxes[kind] = box
+	_qa_print_buttons(box, str(box.name))
+	return box
+
+var _guild_boxes := {}
+
+## Round 822: 0x3080 kind 5's box 0x0F; its answer goes out as
+## guild_invitation_answered, its own timer's close as
+## guild_invitation_expired.
+signal guild_invitation_answered(accept: bool)
+signal guild_invitation_expired
+
+func show_guild_invitation(who: String, guild_name: String) -> GuildMsgBox:
+	var box := open_guild_box(GuildMsgBox.Kind.INVITE, guild_name, who)
+	if box == null:
+		return null
+	box.accepted.connect(func(_t: String) -> void: guild_invitation_answered.emit(true))
+	box.cancelled.connect(func() -> void: guild_invitation_answered.emit(false))
+	box.expired.connect(func() -> void: guild_invitation_expired.emit())
+	box.arm_timer()
+	return box
+
+## B0F8's 0x4c10: the open box 0x0F goes, unanswered (0x6ec7f0(0xf)).
+func close_guild_invitation() -> void:
+	var box: GuildMsgBox = _guild_boxes.get(GuildMsgBox.Kind.INVITE)
+	if is_instance_valid(box):
+		box.close()
+	_guild_boxes.erase(GuildMsgBox.Kind.INVITE)
 
 ## The box behind a town gate's "Designate as return/recall point" line (round
 ## 686). READ: retail's line opens message box kind 5 (CIF_NPCTalk::

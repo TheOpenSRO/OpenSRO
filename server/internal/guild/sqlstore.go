@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
@@ -61,6 +62,12 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS notice_title TEXT NOT NULL DEFAULT '
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS notice_body TEXT NOT NULL DEFAULT '';
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS crest_rev BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS soldier_flags INTEGER NOT NULL DEFAULT 0;
+-- The guild penalty (round 822): the timed job (2, 1) a leave, an
+-- expulsion or a disband gives, 72 hours.
+CREATE TABLE IF NOT EXISTS guild_penalties (
+	character_id BIGINT PRIMARY KEY,
+	until        TIMESTAMPTZ NOT NULL
+);
 -- A master stored before round 821 gets the master's mask.
 UPDATE guild_members gm SET permission = 4294967295 FROM guilds g
  WHERE g.id = gm.guild_id AND g.leader_id = gm.character_id AND gm.permission = 0;
@@ -115,7 +122,7 @@ func (s *SQLStore) Close() error {
 // TruncateForTest clears all guild data, for other packages' tests sharing
 // this Postgres instance. Not for production use.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE guild_members, guilds RESTART IDENTITY CASCADE`)
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE guild_members, guilds, guild_penalties RESTART IDENTITY CASCADE`)
 	return err
 }
 
@@ -541,4 +548,86 @@ func (s *SQLStore) SetNickname(ctx context.Context, actorID, targetID int64, nic
 		return nil, fmt.Errorf("guild: committing: %w", err)
 	}
 	return g, nil
+}
+
+// Remove implements Store.
+func (s *SQLStore) Remove(ctx context.Context, characterID int64) (*Guild, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("guild: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+	var guildID int64
+	var isLeader bool
+	err = tx.QueryRowContext(ctx,
+		`SELECT gm.guild_id, g.leader_id = gm.character_id
+		 FROM guild_members gm JOIN guilds g ON g.id = gm.guild_id
+		 WHERE gm.character_id = $1 FOR UPDATE OF g`, characterID).Scan(&guildID, &isLeader)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotInGuild
+	}
+	if err != nil {
+		return nil, fmt.Errorf("guild: looking up membership: %w", err)
+	}
+	if isLeader {
+		return nil, ErrIsMaster
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM guild_members WHERE character_id = $1`, characterID); err != nil {
+		return nil, fmt.Errorf("guild: deleting membership: %w", err)
+	}
+	g, err := getGuild(ctx, tx, guildID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("guild: committing: %w", err)
+	}
+	return g, nil
+}
+
+// Disband implements Store.
+func (s *SQLStore) Disband(ctx context.Context, guildID int64) (*Guild, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("guild: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+	g, err := getGuild(ctx, tx, guildID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM guild_members WHERE guild_id = $1`, guildID); err != nil {
+		return nil, fmt.Errorf("guild: deleting members: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM guilds WHERE id = $1`, guildID); err != nil {
+		return nil, fmt.Errorf("guild: deleting guild: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("guild: committing: %w", err)
+	}
+	return g, nil
+}
+
+// SetPenalty implements Store.
+func (s *SQLStore) SetPenalty(ctx context.Context, characterID int64, until time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO guild_penalties (character_id, until) VALUES ($1, $2)
+		 ON CONFLICT (character_id) DO UPDATE SET until = $2`, characterID, until)
+	if err != nil {
+		return fmt.Errorf("guild: setting the penalty: %w", err)
+	}
+	return nil
+}
+
+// PenaltyUntil implements Store.
+func (s *SQLStore) PenaltyUntil(ctx context.Context, characterID int64) (time.Time, error) {
+	var until time.Time
+	err := s.db.QueryRowContext(ctx, `SELECT until FROM guild_penalties WHERE character_id = $1`, characterID).Scan(&until)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("guild: reading the penalty: %w", err)
+	}
+	return until, nil
 }

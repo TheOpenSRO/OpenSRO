@@ -2,10 +2,12 @@ package session
 
 import (
 	"log/slog"
+	"math"
 	"os"
 	"sync/atomic"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 // The server's navigation mesh (round 812, internal/navmesh): cmd/server's
@@ -27,8 +29,54 @@ func traceMove(msg string, args ...any) {
 	}
 }
 
-// SetNavmesh installs the navigation mesh (nil: none).
-func SetNavmesh(w *navmesh.World) { navWorld.Store(w) }
+// SetNavmesh installs the navigation mesh (nil: none), and with it the hub's
+// walked heights (world.SetGroundFunc, round 822).
+func SetNavmesh(w *navmesh.World) {
+	navWorld.Store(w)
+	if w == nil {
+		world.SetGroundFunc(nil)
+		return
+	}
+	world.SetGroundFunc(navGround)
+}
+
+// groundWalkLimit is the longest stretch navGround walks (OURS): about 17 ms
+// of walking at the 1.7 us a unit MEASURED on Jangan's west bridge (round
+// 822), past a minute of a horse's heading run. A leg longer than that keeps
+// its straight-line height.
+const groundWalkLimit = 10000.0
+
+// navGround is world.GroundFunc on the navigation mesh (round 822, OURS): the
+// height a no-slide walk from `from` toward (x, z) carries the mover at --
+// its footing settled at `from` (SurfaceAt) and carried edge by edge, as the
+// client's walk carries it frame to frame. A walk a wall stops short (a
+// heading run the server does not clip) answers the surface at (x, z) under
+// the wall's height. ok false with no mesh there, a dungeon, or past
+// groundWalkLimit.
+func navGround(zone string, from world.Position, x, z float64) (float64, bool) {
+	if math.Hypot(x-from.X, z-from.Z) > groundWalkLimit {
+		return 0, false
+	}
+	w := navWorld.Load()
+	if w == nil {
+		return 0, false
+	}
+	r, ok := navWalk(zone, from.X, from.Y, from.Z, x, z)
+	if !ok || !r.Checked || math.IsNaN(r.Y) {
+		return 0, false
+	}
+	if !r.Blocked {
+		return r.Y, true
+	}
+	ox, oy, ok := entityFrame(zone)
+	if !ok {
+		return 0, false
+	}
+	if y := w.Height(ox, oy, x, z, r.Y); !math.IsNaN(y) {
+		return y, true
+	}
+	return 0, false
+}
 
 // navWalk walks from (x, y, z) toward (tx, tz) in zone's frame with no
 // slide (the walk every mover uses, READ round 653). ok is false without a

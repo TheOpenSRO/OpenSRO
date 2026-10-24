@@ -165,6 +165,7 @@ func SetGuildPlateStore(s guild.Store) {
 	if s == nil {
 		guildPlateStore.Store(nil)
 		setGuildBlockDeps(nil, nil)
+		guildOps.Store(nil)
 		return
 	}
 	guildPlateStore.Store(&guildStoreBox{s: s})
@@ -219,6 +220,13 @@ func refreshGuildPlate(hub *world.Hub, characterID int64, g *guild.Guild) {
 		return
 	}
 	guildPlates.Store(characterID, p)
+	if p.Name == "" {
+		// Round 822: a line taken away goes as the original's 0x3100 {u32
+		// uid} (the client's FUN_008819b0 -> FUN_009db110 drops that
+		// player's guild record).
+		sendAboutOwner(equipObservers(hub, characterID), characterID, guild.OpObjectLeft, guild.EncodeObjectLeft(uint32(characterID)))
+		return
+	}
 	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname}
 	sendAboutOwner(equipObservers(hub, characterID), characterID, OpEntityGuildUpdate, msg.Encode())
 }

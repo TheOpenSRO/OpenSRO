@@ -187,8 +187,12 @@ func _init() -> void:
 	_check(leave != null and str(leave.get("strid")) == "UIIT_CTL_GUILD_SECESSION"
 			and str(consts.get("GUILD_SECESSION_STRID", "")) == "UIIT_CTL_GUILD_SECESSION",
 		"guild_leave's strid is UIIT_CTL_GUILD_SECESSION (FUN_006fcd60 case 0x1c)")
-	_check(_keys(from.call(guild_ids, store, 7, true)) == ["shop:G1", "guild"],
-		"a master keeps the placeholder, never secession or creation")
+	var master_lines: Array = from.call(guild_ids, store, 7, true)
+	_check(_keys(master_lines) == ["shop:G1", "guild_disband"],
+		"a master gets the disband line, never secession or creation (got %s)" % [_keys(master_lines)])
+	var brk: Variant = _find(master_lines, "guild_disband")
+	_check(brk != null and str(brk.get("strid")) == "UIIT_CTL_GUILD_BREAK",
+		"guild_disband's strid is UIIT_CTL_GUILD_BREAK (FUN_006fcd60 case 0x14)")
 	_check(_keys(from.call([1], store, 0)) == ["shop:G1"], "without 0x0f the guild state does not gate the store line")
 	var gs0: Array = NpcServiceReader.guild_services(0, false)
 	var gs7: Array = NpcServiceReader.guild_services(7, false)
@@ -481,38 +485,17 @@ func _initialize() -> void:
 		# prompt was up) drops the prompt, and the keyboard with it.
 		_check(live_talk.get_node_or_null("GuildNamePrompt") == null, "a new conversation drops the name prompt")
 		_check(has_gate and not typing.call(), "with the prompt gone the player is not typing")
-		# The leave line asks first. Opening its prompt replaces the name
-		# prompt; Cancel sends nothing; Leave sends once.
+		# The leave line asks first (round 822: box 0x14, GuildMsgBox; its
+		# OK and Cancel are checked in guild822_ui_test.gd). These panels
+		# have no layouts, so no box opens -- and nothing is sent.
 		var has_leave := live.has_method("open_guild_leave_prompt") and live.has_signal("guild_leave_requested")
 		_check(has_leave, "HudPanels has open_guild_leave_prompt and guild_leave_requested")
 		var leaves: Array = []
 		if has_leave:
 			live.connect("guild_leave_requested", func() -> void: leaves.append(1))
-			live.call("open_guild_name_prompt", "NPC_WC_GUILD")
 			live.call("open_guild_leave_prompt", "NPC_WC_GUILD")
-		var leave_prompt := live_talk.get_node_or_null("GuildLeavePrompt")
-		_check(leave_prompt != null, "the leave line opens a prompt on the talk window")
-		_check(has_leave and live_talk.get_node_or_null("GuildNamePrompt") == null,
-			"one prompt at a time: the leave prompt replaced the name prompt")
-		# NEGATIVE: opening the prompt sends nothing by itself.
-		_check(has_leave and leaves.is_empty(), "opening the leave prompt sends no leave (got %d)" % leaves.size())
-		var cancel_btn: Button = null
-		if leave_prompt != null:
-			cancel_btn = leave_prompt.find_child("Cancel", true, false) as Button
-		_check(cancel_btn != null, "the leave prompt has a Cancel button")
-		if cancel_btn != null:
-			cancel_btn.pressed.emit()
-		_check(has_leave and leaves.is_empty(), "Cancel sends no leave (got %d)" % leaves.size())
-		var confirm_btn: Button = null
-		if has_leave:
-			live.call("open_guild_leave_prompt", "NPC_WC_GUILD")
-			var again := live_talk.get_node_or_null("GuildLeavePrompt")
-			if again != null:
-				confirm_btn = again.find_child("Leave", true, false) as Button
-		_check(confirm_btn != null, "the leave prompt has a Leave button")
-		if confirm_btn != null:
-			confirm_btn.pressed.emit()
-		_check(leaves.size() == 1, "Leave sends the leave request once (got %d)" % leaves.size())
+		# NEGATIVE: opening the box sends nothing by itself.
+		_check(has_leave and leaves.is_empty(), "opening the leave box sends no leave (got %d)" % leaves.size())
 
 		# (n) Review of round 521, the other way: a line left focused must not
 		# keep movement dead once the player clicks away. A click on a

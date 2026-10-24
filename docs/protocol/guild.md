@@ -700,3 +700,49 @@ The window's data is the original's guild record, which the server sends as a bl
   0xffffffff, a member 0 -- both INFERRED: the stored procedures' defaults are not read),
   `contribution`, `war_kill`, `war_killed`, `siege_authority`; `guilds.notice_title`,
   `notice_body`, `crest_rev`, `soldier_flags`.
+
+## Membership (round 822)
+
+Create, invite, leave, expel and disband as the original does them, both sides (READ, `sro_client.exe`
+and the GameServer; OURS where marked).
+
+- **Requests.** 0x70F0 create {u32 NPC, str name} (`c:0x81f5a0`, after box 0x12's OK); 0x70F1
+  disband {u32 NPC} (box 0x13, the master's NPC line 0x14 `UIIT_CTL_GUILD_BREAK`); 0x70F2 leave
+  {u32 NPC} (box 0x14, a member's line 0x1c); 0x70F3 invite {u32 the selected player} (the guild
+  window's button 37, `c:0x81fb70(0)`); 0x70F4 expel {str name} (button 39's question, then
+  `c:0x824190`, which itself refuses the master and the player with 0x4c1f and sends nothing).
+  The NPC must offer interaction 0x0f.
+- **Replies.** u8 1, or u8 2 + u16 code (category 0x10, `c:0x7ba32b`; a code without a row shows
+  nothing). B0F0's success carries the guild block, its 0x4c3c a u32 of seconds
+  (`UIIT_MSG_GUILD_SECESSION_PENALTY` as days / hours / minutes). B0F3 (to the inviter) and B0F8 (to
+  the invitee) carry an invitation's failure; B0F8's 0x4c10 closes box 0x0F with no text. The
+  master's own leave gets no reply at all (`s:0x515070`).
+- **The invitation.** 0x3080 {5, u32 inviter} (`c:0x88aeb7`); the client drops it unless the inviter
+  is a spawned player with a guild line. Box 0x0F (agreement box, `UIIT_MSG_GUILD_JOIN_REQUEST` /
+  `_QUESTION_JOIN`, a 30 s timer); its answer 0x3080 {1, 1} or {2, 0x4c16}. The server waits 30 s
+  and then sends 0x4c10 to both.
+- **0x38F5** (`FUN_00887330`): type 1 disbanded (`UIIT_MSG_GUILD_BREAK_RESULT`, also on GDR_NOTICE);
+  type 2 a member's record (the block's 13 fields; the siege byte ignored); type 3 {u32 id, u8 1 left
+  / 2 expelled} (`_EXIT_RESULT` only for the player's own leave, `_EXPULSION_RESULT` with the name
+  either way); type 5 guild fields by mask (0x02 the wide name, 0x04 level with
+  `_LEVEL_UP_RESULT`, 0x08 GP, 0x10 the notice with `_COMMON_KNOW_REMIND_UPDATE` on
+  GDR_WARNING_WND, 0x40 soldier flags); type 6 member fields by mask (0x01 level, 0x02 offline with
+  `_JOIN_RESULT` for the member just added, else `_CONNECT` / `_DISCONNECT`, and `_CONNECT_NOTICE`
+  for the player's own; 0x04 class, 0x08 GP, 0x10 permission, 0x20 the character's name, 0x40 the
+  siege role). OpenSRO now sends type 2 + 6 on a join, type 3 on a leave or expel, type 1 on a
+  disband, type 6 on log-on / log-off and a level, and type 5 on GP and level changes.
+- **Penalty.** Leaving, being expelled or disbanding starts a 72 h penalty (timed job (2, 1),
+  0x3f480 s): it refuses an invitation (0x4c3d) and a founding (0x4c3c + the seconds left).
+  OpenSRO keeps it in `guild_penalties`.
+- **The window's buttons** (`0x5b5150`, READ): the player's own permission enables 37 for bit 0x01,
+  39 for 0x02, 40 for 0x04, 38 for 0x10000000, the notice edit for 0x10; in a guild 38 reads
+  `UIIT_CTL_GUILD_UNION_CHAT_GRANT` (master) or `_CONFIRM`, and the master's 40 follows level >= 4
+  with 41 enabled. OpenSRO enables 37 and 39 by their bits; 38, 41 and the notice edit have no
+  server yet; 40 keeps round 814's rule. A left press on a row selects its member (`0x5b8790 ->
+  0x5b86c0`): that row's bar becomes `com_bar01select_` (`0x5b7090`).
+- **Boxes** (`UI_SILKMALL::FUN_00644c90`): 0x0F agreement, 308x148; 0x12 confirm, 440x144, lines and
+  buttons moved 0x42 right, `UIIT_MSG_GUILD_QUESTION_CREATE` + `_CREATE_CONFIRM`; 0x13 agreement,
+  `UIIT_MSG_GUILD_BREAK_CONFIRM`; 0x14 confirm, `UIIT_MSG_GUILD_SECESSION_CONFIRM`; the ban question
+  MsgBoxSimple 280x144, Yes / No, `UIIT_MSG_GUILD_QUESTION_EXPULSION_ANYONE`. OPEN: where box 0x12 is
+  opened from (it is centred here), and the window the original names a guild in (OpenSRO keeps
+  round 521's own name prompt before box 0x12).

@@ -7483,6 +7483,55 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-second round: guild membership as the original's, and riding under a bridge
+
+The user (2026-10-24): "fully support all guild functionality" (this round: create, invite, leave,
+expel, disband) and "sometimes when I cross a bridge I teleport underneath it".
+
+- **Guild membership (READ; docs/protocol/guild.md "Membership (round 822)").** Server: 0x70F0
+  create, 0x70F1 disband, 0x70F2 leave, 0x70F3 invite with 0x3080 kind 5 and its answer, 0x70F4
+  expel; the replies B0F0..B0F4 / B0F8 with category 0x10 codes; 0x38F5 types 1, 2, 3, 5, 6 to the
+  members; the 72 h penalty (`guild_penalties`, 0x4c3d / 0x4c3c + seconds); 0x3100 drops a
+  departed member's plate line. Client: `GuildOpsNet` / `GuildOpsState` (requests, replies,
+  invitation), `GuildData.apply_update` (0x38F5 with the original's chat lines), `GuildMsgBox`
+  (boxes 0x0F, 0x12, 0x13, 0x14 and the ban question, from ifmessagebox.txt), the guild window's
+  row selection (`com_bar01select_`), Invite (37) and Ban (39) by the player's permission bits, and
+  the NPC's lines: create (name prompt, then box 0x12), leave (box 0x14), and the master's
+  "Disband the guild" (line 0x14, box 0x13).
+- **OURS / OPEN.** The name prompt before box 0x12 is round 521's own (the original's naming window
+  was not traced); box 0x12 is centred (its opener not traced); buttons 38 / 41 and the notice edit
+  stay disabled (no server yet); the invite lock (GInterface+0x509) is kept but nothing reads it.
+- **The bridge (MEASURED, the background agent's report, reproduced on the box).** A heading run
+  keeps its start's height on the server (`Mover.At`); on Jangan's west bridge (region 97/165,
+  `cj_stonebridge01`, deck 82-107 over a river bed at 6-57) a click seeded the server's walk more
+  than 12 under the deck, so it walked the river bed, hit the bank's wall and sent 0xB023 there;
+  the client took that height and stood the rider under the bridge. Fix: legs start at a height
+  the server walks on the navmesh from the leg's origin (`world.LegGround`, `navGround`, capped at
+  10,000 units, outside the hub lock), stops and turns keep it, an accepted claim keeps the
+  client's height; the client stands a correction within 50 units (OURS) at its own height
+  (`NavGraph.correction_surface`). Repro: dev server lands at (-5339.8, 25.3, -107.0) under the
+  deck; fixed, the rider stays on it (y 87.9). Still guessed: the 60 s heading-run cap stop and a
+  far refused claim (the client's 50-unit rule covers neither).
+- **Tests.** Server: `guild/round822_test.go` (both stores), `session/guild822_test.go` (invite,
+  accept, leave, penalty, expel, disband; refused and timed out), `session/bridge822_test.go`
+  (a synthetic arched bridge: crossing, an arrow stop, a turn, no navmesh), swarm's cleanup covers
+  `guild_penalties`. Client: `guild_data_test.gd` (0x38F5), `guild_ops_test.gd`,
+  `guild822_ui_test.gd` (the boxes, the HUD's leave and invitation), `npc_service_reader_test.gd`
+  (the master's line), `nav_graph_test.gd` (a correction on a deck). `go test ./...` and the
+  client's 357 suites pass.
+- **Live (`/var/tmp/r822/g6`, `qa822.sh`).** partybot's Rook founds Verizon and invites Tess
+  (`-guild-invite Tess -guild-invite-after 100s`); her box 0x0F reads "Agreement window",
+  "[Rook]has applied for your guild.", "Do you want to join [Verizon]guild?" (frame 742); the QA
+  presses its Yes (`OPENSRO_QA_GUILD_ANSWER=yes:10`); Rook gets 0x38F5 type 2 then type 6
+  {offline 0}; after 45 s he bans her: B0F4 {1}, type 3 reason 2, and her window prints "[Tess]has
+  been banned from the guild" and her plate drops "[Verizon]" (frame 1500). An invitation that
+  reaches a client still loading in waits behind its loading, so the server's 30 s can run out
+  first (MEASURED in the first runs: B0F8 0x4c10).
+- **Perf gate** (`--base ea6a0860 --head da6b692b --sites jangan,cross --frames 60000`, median of
+  3): jangan frame 0.86 / 0.86 ms, entry 8679 / 8640 ms, freeze 2762 / 2791 ms, hitches 5 / 4;
+  cross frame 1.01 / 1.01 ms, entry 9364 / 9365 ms, freeze 2786 / 2798 ms, hitches 5 / 5 -- all
+  SAME.
+
 ## Eight-hundred-and-twenty-first round: the guild window shows the guild (the original's guild block)
 
 The user (2026-10-24): "let's fully support all guild functionality". This round is the base the

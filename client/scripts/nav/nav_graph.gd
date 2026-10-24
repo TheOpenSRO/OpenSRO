@@ -673,6 +673,32 @@ func surface_at(x: float, z: float, reference_y: float) -> Surface:
 		best.height = minf(best.height, reference_y)
 	return best
 
+## Round 822: how far, in plan, a point the server names for this player may
+## lie from where the player's own walk has it and still be stood on at the
+## walk's height rather than the server's (`correction_surface`). A project
+## choice, OURS: wider than the server's free claim slack (9) and a second or
+## so of a horse's run of latency, which is where a stop, a wall end or a
+## refused claim lands; well short of a teleport or a return.
+const CORRECTION_OWN_REACH := 50.0
+
+## Round 822: the surface a point the server names for this player is stood on
+## -- its 0xB023 (a correction, an arrow stop, a wall that ended its leg), at
+## region-local (x, z) with the server's height `server_y`. Near the player's
+## own position `own` (CORRECTION_OWN_REACH in plan) the reference is the
+## player's own height: the server's is a guess where it has no walk to take
+## it from (a heading run keeps its start's height), and the highest surface
+## within SURFACE_REACH_UP of a guess more than that under a deck is the
+## ground under the bridge (MEASURED round 822 on Jangan's west bridge, region
+## 97/165: deck 82-107 over a river bed at 6-57). Farther, the server's
+## height. A reference under the terrain (an arrival's 0) is measured from the
+## terrain, as before. `own` NAN in x: no own position, the server's height.
+func correction_surface(x: float, z: float, server_y: float, own: Vector3) -> Surface:
+	var ref := server_y
+	if not is_nan(own.x) and Vector2(x - own.x, z - own.z).length() <= CORRECTION_OWN_REACH:
+		ref = own.y
+	ref = maxf(ref, NvmCollision.terrain_height(region, x, z))
+	return surface_at(x, z, ref)
+
 ## Round 813: the normal of the ground a character stands on at region-local
 ## (x, y, z), the target of the original's slope tilt (world/slope_tilt.gd).
 ## READ: the character update (`GlobalDataManager::FUN_009d1d60`, 0x9d1d76..

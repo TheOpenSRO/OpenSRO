@@ -393,8 +393,21 @@ func guildLevelResult(g *guild.Guild, levelledUp bool) *GuildLevelResult {
 func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gateway.Handler {
 	SetGuildPlateStore(guilds)
 	setGuildBlockDeps(chars, hub)
+	ops := guildOpsDeps{chars: chars, guilds: guilds, hub: hub}
+	guildOps.Store(&ops)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
+		// Round 822: the original's requests (guildops.go).
+		case guild.OpCreate:
+			return handleRetailGuildCreate(ctx, sess, p, ops)
+		case guild.OpDisband:
+			return handleGuildDisband(ctx, sess, p, ops)
+		case guild.OpLeave:
+			return handleRetailGuildLeave(ctx, sess, p, ops)
+		case guild.OpInvite:
+			return handleGuildInvite(ctx, sess, p, ops)
+		case guild.OpExpel:
+			return handleGuildExpel(ctx, sess, p, ops)
 		case OpGuildCreate:
 			return handleGuildCreate(ctx, sess, p, chars, guilds, hub)
 		case OpGuildJoin:
@@ -563,8 +576,9 @@ func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		}
 		return reply(&GuildLevelResult{Error: msg, Code: uint16(guild.LevelUpCode(err))})
 	}
-	// Round 821: the new level, cap and GP to the members in the world.
-	broadcastGuildBlock(ctx, g)
+	// Round 822: the new level and GP to the members in the world (0x38F5
+	// type 5).
+	guildLevelChanged(ctx, g)
 	return reply(guildLevelResult(g, true))
 }
 
@@ -677,6 +691,11 @@ func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet
 	req, err := DecodeGuildJoinRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: "malformed request"}).Encode()})
+	}
+	// Round 822: joining by id is OpenSRO's own, a backdoor beside the
+	// original's invitation (guildops.go): a GM account's only (the QA bots).
+	if !guildJoinAllowed(sess) {
+		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: "UIIT_MSG_GUILDERR_PERMISSION_DENIED"}).Encode()})
 	}
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {

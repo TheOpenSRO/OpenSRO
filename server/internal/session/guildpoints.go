@@ -221,7 +221,7 @@ func (s *GuildPointSkills) request(ctx context.Context, guildID, characterID int
 	// Round 821: the guild's GP and the member's donation to the members in
 	// the world.
 	if g, err := s.guilds.Get(ctx, guildID); err == nil {
-		broadcastGuildBlock(ctx, g)
+		guildPointsChanged(ctx, g, characterID)
 	}
 }
 

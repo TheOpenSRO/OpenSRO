@@ -399,3 +399,9 @@ func TestMemStoreLevelUp(t *testing.T) {
 func TestMemStoreLevelRaisesMemberCap(t *testing.T) {
 	checkLevelRaisesMemberCap(t, NewMemStore())
 }
+
+// Round 822: Remove refuses the master and keeps the rest; Disband deletes
+// the guild and frees every member; the penalty round-trips.
+func TestMemStoreRound822(t *testing.T) {
+	testRound822(t, NewMemStore())
+}

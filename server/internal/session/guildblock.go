@@ -112,12 +112,11 @@ func broadcastGuildBlock(ctx context.Context, g *guild.Guild) {
 }
 
 // guildMemberPresence tells characterID's fellow members in the world that
-// it came or went: the original's member update (0x38F5, its online bit),
-// sent here as the whole block again until that message is built (OURS,
-// round 821).
+// it came or went: 0x38F5 type 6 with the online bit (READ, the client's
+// FUN_005bb1b0: "Guild member [%s] has logged on." / "... logged off.").
 func guildMemberPresence(ctx context.Context, characterID int64, online bool) {
 	box := guildPlateStore.Load()
-	d := guildBlockBox.Load()
+	d := guildOps.Load()
 	if box == nil || d == nil || d.hub == nil {
 		return
 	}
@@ -125,20 +124,39 @@ func guildMemberPresence(ctx context.Context, characterID int64, online bool) {
 	if err != nil || g == nil {
 		return
 	}
-	var pkts []*proto.Packet
 	for _, m := range g.Members {
-		if m.CharacterID == characterID {
+		if m.CharacterID != characterID {
 			continue
 		}
-		e, ok := entityOf(d.hub, m.CharacterID)
-		if !ok || e.Session == nil {
-			continue
-		}
-		if pkts == nil {
-			pkts = guildBlockPacketsWith(ctx, g, characterID, online)
-		}
-		for _, p := range pkts {
-			_ = e.Session.Send(p)
+		live := d.guildLive(ctx, characterID)
+		live.Online = online
+		d.toMembers(g, guild.OpUpdate, guild.EncodeMemberFields(guild.MemberFieldOffline|guild.MemberFieldLevel, m, live), characterID)
+	}
+}
+
+// guildPointsChanged tells the members in the world a GP credit: the
+// guild's GP (0x38F5 type 5, bit 0x08) and the earner's donation (type 6,
+// bit 0x08).
+func guildPointsChanged(ctx context.Context, g *guild.Guild, earner int64) {
+	d := guildOps.Load()
+	if d == nil || g == nil {
+		return
+	}
+	d.toMembers(g, guild.OpUpdate, guild.EncodeGuildFields(guild.GuildFieldGP, g), 0)
+	for _, m := range g.Members {
+		if m.CharacterID == earner {
+			d.toMembers(g, guild.OpUpdate, guild.EncodeMemberFields(guild.MemberFieldGP, m, guild.MemberLive{}), 0)
 		}
 	}
+}
+
+// guildLevelChanged tells the members in the world a level-up: 0x38F5 type
+// 5 with the level and the GP the level-up spent ("Guild level has been
+// increased to %d.", FUN_005b7b80).
+func guildLevelChanged(ctx context.Context, g *guild.Guild) {
+	d := guildOps.Load()
+	if d == nil || g == nil {
+		return
+	}
+	d.toMembers(g, guild.OpUpdate, guild.EncodeGuildFields(guild.GuildFieldLevel|guild.GuildFieldGP, g), 0)
 }

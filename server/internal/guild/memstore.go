@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MemStore is an in-memory Store, for tests and for running the server
@@ -17,6 +18,8 @@ type MemStore struct {
 	nextID  int64
 	joinSeq map[int64]int64 // characterID -> join order, for leader succession
 	seq     int64
+	// penalty is each character's guild penalty end (round 822).
+	penalty map[int64]time.Time
 }
 
 // NewMemStore returns an empty MemStore.
@@ -26,6 +29,7 @@ func NewMemStore() *MemStore {
 		ofChar:  make(map[int64]int64),
 		names:   make(map[string]int64),
 		joinSeq: make(map[int64]int64),
+		penalty: make(map[int64]time.Time),
 	}
 }
 
@@ -257,4 +261,61 @@ func (m *MemStore) SetNickname(_ context.Context, actorID, targetID int64, nickn
 		}
 	}
 	return nil, ErrNotInGuild
+}
+
+// Remove implements Store.
+func (m *MemStore) Remove(_ context.Context, characterID int64) (*Guild, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	guildID, in := m.ofChar[characterID]
+	if !in {
+		return nil, ErrNotInGuild
+	}
+	g := m.byID[guildID]
+	if g.LeaderID == characterID {
+		return nil, ErrIsMaster
+	}
+	delete(m.ofChar, characterID)
+	delete(m.joinSeq, characterID)
+	kept := g.Members[:0]
+	for _, member := range g.Members {
+		if member.CharacterID != characterID {
+			kept = append(kept, member)
+		}
+	}
+	g.Members = kept
+	return m.copy(g), nil
+}
+
+// Disband implements Store.
+func (m *MemStore) Disband(_ context.Context, guildID int64) (*Guild, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.byID[guildID]
+	if !ok {
+		return nil, ErrGuildNotFound
+	}
+	out := m.copy(g)
+	for _, member := range g.Members {
+		delete(m.ofChar, member.CharacterID)
+		delete(m.joinSeq, member.CharacterID)
+	}
+	delete(m.byID, guildID)
+	delete(m.names, strings.ToLower(g.Name))
+	return out, nil
+}
+
+// SetPenalty implements Store.
+func (m *MemStore) SetPenalty(_ context.Context, characterID int64, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.penalty[characterID] = until
+	return nil
+}
+
+// PenaltyUntil implements Store.
+func (m *MemStore) PenaltyUntil(_ context.Context, characterID int64) (time.Time, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.penalty[characterID], nil
 }

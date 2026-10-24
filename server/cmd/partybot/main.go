@@ -279,6 +279,12 @@ var botGuild struct {
 	join   int64
 	level  int
 	grant  string
+	// Round 822: -guild-invite NAME invites NAME (0x70F3) once it is in
+	// view, and -guild-expel-after expels it (0x70F4) that long after its
+	// record arrives (0x38F5 type 2; 0: never).
+	invite      string
+	inviteAfter time.Duration
+	expelAfter  time.Duration
 }
 
 // guildSteps runs botGuild's steps, in that order.
@@ -318,6 +324,15 @@ func (b *bot) idOf(name string) (int64, bool) {
 	defer b.mu.Unlock()
 	id, ok := b.seen[name]
 	return id, ok
+}
+
+func isGuildOp(op uint16) bool {
+	switch op {
+	case guild.OpUpdate, guild.OpCreateResult, guild.OpDisbandResult, guild.OpLeaveResult,
+		guild.OpInviteResult, guild.OpExpelResult, guild.OpJoinResult:
+		return true
+	}
+	return false
 }
 
 func isParty(op uint16) bool {
@@ -455,6 +470,9 @@ func (b *bot) run() {
 		}
 		if isParty(p.Opcode) || p.Opcode == session.OpChatUpdate || p.Opcode == party.OpItemNotice {
 			fmt.Printf("[%s] <- %s\n", b.name, describe(p))
+			b.in <- p
+		} else if isGuildOp(p.Opcode) {
+			// Round 822: the membership replies and updates (botMode prints them).
 			b.in <- p
 		}
 		switch p.Opcode {
@@ -866,6 +884,9 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	}
 	requested := false
 	invited := false
+	guildInvited := false
+	var guildSeen time.Time
+	var expelC <-chan time.Time
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -904,7 +925,16 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 					}
 				}
 			}
-			if p.Opcode == party.OpInvitation {
+			switch p.Opcode {
+			case guild.OpUpdate, guild.OpCreateResult, guild.OpDisbandResult, guild.OpLeaveResult,
+				guild.OpInviteResult, guild.OpExpelResult, guild.OpJoinResult:
+				fmt.Printf("[%s] GUILD %#04x % x\n", name, p.Opcode, p.Data)
+				if p.Opcode == guild.OpUpdate && len(p.Data) > 0 && p.Data[0] == guild.UpdateMemberAdd &&
+					botGuild.expelAfter > 0 && expelC == nil {
+					expelC = time.After(botGuild.expelAfter)
+				}
+			}
+			if p.Opcode == party.OpInvitation && len(p.Data) > 0 && p.Data[0] != guild.RequestGuildInvite {
 				k, _, _, _ := party.DecodeInvitation(p.Data)
 				if accept {
 					b.send(party.OpInvitation, party.EncodeAnswerYes())
@@ -916,6 +946,10 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 			}
 		case <-tp2C:
 			gmTP(tp2)
+		case <-expelC:
+			n := botGuild.invite
+			b.send(guild.OpExpel, append(binary.LittleEndian.AppendUint16(nil, uint16(len(n))), n...))
+			fmt.Printf("[%s] -> 0x70F4 expel %s\n", name, n)
 		case <-killC:
 			go func() {
 				// The -tp's GM reply may still be queued: drop it, or the
@@ -937,6 +971,16 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		case <-tick.C:
 			if requestName != "" && !requested {
 				b.send(party.OpMatchList, []byte{0})
+			}
+			if botGuild.invite != "" && !guildInvited {
+				if _, ok := b.idOf(botGuild.invite); ok && guildSeen.IsZero() {
+					guildSeen = time.Now()
+				}
+				if id, ok := b.idOf(botGuild.invite); ok && time.Since(guildSeen) >= botGuild.inviteAfter {
+					b.send(guild.OpInvite, binary.LittleEndian.AppendUint32(nil, uint32(id)))
+					fmt.Printf("[%s] -> 0x70F3 guild invite %s(%d)\n", name, botGuild.invite, uint32(id))
+					guildInvited = true
+				}
 			}
 			if inviteName != "" && !invited {
 				if id, ok := b.idOf(inviteName); ok {
@@ -974,6 +1018,9 @@ func main() {
 	flag.Int64Var(&botGuild.join, "guild-join", 0, "bot: join this guild id once in the world")
 	flag.IntVar(&botGuild.level, "guild-level", 0, "bot: raise its guild to this level with /guildlevel (a GM account)")
 	flag.StringVar(&botGuild.grant, "grant-name", "", "bot: set its own grant name (0x7256) once in its guild")
+	flag.StringVar(&botGuild.invite, "guild-invite", "", "bot (round 822): invite this character into its guild (0x70F3) once it is in view")
+	flag.DurationVar(&botGuild.inviteAfter, "guild-invite-after", 0, "bot (round 822): wait this long after first seeing the -guild-invite character before inviting it")
+	flag.DurationVar(&botGuild.expelAfter, "guild-expel-after", 0, "bot (round 822): expel the -guild-invite character (0x70F4) this long after it joins")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")

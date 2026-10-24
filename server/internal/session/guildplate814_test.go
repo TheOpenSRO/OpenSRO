@@ -23,7 +23,9 @@ import (
 // world.
 func testGuildHandler(t testing.TB, chars character.Store, guilds guild.Store, hub *world.Hub) gateway.Handler {
 	t.Helper()
-	t.Cleanup(func() { SetGuildPlateStore(nil) })
+	t.Cleanup(func() { SetGuildPlateStore(nil); SetGuildJoinGate(nil) })
+	// Round 822: join-by-id is a GM's; the tests that join by id are.
+	SetGuildJoinGate(func(string) bool { return true })
 	return GuildHandler(chars, guilds, hub)
 }
 
@@ -179,6 +181,14 @@ func TestRound814GrantNameFlow(t *testing.T) {
 	if lr, err := DecodeGuildLeaveResult(f.read(t, f.connB, f.rB).Data); err != nil || !lr.OK {
 		t.Fatalf("leave: %+v %v", lr, err)
 	}
-	expectGuildLine(t, f, f.connB, f.rB, f.bram, "", "")
-	expectGuildLine(t, f, f.connA, f.rA, f.bram, "", "")
+	// Round 822: as the original's 0x3100 {u32 uid}.
+	for _, c := range []struct {
+		conn net.Conn
+		r    *bufio.Reader
+	}{{f.connB, f.rB}, {f.connA, f.rA}} {
+		p := f.read(t, c.conn, c.r)
+		if p.Opcode != guild.OpObjectLeft || !bytes.Equal(p.Data, guild.EncodeObjectLeft(uint32(f.bram))) {
+			t.Fatalf("the line taken away: %#04x % x", p.Opcode, p.Data)
+		}
+	}
 }

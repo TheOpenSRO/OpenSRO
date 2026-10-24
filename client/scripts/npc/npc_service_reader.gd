@@ -66,6 +66,8 @@ const GUILD_CREATE_STRID := "UIIT_CTL_GUILD_CREATE"
 ## Item 0x1c takes index byte 0x17 (0x6fd394 + 0x1c), whose jump-table entry
 ## (0x6fd334) is 0x6fd0bc `push 0xdad2ec`, and .rdata 0xdad2ec is this string.
 const GUILD_SECESSION_STRID := "UIIT_CTL_GUILD_SECESSION"
+## Round 822: the master's disband line (FUN_006fcd60 case 0x14).
+const GUILD_BREAK_STRID := "UIIT_CTL_GUILD_BREAK"
 
 ## The job guilds' join lines (round 526), by job kind: 1 Trader, 2 Thief
 ## ("Robber"), 3 Hunter (docs/protocol/jobs.md, "Three job kinds"). The real
@@ -384,9 +386,11 @@ static func gate_ids(has_links: bool, designate: bool, recall: bool) -> PackedBy
 ##     UIIT_CTL_GUILD_UNION_CHAT_GRANT instead of ..._CONFIRM; and its
 ##     non-zero branch is the one with GUILD_BREAK and MASTERLEAVE.
 ## So guildless -> "guild_create", a member -> "guild_leave". A master is
-## never offered secession (the 0x1c push is only in the zero branch), and
-## the master's own items have no server in OpenSRO, so a master keeps the
-## "Guild" placeholder. Items 0x19/0x1a (MASTERRELEASE / MRELEASE_VOTE), 0x1d
+## never offered secession (the 0x1c push is only in the zero branch). Round
+## 822: the master gets item 0x14, GUILD_BREAK_STRID ("guild_disband", box
+## 0x13 then 0x70F1); the master's other items (0x17 level up, 0x18
+## MASTERLEAVE, 0x1b GUILD_COMPENSATION) have no server in OpenSRO yet and
+## are not offered. Items 0x19/0x1a (MASTERRELEASE / MRELEASE_VOTE), 0x1d
 ## (GUILD_WAREHOUSE) and 0x43 (GP_HISTORY), which a member also gets, have no
 ## server either and are not offered -- this project's choice, not a claim
 ## that the real client lacks them.
@@ -409,7 +413,7 @@ static func guild_services(guild_id: int, is_master: bool) -> Array:
 		return [Service.new("guild_create", "Create a new guild", GUILD_CREATE_STRID)]
 	if not is_master:
 		return [Service.new("guild_leave", "Leave guild.", GUILD_SECESSION_STRID)]
-	return [Service.new("guild", "Guild")]
+	return [Service.new("guild_disband", "Disband the guild", GUILD_BREAK_STRID)]
 
 ## Whether the store window shows Repair and Repair All for the NPC with this
 ## codename (round 514). True exactly when the server registers interaction

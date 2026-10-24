@@ -2407,6 +2407,8 @@ func main() {
 	// command is those stores' own methods and nothing more. The species and
 	// zones a GM can name are built from the running roster and the world map.
 	gmGate := gm.ParseAccounts(*gmAccounts)
+	// Round 822: OpenSRO's own join-by-id is a GM account's only.
+	session.SetGuildJoinGate(gmGate.Allows)
 	if names := gmGate.Names(); len(names) > 0 {
 		logger.Info("GM accounts enabled", "accounts", names)
 	} else {

@@ -17,9 +17,11 @@ const LAYOUT := "resinfo\\ifmessagebox.txt"
 
 signal confirmed
 
-func build(builder: UiBuilder, message: String) -> bool:
+## `box` is 0x643e50's size (round 822: the guild window's ban question
+## passes 280x144); the party match's is 360x151.
+func build(builder: UiBuilder, message: String, box: Vector2 = SIZE) -> bool:
 	name = "PartyMatchConfirm"
-	if not build_shell(builder, SIZE, "UIIT_STT_CONFIRM_BOX", "Confirmation window", LAYOUT, "MsgBoxSimple"):
+	if not build_shell(builder, box, "UIIT_STT_CONFIRM_BOX", "Confirmation window", LAYOUT, "MsgBoxSimple"):
 		return false
 	var layout: UiLayoutParser.LayoutDef = builder.load_layout(LAYOUT)
 	if layout != null and layout.sections.has("Create"):
@@ -29,7 +31,7 @@ func build(builder: UiBuilder, message: String) -> bool:
 			move_child(base, root.get_index())
 			var tile := base.get_node_or_null("GDR_MSGBOX_BG") as Control
 			if tile != null:
-				var r := Rect2(tile.position, Vector2(SIZE.x - 32, SIZE.y - 56))
+				var r := Rect2(tile.position, Vector2(box.x - 32, box.y - 56))
 				tile.set_meta(UiBuilder.AUTHORED_RECT_META, r)
 				tile.custom_minimum_size = Vector2.ZERO
 				tile.size = r.size
@@ -40,13 +42,13 @@ func build(builder: UiBuilder, message: String) -> bool:
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.position = Vector2(30, 65)
-	lbl.size = Vector2(SIZE.x - 60, SIZE.y - 122)
+	lbl.size = Vector2(box.x - 60, box.y - 122)
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(lbl)
 	for n in root.get_children():
 		if n is CanvasItem and not (n is BaseButton):
 			(n as CanvasItem).visible = false
-	var centre := SIZE.x / 2.0
+	var centre := box.x / 2.0
 	for spec in [["GDR_MBSIMPLE_BTN_OK", centre - 81, "UIIT_CTL_YES", "Yes", true],
 			["GDR_MBSIMPLE_BTN_CANCEL", centre + 5, "UIIT_CTL_NO", "No", false]]:
 		var b := _find_button(spec[4])

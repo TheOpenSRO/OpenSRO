@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // MaxMembersByLevel is how many characters a guild may hold, by guild level.
@@ -97,6 +98,10 @@ type Permission uint32
 const (
 	// PermInvite is required to bring a character into the guild.
 	PermInvite Permission = 1 << 0
+	// PermExpel is required to expel a member (round 822, READ: the 0x70F4
+	// handler s:0x5151d0 tests it; the client enables the expel button 39
+	// with it, 0x5b531b..).
+	PermExpel Permission = 1 << 1
 	// PermWarehouse is required to use the guild warehouse.
 	PermWarehouse Permission = 1 << 3
 	// PermNotice is required to edit the guild's notice and title.
@@ -519,7 +524,7 @@ type Guild struct {
 	// guild soldier abilities (round 821; both in the guild block).
 	CrestRev     uint32
 	SoldierFlags uint8
-	Members  []Member
+	Members      []Member
 	// GatheredSP is the guild's points total: _GUILD.GatheredSP, the guild
 	// record's +0x3c (docs/protocol/db_bind_offsets.tsv, `_GUILD GatheredSP
 	// 0x3c`), raised by CGuild::AddPoints (0x5c4110) and read as the
@@ -609,7 +614,31 @@ type Store interface {
 	// length and allowed (the name filter; nil allows any). "" clears it.
 	// Returns the guild after the change.
 	SetNickname(ctx context.Context, actorID, targetID int64, nickname string, allowed func(string) bool) (*Guild, error)
+
+	// Remove takes a member who is not the master out of their guild (the
+	// original's leave and expel, s:0x5c60b0: the master is refused 0x4c1f,
+	// ErrIsMaster). It returns the guild as it is after (round 822).
+	Remove(ctx context.Context, characterID int64) (*Guild, error)
+	// Disband deletes guildID with every member, returning the guild as it
+	// was (round 822).
+	Disband(ctx context.Context, guildID int64) (*Guild, error)
+	// SetPenalty records characterID's guild penalty (the timed job (2, 1),
+	// READ s:0x5c3f94 / s:0x5c8b3d) until `until`; PenaltyUntil reads it
+	// (the zero time: none). Round 822.
+	SetPenalty(ctx context.Context, characterID int64, until time.Time) error
+	PenaltyUntil(ctx context.Context, characterID int64) (time.Time, error)
 }
+
+// ErrIsMaster is Remove's refusal for the guild's master (0x4c1f
+// UIIT_MSG_GUILD_EXPULSION_NOTEXP, s:0x5c60b0).
+var ErrIsMaster = errors.New("guild: the master cannot leave or be expelled")
+
+// PenaltyDuration is the guild penalty a leave, an expulsion or a disband
+// gives (READ: `push 0x3f480` seconds, s:0x5c3f94 and s:0x5c8b3d, the timed
+// job (2, 1)): 72 hours. It refuses a join (0x4c3d GUILD_PENALTY,
+// s:0x514c40) and a founding (0x4c3c, with the seconds left, s:0x514b20).
+// The client's text speaks of 15 days for a disband; the code is followed.
+const PenaltyDuration = 259200 * time.Second
 
 // Where guild points come from -- read 2026-09-19 (round 272,
 // docs/protocol/guild.md "Where guild points come from"). They are the SKILL

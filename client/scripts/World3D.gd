@@ -2255,6 +2255,7 @@ func _ready() -> void:
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
 	_wire_party_state()
+	_wire_guild_ops()
 
 	NetClient.guild_create_result.connect(_on_guild_create_result)
 	NetClient.guild_join_result.connect(_on_guild_result)
@@ -2794,6 +2795,13 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	# Round 814: the guild window's grant name (0x7256, own name only).
 	_hud_panels.guild_grant_name_requested.connect(func(nick: String) -> void: NetClient.send_guild_grant_name(nick))
+	# Round 822: the membership boxes and buttons.
+	_hud_panels.guild_invite_requested.connect(_on_guild_invite_requested)
+	_hud_panels.guild_expel_requested.connect(func(who: String) -> void: NetClient.guild_expel(who))
+	_hud_panels.guild_expel_refused.connect(func(code: int) -> void:
+		_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code))
+	_hud_panels.guild_invitation_answered.connect(_on_guild_invitation_answered)
+	_hud_panels.guild_invitation_expired.connect(func() -> void: NetClient.guild_ops.forget_invitation())
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
 	# The party window's requests and the invitation box (round 711).
 	_wire_party_panels()
@@ -23981,9 +23989,12 @@ func _apply_own_correction(at: Vector3, heading: float) -> void:
 		_send_stop()
 
 ## A point the server named (its correction, its /unstuck), stood on the ground
-## the walk stands on: the walkable graph's surface at its (x, z) nearest its
-## height (NavGraph.surface_at, the walk's footing settled there as a skill
-## move's is), else the terrain ray, else the point as it is.
+## the walk stands on: the walkable graph's surface at its (x, z) under its
+## height -- or, near the player, under the player's own (round 822,
+## NavGraph.correction_surface: the server's height is a guess, and a guess
+## under a bridge deck put a rider crossing it on the river bed) -- the walk's
+## footing settled there as a skill move's is; else the terrain ray, else the
+## point as it is.
 func _ground_on_walk_surface(at: Vector3) -> Vector3:
 	var pair := _nav_graph_for(at)
 	if pair.is_empty():
@@ -23994,11 +24005,13 @@ func _ground_on_walk_surface(at: Vector3) -> Vector3:
 	var graph: NavGraph = pair[0]
 	var group: Node3D = pair[1]
 	var local := group.to_local(at)
-	# A height under the terrain (a server's guess, an arrival's 0) is
-	# measured from the terrain: surface_at holds a reference that far below
-	# the ground at the reference rather than lift it.
-	var ref := maxf(local.y, NvmCollision.terrain_height(graph.region, local.x, local.z))
-	var surface := graph.surface_at(local.x, local.z, ref)
+	# The player's own position in the same graph's space, when the walk left
+	# it there (a player moved by something else, or off this graph, has none
+	# to keep: the server's height decides).
+	var own := Vector3(NAN, NAN, NAN)
+	if _nav_footing_graph == graph and player.global_position.distance_to(_nav_footing_pos) <= NAV_FOOTING_RESETTLE_DISTANCE:
+		own = group.to_local(player.global_position)
+	var surface := graph.correction_surface(local.x, local.z, local.y, own)
 	_nav_footing = surface.object_index
 	_nav_footing_graph = graph
 	var spot := group.to_global(Vector3(local.x, surface.height, local.z))
@@ -26451,14 +26464,20 @@ func _on_npc_service_selected(key: String) -> void:
 			else:
 				_log_system("Founding a guild needs the server.")
 		"guild_leave":
-			# Not sent on the click: the prompt's Leave emits
+			# Not sent on the click: box 0x14's OK emits
 			# guild_leave_requested, which _on_guild_leave_requested sends
-			# (the real client opens a window here too; see
-			# HudPanels.open_guild_leave_prompt).
+			# (round 822: CIF_NPCTalk::FUN_007020c0 case 0x1c).
 			if NetClient.is_connected_to_server():
 				_hud_panels.open_guild_leave_prompt(_talk_npc_name)
 			else:
 				_log_system("Leaving a guild needs the server.")
+		"guild_disband":
+			# Round 822: line 0x14 opens box 0x13; its OK sends 0x70F1.
+			if NetClient.is_connected_to_server():
+				var npc := _talk_npc_uid()
+				var box: GuildMsgBox = _hud_panels.open_guild_box(GuildMsgBox.Kind.DISBAND)
+				if box != null:
+					box.accepted.connect(func(_t: String) -> void: NetClient.guild_disband(npc))
 		"teleport":
 			# A Dimensional Gate's 'Select a teleport area:' (round 578): its
 			# destinations, in the talk box (round 603).
@@ -26662,7 +26681,13 @@ func _on_guild_create_requested(guild_name: String) -> void:
 		return
 	if not _guild_name_passes(guild_name):
 		return
-	NetClient.create_guild(NetClient.current_character_name, guild_name)
+	# Round 822: box 0x12's OK sends 0x70F0 with the talk's NPC (c:0x81f5a0).
+	var npc := _talk_npc_uid()
+	var box: GuildMsgBox = _hud_panels.open_guild_box(GuildMsgBox.Kind.CREATE, guild_name) if _hud_panels != null else null
+	if box == null:
+		NetClient.guild_found(npc, guild_name)
+		return
+	box.accepted.connect(func(_t: String) -> void: NetClient.guild_found(npc, guild_name))
 
 ## The guild-create prompt's own name checks before it sends (round 788,
 ## READ 0x6f91b0: length, then the AbuseFilter guild test; NameFilter): a
@@ -26682,7 +26707,8 @@ func _guild_name_passes(guild_name: String) -> bool:
 func _on_guild_leave_requested() -> void:
 	if not NetClient.is_connected_to_server():
 		return
-	NetClient.leave_guild(NetClient.current_character_name)
+	# Round 822: 0x70F2 with the talk's NPC (c:0x81f7d0).
+	NetClient.guild_secede(_talk_npc_uid())
 
 func _try_set_move_target(screen_pos: Vector2) -> void:
 	# Round 808: seated, the click only stands (retail tests it before the pick).
@@ -33559,6 +33585,128 @@ func _wire_party_state() -> void:
 	party.invitation.connect(_on_party_invitation)
 	party.invitation_closed.connect(_on_party_invitation_closed)
 	NetClient.self_id_received.connect(_on_party_self_id)
+
+# --- The guild's membership (round 822; GuildOpsState, GuildData) -----------
+
+func _wire_guild_ops() -> void:
+	var d := NetClient.guild_data
+	d.line.connect(_on_guild_line)
+	d.banner.connect(_on_guild_banner)
+	d.changed.connect(_on_guild_data_changed)
+	var ops := NetClient.guild_ops
+	ops.notice.connect(_on_guild_ops_notice)
+	ops.banner.connect(_on_guild_banner)
+	ops.invitation.connect(_on_guild_invitation)
+	ops.invitation_closed.connect(_on_guild_invitation_closed)
+	ops.created.connect(_on_guild_founded)
+	ops.result.connect(_on_guild_ops_result)
+
+## A key's archive text with its values (%s, %d, %u in order); "" when the
+## archive lacks the key, so nothing of ours is shown in its place.
+func _guild_text(key: String, args: Array) -> String:
+	var text := _ui_text_table.get_text(key, "") if _ui_text_table != null else ""
+	if text == "" or text == key:
+		print("World3D: guild message %s is not in the text table" % key)
+		return ""
+	text = text.replace("%u", "%d")
+	var wanted := text.count("%s") + text.count("%d")
+	if wanted == 0 or wanted != args.size():
+		return text
+	return text % args
+
+## 0x38F5's lines: the system message window, type 0 (0x7781b0(0, text)).
+func _on_guild_line(key: String, args: Array) -> void:
+	var text := _guild_text(key, args)
+	print("GUILD line %s %s" % [key, args])
+	if text != "":
+		_log_system(text, HudSystemMessage.TYPE_ALWAYS)
+
+func _on_guild_banner(where: String, key: String, args: Array) -> void:
+	var text := _guild_text(key, args)
+	if text != "":
+		_show_banner("guild_created" if where == "notice" else "system", text)
+
+## A reply's refusal through category 0x10 (0x778190): its text, or nothing
+## for a code the client has none for.
+func _on_guild_ops_notice(key: String, args: Array, code: int) -> void:
+	print("GUILD notice %s %s code 0x%x" % [key, args, code])
+	if key == "":
+		print("World3D: guild refusal code 0x%x -- the client has no message for it" % code)
+		return
+	var text := _guild_text(key, args)
+	if text != "":
+		_log_system(text, HudSystemMessage.TYPE_ALWAYS)
+
+## B0F0's success (c:0x8852c0): CREATE_RESULT with the guild's name, in the
+## system window and on 0x777bf0 (GDR_NOTICE).
+func _on_guild_founded(_block: PackedByteArray) -> void:
+	var gname := NetClient.guild_data.guild_name
+	_on_guild_line("UIIT_MSG_GUILD_CREATE_RESULT", [gname])
+	_on_guild_banner("notice", "UIIT_MSG_GUILD_CREATE_RESULT", [gname])
+	_request_world_stats()
+
+func _on_guild_ops_result(op: int, ok: bool, code: int) -> void:
+	print("GUILD result 0x%04x ok=%s code=0x%x" % [op, ok, code])
+
+## The guild record changed: the NPC's lines follow it (0x701540, the guild
+## NPC page's refresh, after each reply and update).
+func _on_guild_data_changed() -> void:
+	var d := NetClient.guild_data
+	if d.in_guild:
+		_guild_id = d.guild_id
+		var m := d.master()
+		_guild_master = m != null and m.member_name == NetClient.current_character_name
+	elif _guild_id > 0:
+		_guild_id = 0
+		_guild_master = false
+	_refresh_open_talk_menu()
+
+func _on_guild_invitation(_inviter_uid: int, inviter_name: String, guild_name: String) -> void:
+	print("GUILD invitation from %s to [%s]" % [inviter_name, guild_name])
+	if _hud_panels != null:
+		_hud_panels.show_guild_invitation(inviter_name, guild_name)
+	_qa_guild_answer_pending()
+
+func _on_guild_invitation_closed() -> void:
+	if _hud_panels != null:
+		_hud_panels.close_guild_invitation()
+
+func _on_guild_invitation_answered(accept: bool) -> void:
+	print("GUILD invitation answered %s" % accept)
+	NetClient.guild_answer(accept)
+
+## OPENSRO_QA_GUILD_ANSWER=yes|no[:frames] presses the invitation box's own
+## OK (yes) or Cancel (no), that many frames after it opens (0 unless given),
+## so the frames show the box first -- but within 25 wall seconds, inside the
+## server's 30 s wait (a movie render's frames can run slower than that).
+func _qa_guild_answer_pending() -> void:
+	var a := OS.get_environment("OPENSRO_QA_GUILD_ANSWER")
+	if a == "" or _hud_panels == null:
+		return
+	var parts := a.split(":")
+	var frames := int(parts[1]) if parts.size() > 1 else 0
+	var until := Time.get_ticks_msec() + 25000
+	while frames > 0 and Time.get_ticks_msec() < until:
+		frames -= 1
+		await get_tree().process_frame
+	var box: GuildMsgBox = _hud_panels._guild_boxes.get(GuildMsgBox.Kind.INVITE)
+	if not is_instance_valid(box):
+		print("QA GUILD answer %s: no box open" % a)
+		return
+	print("QA GUILD answer %s: pressing the box's %s" % [a, "OK" if parts[0] == "yes" else "Cancel"])
+	var b := box.node("GDR_MBIN_BTN_OK" if parts[0] == "yes" else "GDR_MBIN_BTN_CANCEL") as BaseButton
+	if b != null:
+		b.pressed.emit()
+
+## The guild window's Invite (button 37, c:0x81fb70(0)): the selected player
+## (a pet or horse would give its owner, c:0x81fbdd; not selectable here).
+## Nothing without a target, or with the player's own body.
+func _on_guild_invite_requested() -> void:
+	var target := _party_selected_target()
+	if target == 0:
+		print("GUILD invite: no player selected")
+		return
+	NetClient.guild_invite(target)
 
 func _wire_party_panels() -> void:
 	_hud_panels.party_state = NetClient.party

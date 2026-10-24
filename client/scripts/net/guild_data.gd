@@ -11,7 +11,10 @@ class_name GuildData
 const OP_BEGIN := 0x34B3
 const OP_CHUNK := 0x3101
 const OP_END := 0x34B4
-const SERVER_OPCODES := [OP_BEGIN, OP_CHUNK, OP_END]
+## Round 822: the guild's piecewise changes (NetProcessInInterface::
+## FUN_00887330; GuildOpsNet has the types and masks).
+const OP_UPDATE := 0x38F5
+const SERVER_OPCODES := [OP_BEGIN, OP_CHUNK, OP_END, OP_UPDATE]
 
 ## Member classes (the row fill 0x5b6b40, READ).
 const CLASS_MASTER := 0
@@ -47,6 +50,8 @@ class Member:
 	var siege_authority := 0
 	## Record +0x26: 0 online (gil_contact_on), 1 offline.
 	var online := false
+	## Record +0x27: the logged-on line was shown (FUN_005bb1b0's bit 0x02).
+	var announced := false
 
 ## Whether the player is in a guild (the record's flag +4, set by a parse).
 var in_guild := false
@@ -65,6 +70,19 @@ var _buffer := PackedByteArray()
 
 ## A parse changed the record (World3D and the guild window redraw).
 signal changed()
+## Round 822: a line for the system message window, as 0x38F5's handler
+## writes it with 0x7781b0(0, text): the text's key and its %s / %d values.
+signal line(key: String, args: Array)
+## Round 822: a line for a centre banner as well: "notice" is GDR_NOTICE
+## (0x777bf0), "warning" GDR_WARNING_WND (0x77b580).
+signal banner(where: String, key: String, args: Array)
+
+## The player's own character name (the owner sets it): 0x38F5's handler
+## compares member names with it (0xeef5ec -> 0x9d6580, 0x4e9530).
+var own_name := ""
+## The name the last type 2 added (0xeeef70 FUN_009a2e30): its first
+## "online" update says "joined" rather than "logged on".
+var _just_joined := ""
 
 func register_with(net: Node) -> void:
 	for op in SERVER_OPCODES:
@@ -82,9 +100,165 @@ func handle(data: PackedByteArray, op: int) -> void:
 			else:
 				print("GuildData: malformed guild block (%d bytes)" % _buffer.size())
 			_buffer = PackedByteArray()
+		OP_UPDATE:
+			apply_update(data)
+
+## One 0x38F5 (FUN_00887330's switch on the u8 type; READ, docs/protocol/
+## guild.md "Membership (round 822)"). Types it does not know, and any
+## update while the player is in no guild, change nothing. A short message
+## changes what it read up to the shortfall and stops.
+func apply_update(data: PackedByteArray) -> void:
+	var r := _Reader.new(data)
+	var kind := r.u8()
+	if not r.ok or (not in_guild and kind != GuildOpsNet.UPDATE_DISBANDED):
+		return
+	match kind:
+		GuildOpsNet.UPDATE_REFRESH:
+			changed.emit()
+		GuildOpsNet.UPDATE_DISBANDED:
+			if not in_guild:
+				return
+			# 0x8873c5: BREAK_RESULT with the own guild's name, to the log
+			# and to 0x777bf0; then FUN_009990f0 clears everything.
+			var gname := guild_name
+			line.emit("UIIT_MSG_GUILD_BREAK_RESULT", [gname])
+			banner.emit("notice", "UIIT_MSG_GUILD_BREAK_RESULT", [gname])
+			clear()
+		GuildOpsNet.UPDATE_MEMBER_ADD:
+			var m := _read_member(r)
+			if not r.ok:
+				return
+			# 0x88768c pushes ebx = 0 for the siege byte: a member added
+			# this way has none, whatever the wire says.
+			m.siege_authority = 0
+			var old := member(m.character_id)
+			if old != null:
+				members.erase(old)
+			members.append(m)
+			_just_joined = m.member_name
+			changed.emit()
+		GuildOpsNet.UPDATE_MEMBER_OUT:
+			_member_out(r)
+		GuildOpsNet.UPDATE_GUILD:
+			_guild_fields(r)
+		GuildOpsNet.UPDATE_MEMBER:
+			_member_fields(r)
+
+## Type 3: u32 id, u8 reason (read after the removal, 0x8877fe).
+func _member_out(r: _Reader) -> void:
+	var id := r.u32()
+	var reason := r.u8()
+	if not r.ok:
+		return
+	var m := member(id)
+	if m == null:
+		return
+	var me := m.member_name == own_name
+	var gname := guild_name
+	if me:
+		clear()
+	else:
+		members.erase(m)
+		changed.emit()
+	match reason:
+		GuildOpsNet.REMOVED_LEFT:
+			# Someone else's leave says nothing (0x887856).
+			if me:
+				line.emit("UIIT_MSG_GUILD_EXIT_RESULT", [gname])
+		GuildOpsNet.REMOVED_EXPELLED:
+			# The member's name, whether it is the player or not.
+			line.emit("UIIT_MSG_GUILD_EXPULSION_RESULT", [m.member_name])
+
+## Type 5: u8 mask, then the fields in bit order (FUN_005b7b80).
+func _guild_fields(r: _Reader) -> void:
+	var mask := r.u8()
+	if mask & GuildOpsNet.GUILD_FIELD_NAME:
+		# The one wide string: u16 characters, then UTF-16LE (FUN_005b5e50).
+		var n := r.u16()
+		if r.need(n * 2):
+			guild_name = TextDecode.utf16(r.d.slice(r.at, r.at + n * 2))
+			r.at += n * 2
+	if mask & GuildOpsNet.GUILD_FIELD_LEVEL:
+		var lv := r.u8()
+		if r.ok:
+			level = lv
+			line.emit("UIIT_MSG_GUILD_LEVEL_UP_RESULT", [lv])
+	if mask & GuildOpsNet.GUILD_FIELD_GP:
+		var pts := r.u32()
+		if r.ok:
+			gp = pts
+	if mask & GuildOpsNet.GUILD_FIELD_NOTICE:
+		var title := r.s()
+		var body := r.s()
+		if r.ok:
+			notice_title = title
+			notice_body = body
+			banner.emit("warning", "UIIT_MSG_GUILD_COMMON_KNOW_REMIND_UPDATE", [])
+	if mask & GuildOpsNet.GUILD_FIELD_SOLDIER:
+		var f := r.u8()
+		if r.ok:
+			# 0 clears it; anything else is ORed in.
+			soldier_flags = 0 if f == 0 else soldier_flags | f
+	changed.emit()
+
+## Type 6: u32 id, u8 mask, then the fields in bit order (FUN_005bb1b0).
+func _member_fields(r: _Reader) -> void:
+	var id := r.u32()
+	var mask := r.u8()
+	var m := member(id)
+	if not r.ok or m == null:
+		# The original asserts "Illigal Guild Member : %d" here.
+		return
+	if mask & GuildOpsNet.MEMBER_FIELD_LEVEL:
+		var lv := r.u8()
+		if r.ok:
+			m.level = lv
+	if mask & GuildOpsNet.MEMBER_FIELD_OFFLINE:
+		var off := r.u8()
+		if r.ok:
+			_presence(m, off == 0)
+	if mask & GuildOpsNet.MEMBER_FIELD_CLASS:
+		var c := r.u8()
+		if r.ok:
+			m.member_class = c
+	if mask & GuildOpsNet.MEMBER_FIELD_GP:
+		var g := r.u32()
+		if r.ok:
+			m.gp_donation = g
+	if mask & GuildOpsNet.MEMBER_FIELD_PERMISSION:
+		var p := r.u32()
+		if r.ok:
+			m.permission = p
+	if mask & GuildOpsNet.MEMBER_FIELD_NAME:
+		var nm := r.s()
+		if r.ok:
+			m.member_name = nm
+	if mask & GuildOpsNet.MEMBER_FIELD_SIEGE:
+		var sa := r.u8()
+		if r.ok:
+			m.siege_authority = sa
+	changed.emit()
+
+## Bit 0x02 of type 6: the online lines (FUN_005bb1b0, READ).
+func _presence(m: Member, online: bool) -> void:
+	m.online = online
+	if online:
+		if _just_joined != "" and m.member_name == _just_joined:
+			line.emit("UIIT_MSG_GUILD_JOIN_RESULT", [m.member_name])
+			_just_joined = ""
+		elif not m.announced:
+			line.emit("UIIT_MSG_GUILD_CONNECT", [m.member_name])
+		if m.member_name == own_name and notice_title != "":
+			line.emit("UIIT_MSG_GUILD_CONNECT_NOTICE", [notice_title])
+		m.announced = true
+	else:
+		if m.member_name != own_name:
+			line.emit("UIIT_MSG_GUILD_DISCONNECT", [m.member_name])
+		m.announced = false
 
 ## Forgets the guild (the player left it, or another character came in).
 func clear() -> void:
+	_just_joined = ""
 	in_guild = false
 	guild_id = 0
 	guild_name = ""
@@ -113,6 +287,11 @@ class _Reader:
 			return 0
 		at += 1
 		return d[at - 1]
+	func u16() -> int:
+		if not need(2):
+			return 0
+		at += 2
+		return d.decode_u16(at - 2)
 	func u32() -> int:
 		if not need(4):
 			return 0
@@ -143,21 +322,7 @@ func parse(b: PackedByteArray) -> bool:
 	var n := r.u8()
 	var list: Array[Member] = []
 	for i in n:
-		var m := Member.new()
-		m.character_id = r.u32()
-		m.member_name = r.s()
-		m.member_class = r.u8()
-		m.level = r.u8()
-		m.gp_donation = r.u32()
-		m.permission = r.u32()
-		m.contribution = r.u32()
-		m.war_kill = r.u32()
-		m.war_killed = r.u32()
-		m.nickname = r.s()
-		m.ref_obj_id = r.u32()
-		m.siege_authority = r.u8()
-		m.online = r.u8() == 0
-		list.append(m)
+		list.append(_read_member(r))
 	# The trailing list (FUN_0099d7e0): u8 n x {u32, u8, u32}, kept unread.
 	var extra := r.u8()
 	for i in extra:
@@ -177,6 +342,27 @@ func parse(b: PackedByteArray) -> bool:
 	soldier_flags = soldier
 	members = list
 	return true
+
+## One member record, in the block's order (FUN_009965e0; 0x38F5 type 2 uses
+## the same 13 fields, 0x8874ac..0x887739). +0x27, "logged on announced",
+## starts as (offline flag == 0) (FUN_009961a0, 0x99630x).
+static func _read_member(r: _Reader) -> Member:
+	var m := Member.new()
+	m.character_id = r.u32()
+	m.member_name = r.s()
+	m.member_class = r.u8()
+	m.level = r.u8()
+	m.gp_donation = r.u32()
+	m.permission = r.u32()
+	m.contribution = r.u32()
+	m.war_kill = r.u32()
+	m.war_killed = r.u32()
+	m.nickname = r.s()
+	m.ref_obj_id = r.u32()
+	m.siege_authority = r.u8()
+	m.online = r.u8() == 0
+	m.announced = m.online
+	return m
 
 ## The member record for `character_id`, or null.
 func member(character_id: int) -> Member:

@@ -2,6 +2,7 @@ package world
 
 import (
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
@@ -52,6 +53,50 @@ type Mover struct {
 	dist float64
 	// Wall is MoveOrder.Wall.
 	Wall bool
+	// Origin is where the leg's line was last given a height the server's
+	// own walk settled (round 822, OURS: GroundFunc): Src when the leg
+	// began or turned; a speed re-base moves Src along the same line and
+	// keeps it. The height the leg has the character at now is found by
+	// walking from here (Hub.walkedLocked). The zero Position: Src.
+	Origin Position
+}
+
+// GroundFunc is the height a mover walking from `from` straight to world
+// (x, z) in zone arrives at on the server's navigation mesh, carrying its
+// footing (a deck, the terrain under it) as the client's walk does; ok false
+// where none was walked (round 822, OURS: session.SetNavmesh installs it).
+type GroundFunc func(zone string, from Position, x, z float64) (y float64, ok bool)
+
+var groundFunc atomic.Pointer[GroundFunc]
+
+// SetGroundFunc installs f (nil: none). Without one every leg's height is the
+// straight line Mover.At gives, as before round 822.
+func SetGroundFunc(f GroundFunc) {
+	if f == nil {
+		groundFunc.Store(nil)
+		return
+	}
+	groundFunc.Store(&f)
+}
+
+// LegGround is the height e's leg has it at now, walked from the leg's origin
+// to e.Pos (GroundFunc); ok false with no leg or no GroundFunc. e is a copy
+// the hub handed out (its Pos the leg's point now). Round 822: Mover.At's
+// height is a guess -- a heading run keeps its start's height for the whole
+// run, a destination leg runs a straight line to the clicked height -- and a
+// guess more than SurfaceReachUp under a bridge deck seeded the server's walk
+// on the river bed under it (MEASURED: Jangan west, 97/165's bridge), whose
+// wall stop then put the player there.
+func LegGround(e Entity) (float64, bool) {
+	f := groundFunc.Load()
+	if f == nil || e.Move == nil {
+		return 0, false
+	}
+	from := e.Move.Origin
+	if from == (Position{}) {
+		from = e.Move.Src
+	}
+	return (*f)(e.Zone, from, e.Pos.X, e.Pos.Z)
 }
 
 // At is the position the leg gives at now: Src plus the travel direction times
@@ -135,6 +180,11 @@ type MoveOrder struct {
 	Command        byte
 	WireAngle      uint16
 	Speed          float64
+	// SrcY, with HasSrcY, is the height the leg starts at (round 822: the
+	// walked height, LegGround, in place of the guess the leg in progress or
+	// the trusted point carries).
+	SrcY    float64
+	HasSrcY bool
 	// Wall: Dest is where the server's navigation mesh stops the walk short
 	// of the client's destination (round 812, session.navWalk): its arrival
 	// ends the leg with a 0xB023 to the window, as the original server's
@@ -286,7 +336,10 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 	if e.Move == nil {
 		e.Pos = e.Trusted
 	}
-	m := &Mover{Src: e.Pos, Start: now, Speed: o.Speed}
+	if o.HasSrcY {
+		e.Pos.Y = o.SrcY
+	}
+	m := &Mover{Src: e.Pos, Origin: e.Pos, Start: now, Speed: o.Speed}
 	if o.Heading {
 		m.Heading = true
 		m.DirX, m.DirZ = math.Sin(o.HeadingRadians), math.Cos(o.HeadingRadians)
@@ -487,8 +540,10 @@ func rebaseLocked(e *Entity, now time.Time, speed float64) {
 // Halt ends sess's character's leg where the leg has it now -- a stop the
 // server makes itself (a sit, a death, a state) -- and refiles it. A
 // character with no leg is left where it stands. ok is false when the session
-// is not in the world; moved says it had a leg.
+// is not in the world; moved says it had a leg. Round 822: the stop stands at
+// the leg's walked height (LegGround), not the straight line's.
 func (h *Hub) Halt(sess *gateway.Session) (r MoveResult, moved, ok bool) {
+	leg, y, walked := h.walkedNow(sess)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.clock()
@@ -497,11 +552,37 @@ func (h *Hub) Halt(sess *gateway.Session) (r MoveResult, moved, ok bool) {
 		return MoveResult{}, false, false
 	}
 	moved = e.Move != nil
+	same := walked && e.Move == leg
 	h.settleLocked(e, now)
 	h.endMoveLocked(e)
+	if same {
+		e.Pos.Y, e.Trusted.Y = y, y
+	}
 	h.refileLocked(e, now, &r)
 	r.Entity = *e
 	return r, moved, true
+}
+
+// walkedNow is sess's character's leg and the height it has the character at
+// now (LegGround), walked outside the hub's lock; walked false with no leg or
+// no GroundFunc. A caller applies the height only while the leg is still that
+// one (a Mover is replaced, never changed, so the pointer says).
+func (h *Hub) walkedNow(sess *gateway.Session) (leg *Mover, y float64, walked bool) {
+	if groundFunc.Load() == nil {
+		return nil, 0, false
+	}
+	h.mu.RLock()
+	e, exists := h.bySession[sess.ID()]
+	var c Entity
+	if exists {
+		c = outLocked(e, h.clock())
+	}
+	h.mu.RUnlock()
+	if !exists || c.Move == nil {
+		return nil, 0, false
+	}
+	y, walked = LegGround(c)
+	return c.Move, y, walked
 }
 
 // Turn sets sess's character's heading -- an arrow key's 0x7024 (round 808;
@@ -512,6 +593,7 @@ func (h *Hub) Halt(sess *gateway.Session) (r MoveResult, moved, ok bool) {
 // destination mover's vslot_005 is not read, and the retail client sends no
 // turn during one). ok is false when the session is not in the world.
 func (h *Hub) Turn(sess *gateway.Session, heading float64, wire uint16) (e Entity, ok bool) {
+	leg, y, walked := h.walkedNow(sess)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.clock()
@@ -519,11 +601,16 @@ func (h *Hub) Turn(sess *gateway.Session, heading float64, wire uint16) (e Entit
 	if !exists {
 		return Entity{}, false
 	}
+	same := walked && ent.Move == leg
 	h.settleLocked(ent, now)
 	ent.Heading = heading
 	if m := ent.Move; m != nil && m.Heading {
+		// Round 822: the run goes on from its walked height (LegGround).
+		if same {
+			ent.Pos.Y = y
+		}
 		n := *m
-		n.Src, n.Start = ent.Pos, now
+		n.Src, n.Origin, n.Start = ent.Pos, ent.Pos, now
 		n.DirX, n.DirZ = math.Sin(heading), math.Cos(heading)
 		n.WireAngle = wire
 		ent.Move = &n

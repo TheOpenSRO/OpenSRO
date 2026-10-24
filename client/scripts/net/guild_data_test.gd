@@ -48,6 +48,143 @@ func _member(id: int, name: String, cls: int, lv: int, gp: int, perm: int, nick:
 	_u8(0)
 	_u8(offline)
 
+func _u16(v: int) -> void:
+	var x := PackedByteArray()
+	x.resize(2)
+	x.encode_u16(0, v)
+	_b.append_array(x)
+
+## Round 822: 0x38F5 (FUN_00887330), as the server's guild.Encode* writes it.
+func _updates(d: GuildData) -> void:
+	var lines: Array = []
+	var banners: Array = []
+	d.line.connect(func(k: String, a: Array) -> void: lines.append([k, a]))
+	d.banner.connect(func(w: String, k: String, a: Array) -> void: banners.append([w, k, a]))
+	d.own_name = "Tess"
+	# Nothing applies before a block.
+	d.apply_update(PackedByteArray([GuildOpsNet.UPDATE_DISBANDED]))
+	_check(lines.is_empty() and not d.in_guild, "no guild: a disband says nothing")
+	_b = PackedByteArray()
+	_u32(7)
+	_s("Verizon")
+	_u8(2)
+	_u32(1234)
+	_s("Hi")
+	_s("Body")
+	_u32(3)
+	_u8(1)
+	_u8(1)
+	_member(10, "Tess", 0, 110, 50, 0xffffffff, "Boss", 1907, 0)
+	_u8(0)
+	_check(d.parse(_b), "a one-member block parses")
+	# Type 2: Rook joins (offline flag 0 on the record, the siege byte ignored).
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER_ADD)
+	_member(11, "Rook", 10, 30, 0, 0, "", 14875, 0)
+	_b[_b.size() - 2] = 4
+	d.apply_update(_b)
+	var rook := d.member(11)
+	_check(rook != null and rook.siege_authority == 0 and rook.online and lines.is_empty(), "type 2 adds Rook, siege 0, no line yet")
+	# Type 6 bit 0x02 = 0: "joined", not "logged on".
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER)
+	_u32(11)
+	_u8(GuildOpsNet.MEMBER_FIELD_OFFLINE)
+	_u8(0)
+	d.apply_update(_b)
+	_check(lines.size() == 1 and lines[0][0] == "UIIT_MSG_GUILD_JOIN_RESULT" and lines[0][1] == ["Rook"], "the first online update says joined (got %s)" % [lines])
+	# Offline, then online again: logged off, logged on.
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER)
+	_u32(11)
+	_u8(GuildOpsNet.MEMBER_FIELD_LEVEL | GuildOpsNet.MEMBER_FIELD_OFFLINE)
+	_u8(31)
+	_u8(1)
+	d.apply_update(_b)
+	_check(not rook.online and rook.level == 31 and lines[-1][0] == "UIIT_MSG_GUILD_DISCONNECT", "level then offline, in bit order")
+	_b[_b.size() - 1] = 0
+	d.apply_update(_b)
+	_check(rook.online and lines[-1][0] == "UIIT_MSG_GUILD_CONNECT" and lines[-1][1] == ["Rook"], "back online: logged on")
+	# The player's own online line: the notice title follows; no "logged off" for oneself.
+	var n0 := lines.size()
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER)
+	_u32(10)
+	_u8(GuildOpsNet.MEMBER_FIELD_OFFLINE)
+	_u8(1)
+	d.apply_update(_b)
+	_check(lines.size() == n0, "the player's own offline update says nothing")
+	_b[_b.size() - 1] = 0
+	d.apply_update(_b)
+	_check(lines[-1][0] == "UIIT_MSG_GUILD_CONNECT_NOTICE" and lines[-1][1] == ["Hi"], "own online: the guild post's title")
+	# Type 6 permission and name.
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER)
+	_u32(11)
+	_u8(GuildOpsNet.MEMBER_FIELD_PERMISSION | GuildOpsNet.MEMBER_FIELD_NAME)
+	_u32(3)
+	_s("Rooky")
+	d.apply_update(_b)
+	_check(rook.permission == 3 and rook.member_name == "Rooky", "permission and name by mask")
+	# Type 5: the wide name, level, GP, notice.
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_GUILD)
+	_u8(GuildOpsNet.GUILD_FIELD_NAME | GuildOpsNet.GUILD_FIELD_LEVEL | GuildOpsNet.GUILD_FIELD_GP | GuildOpsNet.GUILD_FIELD_NOTICE)
+	var wide := "Verix".to_utf16_buffer()
+	_u16(5)
+	_b.append_array(wide)
+	_u8(3)
+	_u32(99)
+	_s("T2")
+	_s("B2")
+	d.apply_update(_b)
+	_check(d.guild_name == "Verix" and d.level == 3 and d.gp == 99 and d.notice_title == "T2", "type 5 fields in bit order")
+	_check(lines[-1][0] == "UIIT_MSG_GUILD_LEVEL_UP_RESULT" and lines[-1][1] == [3], "level up line")
+	_check(banners.size() == 1 and banners[0][0] == "warning" and banners[0][1] == "UIIT_MSG_GUILD_COMMON_KNOW_REMIND_UPDATE", "notice refreshed banner")
+	# Type 3 reason 2 for someone else: the line, the record gone.
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER_OUT)
+	_u32(11)
+	_u8(GuildOpsNet.REMOVED_EXPELLED)
+	d.apply_update(_b)
+	_check(d.member(11) == null and d.in_guild and lines[-1][0] == "UIIT_MSG_GUILD_EXPULSION_RESULT" and lines[-1][1] == ["Rooky"], "expelled: the member's name")
+	# Type 3 reason 1 for someone else says nothing.
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER_ADD)
+	_member(12, "Pip", 10, 1, 0, 0, "", 1907, 0)
+	d.apply_update(_b)
+	var n1 := lines.size()
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER_OUT)
+	_u32(12)
+	_u8(GuildOpsNet.REMOVED_LEFT)
+	d.apply_update(_b)
+	_check(lines.size() == n1 and d.member(12) == null, "someone else's leave: removed silently")
+	# Type 1: the break line, the banner, the record cleared.
+	d.apply_update(PackedByteArray([GuildOpsNet.UPDATE_DISBANDED]))
+	_check(not d.in_guild and lines[-1][0] == "UIIT_MSG_GUILD_BREAK_RESULT" and lines[-1][1] == ["Verix"]
+		and banners[-1][0] == "notice", "disbanded: line, notice banner, cleared")
+	# The player's own leave (reason 1): EXIT_RESULT with the guild's name.
+	_b = PackedByteArray()
+	_u32(7)
+	_s("Again")
+	_u8(1)
+	_u32(0)
+	_s("")
+	_s("")
+	_u32(0)
+	_u8(0)
+	_u8(1)
+	_member(10, "Tess", 10, 110, 0, 0, "", 1907, 0)
+	_u8(0)
+	d.parse(_b)
+	_b = PackedByteArray()
+	_u8(GuildOpsNet.UPDATE_MEMBER_OUT)
+	_u32(10)
+	_u8(GuildOpsNet.REMOVED_LEFT)
+	d.apply_update(_b)
+	_check(not d.in_guild and lines[-1][0] == "UIIT_MSG_GUILD_EXIT_RESULT" and lines[-1][1] == ["Again"], "own leave: have left [guild]")
+
 func _init() -> void:
 	_u32(7)
 	_s("Verizon")
@@ -89,6 +226,8 @@ func _init() -> void:
 
 	d.clear()
 	_check(not d.in_guild and d.members.is_empty() and changes[0] == 2, "clear forgets the guild")
+
+	_updates(GuildData.new())
 
 	if _failures == 0:
 		print("ALL PASS")
