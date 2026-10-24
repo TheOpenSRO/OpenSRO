@@ -2,6 +2,7 @@ package guild
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -20,16 +21,22 @@ type MemStore struct {
 	seq     int64
 	// penalty is each character's guild penalty end (round 822).
 	penalty map[int64]time.Time
+	// crests are each guild's crest pixels and lastCrest its last revision
+	// (round 824).
+	crests    map[int64][]byte
+	lastCrest map[int64]uint32
 }
 
 // NewMemStore returns an empty MemStore.
 func NewMemStore() *MemStore {
 	return &MemStore{
-		byID:    make(map[int64]*Guild),
-		ofChar:  make(map[int64]int64),
-		names:   make(map[string]int64),
-		joinSeq: make(map[int64]int64),
-		penalty: make(map[int64]time.Time),
+		byID:      make(map[int64]*Guild),
+		ofChar:    make(map[int64]int64),
+		names:     make(map[string]int64),
+		joinSeq:   make(map[int64]int64),
+		penalty:   make(map[int64]time.Time),
+		crests:    make(map[int64][]byte),
+		lastCrest: make(map[int64]uint32),
 	}
 }
 
@@ -318,4 +325,48 @@ func (m *MemStore) PenaltyUntil(_ context.Context, characterID int64) (time.Time
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.penalty[characterID], nil
+}
+
+// SetCrest implements Store.
+func (m *MemStore) SetCrest(_ context.Context, guildID int64, pixels []byte) (uint32, error) {
+	if len(pixels) != CrestBytes {
+		return 0, fmt.Errorf("guild: a crest is %d bytes, not %d", CrestBytes, len(pixels))
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g := m.byID[guildID]
+	if g == nil {
+		return 0, ErrGuildNotFound
+	}
+	m.lastCrest[guildID]++
+	g.CrestRev = m.lastCrest[guildID]
+	m.crests[guildID] = append([]byte(nil), pixels...)
+	return g.CrestRev, nil
+}
+
+// ClearCrest implements Store.
+func (m *MemStore) ClearCrest(_ context.Context, guildID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g := m.byID[guildID]
+	if g == nil {
+		return ErrGuildNotFound
+	}
+	g.CrestRev = 0
+	delete(m.crests, guildID)
+	return nil
+}
+
+// Crest implements Store.
+func (m *MemStore) Crest(_ context.Context, guildID int64) (uint32, []byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	g := m.byID[guildID]
+	if g == nil {
+		return 0, nil, ErrGuildNotFound
+	}
+	if g.CrestRev == 0 {
+		return 0, nil, nil
+	}
+	return g.CrestRev, append([]byte(nil), m.crests[guildID]...), nil
 }

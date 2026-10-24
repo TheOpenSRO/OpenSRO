@@ -109,13 +109,16 @@ func (u *GuildNicknameUpdate) Encode() []byte {
 }
 
 // EntityGuildUpdate is 0x30FF: one character's guild line, or none (an empty
-// GuildName). The three u32 and two bytes after the grant name are written
-// 0 (no crests, unions or fortress roles in OpenSRO, OPEN).
+// GuildName). The three u32 after the grant name are the spawn block's: the
+// guild's crest revision (round 824), the union id and its crest revision;
+// then two bytes. The union fields and the bytes are written 0 (no unions or
+// fortress roles in OpenSRO, OPEN).
 type EntityGuildUpdate struct {
 	UID       uint32
 	GuildID   uint32
 	GuildName string
 	Nickname  string
+	CrestRev  uint32
 }
 
 // Encode is the update's bytes.
@@ -127,7 +130,8 @@ func (u *EntityGuildUpdate) Encode() []byte {
 		return out
 	}
 	out = appendWireString(out, u.Nickname)
-	out = append(out, make([]byte, 12)...)
+	out = binary.LittleEndian.AppendUint32(out, u.CrestRev)
+	out = append(out, make([]byte, 8)...)
 	return append(out, 0, 0) // the fortress role, FUN_005cffe0's byte
 }
 
@@ -142,6 +146,8 @@ type guildPlate struct {
 	ID       uint32
 	Name     string
 	Nickname string
+	// CrestRev is the guild's crest revision (round 824; 0 none).
+	CrestRev uint32
 }
 
 // guildPlates caches each character's line (characterID -> guildPlate), so
@@ -199,7 +205,7 @@ func plateOf(g *guild.Guild, characterID int64) guildPlate {
 	if g == nil {
 		return guildPlate{}
 	}
-	p := guildPlate{ID: uint32(g.ID), Name: g.Name}
+	p := guildPlate{ID: uint32(g.ID), Name: g.Name, CrestRev: g.CrestRev}
 	for _, m := range g.Members {
 		if m.CharacterID == characterID {
 			p.Nickname = m.Nickname
@@ -227,7 +233,7 @@ func refreshGuildPlate(hub *world.Hub, characterID int64, g *guild.Guild) {
 		sendAboutOwner(equipObservers(hub, characterID), characterID, guild.OpObjectLeft, guild.EncodeObjectLeft(uint32(characterID)))
 		return
 	}
-	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname}
+	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev}
 	sendAboutOwner(equipObservers(hub, characterID), characterID, OpEntityGuildUpdate, msg.Encode())
 }
 
@@ -304,6 +310,6 @@ func ownGuildLine(ctx context.Context, characterID int64) *proto.Packet {
 	if p.Name == "" {
 		return nil
 	}
-	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname}
+	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev}
 	return &proto.Packet{Opcode: OpEntityGuildUpdate, Data: msg.Encode()}
 }

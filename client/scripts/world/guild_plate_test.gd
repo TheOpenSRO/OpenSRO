@@ -69,6 +69,42 @@ func _packet(op: int, data: PackedByteArray) -> Packet:
 	p.data = data
 	return p
 
+## Round 824: a guild with a crest gets its 16 x 16 quad 20 px left of the
+## line's text item (FUN_009dea30 0x9df370..; World3D._fit_guild_crest).
+func _crest_check(world: Node, plate: Label3D, body: Node3D) -> void:
+	var nc = root.get_node_or_null("NetClient")
+	_check(nc != null, "the NetClient autoload is up")
+	if nc == null:
+		return
+	var cache: CrestCache = nc.crest_cache
+	var pal := PackedByteArray()
+	pal.resize(768)
+	cache.palette = pal
+	var gid := 950000 + randi() % 9999
+	cache.note_guild("Crested", gid, 1)
+	var reply := PackedByteArray([1, 0, 0, 0, 0, 1, 0, 0, 0, 1])
+	reply.encode_u32(1, gid)
+	var px := PackedByteArray()
+	px.resize(256)
+	reply.append_array(px)
+	cache.handle_data(reply)
+	world.call("_apply_guild_line", plate, body, {"guild_name": "Crested", "nickname": ""}, UserSpawnNet.JOB_STATE_NONE, false, false)
+	var g := body.get_node_or_null("GuildLine") as Label3D
+	var crest := g.get_node_or_null("GuildCrest") as Sprite3D if g != null else null
+	_check(crest != null and crest.texture != null and crest.texture.get_size() == Vector2(16, 16), "the crest's 16 x 16 quad hangs on the line")
+	if crest != null:
+		var fk := FontOversampling.factor()
+		var font: Font = g.font if g.font != null else ThemeDB.fallback_font
+		var text_w := font.get_string_size(g.text, HORIZONTAL_ALIGNMENT_LEFT, -1, g.font_size).x
+		var cx := crest.offset.x * fk
+		var want := -text_w * 0.5 - 1.0 * fk - 12.0 * fk
+		_check(is_equal_approx(cx, want) and is_equal_approx(crest.pixel_size, g.pixel_size * fk),
+			"its centre 12 px left of the item's left edge (-(w+2)/2): %.2f, want %.2f" % [cx, want])
+	world.call("_apply_guild_line", plate, body, {"guild_name": "Verizon", "nickname": ""}, UserSpawnNet.JOB_STATE_NONE, false, false)
+	var plain := body.get_node_or_null("GuildLine") as Label3D
+	_check(plain != null and plain.get_node_or_null("GuildCrest") == null, "a guild with no crest has none")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://crest/G%d.rd" % gid))
+
 ## NetClient keeps each player's line from its spawn, takes 0x30FF and 0x3256,
 ## and the own line apart.
 func _test_net_client() -> void:
@@ -177,4 +213,5 @@ func _test_line(world: Node) -> void:
 	_check(own != null and own.text == "[Verizon]" and own.modulate == Color8(254, 173, 46), "the own line, [Verizon], orange")
 	world.call("_apply_guild_line", plate, body, {}, UserSpawnNet.JOB_STATE_NONE, true, false)
 	_check(body.get_node_or_null("GuildLine") == null, "no guild, no line")
+	_crest_check(world, plate, body)
 	body.queue_free()

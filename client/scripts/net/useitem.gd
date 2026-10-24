@@ -59,6 +59,10 @@ const OPTION_MAP := 7
 ## Round 795: a pet consumable's target (OURS, session.UseOptionCOSTarget):
 ## the COS uid, or the pet item's bag index for the revival and the clock.
 const OPTION_COS_TARGET := 0xC5
+## Round 824 (OURS, the server's UseOptionCrest): a crest register's use, the
+## 256 palette indices after the option (retail's 0x704C carries them after
+## the slot and type word, c:0x7974a2).
+const OPTION_CREST := 0xC6
 
 ## Whether TypeIDs are an item the client sends with the current COS's uid
 ## (round 805; SendItem_HandleUseItem 0x796660, READ): a COS HP potion 3/3/1/4,
@@ -88,6 +92,13 @@ static func encode_use(character_name: String, inventory_slot: int, option: int 
 			id.resize(4)
 			id.encode_u32(0, target)
 			out.append_array(id)
+	return out
+
+## A crest register's use: the plain use, OPTION_CREST, the 256 bytes.
+static func encode_use_crest(character_name: String, inventory_slot: int, pixels: PackedByteArray) -> PackedByteArray:
+	var out := encode_use(character_name, inventory_slot)
+	out.append(OPTION_CREST)
+	out.append_array(pixels)
 	return out
 
 static func decode_result(data: PackedByteArray) -> Result:

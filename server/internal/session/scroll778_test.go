@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"math"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -479,7 +480,7 @@ func TestRound778CastDroppedAfterLeaving(t *testing.T) {
 func TestRound778UseItemWire(t *testing.T) {
 	req := &UseItemRequest{CharacterName: "Aria", InventorySlot: 9, Option: ReverseOptionMap, Target: 30}
 	got, err := DecodeUseItemRequest(req.Encode())
-	if err != nil || *got != *req {
+	if err != nil || !reflect.DeepEqual(got, req) {
 		t.Fatalf("request round trip %+v %v", got, err)
 	}
 	if string(req.Encode()) != string(clientUse("Aria", 9, 7, 30)) {

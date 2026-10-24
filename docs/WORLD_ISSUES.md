@@ -7483,6 +7483,44 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-fourth round: guild emblems (crests)
+
+The user (2026-10-24): "the guild emblem scroll can't be used?" (and earlier "make sure guild and union
+emblems are fully supported").
+
+- **Why it could not be used.** No crest code existed: the server answered the four crest items with
+  "that cannot be used", the client had no boxes for them, and the plates drew no crest. In retail a
+  refusal of these items shows nothing at all (Item_OnUseItemResult sends the code through category 1,
+  0x87b689, whose table has no 0x4cxx row), so a master of a guild under level 4 sees a scroll that does
+  nothing. Prod (MEASURED): OFWS (Pain) is level 5, Verizon (deadass3) level 1.
+- **READ, client.** The items open boxes 0x15 / 0x16 / 0x18 / 0x19 by code name (FUN_00676570); 0x15's OK
+  checks the own crest revision, reads guildmark.bmp from the install path (0x4f9d70: 24-bit 16 x 16,
+  nearest silk.dat entry by the sum of differences, ties to the higher index) and sends the use with the
+  256 bytes; the success opens 0x1a / 0x1b, a delete's the generic notice. The box geometry is
+  docs/protocol/guild.md's (0x644c90's purposes). 0x3257 type 1 keeps the guild's revision (rev 0
+  clears), and the plate draws the crest 16 x 16, 20 px left of the guild text item and from its top.
+- **READ, GS.** 0x5c7600 / 0x5c7690 / 0x5c7710 / 0x5c77d0: the checks in order (0x4c0d, 0x4c4a at level <
+  4 -- 0x5d0e80 is the level, the level-up handler caps it at 5 --, 0x4c1e, 0x4c4e / 0x4c4f; the union's
+  level 5 and 0x4c2f), then the ShardManager job and 0x3257 to every player.
+- **OURS.** The bytes travel over 0x0130 / 0x0131 and are kept under `user://crest/` (the original's FTP
+  host is not ours to run); the use carries them as option 0xC6; the refusals carry our own words; the
+  install path is the folder Media.pk2 is read from. The revision is one past the guild's last
+  (INFERRED from LastCrestRev / CurCrestRev). Union crests are refused (no unions).
+- **Live** (`/var/tmp/r824/c2`, qa824.sh, a guildmark.bmp made from one of the box's own `RD\A64_1.rd`):
+  "guild create Crested", /guildlevel 4, /give 9268; `OPENSRO_QA_CREST=900:ITEM_ETC_GUILD_CREST_USER`
+  opens box 0x15 ("Please use the format below...", "Register guild emblem?", Yes / No), its OK reads the
+  bitmap, the server stores rev 1 and broadcasts 0x3257, box 0x1a shows "Registering guild emblem
+  successful." and the [Notice] lines, and Tess's plate draws the red-and-gold crest left of
+  `[Crested]` (frame 1450).
+- **Tests.** Server: `guild.TestRound824Crest*` (both stores), `session.TestRound824CrestUse` (every check,
+  the use, the bytes served for the current revision only), `TestRound824CrestItems`,
+  `TestRound824GuildCrestUpdateBytes`. Client: `crest_test.gd` (the quantisation, 0x3257, the cache and its
+  file), `guild822_ui_test.gd` (the boxes' geometry, the HUD's flow), `guild_plate_test.gd` (the quad's
+  place).
+- **Perf gate** (`--base 71acd8ab --head 50562e26 --sites jangan,cross --frames 60000`): jangan frame
+  0.86 / 0.87 ms, entry 8569 / 8734, freeze 2743 / 2773, hitches 5 / 4; cross 1.01 / 1.01 ms, 9472 / 9327,
+  2789 / 2760, 5 / 5 -- all SAME.
+
 ## Eight-hundred-and-twenty-third round: the guild line without a box (OURS)
 
 The user (2026-10-24): "the guild above the name plate doesn't have a background box around it like the

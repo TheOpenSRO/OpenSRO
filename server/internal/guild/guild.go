@@ -627,7 +627,25 @@ type Store interface {
 	// (the zero time: none). Round 822.
 	SetPenalty(ctx context.Context, characterID int64, until time.Time) error
 	PenaltyUntil(ctx context.Context, characterID int64) (time.Time, error)
+
+	// SetCrest stores guildID's crest -- CrestBytes palette indices -- under
+	// a new revision and returns it (round 824). The revision is one past
+	// the last one the guild ever had (INFERRED: the ShardManager keeps
+	// _Guild.LastCrestRev and CurCrestRev, and its uploader logs "Revision
+	// Updated" before the upload; the bump itself was not read), so a client
+	// cache keyed by revision never shows an old crest.
+	SetCrest(ctx context.Context, guildID int64, pixels []byte) (uint32, error)
+	// ClearCrest deletes guildID's crest: its revision becomes 0 (round 824).
+	ClearCrest(ctx context.Context, guildID int64) error
+	// Crest is guildID's crest revision and pixels (0 and nil for none).
+	Crest(ctx context.Context, guildID int64) (uint32, []byte, error)
 }
+
+// CrestBytes is a crest's size: 16 x 16 palette indices into Media.pk2's
+// silk.dat, bottom row first, as the client builds them from guildmark.bmp
+// (READ c:0x4f9d70) and as the original's .crb files hold them (256 bytes,
+// no header, MEASURED on the box's ShardManager samples).
+const CrestBytes = 256
 
 // ErrIsMaster is Remove's refusal for the guild's master (0x4c1f
 // UIIT_MSG_GUILD_EXPULSION_NOTEXP, s:0x5c60b0).

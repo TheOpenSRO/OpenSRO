@@ -746,3 +746,39 @@ and the GameServer; OURS where marked).
   MsgBoxSimple 280x144, Yes / No, `UIIT_MSG_GUILD_QUESTION_EXPULSION_ANYONE`. OPEN: where box 0x12 is
   opened from (it is centred here), and the window the original names a guild in (OpenSRO keeps
   round 521's own name prompt before box 0x12).
+
+## Crests (round 824)
+
+The guild and union emblems, both sides (READ, `sro_client.exe` and the GameServer, unless marked;
+the full notes are round 824's in docs/WORLD_ISSUES.md).
+
+- **The items.** ITEM_ETC_GUILD_CREST_USER (9268), _DELETE (9269), ITEM_ETC_UNION_CREST_USER (9270),
+  _DELETE (9271): TypeID 3/3/12/2, Param1 (ref +0x2a0) 1 guild / 2 union, Param2 (+0x2c0) 1 register / 2
+  delete (MEASURED in the export: OpenSRO's RestoreHP / RestoreHPPct).
+- **The client's boxes** (IFSlotWithHelp 0x676dcb, by code name; texts in UI_SILKMALL 0x644c90): 0x15 /
+  0x18 the register questions (460 x 210, four lines at (50, 51 / 68 / 85 / 122), OK and Cancel +80, +60),
+  0x16 / 0x19 the delete questions (308 x 148), 0x1a / 0x1b the register's success (five lines, one
+  Confirm), and the deletes' success through GInterface 0x788270 (MsgBoxSimple, one OK). Placed at (w/2 -
+  0x9a, h/2 - 0x4a) before the resize (CMessageBoxManager 0x6ec5d0).
+- **The register's OK** (0x797d90 case 0x15 / 0x18): an own crest already -> UIIT_MSG_CREST_REGISTER_OVERLAP;
+  `<install path>\guildmark.bmp` (`unionmark.bmp`) through 0x4f9d70: 'BM', 24-bit, 16 x 16, else
+  _REGISTER_ERROR (no file: _REGISTER_FAIL); each pixel the nearest silk.dat entry by |dR|+|dG|+|dB|, ties
+  to the higher index, bottom row first. OURS: the install path is the folder Media.pk2 is read from,
+  else the executable's.
+- **The use.** Retail's 0x704C carries the 256 bytes after the slot and type word; OURS: OpenSRO's use
+  request (0x008A) with option 0xC6 and the bytes. GS 0x5c7600 / 0x5c7690: not in a guild 0x4c0d, guild
+  level < 4 0x4c4a (union: < 5), not the master 0x4c1e, a crest already 0x4c4e / none 0x4c4f; a union's
+  also 0x4c2f with no union (OpenSRO forms none). Retail shows these through category 1, which has no row
+  for them: nothing. OURS: the reply's own words.
+- **The revision.** One past the guild's last (`guilds.crest_last_rev`; INFERRED from the ShardManager's
+  LastCrestRev / CurCrestRev), 0 on a delete. 0x3257 {u8 1, u32 guild, str name, u32 rev} goes to every
+  player; the spawn record's and 0x30FF's guild block carry it (the first of its three u32); the client's
+  cache entry (0x9a4780) is keyed by guild name, and rev 0 clears it.
+- **The bytes.** Retail downloads `G<shard>_<id>_<rev>.crb` (256 raw bytes) over FTP from type.txt's
+  MarkFTPAddr and keeps `RD\G<shard>_<id>.rd` (an 8-bit BMP with the revision as its last four bytes,
+  MEASURED 1338 bytes). OURS: 0x0130 {u8 kind, u32 id, u32 rev} -> 0x0131 {u8 kind, u32 id, u32 rev, u8
+  ok, 256 bytes}, served for the current revision only, kept as `user://crest/G<id>.rd` (the bytes, then
+  the u32 revision).
+- **Drawing** (FUN_009dea30 0x9df370): a 16 x 16 quad whose left edge is the guild text item's left less
+  20 and whose top is the item's top (FUN_008b2d30). The union's (36 px) is OPEN, no unions. Where the
+  guild window or union pane shows crests, if they do, is OPEN.

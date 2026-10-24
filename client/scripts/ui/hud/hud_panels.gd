@@ -4193,6 +4193,60 @@ var _reverse_box: ReverseReturnBox
 var _optional_teleports: OptionalTeleportReader
 var _optional_teleports_loaded := false
 
+# --- The crest items (round 824) ---------------------------------------------
+
+## The crest items' boxes by code name (READ, FUN_00676570).
+const CREST_ITEM_BOXES := {
+	"ITEM_ETC_GUILD_CREST_USER": GuildMsgBox.Kind.CREST,
+	"ITEM_ETC_GUILD_CREST_DELETE": GuildMsgBox.Kind.CREST_DELETE,
+	"ITEM_ETC_UNION_CREST_USER": GuildMsgBox.Kind.UNION_CREST,
+	"ITEM_ETC_UNION_CREST_DELETE": GuildMsgBox.Kind.UNION_CREST_DELETE,
+}
+
+## A crest box's OK: World3D runs 0x797d90's case for `kind` with the item in
+## bag slot `slot` (the checks, the bitmap, the use).
+signal crest_confirmed(slot: int, kind: int)
+
+## The box for the crest item in bag slot `slot` (Kind.CREST..UNION_CREST_
+## DELETE), placed as CMessageBoxManager places a box.
+func open_crest_box(slot: int, kind: int) -> GuildMsgBox:
+	if _builder == null:
+		return null
+	var old: GuildMsgBox = _guild_boxes.get(kind)
+	if is_instance_valid(old):
+		old.close()
+	var box := GuildMsgBox.new()
+	if not box.build_crest_box(_builder, kind):
+		box.free()
+		return null
+	box.accepted.connect(func(_t: String) -> void: crest_confirmed.emit(slot, kind))
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_guild_boxes[kind] = box
+	print("CRESTBOX %x opened for bag slot %d" % [kind, slot])
+	return box
+
+## A crest item's accepted use (Item_OnUseItemResult 0x87b15c..0x87b327): a
+## register opens box 0x1a / 0x1b, a delete the generic notice with
+## UIIT_MSG_GUILD_ / UNION_CREST_DELETE_COMPLETE.
+func crest_used(code_name: String) -> void:
+	match code_name:
+		"ITEM_ETC_GUILD_CREST_USER", "ITEM_ETC_UNION_CREST_USER":
+			var kind := GuildMsgBox.Kind.CREST_DONE if code_name == "ITEM_ETC_GUILD_CREST_USER" else GuildMsgBox.Kind.UNION_CREST_DONE
+			var box := GuildMsgBox.new()
+			if _builder == null or not box.build_crest_box(_builder, kind):
+				box.free()
+				return
+			add_child(box)
+			box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+			_guild_boxes[kind] = box
+		"ITEM_ETC_GUILD_CREST_DELETE", "ITEM_ETC_UNION_CREST_DELETE":
+			var note := GuildMsgBox.notice_box(_builder, "UIIT_MSG_GUILD_CREST_DELETE_COMPLETE"
+				if code_name == "ITEM_ETC_GUILD_CREST_DELETE" else "UIIT_MSG_UNION_CREST_DELETE_COMPLETE")
+			if note != null:
+				add_child(note)
+				note.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+
 ## The box for the reverse return scroll in bag slot `slot`, replacing one
 ## already up. Sits on this HUD, centred (ReverseReturnBox.screen_position).
 func open_reverse_return_box(slot: int) -> ReverseReturnBox:
@@ -5109,6 +5163,12 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		if is_reverse_return_scroll(item_types(item_id)):
 			open_reverse_return_box(slot)
 			return
+		# Round 824: a crest item opens its box (IFSlotWithHelp::FUN_00676570,
+		# 0x676dcb..0x676efe: by code name, boxes 0x15 / 0x16 / 0x18 / 0x19).
+		var crest_kind := int(CREST_ITEM_BOXES.get(item_code_for_id(item_id), 0))
+		if crest_kind != 0:
+			open_crest_box(slot, crest_kind)
+			return
 		# Round 805: a pet's potion, food or cure names the current COS.
 		if is_cos_target_item(item_types(item_id)):
 			cos_item_requested.emit(slot)
@@ -5563,6 +5623,15 @@ func _bag_cell_of_item(item_id: int) -> Control:
 		if _bag_item_id_at_slot(_bag_page * BAG_PAGE_SLOTS + i) == item_id:
 			return grid.get_child(i) as Control
 	return null
+
+## Round 824 (QA): the bag slot holding an item with code name `code`, or -1.
+func bag_slot_of_code(code: String) -> int:
+	for entry in _bag_slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		var item_id = _first_field(entry, ["item_id", "id"])
+		if index != null and item_id != null and item_code_for_id(int(item_id)) == code:
+			return int(index)
+	return -1
 
 func _bag_item_id_at_slot(slot: int) -> int:
 	for entry in _bag_slots:

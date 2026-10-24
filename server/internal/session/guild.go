@@ -408,6 +408,9 @@ func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gat
 			return handleGuildInvite(ctx, sess, p, ops)
 		case guild.OpExpel:
 			return handleGuildExpel(ctx, sess, p, ops)
+		// Round 824: a crest's bytes (crest.go, OURS).
+		case OpCrestGet:
+			return handleCrestGet(ctx, sess, guilds, p.Data)
 		case OpGuildCreate:
 			return handleGuildCreate(ctx, sess, p, chars, guilds, hub)
 		case OpGuildJoin:

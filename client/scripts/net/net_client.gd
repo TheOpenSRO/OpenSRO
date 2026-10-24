@@ -432,6 +432,8 @@ var quest := QuestState.new()
 var guild_data := GuildData.new()
 ## Round 822: the membership replies and the invitation (GuildOpsState).
 var guild_ops := GuildOpsState.new()
+## Round 824: the guilds' crests (CrestCache; World3D gives it silk.dat).
+var crest_cache := CrestCache.new()
 ## The game clock (round 786, GameClock): kept here so it outlives a scene
 ## change, as retail keeps it in its CGame config object.
 var game_clock := GameClock.new()
@@ -859,6 +861,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	own_guild_line = {}
 	guild_data.clear()
 	guild_ops.reset_connection()
+	crest_cache.clear()
 	buff_roster.clear()
 	npc_roster.clear()
 	user_roster.clear()
@@ -1371,6 +1374,10 @@ func use_item(char_name: String, inventory_slot: int) -> void:
 
 ## A reverse return scroll's use (round 778): the option the box or the map
 ## chose, and the map option's refoptionalteleport id.
+## Round 824: a crest register's use with the crest's 256 bytes.
+func use_item_crest(char_name: String, inventory_slot: int, pixels: PackedByteArray) -> void:
+	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_crest(char_name, inventory_slot, pixels))
+
 func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot, option, target))
 
@@ -1681,6 +1688,18 @@ func _init() -> void:
 	guild_ops.created.connect(func(block: PackedByteArray) -> void:
 		if guild_data.parse(block):
 			guild_data.changed.emit())
+	# Round 824: the crests -- 0x3257 (also the own guild's revision, when
+	# the name is the own guild's: c:0x895810), and the bytes asked for.
+	crest_cache.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
+	register_handler(CrestNet.OP_CREST_UPDATE, func(data: PackedByteArray) -> void:
+		var u := crest_cache.handle_update(data)
+		if u != null and u.kind == CrestNet.KIND_GUILD and guild_data.in_guild and u.guild_names[0] == guild_data.guild_name:
+			guild_data.crest_rev = u.rev
+			guild_data.changed.emit())
+	register_handler(CrestNet.OP_CREST_DATA, func(data: PackedByteArray) -> void: crest_cache.handle_data(data))
+	guild_data.changed.connect(func() -> void:
+		if guild_data.in_guild:
+			crest_cache.note_guild(guild_data.guild_name, guild_data.guild_id, guild_data.crest_rev))
 	guild_ops.player_name = func(uid: int) -> String:
 		return String((user_guilds.get(uid, {}) as Dictionary).get("name", "")) if user_roster.has(uid) else ""
 	guild_ops.player_guild = func(uid: int) -> String:
@@ -2212,7 +2231,9 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	user_jobs[rec.uid] = {"state": rec.job_state, "kind": rec.job_kind, "level": rec.job_level,
 		"trade_rank": rec.trade_rank}
 	# Round 814: its guild line as the record carries it.
-	user_guilds[rec.uid] = {"guild_id": rec.guild_id, "guild_name": rec.guild_name, "nickname": rec.nickname, "name": rec.name}
+	user_guilds[rec.uid] = {"guild_id": rec.guild_id, "guild_name": rec.guild_name, "nickname": rec.nickname, "name": rec.name,
+		"crest_rev": rec.crest_rev}
+	crest_cache.note_guild(rec.guild_name, rec.guild_id, rec.crest_rev)
 	var mode := WorldNet.StateChange.new()
 	mode.object_id = rec.uid
 	mode.kind = WorldNet.STATE_KIND_BODY_MODE
@@ -2251,7 +2272,9 @@ func _guild_line_update(d: Dictionary) -> void:
 	if d.is_empty():
 		return
 	var uid := int(d["uid"])
-	var line := {"guild_id": int(d["guild_id"]), "guild_name": String(d["guild_name"]), "nickname": String(d["nickname"])}
+	var line := {"guild_id": int(d["guild_id"]), "guild_name": String(d["guild_name"]), "nickname": String(d["nickname"]),
+		"crest_rev": int(d.get("crest_rev", 0))}
+	crest_cache.note_guild(String(d["guild_name"]), int(d["guild_id"]), int(d.get("crest_rev", 0)))
 	if own_character_id >= 0 and uid == (own_character_id & 0xffffffff):
 		own_guild_line = line
 	elif user_roster.has(uid):

@@ -107,12 +107,15 @@ type Record struct {
 	// READ s:0x4e5d3b..0x4e5eb3 / c:0x9ddfbe..0x9de08c): the guild's id (0
 	// for none) and the member's grant name, which the client keeps at
 	// CICUser+0x7c8 and shows as `[Guild * Nickname]`
-	// (docs/protocol/guild_plate.md). The block's three u32 (crest revision,
-	// union id, union crest revision), its byte from FUN_005cffe0 and the
-	// fortress role are written 0: OpenSRO has no crests, unions or fortress
-	// roles (OPEN).
+	// (docs/protocol/guild_plate.md). The block's three u32 are the guild's
+	// crest revision (round 824: CrestRev; the client's GlobalDataManager::
+	// FUN_009ddc40 hands it to the crest cache 0x9a4780), the union id and
+	// the union's crest revision; then FUN_005cffe0's byte and the fortress
+	// role. The union fields, the byte and the role are written 0: OpenSRO
+	// has no unions or fortress roles (OPEN).
 	GuildID  uint32
 	Nickname string
+	CrestRev uint32
 	// JobState is the job state the slot-8 suit gives; the guild block is
 	// written only for JobStateNone. 0, the zero value, is no job state the
 	// engine has and is written as JobStateNone (round 737's review).
@@ -207,7 +210,7 @@ func Append(out []byte, r Record) ([]byte, error) {
 		// id and the grant name; the rest 0, OPEN).
 		out = binary.LittleEndian.AppendUint32(out, r.GuildID)
 		out = appendString(out, r.Nickname)
-		out = binary.LittleEndian.AppendUint32(out, 0)
+		out = binary.LittleEndian.AppendUint32(out, r.CrestRev)
 		out = binary.LittleEndian.AppendUint32(out, 0)
 		out = binary.LittleEndian.AppendUint32(out, 0)
 		out = append(out, 0, 0)
@@ -369,9 +372,10 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 	if d.JobState == JobStateNone {
 		d.GuildID = r.u32()
 		d.Nickname = r.str()
-		if r.u32() != 0 || r.u32() != 0 || r.u32() != 0 || r.u8() != 0 || r.u8() != 0 {
+		d.CrestRev = r.u32()
+		if r.u32() != 0 || r.u32() != 0 || r.u8() != 0 || r.u8() != 0 {
 			if r.err == nil {
-				return d, nil, fmt.Errorf("pcspawn: crests, unions and fortress roles are not OpenSRO's")
+				return d, nil, fmt.Errorf("pcspawn: unions and fortress roles are not OpenSRO's")
 			}
 		}
 	}

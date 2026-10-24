@@ -80,6 +80,9 @@ class Record:
 	var guild_name := ""
 	var guild_id := 0
 	var nickname := ""
+	## Round 824: the guild's crest revision (the guild block's first u32
+	## after the grant name; GlobalDataManager::FUN_009ddc40 0x9de0fe).
+	var crest_rev := 0
 
 ## The item table the reader asks (World3D's own: RefItemID ->
 ## ItemTableReader.Item).
@@ -237,7 +240,8 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 	if rec.job_state == JOB_STATE_NONE:
 		rec.guild_id = r.u32()
 		rec.nickname = r.bytes(r.u16()).get_string_from_utf8()
-		r.bytes(12) # three u32: crest revision, union id, union crest revision (OPEN in OpenSRO)
+		rec.crest_rev = r.u32()
+		r.bytes(8) # union id, union crest revision (no unions in OpenSRO)
 		r.u8() # membership
 		r.u8() # fortress role
 	if interact == 4 and r.error == "":

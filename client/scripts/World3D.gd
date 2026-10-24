@@ -2263,6 +2263,7 @@ func _ready() -> void:
 	NetClient.guild_info_result.connect(_on_guild_result)
 	# Round 814: a character's guild line changed (0x30FF / 0x3256).
 	NetClient.guild_line_changed.connect(_on_guild_line_changed)
+	NetClient.crest_cache.changed.connect(_on_guild_crest_changed)
 	NetClient.guild_grant_result.connect(_on_guild_grant_result)
 	NetClient.guild_points_result.connect(_on_guild_points_result)
 	NetClient.guild_level_result.connect(_on_guild_level_result)
@@ -2434,6 +2435,11 @@ func _try_initialize_pk2_ui() -> void:
 	if text_entry != null:
 		var text_bytes := _media_pk2.read_file(text_entry)
 		_ui_text_table = UiTextTable.parse(text_bytes)
+	# Round 824: the crests' palette, silk.dat at Media.pk2's root (READ
+	# Client_LoadAllRefData 0x845fa1).
+	var silk_entry := ObjectLoader.find_file(_media_pk2, CrestNet.PALETTE_PATH)
+	if silk_entry != null:
+		NetClient.crest_cache.palette = _media_pk2.read_file(silk_entry)
 	# The blue options' rows and line keys (round 732, MagicOptionTable),
 	# for the item tooltip and the instance log lines.
 	var magic_entry := ObjectLoader.find_file(_media_pk2, MagicOptionTable.PATH)
@@ -2801,6 +2807,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.guild_expel_refused.connect(func(code: int) -> void:
 		_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code))
 	_hud_panels.guild_invitation_answered.connect(_on_guild_invitation_answered)
+	# Round 824: the crest items' OK.
+	_hud_panels.crest_confirmed.connect(_on_crest_confirmed)
 	_hud_panels.guild_invitation_expired.connect(func() -> void: NetClient.guild_ops.forget_invitation())
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
 	# The party window's requests and the invitation box (round 711).
@@ -9518,7 +9526,8 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 ##   guild manager (+0x98, FUN_00996d60; +0xa4, FUN_00992a90) -- INFERRED
 ##   allies and war enemies; OpenSRO forms neither, so they are OPEN;
 ## - the option byte that also gates it (FUN_004f9d00()+0x10) is OPEN: on;
-## - the crests drawn left of it (+0x34, +0x38) are OPEN (no crests).
+## - round 824: the crest drawn left of it (_fit_guild_crest; the entry's
+##   guild texture +0x34 -- the union's +0x38 is OPEN, no unions).
 const GUILD_LINE_RAISE_PX := 20.0
 ## Round 823, OURS: the guild line has no box (retail's has one; see above).
 const GUILD_LINE_BOX := false
@@ -9551,6 +9560,19 @@ func _apply_guild_line(label: Label3D, holder: Node3D, line: Dictionary, job_sta
 	holder.add_child(g)
 	if swept:
 		_plate_sweep.add(g)
+	var crest := NetClient.crest_cache.texture_for(String(line.get("guild_name", "")))
+	if crest != null:
+		var s := Sprite3D.new()
+		s.name = "GuildCrest"
+		s.texture = crest
+		s.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		s.fixed_size = true
+		s.no_depth_test = true
+		s.shaded = false
+		s.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		s.render_priority = g.render_priority
+		s.layers = OverlayView.BIT
+		g.add_child(s)
 	_layout_guild_line(label, holder)
 
 ## Puts the guild line GUILD_LINE_RAISE_PX above the name line, centred on the
@@ -9564,6 +9586,47 @@ func _layout_guild_line(label: Label3D, holder: Node3D) -> void:
 	g.pixel_size = label.pixel_size
 	g.offset = Vector2(0.0, label.offset.y + GUILD_LINE_RAISE_PX * _plate_fk(label))
 	_fit_monster_name_box(g)
+	_fit_guild_crest(g)
+
+## Round 824: the guild's crest beside its line. READ (GlobalDataManager::
+## FUN_009dea30, 0x9df370..0x9df4ad): with the crest cache entry's guild
+## texture (+0x34) set, a 16 x 16 quad (0xe1b8e0 = 16.0) whose left edge is
+## the guild text item's left less 20.0 (0xe1b830) and whose top is the item's
+## top (both from FUN_008b2d30, the item's top-left; 0x9df390). The item is
+## drawn centred on its point (FUN_008b4d90: x - w/2, y - h/2), w the text's
+## width + 2 and h 14 (round 817: the box fills 1 px around the item). In the
+## line's font pixels (y up): the item's left is -(text + 2)/2, its top 1 px
+## under the box's (NamePlates.box_rect). The union's crest (+0x38, 36 px
+## left) is OPEN: OpenSRO has no unions.
+const GUILD_CREST_PX := 16.0
+const GUILD_CREST_LEFT_PX := 20.0
+
+func _fit_guild_crest(g: Label3D) -> void:
+	var s := g.get_node_or_null("GuildCrest") as Sprite3D
+	if s == null:
+		return
+	var fk := _plate_fk(g)
+	var font: Font = g.font if g.font != null else ThemeDB.fallback_font
+	var text_w := font.get_string_size(g.text, HORIZONTAL_ALIGNMENT_LEFT, -1, g.font_size).x
+	var r := NamePlates.box_rect(g)
+	var item_left := g.offset.x - text_w * 0.5 - 1.0 * fk
+	var item_top := r.position.y + r.size.y * 0.5 - NamePlates.BOX_OVER_CELL_PX * fk
+	var centre := Vector2(item_left - (GUILD_CREST_LEFT_PX - GUILD_CREST_PX * 0.5) * fk,
+		item_top - GUILD_CREST_PX * 0.5 * fk)
+	# The 16 texels at 16 font pixels: the sprite's pixel is fk of the line's.
+	s.pixel_size = g.pixel_size * fk
+	s.offset = centre / fk
+	s.visible = g.text != ""
+
+## A guild's crest came, changed or went (CrestCache.changed): every line of
+## that guild is made again -- the own one and each player's in view.
+func _on_guild_crest_changed(guild_name: String) -> void:
+	print("GUILD crest of [%s]: rev %d" % [guild_name, NetClient.crest_cache.rev_of(guild_name)])
+	if String(NetClient.own_guild_line.get("guild_name", "")) == guild_name:
+		_refresh_player_name_plate()
+	for uid in NetClient.user_guilds:
+		if String((NetClient.user_guilds[uid] as Dictionary).get("guild_name", "")) == guild_name:
+			_on_guild_line_changed(int(uid))
 
 ## 0xB256: the own grant name set or refused, in the chat. OK: the
 ## archive's UIIT_MSG_GUILD_NAME_GRANT_RESULT (READ FUN_0088f9e0 shows it,
@@ -18472,6 +18535,16 @@ func _qa_step() -> void:
 					ev.physical_keycode = code
 					ev.pressed = pressed
 					get_viewport().push_input(ev)
+
+	# OPENSRO_QA_CREST="<tick>:<code name>[,...]" (round 824): at that tick the
+	# crest item's box opens for its bag slot, as its right-click opens it,
+	# and its OK is pressed 40 frames later.
+	var qa_crest := OS.get_environment("OPENSRO_QA_CREST")
+	if qa_crest != "" and _hud_panels != null:
+		for part in qa_crest.split(",", false):
+			var tc := String(part).split(":")
+			if tc.size() == 2 and tc[0].is_valid_int() and int(tc[0]) == _qa_tick:
+				_qa_crest_step(tc[1])
 
 	# OPENSRO_QA_INPUT: a player's clicks and keys, through push_input
 	# (_qa_input_step has the syntax).
@@ -33680,6 +33753,95 @@ func _on_guild_invitation_closed() -> void:
 	if _hud_panels != null:
 		_hud_panels.close_guild_invitation()
 
+## Round 824: a crest box's OK -- FUN_00797d90's cases (READ):
+## - 0x15 (0x798374..0x798486): the own guild's crest revision set ->
+##   UIIT_MSG_CREST_REGISTER_OVERLAP; else the install path's guildmark.bmp
+##   through 0x4f9d70 with silk.dat: no file -> UIIT_MSG_CREST_REGISTER_FAIL,
+##   not 16 x 16 24-bit -> _ERROR, else the use with the 256 bytes. Each line
+##   to the system message window (0x7781b0(0, ...)).
+## - 0x18 (0x798519..0x7985e7): the same for unionmark.bmp and the own
+##   union's revision (0xeeee1c; OpenSRO has no unions: 0).
+## - 0x16 / 0x19: no crest -> UIIT_MSG_GUILD_ / UNION_DELETE_ERROR, else the
+##   plain use (0x798654).
+## The install path is `*(0x110f7d0)+0x134`, the client's folder (INFERRED);
+## OURS: the folder Media.pk2 is read from (the player's Silkroad folder),
+## else the executable's.
+func _on_crest_confirmed(slot: int, kind: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	var own_rev := NetClient.guild_data.crest_rev if NetClient.guild_data.in_guild else 0
+	match kind:
+		GuildMsgBox.Kind.CREST, GuildMsgBox.Kind.UNION_CREST:
+			var union := kind == GuildMsgBox.Kind.UNION_CREST
+			if (0 if union else own_rev) != 0:
+				_crest_line("UIIT_MSG_CREST_REGISTER_OVERLAP")
+				return
+			var file := CrestNet.UNION_MARK_FILE if union else CrestNet.GUILD_MARK_FILE
+			var bmp := PackedByteArray()
+			for dir in _crest_folders():
+				var path := String(dir).path_join(file)
+				if FileAccess.file_exists(path):
+					bmp = FileAccess.get_file_as_bytes(path)
+					print("CREST reading %s (%d bytes)" % [path, bmp.size()])
+					break
+			var got := CrestNet.bmp_to_indices(bmp, NetClient.crest_cache.palette)
+			match int(got[0]):
+				CrestNet.BMP_MISSING:
+					_crest_line("UIIT_MSG_CREST_REGISTER_FAIL")
+				CrestNet.BMP_FORMAT:
+					_crest_line("UIIT_MSG_CREST_REGISTER_ERROR")
+				_:
+					NetClient.use_item_crest(NetClient.current_character_name, slot, got[1])
+		GuildMsgBox.Kind.CREST_DELETE:
+			if own_rev == 0:
+				_crest_line("UIIT_MSG_GUILD_DELETE_ERROR")
+				return
+			NetClient.use_item(NetClient.current_character_name, slot)
+		GuildMsgBox.Kind.UNION_CREST_DELETE:
+			_crest_line("UIIT_MSG_UNION_DELETE_ERROR")
+
+func _qa_crest_step(code: String) -> void:
+	var slot := _hud_panels.bag_slot_of_code(code)
+	var kind := int(HudPanels.CREST_ITEM_BOXES.get(code, 0))
+	print("QA CREST %s: bag slot %d, box %x" % [code, slot, kind])
+	if slot < 0 or kind == 0:
+		return
+	var box: GuildMsgBox = _hud_panels.open_crest_box(slot, kind)
+	if box == null:
+		return
+	for i in 40:
+		await get_tree().process_frame
+	if is_instance_valid(box) and not box.is_queued_for_deletion():
+		print("QA CREST pressing OK at frame %d" % Engine.get_frames_drawn())
+		(box.node("GDR_MBIN_BTN_OK") as BaseButton).pressed.emit()
+	# The result's box (0x1a / 0x1b), confirmed 60 frames after it shows.
+	for i in 200:
+		await get_tree().process_frame
+		var done: GuildMsgBox = _hud_panels._guild_boxes.get(GuildMsgBox.Kind.CREST_DONE)
+		if done == null:
+			done = _hud_panels._guild_boxes.get(GuildMsgBox.Kind.UNION_CREST_DONE)
+		if is_instance_valid(done) and not done.is_queued_for_deletion():
+			for j in 60:
+				await get_tree().process_frame
+			if is_instance_valid(done):
+				print("QA CREST confirming the result at frame %d" % Engine.get_frames_drawn())
+				(done.node("GDR_MBIN_BTN_OK") as BaseButton).pressed.emit()
+			return
+
+## Where guildmark.bmp / unionmark.bmp are looked for, in order.
+func _crest_folders() -> PackedStringArray:
+	var out := PackedStringArray()
+	var media := Pk2Config.media_path()
+	if media != "":
+		out.append(media.get_base_dir())
+	out.append(OS.get_executable_path().get_base_dir())
+	return out
+
+func _crest_line(key: String) -> void:
+	print("CREST line %s" % key)
+	var text := _ui_text_table.get_text(key, "") if _ui_text_table != null else ""
+	_log_system(text if text != "" and text != key else key, HudSystemMessage.TYPE_ALWAYS)
+
 func _on_guild_invitation_answered(accept: bool) -> void:
 	print("GUILD invitation answered %s" % accept)
 	NetClient.guild_answer(accept)
@@ -34636,6 +34798,11 @@ func _on_use_item_result(result) -> void:
 		# archive's own category-1 message (ErrorText.scroll_line).
 		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
 		return
+	# Round 824: a crest item's accepted use opens its result box.
+	if result.item_id != 0 and _hud_panels != null:
+		var code := _hud_panels.item_code_for_id(result.item_id)
+		if HudPanels.CREST_ITEM_BOXES.has(code):
+			_hud_panels.crest_used(code)
 	# Round 786: every accepted use is logged with what it left, so a run
 	# (the auto potion's QA) reads the count and the pools from the log.
 	print("World3D: use item ok: %d left, HP %d/%d, MP %d/%d, restored %d HP %d MP" % [result.remaining,

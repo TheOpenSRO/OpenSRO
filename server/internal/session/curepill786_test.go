@@ -54,6 +54,13 @@ type pillHarness struct {
 
 func newPillHarness(t *testing.T, rows []refdata.Item) *pillHarness {
 	t.Helper()
+	return newPillHarnessWith(t, rows, nil)
+}
+
+// newPillHarnessWith chains extra (nil: none) after the use-item handler
+// (round 824: the guild handler, for the crest's bytes).
+func newPillHarnessWith(t *testing.T, rows []refdata.Item, extra gateway.Handler) *pillHarness {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -83,6 +90,9 @@ func newPillHarness(t *testing.T, rows []refdata.Item) *pillHarness {
 		statusFX.mu.Unlock()
 	})
 	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, nil, nil, nil, nil, nil, nil))
+	if extra != nil {
+		handle = gateway.Chain(handle, extra)
+	}
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	conn := dialTestServer(t, addr)

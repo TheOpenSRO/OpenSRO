@@ -30,6 +30,9 @@ func _ifmessagebox() -> String:
 	inif += _c("GDR_MBIN_BTN_CERTIFY", "CIFButton", "112,99,76,24", 202, "UIIT_CTL_CONFIRM", "", 1)
 	inif += _c("GDR_MBIN_BTN_CANCEL", "CIFButton", "152,99,76,24", 201, "UIIT_CTL_NO", "", 1)
 	inif += _c("GDR_MBIN_BTN_OK", "CIFButton", "72,99,76,24", 200, "UIIT_CTL_YES", "", 1)
+	inif += _c("GDR_MBIN_STATIC_MESSAGE5", "CIFStatic", "6,154,294,12", 8, "", "", 1)
+	inif += _c("GDR_MBIN_STATIC_MESSAGE4", "CIFStatic", "6,66,288,12", 4, "", "", 1)
+	inif += _c("GDR_MBIN_STATIC_MESSAGE3", "CIFStatic", "6,66,288,12", 3, "", "", 1)
 	inif += _c("GDR_MBIN_STATIC_MESSAGE2", "CIFStatic", "6,70,300,12", 2, "", "", 1)
 	inif += _c("GDR_MBIN_STATIC_MESSAGE1", "CIFStatic", "0,52,300,12", 1, "", "", 1)
 	var simple := ""
@@ -41,7 +44,12 @@ func _ifmessagebox() -> String:
 func _builder() -> UiBuilder:
 	var rows := PackedStringArray()
 	for k in ["UIIT_STT_AGREEMENT_BOX", "UIIT_STT_CONFIRM_BOX", "UIIT_MSG_GUILD_QUESTION_CREATE_CONFIRM",
-			"UIIT_MSG_GUILD_BREAK_CONFIRM", "UIIT_MSG_GUILD_SECESSION_CONFIRM", "UIIT_CTL_YES", "UIIT_CTL_NO"]:
+			"UIIT_MSG_GUILD_BREAK_CONFIRM", "UIIT_MSG_GUILD_SECESSION_CONFIRM", "UIIT_CTL_YES", "UIIT_CTL_NO",
+			"UIIT_MSG_GUILD_USER_CREST", "UIIT_MSG_GUILD_USER_CREST_FILE", "UIIT_MSG_GUILD_USER_CREST_FOLDER",
+			"UIIT_MSG_GUILD_CREST_REGISTER", "UIIT_MSG_UNION_USER_CREST", "UIIT_MSG_UNION_USER_CREST_FOLDER",
+			"UIIT_CTL_UNION_CREST_REGISTER", "UIIT_MSG_UNION_CREST_REGISTER", "UIIT_MSG_GUILD_CREST_DELETE",
+			"UIIT_MSG_GUILD_CREST_REGISTER_COMPLETE", "UIIT_MSG_CREST_REGISTER_INFORMATION_01",
+			"UIIT_MSG_CREST_REGISTER_INFORMATION_04", "UIIT_CTL_CONFIRM", "UIIT_MSG_GUILD_CREST_DELETE_COMPLETE"]:
 		rows.append("1\t%s\t\t\t\t\t\t\t<%s>" % [k, k])
 	rows.append("1\tUIIT_MSG_GUILD_JOIN_REQUEST\t\t\t\t\t\t\t[%s]has applied for your guild.")
 	rows.append("1\tUIIT_MSG_GUILD_QUESTION_JOIN\t\t\t\t\t\t\tDo you want to join [%s]guild?")
@@ -62,6 +70,57 @@ func _text(n: Node) -> String:
 		if l != null:
 			return l.text
 	return "(no text)"
+
+## Round 824: the crest items' boxes (GuildMsgBox.build_crest_box, notice_box)
+## and the HUD's crest flow.
+func _crest_boxes(builder: UiBuilder, live: Node) -> void:
+	var ask := GuildMsgBox.new()
+	_check(ask.build_crest_box(builder, GuildMsgBox.Kind.CREST), "box 0x15 builds")
+	_check(ask.size == Vector2(460, 210), "0x15 is 0x1cc x 0xd2 (got %s)" % [ask.size])
+	var lines := []
+	for i in 4:
+		var n := ask.node(GuildMsgBox.MESSAGES[i])
+		lines.append([_text(n), n.position, n.size])
+	_check(lines[0][0] == "<UIIT_MSG_GUILD_USER_CREST>" and lines[1][0] == "<UIIT_MSG_GUILD_USER_CREST_FILE>"
+		and lines[2][0] == "<UIIT_MSG_GUILD_USER_CREST_FOLDER>" and lines[3][0] == "<UIIT_MSG_GUILD_CREST_REGISTER>",
+		"0x15's four lines, in order")
+	_check(lines[0][1] == Vector2(50, 51) and lines[1][1] == Vector2(50, 68) and lines[2][1] == Vector2(50, 85)
+		and lines[3][1] == Vector2(50, 122) and lines[0][2].x == 359.0, "at (0x32, 0x33 / 0x44 / 0x55 / 0x7a), 0x167 wide (got %s)" % [lines])
+	_check(ask.node("GDR_MBIN_BTN_OK").position == Vector2(152, 159) and ask.node("GDR_MBIN_BTN_CANCEL").position == Vector2(232, 159),
+		"OK and Cancel moved (+0x50, +0x3c)")
+	_check(_text(ask.node("GDR_MBIN_STATIC_MESSAGE5")) == "", "the fifth line empty")
+	ask.free()
+	var uni := GuildMsgBox.new()
+	uni.build_crest_box(builder, GuildMsgBox.Kind.UNION_CREST)
+	_check(_text(uni.node("GDR_MBIN_STATIC_MESSAGE3")) == "<UIIT_CTL_UNION_CREST_REGISTER>", "0x18's third line is the CTL key")
+	uni.free()
+	var del := GuildMsgBox.new()
+	del.build_crest_box(builder, GuildMsgBox.Kind.CREST_DELETE)
+	_check(del.size == Vector2(308, 148) and _text(del.node("GDR_MBIN_STATIC_MESSAGE1")) == "<UIIT_MSG_GUILD_CREST_DELETE>",
+		"0x16: the 308 x 148 box, GUILD_CREST_DELETE")
+	del.free()
+	var done := GuildMsgBox.new()
+	done.build_crest_box(builder, GuildMsgBox.Kind.CREST_DONE)
+	_check(done.node("GDR_MBIN_STATIC_MESSAGE1").position == Vector2(50, 55) and done.node("GDR_MBIN_STATIC_MESSAGE5").position == Vector2(50, 141)
+		and _text(done.node("GDR_MBIN_STATIC_MESSAGE5")) == "<UIIT_MSG_CREST_REGISTER_INFORMATION_04>", "0x1a's five lines")
+	_check(done.node("GDR_MBIN_BTN_OK").position == Vector2(192, 159) and _text(done.node("GDR_MBIN_BTN_OK")) == "<UIIT_CTL_CONFIRM>"
+		and not done.node("GDR_MBIN_BTN_CANCEL").visible, "0x1a: one Confirm, moved (+0x78, +0x3c)")
+	done.free()
+	var note := GuildMsgBox.notice_box(builder, "UIIT_MSG_GUILD_CREST_DELETE_COMPLETE")
+	var msg := note.get_node_or_null("Message") as Label if note != null else null
+	_check(msg != null and msg.text == "<UIIT_MSG_GUILD_CREST_DELETE_COMPLETE>", "the delete's notice")
+	if note != null:
+		note.free()
+	# The HUD: the box's OK goes out as crest_confirmed(slot, kind).
+	var confirmed: Array = []
+	live.connect("crest_confirmed", func(sl: int, k: int) -> void: confirmed.append([sl, k]))
+	var box: GuildMsgBox = live.call("open_crest_box", 12, GuildMsgBox.Kind.CREST)
+	_check(box != null and box.position == Vector2(512 - 0x9a, 384 - 0x4a), "placed as 0x6ec5d0 places it, before the resize")
+	(box.node("GDR_MBIN_BTN_OK") as BaseButton).pressed.emit()
+	_check(confirmed == [[12, GuildMsgBox.Kind.CREST]], "OK: crest_confirmed(12, 0x15)")
+	live.call("crest_used", "ITEM_ETC_GUILD_CREST_USER")
+	var shown := (live.get("_guild_boxes") as Dictionary).get(GuildMsgBox.Kind.CREST_DONE) as GuildMsgBox
+	_check(shown != null and shown.get_parent() == live, "a register's success opens box 0x1a")
 
 func _initialize() -> void:
 	var builder := _builder()
@@ -143,6 +202,8 @@ func _initialize() -> void:
 	ib = live.call("show_guild_invitation", "Aria", "Verizon")
 	live.call("close_guild_invitation")
 	_check(ib.is_queued_for_deletion() and answered == [true], "close_guild_invitation closes it unanswered")
+
+	_crest_boxes(builder, live)
 
 	if _failures == 0:
 		print("ALL PASS")

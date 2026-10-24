@@ -62,6 +62,9 @@ type UseItemRequest struct {
 	Option byte
 	// Target is the map option's refoptionalteleport id.
 	Target uint32
+	// Pixels are a crest register's 256 palette indices (round 824,
+	// UseOptionCrest).
+	Pixels []byte
 }
 
 func (r *UseItemRequest) Encode() []byte {
@@ -70,6 +73,9 @@ func (r *UseItemRequest) Encode() []byte {
 		out = append(out, r.Option)
 		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget {
 			out = binary.LittleEndian.AppendUint32(out, r.Target)
+		}
+		if r.Option == UseOptionCrest {
+			out = append(out, r.Pixels...)
 		}
 	}
 	return out
@@ -87,7 +93,9 @@ func DecodeUseItemRequest(data []byte) (*UseItemRequest, error) {
 	req := &UseItemRequest{CharacterName: fields[0], InventorySlot: int32(slot)}
 	if len(rest) >= 1 {
 		req.Option = rest[0]
-		if len(rest) >= 5 {
+		if req.Option == UseOptionCrest {
+			req.Pixels = append([]byte(nil), rest[1:]...)
+		} else if len(rest) >= 5 {
 			req.Target = binary.LittleEndian.Uint32(rest[1:5])
 		}
 	}
@@ -1107,6 +1115,10 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		}
 		if isNasrunExtension(it) {
 			return useNasrunExtension(ctx, sess, inv, items, characterID, held, have, it, req.Option)
+		}
+		// Round 824 (crest.go): a guild or union crest's register or delete.
+		if _, _, ok := crestItem(it); ok {
+			return useCrestItem(ctx, sess, inv, characterID, it, held, have, req)
 		}
 		// A container expansion (round 498): its Param block is a slot count
 		// and a container, never a restore amount.

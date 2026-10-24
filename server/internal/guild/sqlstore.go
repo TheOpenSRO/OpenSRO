@@ -68,6 +68,11 @@ CREATE TABLE IF NOT EXISTS guild_penalties (
 	character_id BIGINT PRIMARY KEY,
 	until        TIMESTAMPTZ NOT NULL
 );
+-- The crest (round 824): the 256 palette indices the original's .crb file
+-- holds, and the last revision the guild ever had (_Guild.LastCrestRev;
+-- crest_rev is CurCrestRev). NULL / 0 for none.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS crest BYTEA;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS crest_last_rev BIGINT NOT NULL DEFAULT 0;
 -- A master stored before round 821 gets the master's mask.
 UPDATE guild_members gm SET permission = 4294967295 FROM guilds g
  WHERE g.id = gm.guild_id AND g.leader_id = gm.character_id AND gm.permission = 0;
@@ -630,4 +635,53 @@ func (s *SQLStore) PenaltyUntil(ctx context.Context, characterID int64) (time.Ti
 		return time.Time{}, fmt.Errorf("guild: reading the penalty: %w", err)
 	}
 	return until, nil
+}
+
+// SetCrest implements Store.
+func (s *SQLStore) SetCrest(ctx context.Context, guildID int64, pixels []byte) (uint32, error) {
+	if len(pixels) != CrestBytes {
+		return 0, fmt.Errorf("guild: a crest is %d bytes, not %d", CrestBytes, len(pixels))
+	}
+	var rev int64
+	// SET's right-hand sides read the row as it was: both take the old
+	// crest_last_rev + 1.
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE guilds SET crest = $2, crest_rev = crest_last_rev + 1, crest_last_rev = crest_last_rev + 1
+		 WHERE id = $1 RETURNING crest_rev`, guildID, pixels).Scan(&rev)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrGuildNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("guild: storing the crest: %w", err)
+	}
+	return uint32(rev), nil
+}
+
+// ClearCrest implements Store.
+func (s *SQLStore) ClearCrest(ctx context.Context, guildID int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE guilds SET crest = NULL, crest_rev = 0 WHERE id = $1`, guildID)
+	if err != nil {
+		return fmt.Errorf("guild: deleting the crest: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrGuildNotFound
+	}
+	return nil
+}
+
+// Crest implements Store.
+func (s *SQLStore) Crest(ctx context.Context, guildID int64) (uint32, []byte, error) {
+	var rev int64
+	var pixels []byte
+	err := s.db.QueryRowContext(ctx, `SELECT crest_rev, crest FROM guilds WHERE id = $1`, guildID).Scan(&rev, &pixels)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil, ErrGuildNotFound
+	}
+	if err != nil {
+		return 0, nil, fmt.Errorf("guild: reading the crest: %w", err)
+	}
+	if rev == 0 {
+		return 0, nil, nil
+	}
+	return uint32(rev), pixels, nil
 }

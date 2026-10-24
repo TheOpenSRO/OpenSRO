@@ -66,12 +66,19 @@ static func decode_entity(data: PackedByteArray) -> Dictionary:
 	if name == null:
 		return {}
 	var nick := ""
+	var crest := 0
 	if name != "":
 		var n = _take_string(data, at)
 		if n == null:
 			return {}
 		nick = n
-	return {"uid": data.decode_u32(0), "guild_id": data.decode_u32(4), "guild_name": name, "nickname": nick}
+		# Round 824: the guild block's crest revision follows the grant name
+		# (the spawn record's three u32: crest revision, union id, union
+		# crest revision).
+		if at[0] + 4 <= data.size():
+			crest = data.decode_u32(at[0])
+	return {"uid": data.decode_u32(0), "guild_id": data.decode_u32(4), "guild_name": name, "nickname": nick,
+		"crest_rev": crest}
 
 ## 0x3256 as {guild_id, name, nickname}; {} when malformed.
 static func decode_nickname(data: PackedByteArray) -> Dictionary:
