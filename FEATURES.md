@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.583** plus what is merged on `dev`; updated 2026-10-24.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.584** plus what is merged on `dev`; updated 2026-10-24.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -16,7 +16,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
-| [Social](#social) | 11 | 4 |  | 4 | 19 |
+| [Social](#social) | 11 | 5 |  | 4 | 20 |
 | [Job / trade](#job--trade) | 6 |  |  |  | 6 |
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
@@ -27,7 +27,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **159** | **32** | **1** | **35** | **227** |
+| **All** | **159** | **33** | **1** | **35** | **228** |
 
 ## Biggest gaps
 
@@ -241,6 +241,7 @@ Chat, full party system, party matching and basic guilds.
 | Guild window | 🟡 Partial | Level, GP, members n / cap, notice title and the member list (online lamps, ranks, GP), live updates as members join, leave, log on and off; select a member to ban; its grant-name button sets your own grant name (or `/grantname`) |
 | Guild names over characters | ✅ Supported | `[Guild * Grant]` (or `[Guild]`) 20 px above the name with no box behind it, orange for you and blue for others, riding a mount with the name and hidden in a job suit; each member sets their own grant name (window button or /grantname), at any guild level |
 | Guild points and levels | 🟡 Partial | Points earned, guild levels up; spending points not done |
+| Guild emblems | 🟡 Partial | Register and delete a guild's emblem with the emblem scrolls (guildmark.bmp, 16 x 16 24-bit, beside Media.pk2; guild level 4, the master); shown beside the guild name over every member; union emblems wait for unions |
 | Union | ❌ Not yet | No guild alliances yet |
 | Friends list | 🟡 Partial | Server complete; adding friends only from a developer tab |
 | Mail / letters | ❌ Not yet | Letter pane drawn, no backend |
