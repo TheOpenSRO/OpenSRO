@@ -7483,6 +7483,55 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-nineteenth round: the quest talk as the original's -- OK closes it
+
+The user (2026-10-24): "When I hit confirm on the quest it doesn't close the window. Not only that
+let's fully support quests". This round is the first quest step; the gap list (a read of both
+binaries) orders the rest (docs/protocol/quests.md).
+
+- **Cause (READ).** The server answered a closing page's OK with nothing (`answer()` had no case
+  for it), and the client ignored 0xB04B (`NpcTalkNet.ended` was connected to nothing). The
+  original's CBasicQuest conversation (`s:0x920110`) runs TerminateMenu on every OK (CGObjPC vslot
+  0x154 -> EndInteraction `s:0x5107c0`, 0xB04B {1}), and the client's `0x886ac0 -> 0x79e350`
+  closes the NPC talk, store and storage windows by ShowWindow(0), whatever the result.
+- **Fix, server.** Every quest page is the original's type-4 list with the quest's
+  `SN_TALK_COMMON_*` lines (an offer [Accept, Refuse], responses 5 and 6; every other page [OK]);
+  the OK ends the talk (`endInteraction`, factored out of the 0x704B handler: the trader and
+  caravan hooks run as EndInteraction's own code does); after an accepted quest it first sends the
+  quest's `MIDDLE_ACHIEVED` as a 0x30EC notice. The reward take ends the talk on every path, then
+  sends `SN_TALK_COMMON_END` (0x30EC) and 0xB515.
+- **The rest of the conversation (READ).** `NOT_PARTY` for a party-only quest (divide type 1)
+  out of a party sharing EXP and items (`s:0x9261d0`); `COUNT_LIMIT` for a `LuaSetRealTime` quest
+  at its limit; `ACCEPT_AFTER_ONE_CLEAR` for a `LuaSetDifferentString` quest cleared before;
+  `INVENTORY_FULL` before the reward window when the reward does not fit; Accept reads
+  `SN_TALK_COMMON_MAXQUEST` at 33 quests (and still accepts: nothing else reads the count). The
+  setters, from the binary's own registration table: `LuaSetDivideType` 0x86bb20 (builder +0x826,
+  quest +0x2e), `LuaSetRealTime` 0x86ba00 (mask |= 0x100000), `LuaSetDifferentString` 0x86b200
+  (+0x85d); the compiled quests write +0x2e and the condition block's +0x1d directly. Exported as
+  two new catalogue columns (an older catalogue still loads).
+- **Party-only kills (READ).** `s:0x9210a0` runs the party check before any kill or gather
+  mission: a party-only quest counts nothing out of a sharing party.
+- **0x30D5 (READ).** Byte +9 is the divide type (it was 1 for every quest), the mission index the
+  mission's +1 (`s:0x91be70`).
+- **Give up (READ, `s:0x571b80`).** No reply for a quest with no record; {2, 2} for one not under
+  way (status 1, 7, 8); {2, 5} while an NPC talk is open; else {1, id}.
+- **Fix, client.** 0xB04B closes the NPC windows silently (no 0x704B back), the reward window
+  hides the talk box silently (`c:0x884ca0`), 0x30EC shows in the quest info notice with
+  `snd_quest_end` for `SN_TALK_COMMON_END` (`FUN_00884a30`), and a quest line is answered once
+  until the next page (CIF_NPCTalk +0x7f0).
+- **Measured in the user's data** (the re-export): 58 `LuaSetRealTime` quests, every one limit 1;
+  divide types 0 x564, 5 x105, 1 x26, 4 x1 (QNO_RM_MEETROC_6, which the party check never
+  passes, in retail too); 40 different-string quests.
+- **Live (`/var/tmp/r819/q1`).** At the Jangan smith: list -> [Accept, Refuse] -> accepted ->
+  `AT_ACCEPT` [OK] -> OK at tick 720 -> the talk window is gone at 780 and the smith carries the
+  quest mark.
+- **OPEN.** Which offers the first talk menu lists; the start branch's other COUNT_LIMIT test;
+  where the row's colour bar draws (OpenSRO draws none yet).
+- **Tests.** `quest819_test.go` (7: refuse, party-only, repeat limit and after-one-clear, the
+  MAXQUEST line, the update header, a full bag, party-only kills), `csvio819_test.go` (2), the
+  flow test on the new pages; client `quest_test.gd` (0x30EC). `go test ./...` ok; client `check`
+  ALL LOAD, `tests` 354 suites, 0 failing.
+
 ## Eight-hundred-and-eighteenth round: the mouse no longer reaches the world through a window
 
 The user (2026-10-24): "when I'm interacting with menus in the game like scrolling it also affects the game

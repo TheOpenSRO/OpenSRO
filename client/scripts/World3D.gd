@@ -2243,6 +2243,10 @@ func _ready() -> void:
 		if NetClient.is_connected_to_server():
 			NetClient.list_inventory(NetClient.current_character_name))
 	NetClient.quest.mission_progress.connect(_on_quest_progress)
+	# Round 819: the reward window hides the talk box first (c:0x884ca0), and
+	# 0x30EC's notice shows in the quest info band.
+	NetClient.quest.reward_window.connect(func(_id: int, _text: String) -> void: hide_npc_talk_silently())
+	NetClient.quest.event_message.connect(_on_quest_event_message)
 	NetClient.quest.marks_changed.connect(_apply_quest_marks)
 	NetClient.skill_list_result.connect(_on_skill_list_result)
 	NetClient.learn_skill_result.connect(_on_learn_skill_result)
@@ -25759,7 +25763,12 @@ func _npc_talk_net() -> NpcTalkNet:
 	_npc_talk.open_refused.connect(func(code: int) -> void:
 		print("NPC open refused, code 0x%x" % code))
 	_npc_talk.end_refused.connect(func(code: int) -> void:
-		print("NPC end refused, code 0x%x" % code))
+		print("NPC end refused, code 0x%x" % code)
+		_on_npc_ended_by_server())
+	# Round 819: 0xB04B closes the NPC windows, whatever its result (READ,
+	# c:0x886ac0 calls 0x79e350 before it reads the code) -- the quest talk's
+	# OK and the reward end the talk this way (the server's TerminateMenu).
+	_npc_talk.ended.connect(_on_npc_ended_by_server)
 	return _npc_talk
 
 ## The 0xB045 reply (FUN_0088b200 -> IF_NPCWindow::FUN_00703ff0): the talk
@@ -25849,10 +25858,42 @@ func _on_npc_opened(id: int) -> void:
 func _on_npc_window_hidden(panel_id: String) -> void:
 	if panel_id == "store" and _specialty_flow != null:
 		_specialty_flow.store_closed()
+	# A hide the server asked for, or ShowWindow(0): no end request.
+	if _npc_hide_silent > 0:
+		return
 	if not _talk_server or _npc_talk == null:
 		return
 	if _npc_talk.end():
 		print("NPC end 0x704B: %s closed" % panel_id)
+
+## Round 819: 0xB04B's close, FUN_0079e350 (READ): the NPC talk window, the
+## store and the storage are hidden by ShowWindow(0) -- no 0x704B goes back
+## (that is the windows' close slot, which this is not).
+func _on_npc_ended_by_server() -> void:
+	if _hud_panels == null:
+		return
+	_npc_hide_silent += 1
+	var closed: Array = []
+	for id in ["npctalk", "store", "storage"]:
+		if _hud_panels.is_open(id):
+			_hud_panels.close(id)
+			closed.append(id)
+	_npc_hide_silent -= 1
+	if not closed.is_empty():
+		print("NPC end 0xB04B from the server: closed %s" % ", ".join(closed))
+
+## Round 819: the talk window hidden by ShowWindow(0) with the talk kept --
+## the reward window's 0x3514 hides it first (c:0x884ca0, READ); the talk
+## ends when the reward is taken (the server's 0xB04B).
+func hide_npc_talk_silently() -> void:
+	if _hud_panels == null or not _hud_panels.is_open("npctalk"):
+		return
+	_npc_hide_silent += 1
+	_hud_panels.close("npctalk")
+	_npc_hide_silent -= 1
+
+## Above zero while a hide must not send 0x704B.
+var _npc_hide_silent := 0
 
 ## Opens the talk window for an NPC or gate holder (the click in reach, or a
 ## talk approach's arrival): the name, greeting and lines, the ring under an
@@ -33313,6 +33354,21 @@ func _on_quest_progress(quest_id: int, m: QuestNet.Mission) -> void:
 	_show_banner("quest_info", text)
 
 var _hud_quest_notice: HudNotice = null
+
+## 0x30EC (FUN_00884a30, READ round 819): the key's text in the quest info
+## notice (0x77b5b0, as a progress line is shown), and snd_quest_end for
+## SN_TALK_COMMON_END.
+func _on_quest_event_message(key: String) -> void:
+	var text := _hud_panels.quest_text(key) if _hud_panels != null else key
+	print("QUEST NOTICE %s: %s" % [key, text])
+	if _hud_quest_notice == null and ui_control != null:
+		_hud_quest_notice = HudNotice.new()
+		_hud_quest_notice.name = "HudQuestInfo"
+		ui_control.add_child(_hud_quest_notice)
+		_hud_quest_notice.setup(_ui_builder, HudNotice.STYLE_QUEST_INFO)
+	_show_banner("quest_info", text)
+	if key == QuestNet.NOTICE_END:
+		UiSounds.quest_end("0x30EC %s" % key)
 ## Loaded quest-mark models by path, and the npcpos index for the minimap's
 ## quest signs (QuestMarks), built on first use.
 var _quest_mark_models: Dictionary = {}

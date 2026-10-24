@@ -17,6 +17,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/quest"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
@@ -59,7 +60,10 @@ type QuestDeps struct {
 	Items  QuestItems
 	Skills skill.Store
 	Hub    *world.Hub
-	MP     *mana.Tracker
+	// Parties answers a party-only quest's check (DivideType 1); nil: no
+	// party anywhere.
+	Parties *party.Hub
+	MP      *mana.Tracker
 	Logger *slog.Logger
 	// Roll answers a gather mission's drop roll (rate in percent); nil uses
 	// math/rand.
@@ -97,6 +101,10 @@ type questTalk struct {
 	stage       int
 	list        []talkEntry
 	pending     int64
+	// notice is the quest notice its OK sends before the talk ends: the
+	// quest's BASIC_MENUSTRING_MIDDLE_ACHIEVED after its AT_ACCEPT page
+	// (s:0x920110, the response branch for a quest under way at state 2).
+	notice string
 }
 
 type questRuntime struct {
@@ -265,7 +273,7 @@ func playerOf(ctx context.Context, chars character.Store, characterID int64, lev
 
 // view builds a quest's 0x30D5 body.
 func (rt *questRuntime) view(q *quest.Quest, s *quest.State) quest.View {
-	v := quest.View{State: 1, Status: byte(s.Status)}
+	v := quest.View{State: byte(q.DivideType), Status: byte(s.Status)}
 	ach, lim := s.Achieved, q.AchievementLimit
 	if ach > 15 {
 		ach = 15
@@ -290,7 +298,9 @@ func (rt *questRuntime) view(q *quest.Quest, s *quest.State) quest.View {
 			count = s.Counts[i]
 		}
 		open := count < quest.Required(m)
-		v.Missions = append(v.Missions, quest.MissionView{Index: byte(m.Index), Open: open && s.Status == quest.StatusAchieving,
+		// The index goes as the mission's +1 (CMissionKillMonster::vslot_003,
+		// s:0x91be70, READ round 819).
+		v.Missions = append(v.Missions, quest.MissionView{Index: byte(m.Index + 1), Open: open && s.Status == quest.StatusAchieving,
 			Text: m.Text, Values: []uint32{uint32(count)}})
 		if open && s.Status == quest.StatusAchieving {
 			switch m.Type {
@@ -539,10 +549,6 @@ func questTalkOpen(ctx context.Context, sess *gateway.Session, e world.Entity, e
 	return true
 }
 
-func questPage(sess *gateway.Session, kind byte, text string) {
-	sess.Send(&proto.Packet{Opcode: quest.OpTalkPage, Data: quest.EncodeTalkPage(kind, text, nil)})
-}
-
 // QuestHandler answers the talk answer (0x70D4 / 0x30D4), the reward
 // (0x7515), the give-up (0x70D9) and the window's reward button (0x70D8).
 func QuestHandler() gateway.Handler {
@@ -633,8 +639,7 @@ func (rt *questRuntime) answer(ctx context.Context, sess *gateway.Session, e wor
 		entry := t.list[i]
 		q := rt.cat.ByID[entry.questID]
 		if entry.offer {
-			t.pending, t.stage = q.ID, talkAsk
-			questPage(sess, quest.PageYesNo, q.MenuText(t.npc, "BASIC_MENUSTRING_REQUEST_ACCEPT_QUEST"))
+			rt.offer(ctx, sess, e, t, ql, q)
 			return
 		}
 		rt.atNPC(ctx, sess, e, t, ql, q)
@@ -643,13 +648,112 @@ func (rt *questRuntime) answer(ctx context.Context, sess *gateway.Session, e wor
 		if q == nil {
 			return
 		}
-		t.stage = talkDone
-		if resp != quest.RespYes {
-			questPage(sess, quest.PageConfirm, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_DENY"))
-			return
+		switch resp {
+		case quest.RespAccept:
+			t.stage = talkDone
+			rt.accept(ctx, sess, e, t, ql, q)
+		case quest.RespDeny:
+			t.stage = talkDone
+			okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_DENY"))
 		}
-		rt.accept(ctx, sess, e, t, ql, q)
+	case talkDone:
+		// Every closing page's one line, OK: TerminateMenu (s:0x920110,
+		// CGObjPC vslot 0x154 -> EndInteraction 0x5107c0, which sends
+		// 0xB04B {1} and the client closes the NPC window, c:0x886ac0 ->
+		// 0x79e350). Round 819: the talk stayed open and the window with it.
+		if resp == quest.RespListBase {
+			rt.terminate(ctx, sess, e, t)
+		}
 	}
+}
+
+// offer is the conversation's start for a quest the character has not got
+// (status NODATA; s:0x920110, READ round 819): a party-only quest out of a
+// sharing party says NOT_PARTY, a repeatable one at its limit COUNT_LIMIT
+// (each with OK), else the request with [Accept, Refuse] -- the
+// ACCEPT_AFTER_ONE_CLEAR text for a different-string quest cleared before.
+func (rt *questRuntime) offer(ctx context.Context, sess *gateway.Session, e world.Entity, t *questTalk, ql *questLog, q *quest.Quest) {
+	if q == nil {
+		return
+	}
+	ql.mu.Lock()
+	cleared := 0
+	if st := ql.log[q.ID]; st != nil {
+		cleared = st.Achieved
+	}
+	held := heldQuests(ql.log)
+	ql.mu.Unlock()
+	if !rt.divideOK(e.CharacterID, q) {
+		t.pending, t.stage = q.ID, talkDone
+		okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_NOT_PARTY"))
+		return
+	}
+	if q.ConditionMask&quest.CondRealTime != 0 && cleared >= q.AchievementLimit {
+		t.pending, t.stage = q.ID, talkDone
+		okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_COUNT_LIMIT"))
+		return
+	}
+	key := "BASIC_MENUSTRING_REQUEST_ACCEPT_QUEST"
+	if q.DifferentString && cleared != 0 {
+		key = "BASIC_MENUSTRING_ACCEPT_AFTER_ONE_CLEAR"
+	}
+	accept := quest.LineAccept
+	if held >= quest.MaxQuests {
+		accept = quest.LineMaxQuest
+	}
+	t.pending, t.stage = q.ID, talkAsk
+	sess.Send(&proto.Packet{Opcode: quest.OpTalkPage, Data: quest.EncodeTalkPage(quest.PageList, q.MenuText(t.npc, key), []string{accept, quest.LineDeny})})
+}
+
+// heldQuests is GetRecvQuestCount (s:0x5714b0, READ): the quests with an id
+// under 10001 whose status is not 4, 5 or 6.
+func heldQuests(l quest.Log) int {
+	n := 0
+	for id, st := range l {
+		if st == nil || id >= 10001 {
+			continue
+		}
+		switch st.Status {
+		case quest.StatusNoData, quest.StatusAchievedOnlyForServer, quest.StatusLockedByAbort:
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// divideOK is the quest's party check (CBasicQuest slot 90, s:0x9261d0,
+// READ round 819): divide type 0 or 5 always passes; 1 needs a party whose
+// type byte shares both EXP and items (bits 1 and 2); any other never.
+func (rt *questRuntime) divideOK(characterID int64, q *quest.Quest) bool {
+	switch q.DivideType {
+	case 0, 5:
+		return true
+	case 1:
+		if rt.deps.Parties == nil {
+			return false
+		}
+		p, in := rt.deps.Parties.Get(characterID)
+		return in && p != nil && p.Flags.ExpShare() && p.Flags.ItemShare()
+	}
+	return false
+}
+
+// terminate is the OK of a closing page: the quest's notice, if any, then
+// EndInteraction (CGObjPC vslot 0x154), and the marks again (the quest's
+// slot 0x118 runs after it; what it does is not READ).
+func (rt *questRuntime) terminate(ctx context.Context, sess *gateway.Session, e world.Entity, t *questTalk) {
+	if t.notice != "" {
+		sess.Send(&proto.Packet{Opcode: quest.OpEventMessage, Data: quest.EncodeEventMessage(t.notice)})
+	}
+	endInteraction(sess, rt.deps.Hub)
+	forgetQuestTalk(sess.ID(), false)
+	rt.refreshMarks(ctx, sess, e.CharacterID, e.Level)
+}
+
+// okPage sends a closing page: the text and its one line, OK.
+func okPage(sess *gateway.Session, text string) {
+	sess.Send(&proto.Packet{Opcode: quest.OpTalkPage, Data: quest.EncodeTalkPage(quest.PageList, text, []string{quest.LineOK})})
 }
 
 // accept opens q for the character at t's NPC.
@@ -659,7 +763,7 @@ func (rt *questRuntime) accept(ctx context.Context, sess *gateway.Session, e wor
 	if r := rt.cat.CanStart(p, ql.log, q, t.npc); r != quest.OK {
 		ql.mu.Unlock()
 		rt.deps.Logger.Info("quest: refused", "character", e.CharacterID, "quest", q.Code, "why", r.String())
-		questPage(sess, quest.PageConfirm, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_DENY"))
+		okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_DENY"))
 		return
 	}
 	s, give := quest.Start(ql.log, q)
@@ -671,7 +775,8 @@ func (rt *questRuntime) accept(ctx context.Context, sess *gateway.Session, e wor
 	_, _ = rt.persist(ctx, e.CharacterID, ql, q.ID)
 	rt.deps.Logger.Info("quest: accepted", "character", e.CharacterID, "quest", q.Code, "id", q.ID, "npc", t.npc)
 	rt.sendUpdate(sess, quest.UpdateAdd, q, &st)
-	questPage(sess, quest.PageConfirm, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_ACCEPT"))
+	t.notice = q.MenuText(t.npc, "BASIC_MENUSTRING_MIDDLE_ACHIEVED")
+	okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_ACCEPT"))
 	rt.refreshMarks(ctx, sess, e.CharacterID, e.Level)
 }
 
@@ -708,6 +813,14 @@ func (rt *questRuntime) atNPC(ctx context.Context, sess *gateway.Session, e worl
 		return
 	}
 	if st.Status == quest.StatusAchievedButNotPaid && (q.CompleteNPC() == t.npc) {
+		// The reward must fit first (the quest's slot 0x108, s:0x925130):
+		// else INVENTORY_FULL with OK, and the quest waits (s:0x920110).
+		items := rewardItems(q, nil, func(code string) int64 { return rt.itemID(ctx, code) })
+		if !rt.roomFor(ctx, e.CharacterID, len(items)) {
+			t.pending, t.stage = q.ID, talkDone
+			okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_INVENTORY_FULL"))
+			return
+		}
 		t.pending, t.stage = q.ID, talkReward
 		text := q.MenuText(t.npc, "BASIC_MENUSTRING_ACHIEVED")
 		if text == "" {
@@ -720,11 +833,11 @@ func (rt *questRuntime) atNPC(ctx context.Context, sess *gateway.Session, e worl
 	t.stage = talkDone
 	switch {
 	case talked != "":
-		questPage(sess, quest.PageConfirm, talked)
+		okPage(sess, talked)
 	case st.Status == quest.StatusAchievedButNotPaid:
-		questPage(sess, quest.PageConfirm, q.MenuText(t.npc, "BASIC_MENUSTRING_MIDDLE_ACHIEVED"))
+		okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_MIDDLE_ACHIEVED"))
 	default:
-		questPage(sess, quest.PageConfirm, q.MenuText(t.npc, "BASIC_MENUSTRING_NOT_ACHIEVED"))
+		okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_NOT_ACHIEVED"))
 	}
 	if len(progress) > 0 {
 		rt.refreshMarks(ctx, sess, e.CharacterID, e.Level)
@@ -767,6 +880,9 @@ func (rt *questRuntime) claimFromWindow(ctx context.Context, sess *gateway.Sessi
 // the window was opened for, done and unpaid.
 func (rt *questRuntime) takeReward(ctx context.Context, sess *gateway.Session, e world.Entity, id int64, chosen []uint32) {
 	fail := func() {
+		// s:0x51b370 ends the interaction on every path, then answers.
+		endInteraction(sess, rt.deps.Hub)
+		forgetQuestTalk(sess.ID(), false)
 		sess.Send(&proto.Packet{Opcode: quest.OpTakeRewardResult, Data: quest.EncodeFailByte(quest.RewardError)})
 	}
 	t := rt.talkOf(sess, e)
@@ -784,9 +900,6 @@ func (rt *questRuntime) takeReward(ctx context.Context, sess *gateway.Session, e
 	// (the scripts' BASIC_MENUSTRING_INVENTORY_FULL line).
 	items := rewardItems(q, chosen, func(code string) int64 { return rt.itemID(ctx, code) })
 	if !rt.roomFor(ctx, e.CharacterID, len(items)) {
-		if text := q.MenuText(t.npc, "BASIC_MENUSTRING_INVENTORY_FULL"); text != "" {
-			questPage(sess, quest.PageConfirm, text)
-		}
 		fail()
 		return
 	}
@@ -825,6 +938,12 @@ func (rt *questRuntime) takeReward(ctx context.Context, sess *gateway.Session, e
 	}
 	rt.pay(ctx, sess, e, q, items)
 	rt.sendUpdate(sess, quest.UpdateDropped, q, nil)
+	// The paid conversation's TerminateMenu and its notice (s:0x920110),
+	// then the take's reply (s:0x51b370 ends the interaction on every path
+	// before 0xB515; READ round 819).
+	endInteraction(sess, rt.deps.Hub)
+	forgetQuestTalk(sess.ID(), false)
+	sess.Send(&proto.Packet{Opcode: quest.OpEventMessage, Data: quest.EncodeEventMessage(quest.NoticeEnd)})
 	sess.Send(&proto.Packet{Opcode: quest.OpTakeRewardResult, Data: []byte{1}})
 	rt.refreshMarks(ctx, sess, e.CharacterID, e.Level)
 }
@@ -934,25 +1053,35 @@ func (rt *questRuntime) payExp(ctx context.Context, sess *gateway.Session, e wor
 	sendExpGainTo(sess, g)
 }
 
-// abandon is 0x70D9.
+// abandon is 0x70D9 (s:0x571b80, READ round 819): an unknown quest gets no
+// answer; one not under way (status 1, 7 or 8) {2, 2}; while an NPC talk
+// is open {2, 5}; else {1, id}, the quest given up.
 func (rt *questRuntime) abandon(ctx context.Context, sess *gateway.Session, e world.Entity, id int64) {
 	q := rt.cat.ByID[id]
 	ql, err := rt.logOf(ctx, e.CharacterID)
 	if q == nil || err != nil {
-		sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeFailByte(quest.AbandonNotAllowed)})
 		return
 	}
 	ql.mu.Lock()
-	active := ql.log.Active(id)
-	var take []quest.ItemCount
-	if active {
-		take = quest.Abandon(ql.log, q)
-	}
-	ql.mu.Unlock()
-	if !active {
-		sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeFailByte(quest.AbandonNotAllowed)})
+	st := ql.log[id]
+	if st == nil {
+		ql.mu.Unlock()
 		return
 	}
+	switch st.Status {
+	case quest.StatusAchieving, quest.StatusAchievingKillMonster, quest.StatusAchievedKillMonster:
+	default:
+		ql.mu.Unlock()
+		sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeFailByte(quest.AbandonWrongStatus)})
+		return
+	}
+	if npcTalkOpen(sess.ID()) {
+		ql.mu.Unlock()
+		sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeFailByte(quest.AbandonGiveUp)})
+		return
+	}
+	take := quest.Abandon(ql.log, q)
+	ql.mu.Unlock()
 	for _, it := range take {
 		rt.takeItem(ctx, e.CharacterID, it.Code, -1)
 	}
@@ -961,6 +1090,15 @@ func (rt *questRuntime) abandon(ctx context.Context, sess *gateway.Session, e wo
 	sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeOKID(uint32(id))})
 	rt.sendUpdate(sess, quest.UpdateRemove, q, nil)
 	rt.refreshMarks(ctx, sess, e.CharacterID, e.Level)
+}
+
+// npcTalkOpen is the PC's +0x1ca0 the give-up tests: the NPC a talk (mode 5)
+// holds, which EndInteraction clears (s:0x51090a).
+func npcTalkOpen(sessionID uint64) bool {
+	npcInteractions.mu.Lock()
+	defer npcInteractions.mu.Unlock()
+	st, ok := npcInteractions.m[sessionID]
+	return ok && st.mode == 5
 }
 
 // questOnKill credits characterID's kill of monster: kill counts and
@@ -983,6 +1121,16 @@ func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, 
 		return
 	}
 	credits := ql.killCredits(rt.cat, monster.CodeName, rt.roll)
+	// A quest's kill event runs only past its party check (s:0x9210a0 calls
+	// slot 0x168, s:0x9261d0, before any kill or gather mission; READ round
+	// 819): a party-only quest out of a sharing party counts nothing.
+	kept := credits[:0]
+	for _, k := range credits {
+		if rt.divideOK(characterID, k.Quest) {
+			kept = append(kept, k)
+		}
+	}
+	credits = kept
 	if len(credits) == 0 {
 		// A level-up by this kill opens quests: the marks follow (OURS).
 		if sess != nil && rt.deps.Hub != nil {

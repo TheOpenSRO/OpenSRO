@@ -37,6 +37,11 @@ const (
 	// whose missions are done (FUN_006e4ec0 / FUN_00881450).
 	OpClaim       uint16 = 0x70D8
 	OpClaimResult uint16 = 0xB0D8
+	// OpEventMessage 0x30EC: a quest notice, {string key} (CGObjPC::
+	// SendQuestEventMessage, CGObjPC vslot 0x1cc, s:0x4ed4a0; the client's
+	// 0x884a30 shows the key's text through 0x77b5b0 -- the quest info
+	// notice -- and plays snd_quest_end for SN_TALK_COMMON_END). READ.
+	OpEventMessage uint16 = 0x30EC
 	// OpLog (OURS, 0x00B1): the character's quest section at entering the
 	// world, in the layout retail carries inside its character data
 	// (ICPlayer::FUN_009d9830): OpenSRO's character data is its own, so the
@@ -66,7 +71,34 @@ const (
 	RespYes      = 2
 	RespNo       = 3
 	RespListBase = 5
+	// RespAccept and RespDeny are the accept page's two lines (round 819).
+	RespAccept = RespListBase
+	RespDeny   = RespListBase + 1
 )
+
+// The quest pages' lines (round 819, READ). Every quest page is a type-4
+// list (CBasicQuest's conversation s:0x920110 shows each through ShowMenu,
+// CGObjPC vslot 0x150, with type 4) whose lines come from the quest's table
+// at +0x500 (its constructor, s:0x91e35d..): an offer is [Accept, Refuse],
+// every other page [OK]. ShowMenu (s:0x4ec930) swaps the accept line for
+// LineMaxQuest when the player holds MaxQuests or more quests
+// (GetRecvQuestCount, s:0x5714b0); nothing else enforces it -- the line
+// still answers 5 and the quest still starts (no other caller of the count).
+const (
+	LineOK       = "SN_TALK_COMMON_OK"
+	LineAccept   = "SN_TALK_COMMON_ACCEPT"
+	LineDeny     = "SN_TALK_COMMON_DENY"
+	LineMaxQuest = "SN_TALK_COMMON_MAXQUEST"
+	// NoticeEnd is the notice after a paid reward (s:0x920110, when the
+	// quest's +0x48c is set, which its constructor does and nothing clears).
+	NoticeEnd = "SN_TALK_COMMON_END"
+	// MaxQuests: the accept line reads LineMaxQuest at this many quests
+	// (`bVar2 < 0x21` keeps it).
+	MaxQuests = 33
+)
+
+// EncodeEventMessage writes 0x30EC: the key, a u16-length string (FUN_00426040).
+func EncodeEventMessage(key string) []byte { return putString(nil, key) }
 
 // Mark types (GlobalDataManager::FUN_009c75e0): the effect drawn over the
 // object.
@@ -96,7 +128,8 @@ type View struct {
 	// high one (what the pair means is not READ).
 	Counter byte
 	// State is the byte at +9, which picks the row's colour bar (1 green,
-	// 2 red, 3 light green; 0x6e5c5d..0x6e5cf4). OURS: 1.
+	// 2 red, 3 light green; 0x6e5c5d..0x6e5cf4): the quest's divide type
+	// (s:0x871bd0, READ round 819), so a quest of type 0 or 5 has none.
 	State    byte
 	Status   byte
 	Missions []MissionView
@@ -236,7 +269,13 @@ func EncodeFailWord(code uint16) []byte { return binary.LittleEndian.AppendUint1
 
 // Refusal codes the client names (READ, FUN_008814b0 / FUN_00881570).
 const (
-	AbandonNotAllowed = 4 // UIIT_MSG_SR_ABORT_QUEST_ERROR_NOT_ALLOWED
-	AbandonGiveUp     = 5 // UIIT_STT_QUEST_GIVEUP_1
+	// AbandonWrongStatus is the refusal for a quest not under way (status
+	// other than 1, 7 or 8): {2, 2}, which the client shows nothing for
+	// (s:0x571d45, READ round 819).
+	AbandonWrongStatus = 2
+	AbandonNotAllowed  = 4 // UIIT_MSG_SR_ABORT_QUEST_ERROR_NOT_ALLOWED
+	// AbandonGiveUp is the refusal while an NPC talk is open (the PC's
+	// +0x1ca0, which EndInteraction clears for a talk; s:0x571d66).
+	AbandonGiveUp = 5 // UIIT_STT_QUEST_GIVEUP_1
 	RewardError       = 2 // UIIT_STT_QUESTREWARD_ERROR
 )

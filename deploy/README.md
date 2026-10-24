@@ -2003,6 +2003,10 @@ On opensro-01:
 
 To undo: remove the variable and `docker compose up -d`; the table stays, unread.
 
+**Round 819** adds two columns to `quests.csv` (`DivideType`, `DifferentString`: party-only quests
+and the after-one-clear text). A catalogue exported before still loads, without them; re-run the
+export above and stage it again to have them.
+
 ## Alchemy (round 768)
 
 The alchemy window (Y) reinforces with elixirs and lucky powder, and applies magic and attribute

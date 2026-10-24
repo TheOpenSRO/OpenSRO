@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.579** plus what is merged on `dev`; updated 2026-10-23.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.580** plus what is merged on `dev`; updated 2026-10-24.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -104,7 +104,7 @@ Retail NPCs in their retail spots, with talk menus, shops, storage and quests.
 | NPC shops | ✅ Supported | Retail goods and prices; buy, sell, buyback, Ctrl+click quick-sell |
 | Storage (warehouse) | ✅ Supported | Per-account items and gold with deposit fee |
 | Repair NPCs | 🟡 Partial | Repair and Repair All cover worn gear only, not bag items |
-| Quests | 🟡 Partial | 564 of 696 quests reachable, NPC quest marks; party/timed/job quests missing |
+| Quests | 🟡 Partial | 564 of 696 quests reachable, NPC quest marks; the original's talk pages (Accept/Refuse, OK closes the talk, the reward's "Quest completed." notice), party-only quests and their refusals; timed and job quests missing |
 | Guild manager NPC | 🟡 Partial | Create and leave a guild; other guild lines not done |
 | Test Items NPC | ✅ Supported | Jangan NPC; free +12 full-blue gear, elixirs, stones; server option |
 | Test Items NPC: level-101 Nova | ✅ Supported | Sells the unlocked level-101 Seal of Nova instead of level 111 |

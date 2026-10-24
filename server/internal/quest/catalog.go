@@ -57,6 +57,14 @@ const (
 	StatusAchievedKillMonster   = 8
 )
 
+// CondRealTime is LuaSetRealTime's bit in the start-condition mask
+// (s:0x86ba00 ORs 0x100000 into +0x848, READ): a quest offered again after
+// it is cleared, up to its AchievementLimit; at the limit its NPC says
+// BASIC_MENUSTRING_COUNT_LIMIT (s:0x920110).
+const (
+	CondRealTime = 0x100000
+)
+
 // Sources of a catalogue entry.
 const (
 	SourceScript   = "script"   // a Quest.sct function: everything below is known
@@ -166,6 +174,15 @@ type Quest struct {
 	AchievementLimit int
 	// CompleteNum is LuaSetMissionCompleteNum's value: 0 = every mission.
 	CompleteNum int
+	// DivideType is LuaSetDivideType's byte (s:0x86bb20, builder +0x826;
+	// the quest's +0x2e, READ): 0 and 5 any player, 1 only in a party that
+	// shares EXP and items (s:0x9261d0; any other value never passes). The
+	// quest window's row bar is drawn by it (0x30D5 byte +9, s:0x871bd0).
+	DivideType int
+	// DifferentString is LuaSetDifferentString's byte (s:0x86b200, builder
+	// +0x85d; the condition block's +0x1d): a quest cleared before offers
+	// itself with BASIC_MENUSTRING_ACCEPT_AFTER_ONE_CLEAR (s:0x920110).
+	DifferentString bool
 	Missions    []Mission
 	Menus       map[string][]MenuText
 	Reward      Reward

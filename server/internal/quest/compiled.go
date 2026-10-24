@@ -74,6 +74,8 @@ type CompiledSetup struct {
 	Level     int
 	LevelArg2 int
 	Limit     int
+	Divide    int
+	DiffStr   bool
 	QuestNPCs []string
 	Pushed    []string // NPC pushes, in order
 	Deps      []string
@@ -98,6 +100,10 @@ var (
 	reMask     = regexp.MustCompile(`\*\(uint \*\)param_1\[0xc2\] = \*\(uint \*\)param_1\[0xc2\] \| (0x[0-9a-f]+|\d+);`)
 	reCond     = regexp.MustCompile(`\(param_1\[0xc2\] \+ (0x[0-9a-f]+|\d+)\) = (0x[0-9a-f]+|\d+);`)
 	reLimit    = regexp.MustCompile(`\(\(int\)param_1 \+ 0x2d\) = (0x[0-9a-f]+|\d+);`)
+	// reDivide is the divide type at the quest's +0x2e (a byte, or a word
+	// whose low byte it is); reDiffStr the condition block's +0x1d.
+	reDivide  = regexp.MustCompile(`\(\(int\)param_1 \+ 0x2e\) = (0x[0-9a-f]+|\d+);`)
+	reDiffStr = regexp.MustCompile(`\(param_1\[0xc2\] \+ 0x1d\) = (0x[0-9a-f]+|\d+);`)
 	reQNPC     = regexp.MustCompile(`\(param_1\[0xc4\] \+ (0x[0-9a-f]+|\d+)\) = "([A-Z0-9_]+)";`)
 	rePush     = regexp.MustCompile(`FUN_00401fc0\("([A-Z0-9_]+)",`)
 	reSlot     = regexp.MustCompile(`param_1\[(0x[0-9a-f]+)\] = \(int\)"([A-Za-z0-9_]+)";`)
@@ -196,6 +202,10 @@ func ParseDecomp(r io.Reader, dataFloat func(va uint32) (float64, bool)) map[str
 			}
 		case reLimit.MatchString(line):
 			cur.Limit = num(reLimit.FindStringSubmatch(line)[1])
+		case reDivide.MatchString(line):
+			cur.Divide = num(reDivide.FindStringSubmatch(line)[1]) & 0xff
+		case reDiffStr.MatchString(line):
+			cur.DiffStr = num(reDiffStr.FindStringSubmatch(line)[1]) != 0
 		case reQNPC.MatchString(line):
 			cur.QuestNPCs = append(cur.QuestNPCs, reQNPC.FindStringSubmatch(line)[2])
 		case rePush.MatchString(line):
@@ -297,6 +307,8 @@ func ApplyCompiled(q *Quest, cs *CompiledSetup) {
 	}
 	q.LevelArg2 = cs.LevelArg2
 	q.AchievementLimit = cs.Limit
+	q.DivideType = cs.Divide
+	q.DifferentString = cs.DiffStr
 	q.QuestNPCs = append([]string(nil), cs.QuestNPCs...)
 	// The pushes: the complete NPC, then the start NPC (INFERRED, see above).
 	switch len(cs.Pushed) {

@@ -31,13 +31,20 @@ const OP_ABANDON_RESULT := 0xB0D9
 ## FUN_00881450).
 const OP_CLAIM := 0x70D8
 const OP_CLAIM_RESULT := 0xB0D8
+## 0x30EC: a quest notice, {string key} (round 819; the server's
+## SendQuestEventMessage, s:0x4ed4a0; the client's FUN_00884a30 shows the
+## key's text in the quest info notice, 0x77b5b0, and plays snd_quest_end
+## for SN_TALK_COMMON_END). READ.
+const OP_EVENT_MESSAGE := 0x30EC
+## The notice after a paid reward.
+const NOTICE_END := "SN_TALK_COMMON_END"
 ## OURS 0x00B1: the character's quest section at entering the world, in the
 ## layout retail carries inside its character data (ICPlayer::FUN_009d9830).
 const OP_LOG := 0x00B1
 
 ## The server-to-client opcodes this file decodes.
 const SERVER_OPCODES := [OP_UPDATE, OP_TALK_PAGE, OP_MARK, OP_UNMARK, OP_REWARD_WINDOW,
-	OP_TAKE_REWARD_RESULT, OP_ABANDON_RESULT, OP_CLAIM_RESULT, OP_LOG]
+	OP_TAKE_REWARD_RESULT, OP_ABANDON_RESULT, OP_CLAIM_RESULT, OP_LOG, OP_EVENT_MESSAGE]
 
 ## 0x30D5's kinds.
 const UPDATE_ADD := 1
@@ -263,6 +270,12 @@ static func decode_unmark(data: PackedByteArray) -> int:
 	return data.decode_u32(0) if data.size() >= 4 else -1
 
 ## Decodes 0x3514: {quest_id, text}, {} when short.
+## Decodes 0x30EC: the notice's key, or "" for a malformed one.
+static func decode_event_message(data: PackedByteArray) -> String:
+	var c := Cursor.new(data)
+	var key := c.read_string()
+	return key if c.ok else ""
+
 static func decode_reward_window(data: PackedByteArray) -> Dictionary:
 	var c := Cursor.new(data)
 	var id := c.u32()

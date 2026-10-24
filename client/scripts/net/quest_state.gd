@@ -16,6 +16,8 @@ signal quest_updated(update: QuestNet.Update)
 ## its formatted text changes on an existing quest).
 signal mission_progress(quest_id: int, mission: QuestNet.Mission)
 signal talk_page(page: QuestNet.TalkPage)
+## A quest notice (0x30EC): the key of the text to show.
+signal event_message(key: String)
 signal reward_window(quest_id: int, text: String)
 signal reward_result(ok: bool, error: int)
 signal abandon_result(ok: bool, quest_id: int, error: int)
@@ -145,6 +147,10 @@ func handle(data: PackedByteArray, op: int) -> void:
 		QuestNet.OP_CLAIM_RESULT:
 			var r := QuestNet.decode_id_result(data, true)
 			claim_result.emit(bool(r["ok"]), int(r["quest_id"]), int(r["error"]))
+		QuestNet.OP_EVENT_MESSAGE:
+			var key := QuestNet.decode_event_message(data)
+			if key != "":
+				event_message.emit(key)
 
 func _put(id: int, v: QuestNet.View) -> void:
 	if not active.has(id):

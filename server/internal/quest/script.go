@@ -163,6 +163,12 @@ func Apply(q *Quest, calls []Call) {
 			q.RequiresAny = append(q.RequiresAny, a.strs(n)...)
 		case "LuaSetMissionCompleteNum":
 			q.CompleteNum = a.int()
+		case "LuaSetDivideType": // 0x86bb20: byte +0x826
+			q.DivideType = a.int()
+		case "LuaSetRealTime": // 0x86ba00: +0x848 |= 0x100000, no argument
+			q.ConditionMask |= CondRealTime
+		case "LuaSetDifferentString": // 0x86b200: byte +0x85d
+			q.DifferentString = a.int() != 0
 		case "LuaSetMissionDataSize":
 		case "LuaSetMissionData": // 0x86c0f0
 			a.next() // QUESTID

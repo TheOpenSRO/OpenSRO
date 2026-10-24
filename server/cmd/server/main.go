@@ -2471,7 +2471,7 @@ func main() {
 			logger.Warn("the item store cannot look items up by code name: quest items and item rewards are not given")
 		}
 		session.InstallQuests(cat, session.QuestDeps{Store: quests, Chars: chars, Inv: inv, Items: items,
-			Skills: skills, Hub: hub, MP: manaTracker, Logger: logger})
+			Skills: skills, Hub: hub, Parties: parties, MP: manaTracker, Logger: logger})
 		cv := cat.Coverage()
 		logger.Info("quest catalogue loaded: NPCs offer their quests", "dir", *questsDir, "quests", cv.Total,
 			"playable", cv.Playable, "scripted", cv.Script, "compiled_not_extracted", cv.Compiled, "questdata_only", cv.None)

@@ -18,6 +18,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npctalk"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/quest"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
@@ -173,6 +174,13 @@ type reviewQuestWorld struct {
 
 func startReviewQuestWorld(t *testing.T, store quest.Store) *reviewQuestWorld {
 	t.Helper()
+	return startQuestWorld(t, store, testQuestCatalog(), nil)
+}
+
+// startQuestWorld is startReviewQuestWorld with its catalogue and party hub
+// (round 819).
+func startQuestWorld(t *testing.T, store quest.Store, cat *quest.Catalog, parties *party.Hub) *reviewQuestWorld {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	chars := character.NewMemStore()
@@ -189,7 +197,7 @@ func startReviewQuestWorld(t *testing.T, store quest.Store) *reviewQuestWorld {
 	giver.Code = "NPC_T_GIVER"
 	giver.Flags, giver.Interact = npcspawn.FlagInteractions, []byte{1}
 	installNPCsForTest(t, giver)
-	InstallQuests(testQuestCatalog(), QuestDeps{Store: store, Chars: chars, Inv: inv, Items: ref, Hub: hub})
+	InstallQuests(cat, QuestDeps{Store: store, Chars: chars, Inv: inv, Items: ref, Hub: hub, Parties: parties})
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), NPCTalkHandler(hub, trade.NewHub()), QuestHandler())
 	srv := &gateway.Server{Addr: freeAddr(t), Handle: handle}
 	sctx, cancel := context.WithCancel(context.Background())
@@ -238,7 +246,7 @@ func (w *reviewQuestWorld) accept(t *testing.T) {
 	w.openTalk(t)
 	w.cl.send(quest.OpTalkAnswer, []byte{quest.RespListBase})
 	w.cl.next(quest.OpTalkPage)
-	w.cl.send(quest.OpTalkAnswer, []byte{quest.RespYes})
+	w.cl.send(quest.OpTalkAnswer, []byte{quest.RespAccept})
 	w.cl.next(quest.OpUpdate)
 	w.cl.next(quest.OpTalkPage)
 	w.cl.send(npctalk.OpEnd, npctalk.EncodeEntity(w.giver.UID))
@@ -278,7 +286,12 @@ func TestReview785RewardRefusedWhenThePaidStateIsNotSaved(t *testing.T) {
 		t.Fatalf("the log after the refused take: %+v; want still unpaid", s)
 	}
 
+	// The refused take ended the talk, as the original's does on every path
+	// (s:0x51b370, round 819): the reward window is opened again.
 	store.fail.Store(false)
+	w.openTalk(t)
+	w.cl.send(quest.OpTalkAnswer, []byte{quest.RespListBase})
+	w.cl.next(quest.OpRewardWindow)
 	w.cl.send(quest.OpTakeReward, take)
 	if res := w.cl.next(quest.OpTakeRewardResult).Data; res[0] != 1 {
 		t.Fatalf("take with the store back: % x", res)

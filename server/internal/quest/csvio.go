@@ -26,7 +26,11 @@ var (
 	QuestColumns = []string{"ID", "Code", "Level", "LevelArg2", "Source", "ConditionMask", "Race",
 		"StartNPCs", "QuestNPCs", "CompleteNPCs", "MissionNPCs", "Requires", "RequiresAny",
 		"AchievementLimit", "CompleteNum", "TextName", "TextPay", "TextPayCon", "TextNN", "TextNC",
-		"Gold", "Exp", "SPExp", "SkillPoint", "RewardFromTable", "Unhandled"}
+		"Gold", "Exp", "SPExp", "SkillPoint", "RewardFromTable", "Unhandled",
+		// Round 819; a catalogue written before has none of these.
+		"DivideType", "DifferentString"}
+	// questColumnsRequired is how many of QuestColumns a catalogue must have.
+	questColumnsRequired = 26
 	MissionColumns    = []string{"Code", "Index", "Type", "Text", "Targets", "Rates", "Count", "MonsterClass", "Item", "NPC", "Deliver", "Talk"}
 	MenuColumns       = []string{"Code", "NPC", "Key", "Text"}
 	RewardItemColumns = []string{"Code", "Item", "Count", "Choice"}
@@ -60,7 +64,8 @@ func WriteDir(dir string, quests []*Quest) error {
 		qr = append(qr, []string{i64(q.ID), q.Code, itoa(q.Level), itoa(q.LevelArg2), q.Source, itoa(q.ConditionMask), itoa(q.Race),
 			join(q.StartNPCs), join(q.QuestNPCs), join(q.CompleteNPCs), join(q.MissionNPCs), join(q.Requires), join(q.RequiresAny),
 			itoa(q.AchievementLimit), itoa(q.CompleteNum), q.TextName, q.TextPay, q.TextPayCon, q.TextNN, q.TextNC,
-			i64(q.Reward.Gold), i64(q.Reward.Exp), i64(q.Reward.SPExp), i64(q.Reward.SkillPoint), btoa(q.Reward.FromTable), join(q.Unhandled)})
+			i64(q.Reward.Gold), i64(q.Reward.Exp), i64(q.Reward.SPExp), i64(q.Reward.SkillPoint), btoa(q.Reward.FromTable), join(q.Unhandled),
+			itoa(q.DivideType), btoa(q.DifferentString)})
 		for _, m := range q.Missions {
 			var rates, deliver []string
 			for _, r := range m.Rates {
@@ -116,6 +121,13 @@ func writeCSV(path string, head []string, rows [][]string) error {
 }
 
 func readCSV(path string, head []string) ([][]string, error) {
+	return readCSVMin(path, head, len(head))
+}
+
+// readCSVMin is readCSV for a file whose header may end after its first
+// `required` columns (one written before the later ones existed); a short
+// row is padded with "".
+func readCSVMin(path string, head []string, required int) ([][]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -127,10 +139,13 @@ func readCSV(path string, head []string) ([][]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: header: %w", path, err)
 	}
-	if len(got) < len(head) {
-		return nil, fmt.Errorf("%s: header has %d columns, want %d (%s)", path, len(got), len(head), strings.Join(head, ","))
+	if len(got) < required {
+		return nil, fmt.Errorf("%s: header has %d columns, want %d (%s)", path, len(got), required, strings.Join(head[:required], ","))
 	}
 	for i, h := range head {
+		if i >= len(got) {
+			break
+		}
 		if got[i] != h {
 			return nil, fmt.Errorf("%s: column %d is %q, want %q", path, i, got[i], h)
 		}
@@ -162,7 +177,7 @@ func atoi64(s string) int64 {
 
 // LoadDir reads a catalogue WriteDir wrote.
 func LoadDir(dir string) (*Catalog, error) {
-	qrows, err := readCSV(filepath.Join(dir, FileQuests), QuestColumns)
+	qrows, err := readCSVMin(filepath.Join(dir, FileQuests), QuestColumns, questColumnsRequired)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +190,7 @@ func LoadDir(dir string) (*Catalog, error) {
 			AchievementLimit: atoi(r[13]), CompleteNum: atoi(r[14]), TextName: r[15], TextPay: r[16], TextPayCon: r[17],
 			TextNN: r[18], TextNC: r[19], Menus: map[string][]MenuText{}, Unhandled: split(r[25])}
 		q.Reward = Reward{Gold: atoi64(r[20]), Exp: atoi64(r[21]), SPExp: atoi64(r[22]), SkillPoint: atoi64(r[23]), FromTable: r[24] == "1"}
+		q.DivideType, q.DifferentString = atoi(r[26]), r[27] == "1"
 		if q.Code == "" {
 			return nil, fmt.Errorf("%s: a row with no code", FileQuests)
 		}

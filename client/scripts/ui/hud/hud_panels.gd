@@ -721,6 +721,8 @@ signal npc_service_selected(key: String)
 ## sends the end request 0x704B for a server NPC (NpcTalkNet.end, which holds
 ## it while an open is in flight, as the original's close slot does).
 signal npc_window_hidden(panel_id: String)
+## A quest line's answer is out and its page not yet back (round 819).
+var quest_answer_in_flight := false
 ## The guild name prompt (open_guild_name_prompt, round 521) was submitted
 ## with this name. World3D sends it to the server (NetClient.create_guild).
 signal guild_create_requested(guild_name: String)
@@ -966,6 +968,8 @@ func open(panel_id: String) -> HudWindow:
 		if panel_id in NPC_INTERACTION_WINDOWS:
 			window.visibility_changed.connect(func() -> void:
 				if not window.visible:
+					if panel_id == "npctalk":
+						quest_answer_in_flight = false
 					npc_window_hidden.emit(panel_id))
 		_populate(panel_id)
 	if panel_id == "exchange" and not was_shown:
@@ -1430,6 +1434,12 @@ func quest_level_up(level: int) -> void:
 
 ## The progress notice's text for an objective (GDR_UPDATE_QUEST_INFO): its
 ## SN_CON_ text with the count put in.
+## A quest text key's text (the quest tables, keep-first; the key itself
+## when no table has it): 0x30EC's notice (round 819).
+func quest_text(key: String) -> String:
+	var t := _quest_hud()._tables()
+	return QuestTables.plain(t.resolve(key, key)) if t != null else key
+
 func quest_progress_text(m: QuestNet.Mission) -> String:
 	var t := _quest_hud().tables
 	var fmt := t.resolve(m.text, m.text) if t != null else m.text
@@ -1438,6 +1448,7 @@ func quest_progress_text(m: QuestNet.Mission) -> String:
 ## An NPC's quest page (0x30D4, QuestHud.page_lines): the talk box's lines
 ## replaced by the page's. False when the talk box is not open.
 func show_quest_page(page: QuestNet.TalkPage) -> bool:
+	quest_answer_in_flight = false
 	var window := _windows.get("npctalk") as HudWindow
 	if window == null or not window.visible:
 		window = open("npctalk")
@@ -1532,6 +1543,12 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	# A quest page's line (round 785): its response id goes as 0x70D4.
 	var response := QuestHud.response_of(key)
 	if response >= 0:
+		# Round 819: one answer at a time (CIF_NPCTalk's +0x7f0, set when a
+		# quest line is sent, c:0x7026b1..0x702766, and cleared by the next
+		# page, FUN_006fc1c0; READ).
+		if quest_answer_in_flight:
+			return
+		quest_answer_in_flight = true
 		print("HudPanels: quest answer %d" % response)
 		NetClient.quest.answer(response)
 		return

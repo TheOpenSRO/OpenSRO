@@ -41,6 +41,7 @@ func testQuestCatalog() *quest.Catalog {
 			{Key: "BASIC_MENUSTRING_AT_DENY", Text: "SN_TALK_QT_HUNT_03"},
 			{Key: "BASIC_MENUSTRING_NOT_ACHIEVED", Text: "SN_TALK_QT_HUNT_04"},
 			{Key: "BASIC_MENUSTRING_ACHIEVED", Text: "SN_TALK_QT_HUNT_06"},
+			{Key: "BASIC_MENUSTRING_MIDDLE_ACHIEVED", Text: "SN_TALK_QT_HUNT_05"},
 		}},
 		Reward: quest.Reward{Gold: 100, Items: []quest.RewardItem{{Code: "ITEM_T_PRIZE", Count: 1}}, FromTable: true},
 	}
@@ -129,20 +130,37 @@ func TestQuestTalkKillRewardFlow(t *testing.T) {
 	}
 	cl.send(quest.OpTalkAnswer, []byte{quest.RespListBase})
 	pg = cl.next(quest.OpTalkPage).Data
-	if txt, _ := readString(pg[1:]); pg[0] != quest.PageYesNo || txt != "SN_TALK_QT_HUNT_01" {
+	// Round 819 (READ s:0x920110): the offer is a list page, [Accept, Refuse].
+	txt, rest := readString(pg[1:])
+	if pg[0] != quest.PageList || txt != "SN_TALK_QT_HUNT_01" || rest[0] != 2 {
 		t.Fatalf("ask % x", pg)
 	}
-	cl.send(quest.OpTalkAnswer, []byte{quest.RespYes})
+	if l1, r1 := readString(rest[1:]); l1 != quest.LineAccept {
+		t.Fatalf("accept line %q", l1)
+	} else if l2, _ := readString(r1); l2 != quest.LineDeny {
+		t.Fatalf("deny line %q", l2)
+	}
+	cl.send(quest.OpTalkAnswer, []byte{quest.RespAccept})
 	up := cl.next(quest.OpUpdate).Data
 	if up[0] != quest.UpdateAdd || binary.LittleEndian.Uint32(up[1:]) != 901 {
 		t.Fatalf("add % x", up)
 	}
 	pg = cl.next(quest.OpTalkPage).Data
-	if txt, _ := readString(pg[1:]); txt != "SN_TALK_QT_HUNT_02" {
-		t.Fatalf("accept text %q", txt)
+	txt, rest = readString(pg[1:])
+	if txt != "SN_TALK_QT_HUNT_02" || rest[0] != 1 {
+		t.Fatalf("accept page % x", pg)
 	}
-	cl.send(npctalk.OpEnd, npctalk.EncodeEntity(giver.UID))
-	cl.next(npctalk.OpEndResult)
+	if l1, _ := readString(rest[1:]); l1 != quest.LineOK {
+		t.Fatalf("the accept page's line %q", l1)
+	}
+	// Its OK: the MIDDLE_ACHIEVED notice, then the talk ends (0xB04B {1}).
+	cl.send(quest.OpTalkAnswer, []byte{quest.RespListBase})
+	if n, _ := readString(cl.next(quest.OpEventMessage).Data); n != "SN_TALK_QT_HUNT_05" {
+		t.Fatalf("notice %q", n)
+	}
+	if end := cl.next(npctalk.OpEndResult).Data; end[0] != 1 {
+		t.Fatalf("the OK did not end the talk: % x", end)
+	}
 
 	// Two kills: the kill count, and the pelt drops (rate 100) on the first.
 	mob := combat.Monster{ID: 1, CodeName: "MOB_T"}
@@ -178,6 +196,13 @@ func TestQuestTalkKillRewardFlow(t *testing.T) {
 	if up[0] != quest.UpdateDropped {
 		t.Fatalf("drop % x", up)
 	}
+	// The talk ends, the end notice, then the reply (s:0x920110, s:0x51b370).
+	if end := cl.next(npctalk.OpEndResult).Data; end[0] != 1 {
+		t.Fatalf("the reward did not end the talk: % x", end)
+	}
+	if n, _ := readString(cl.next(quest.OpEventMessage).Data); n != quest.NoticeEnd {
+		t.Fatalf("end notice %q", n)
+	}
 	if res := cl.next(quest.OpTakeRewardResult).Data; res[0] != 1 {
 		t.Fatalf("reward result % x", res)
 	}
@@ -211,8 +236,16 @@ func TestQuestTalkKillRewardFlow(t *testing.T) {
 	}
 	cl.send(quest.OpTalkAnswer, []byte{quest.RespListBase})
 	cl.next(quest.OpTalkPage)
-	cl.send(quest.OpTalkAnswer, []byte{quest.RespYes})
+	cl.send(quest.OpTalkAnswer, []byte{quest.RespAccept})
 	cl.next(quest.OpUpdate)
+	cl.next(quest.OpTalkPage)
+	// Given up with the talk still open: {2, 5} (s:0x571d66).
+	cl.send(quest.OpAbandon, binary.LittleEndian.AppendUint32(nil, 902))
+	if res := cl.next(quest.OpAbandonResult).Data; res[0] != 2 || res[1] != quest.AbandonGiveUp {
+		t.Fatalf("give up in the talk % x", res)
+	}
+	cl.send(quest.OpTalkAnswer, []byte{quest.RespListBase})
+	cl.next(npctalk.OpEndResult)
 	cl.send(quest.OpAbandon, binary.LittleEndian.AppendUint32(nil, 902))
 	if res := cl.next(quest.OpAbandonResult).Data; res[0] != 1 || binary.LittleEndian.Uint32(res[1:]) != 902 {
 		t.Fatalf("give up % x", res)
@@ -224,9 +257,14 @@ func TestQuestTalkKillRewardFlow(t *testing.T) {
 	if len(st) != 1 {
 		t.Fatalf("given up state remains %+v", st)
 	}
+	// Given up again: the quest is gone from the log, and the original
+	// answers nothing for a quest it has no record of (s:0x571b80).
 	cl.send(quest.OpAbandon, binary.LittleEndian.AppendUint32(nil, 902))
-	if res := cl.next(quest.OpAbandonResult).Data; res[0] != 2 {
-		t.Fatalf("give up twice % x", res)
+	cl.none(quest.OpAbandonResult)
+	// A quest not under way -- QT_HUNT, paid -- is refused {2, 2}.
+	cl.send(quest.OpAbandon, binary.LittleEndian.AppendUint32(nil, 901))
+	if res := cl.next(quest.OpAbandonResult).Data; res[0] != 2 || res[1] != quest.AbandonWrongStatus {
+		t.Fatalf("give up a paid quest % x", res)
 	}
 }
 

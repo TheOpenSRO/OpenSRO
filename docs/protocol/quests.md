@@ -134,7 +134,7 @@ Strings are a u16 length and the bytes (`FUN_004f7a70`). All READ from
 | opcode | dir | layout | where |
 |---|---|---|---|
 | 0x30D5 | S->C | u8 kind (1 add, 2 change, 3 remove, 4 remove), u32 quest, body for 1/2 | `FUN_008812b0`; body `FUN_008b94d0` |
-| body | | u8 counter (+8), u8 state (+9), u8 flags; flags&4 u32 time; flags&8 u8 status; flags&0x10 u8 n x (u8 index, u8 open flag, string text, u8 m, m x u32 value); flags&0x40 u8 n x u32 NPC RefObjID | |
+| body | | u8 counter (+8), u8 divide type (+9, the quest's +0x2e, `s:0x871bd0`; round 819), u8 flags; flags&4 u32 time; flags&8 u8 status; flags&0x10 u8 n x (u8 index -- the mission's +1, `s:0x91be70` --, u8 open flag, string text, u8 m, m x u32 value); flags&0x40 u8 n x u32 NPC RefObjID | |
 | (log) | S->C | u16 n x u32 completed; u8 n x (u32 quest, body); u8 n marks | `ICPlayer::FUN_009d9830`, inside retail's character data; OpenSRO sends it as **0x00B1 (OURS)** after the world entry |
 | 0x30D4 | S->C | u8 type, string text; type 4/5: u8 n x string; type 5: string, u32 | `FUN_00889d90` -> `FUN_006fc1c0`: type 1 one CONFIRM line (response 1), 3 YES (2) / NO (3), 4 a numbered list (response 5+i) |
 | 0x70D4 | C->S | u8 response | built with 0x30D4 at 0x7026be; the server handler is index 0x0d4 (`GObjPC_HandleTalkMenuSelectMsg_0d4`); OpenSRO accepts both |
@@ -143,23 +143,45 @@ Strings are a u16 length and the bytes (`FUN_004f7a70`). All READ from
 | 0x3514 | S->C | u32 quest, u8 n, string text | opens `CNIFQuestReward` |
 | 0x7515 | C->S | u32 quest, u8 n x u32 chosen | `FUN_008252d0` |
 | 0xB515 | S->C | u8 1, or u8 2 + u8 err (2 `UIIT_STT_QUESTREWARD_ERROR`) | `FUN_00881570` |
-| 0x70D9 / 0xB0D9 | | u32 quest / u8 1 + u32, or u8 2 + u8 err (4 not allowed, 5 GIVEUP_1) | give up |
+| 0x70D9 / 0xB0D9 | | u32 quest / u8 1 + u32, or u8 2 + u8 err (2 not under way -- the client shows nothing --, 4 not allowed, 5 GIVEUP_1 while an NPC talk is open); no reply for a quest with no record | give up (`s:0x571b80`, round 819) |
+| 0x30EC | S->C | string key | a quest notice (`CGObjPC::SendQuestEventMessage` `s:0x4ed4a0`; client `FUN_00884a30`: the quest info notice, and `snd_quest_end` for `SN_TALK_COMMON_END`); round 819 |
+| 0xB04B | S->C | u8 1, or u8 2 + u16 | EndInteraction (`s:0x5107c0`); the client's `0x886ac0` closes the NPC talk, store and storage windows (`0x79e350`, ShowWindow(0)) before it reads the result |
 | 0x70D8 / 0xB0D8 | | u32 quest / u8 1 + u32, or u8 2 + u16 | the quest window's reward button on a status-2 quest |
 
-The talk flow (the client's page types and the scripts' keys):
+The talk flow (round 819, READ: CBasicQuest's conversation `s:0x920110`). Every quest page is a
+type-4 list whose lines are the quest's table at +0x500 (`SN_TALK_COMMON_OK`, `_ACCEPT`, `_DENY`,
+`_PREVIOUS`, `_NEXT`, `_REWARD`, its constructor `s:0x91e35d..`), shown by ShowMenu (CGObjPC vslot
+0x150, `s:0x4ec930`); the client resolves them from TextQuest_QuestString.txt ("OK", "Accept",
+"Refuse").
 
 1. `0x7046 {npc, 2}` -> `0xB046` ok -> 0x30D4 type 4: the NPC's greeting
    (`BASIC_MENUSTRING_GREETING`, e.g. `SN_NPC_CH_SMITH_QS`) and one line per
    quest (`SN_<Q>`): the ones under way here first, then the offers.
-2. An offer -> type 3 with `REQUEST_ACCEPT_QUEST`; yes -> 0x30D5 add, the
-   delivery items handed over, type 1 with `AT_ACCEPT`; no -> `AT_DENY`.
+2. An offer (status NODATA): `NOT_PARTY` [OK] for a party-only quest (divide type 1) out of a
+   party sharing EXP and items (`s:0x9261d0`); `COUNT_LIMIT` [OK] for a `LuaSetRealTime` quest
+   (mask 0x100000) cleared as many times as its limit; else `REQUEST_ACCEPT_QUEST` -- or
+   `ACCEPT_AFTER_ONE_CLEAR` for a `LuaSetDifferentString` quest cleared before -- with [Accept,
+   Refuse]. ShowMenu swaps Accept for `SN_TALK_COMMON_MAXQUEST` at 33 or more quests
+   (GetRecvQuestCount `s:0x5714b0`: ids under 10001, status not 4/5/6); nothing else reads the
+   count, so that line still accepts. Accept (response 5) -> 0x30D5 add, the delivery items, then
+   `AT_ACCEPT` [OK]; Refuse (6) -> `AT_DENY` [OK].
 3. A quest under way here -> its deliveries and dialogues at this NPC settle
-   (the mission's own talk line); done and this its complete NPC -> 0x3514
-   with `ACHIEVED`; otherwise `MIDDLE_ACHIEVED` (done, paid elsewhere) or
-   `NOT_ACHIEVED`.
-4. 0x7515 -> the reward (gold, EXP and skill EXP with a level-up, SP, items),
-   the gathered quest items taken back, 0x30D5 kind 4, 0xB515 {1}. A bag
-   without room for the items refuses with `INVENTORY_FULL` and {2, 2}.
+   (the mission's own talk line, [OK]); done and this its complete NPC -> 0x3514
+   with `ACHIEVED`, unless the reward does not fit (the quest's slot 0x108,
+   `s:0x925130`): `INVENTORY_FULL` [OK]; otherwise `MIDDLE_ACHIEVED` (done, paid
+   elsewhere) or `NOT_ACHIEVED`, each [OK].
+4. **OK ends the talk**: TerminateMenu (CGObjPC vslot 0x154 `s:0x4ecb60`, a thunk to
+   EndInteraction `s:0x5107c0`) sends 0xB04B {1} and the client closes the window. After an
+   accepted quest, the OK first sends the quest's `MIDDLE_ACHIEVED` text as a 0x30EC notice
+   (the response branch for a quest under way at conversation state 2).
+5. 0x3514 hides the NPC talk window first (`c:0x884ca0`, ShowWindow(0): the talk stays open on
+   the server). 0x7515 -> the reward (gold, EXP and skill EXP with a level-up, SP, items),
+   the gathered quest items taken back, 0x30D5 kind 4, 0xB04B {1}, the `SN_TALK_COMMON_END`
+   notice (the quest's +0x48c, set by its constructor and never cleared), 0xB515 {1}.
+   `s:0x51b370` ends the interaction on every path, a refusal too (0xB04B, then 0xB515 {2, 2}).
+
+The client's quest line click sets CIF_NPCTalk's +0x7f0 (`c:0x7026b1..0x702766`), and the next
+page clears it (`FUN_006fc1c0`): one answer at a time.
 
 Which NPC selects show "Talk" (id 2) is per player (0x4c9310's filter,
 `npcspawn/questtalk.go`): with the catalogue loaded, an NPC offers it exactly
@@ -168,7 +190,10 @@ when it has quest business with the character.
 ## 6. What OpenSRO decides (OURS)
 
 - **Kill credit goes to the killer** (`announceKill`); whether party members
-  share it is OPEN (`LuaSetDivideType`, 125 quests, is unread).
+  share it is OPEN. READ (round 819): a quest's kill event runs only past its party check
+  (`s:0x9210a0` calls slot 0x168 before any kill or gather mission), so a party-only quest's
+  kills count only in a party sharing EXP and items, and a divide-4 quest's never
+  (QNO_RM_MEETROC_6: unplayable in retail too).
 - **Gather drops** go straight into the bag at the mission's rate; a full bag
   neither drops nor counts. The drop is given first, and the mission is stepped
   against the log as it is then (`quest.KillCredits` / `quest.Credit`, round 785
@@ -193,7 +218,9 @@ when it has quest business with the character.
   offer 1 (start), else one with a quest under way 2 (going); sent at entry and
   after every change.
 - **0x30D5 counter (+8)**: achievement count in the low nibble, the limit in
-  the high one (the window draws them "%s (%d/%d)"); state (+9) 1.
+  the high one (the window draws them "%s (%d/%d)"); +9 is the divide type (round 819). The
+  client draws `qst_colorbar_green/red/lightgreen` for 1/2/3 on the row's control 19 (its
+  +0x84, `c:0x6e5c5d`); where that draws is not traced, so OpenSRO's window draws no bar yet.
 - **0x70D8** opens the reward window only for a quest that names no complete
   NPC; otherwise {2, 1}.
 - **Repeatable quests** (limit 0) can be taken again after being paid.
@@ -203,7 +230,10 @@ when it has quest business with the character.
 ## 7. OPEN
 
 - The second level value (`LuaSetStartCodition`'s last argument, +0x820).
-- Party credit and `LuaSetDivideType`; `LuaSetRealTime` and the time limits;
+- Which offers the first talk menu lists (a `LuaSetRealTime` quest at its limit says
+  `COUNT_LIMIT` when picked; OpenSRO's list leaves quests at their limit out, as before).
+- The start branch's other COUNT_LIMIT test (the condition block's +0xc and +0x10).
+- Party credit; the time limits (`LuaSetLimitTimeStartCondition`, `LuaStartDayLimit`);
   `LuaSetJobTypeStartCondition` (job quests); `LuaSetAchievedPoint`.
 - The 13 questdata-only quests, the change-item mission class, and 5 compiled
   classes absent from the dump.

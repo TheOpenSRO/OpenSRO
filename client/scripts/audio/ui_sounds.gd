@@ -46,6 +46,9 @@ const KEY_POTION := "UI:snd_potion:-:-:-:-"
 const KEY_ERROR := "UI:snd_error:-:-:-:-"
 const KEY_REPAIR := "UI:snd_repair:-:-:-:-"
 const KEY_REVIVE := "UI:snd_revive:-:-:-:-"
+## Round 819: a quest notice of SN_TALK_COMMON_END (0x30EC's handler
+## 0x884a30 plays snd_quest_end, READ; effectsound.txt's UI SND_QUEST_END row).
+const KEY_QUEST_END := "UI:snd_quest_end:-:-:-:-"
 
 ## A key the log reports at most once a second each (ours): a repair of
 ## eight slots fires eight sounds in one frame, and the log should say so
@@ -328,3 +331,7 @@ static func move_replied(ok: bool) -> void:
 
 static func has_pending_move() -> bool:
 	return not _pending_move_types.is_empty()
+
+## 0x30EC with SN_TALK_COMMON_END (FUN_00884a30, READ).
+static func quest_end(what: String) -> void:
+	play(KEY_QUEST_END, what)

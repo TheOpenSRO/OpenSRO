@@ -128,6 +128,15 @@ func _test_state() -> void:
 	s.talk_page.connect(func(p: QuestNet.TalkPage) -> void: pages.append(p.text))
 	s.handle(QuestNet.encode_talk_page(QuestNet.PAGE_CONFIRM, "SN_TALK_Q_02"), QuestNet.OP_TALK_PAGE)
 	_check(pages == ["SN_TALK_Q_02"], "a talk page is passed on")
+	# Round 819: 0x30EC, a u16-length key (s:0x4ed4a0 -> FUN_00426040).
+	var notices: Array = []
+	s.event_message.connect(func(key: String) -> void: notices.append(key))
+	var b := PackedByteArray([18, 0])
+	b.append_array("SN_TALK_COMMON_END".to_ascii_buffer())
+	s.handle(b, QuestNet.OP_EVENT_MESSAGE)
+	s.handle(PackedByteArray([40, 0, 65]), QuestNet.OP_EVENT_MESSAGE)
+	_check(notices == [QuestNet.NOTICE_END], "a quest notice is passed on, a short one dropped (got %s)" % [notices])
+	_check(QuestNet.OP_EVENT_MESSAGE in QuestNet.SERVER_OPCODES, "0x30EC is registered")
 
 func _init() -> void:
 	_test_update()

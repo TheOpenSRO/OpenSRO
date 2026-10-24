@@ -329,6 +329,13 @@ func handleNPCEnd(sess *gateway.Session, data []byte, hub *world.Hub) {
 	if _, err := npctalk.DecodeEntity(data); err != nil {
 		return
 	}
+	endInteraction(sess, hub)
+}
+
+// endInteraction is GObjPC::EndInteraction (0x5107c0), shared by the end
+// request 0x704B and the quest talk's TerminateMenu (CGObjPC vslot 0x154, a
+// thunk to it; round 819). It reports whether an interaction was open.
+func endInteraction(sess *gateway.Session, hub *world.Hub) bool {
 	npcInteractions.mu.Lock()
 	st, ok := npcInteractions.m[sess.ID()]
 	open := ok && (st.mode == 5 || st.mode == 6 || st.selected)
@@ -349,7 +356,7 @@ func handleNPCEnd(sess *gateway.Session, data []byte, hub *world.Hub) {
 	forgetQuestTalk(sess.ID(), true)
 	if !open {
 		sendNPCTalk(sess, npctalk.OpEndResult, npctalk.EncodeFail(npctalk.CodeNoInteraction))
-		return
+		return false
 	}
 	sendNPCTalk(sess, npctalk.OpEndResult, npctalk.EncodeEndOK())
 	// Round 802 (safetrade.go): a trader closing a specialty trader's
@@ -358,4 +365,5 @@ func handleNPCEnd(sess *gateway.Session, data []byte, hub *world.Hub) {
 	// Round 804 (caravan.go): and, his transport holding goods, registers
 	// his caravan.
 	caravanOnEnd(context.Background(), sess, hub, endedNPC, endedMode)
+	return true
 }
