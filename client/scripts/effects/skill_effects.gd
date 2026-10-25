@@ -49,6 +49,14 @@ class_name SkillEffects
 ## - AT_TARGET, AT_TARGET_F and AT_DMG_POS play on the target (INFERRED from
 ##   the names); everything else on the caster, placed every frame (OURS for
 ##   the ActTypes past AT_LOOP: FUN_00a513a0 plays them on other paths).
+##   Round 826 (READ, FUN_00a51bc0 case 3): an AT_TARGET row whose
+##   MovTypeSpeed second number is not 0 is a mover that falls from the
+##   target's position + StartOffset to its position + TargetOffset and lands
+##   the group's hit there (is_target_mover).
+## - THE CAMERA SHAKE (round 826, READ; CameraShake has the numbers): a row's
+##   Script SCT_SHAKECAM0..3 shakes when the row plays, SCT_SHAKECAM_MOV0..3
+##   when its mover arrives, unless the caster is another player
+##   (shake_hook). Rows of no effect are kept for it (has_effect).
 ## - AT_MOV_* (projectiles, round 785): the effect leaves the caster at its
 ##   StartBone + StartOffset and flies to the target's TargetBone +
 ##   TargetOffset; the hit it carries lands when it arrives (`on_arrive`).
@@ -141,6 +149,8 @@ const C_CNT := 11
 const C_FADE := 12
 const C_OPT := 16
 const C_OBJ2 := 23
+## Round 826: Script (the camera shakes' SCT_ name; MEASURED, the `//` line).
+const C_SCRIPT := 25
 
 ## Round 809: the row's object kind, its ObjName's extension through the
 ## client's name map (READ, 0xec7180..0xec7400, record +0x37): none 0, bsr 1,
@@ -191,7 +201,7 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 	var in_section := false
 	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET,
 		"dmg": C_DMG, "mov": C_MOV, "tbone": C_TBONE, "toffset": C_TOFFSET, "rotate": C_ROTATE,
-		"scale": C_SCALE, "cnt": C_CNT, "fade": C_FADE, "opt": C_OPT, "obj2": C_OBJ2}
+		"scale": C_SCALE, "cnt": C_CNT, "fade": C_FADE, "opt": C_OPT, "obj2": C_OBJ2, "script": C_SCRIPT}
 	for raw in SkillAudio._utf16_lines(bytes):
 		var line: String = raw
 		if line.begins_with("#section"):
@@ -205,7 +215,8 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			var names := {"ActType": "act", "Obj Path": "path", "ObjName": "name",
 				"StartBone": "bone", "StartOffset": "offset", "DMG Event": "dmg",
 				"MovTypeSpeed": "mov", "TargetBone": "tbone", "TargetOffset": "toffset", "Rotate": "rotate",
-				"Scale": "scale", "CreateCnt": "cnt", "Fade": "fade", "Act Option": "opt", "ObjName2": "obj2"}
+				"Scale": "scale", "CreateCnt": "cnt", "Fade": "fade", "Act Option": "opt", "ObjName2": "obj2",
+				"Script": "script"}
 			for h in names:
 				var at := header.find(h)
 				if at >= 0:
@@ -220,7 +231,11 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			continue
 		var obj := cols[int(col["name"])].strip_edges()
 		var kind := object_kind(obj)
-		if kind != KIND_EFP and kind != KIND_BSR:
+		var script := script_flag(_cell(cols, int(col["script"])))
+		# Round 826: a row of no effect is kept only for its camera shake
+		# (READ: every row reaches the shake test, a sound's and a none's
+		# too; rows_in leaves these out unless asked).
+		if kind != KIND_EFP and kind != KIND_BSR and script & SHAKE_FLAGS == 0:
 			continue
 		var dir := cols[int(col["path"])].strip_edges()
 		if dir.to_lower() == "none":
@@ -241,6 +256,8 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			"rotate": int(_cell(cols, int(col["rotate"]))) if _cell(cols, int(col["rotate"])).is_valid_int() else 0,
 			"kind": kind,
 			"mov_a": parse_mov_delay(_cell(cols, int(col["mov"]))),
+			"mov_b": parse_mov_speed(_cell(cols, int(col["mov"]))),
+			"script": script,
 			"scale": int(SCALE_KINDS.get(_cell(cols, int(col["scale"])), 0)),
 			"cnt": maxi(int(_cell(cols, int(col["cnt"]))), 1) if _cell(cols, int(col["cnt"])).is_valid_int() else 1,
 			"fade": parse_pair(_cell(cols, int(col["fade"]))),
@@ -291,6 +308,30 @@ static func parse_mov_delay(cell: String) -> int:
 		return 0
 	return maxi(int(p[1]), 0)
 
+## Round 826: MovTypeSpeed's second number (record +0x12, READ: the row
+## parser reads the four cells into +0xf, +0x10, +0x12, +0x14), whatever the
+## kind. An AT_TARGET row with it non-zero is a mover (IDecoSkill::
+## FUN_00a51bc0's case 3).
+static func parse_mov_speed(cell: String) -> int:
+	var p := cell.strip_edges().split(",")
+	if p.size() < 3 or not String(p[2]).strip_edges().is_valid_int():
+		return 0
+	return int(p[2])
+
+## Round 826: the Script cell's SCT_ flag (READ, the name table at 0x00ec7378:
+## the name up to the first comma; "none" and anything unknown 0).
+static func script_flag(cell: String) -> int:
+	var name := cell.strip_edges().get_slice(",", 0).strip_edges()
+	return int(SCT_NAMES.get(name, 0))
+
+## The SCT_ name table (READ, 0x00ec7378: (name, flag) pairs).
+const SCT_NAMES := {"none": 0, "SCT_ARROW": 0x1, "SCT_RUT": 0x2, "SCT_MOVER": 0x4,
+	"SCT_SHAKECAM0": 0x8, "SCT_SHAKECAM1": 0x10, "SCT_SHAKECAM_MOV0": 0x20, "SCT_SHAKECAM_MOV1": 0x40,
+	"SCT_SHAKECAM2": 0x80, "SCT_SHAKECAM3": 0x100, "SCT_SHAKECAM_MOV2": 0x200, "SCT_SHAKECAM_MOV3": 0x400,
+	"SCT_MAT": 0x800, "SCT_CHAR_SCALE": 0x1000, "SCT_EFFECT_SCALE": 0x2000}
+## Every camera shake flag, at the row's play and at its mover's arrival.
+const SHAKE_FLAGS := 0x8 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400
+
 ## "a,b" -> [a, b] (Fade: record +0xa, +0xc), [0, 0] for anything else.
 static func parse_pair(cell: String) -> Array:
 	var p := cell.strip_edges().split(",")
@@ -331,12 +372,20 @@ static func parse_offset(cell: String) -> Vector3:
 ## The rows of `skill_id` for one phase (start_event -1 = any), against
 ## given tables.
 static func rows_in(skills: Dictionary, rows: Dictionary, skill_id: int, ani_type: int,
-		start_event: int = -1) -> Array:
+		start_event: int = -1, bare := false) -> Array:
 	var out: Array = []
 	for r in SkillAudio.effect_rows_in(skills, rows, skill_id):
+		if not bare and not has_effect(r):
+			continue
 		if int(r["ani"]) == ani_type and (start_event < 0 or int(r["event"]) == start_event):
 			out.append(r)
 	return out
+
+## Whether a row makes an effect (.efp or .bsr); round 826 keeps the others
+## for their shakes alone (`bare`).
+static func has_effect(r: Dictionary) -> bool:
+	var k := int(r.get("kind", KIND_EFP))
+	return k == KIND_EFP or k == KIND_BSR
 
 ## Whether a row's effect is kept (retail's keep flag: AT_LOOP alone, READ,
 ## see the header).
@@ -546,55 +595,134 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 		target: Node3D = null, what: String = "", on_arrive: Callable = Callable()) -> Array:
 	var started: Array = []
 	var arrive := on_arrive
-	for r in rows_for(skill_id, ani_type, start_event):
+	warm()
+	for r in rows_in(SkillAudio._skills, _rows, skill_id, ani_type, start_event, true):
 		var act := int(r["act"])
+		# Round 826: a row of no effect (a sound's, a none's) is kept for its
+		# shake alone (READ: such a row reaches the shake test).
+		if not has_effect(r):
+			_shake_at_play(r, caster)
+			continue
 		var host := host_for(act, caster, target)
 		if not _valid(host):
 			continue
-		if not wants_effect(caster, target, host):
-			continue
 		var option_mover := is_option_mover(r) and _valid(caster)
+		var drop := is_target_mover(r)
+		var flies := option_mover or drop or (act >= AT_MOV_1TAR and _valid(target) and target != caster and _valid(caster))
+		if not wants_effect(caster, target, host):
+			# READ: the Effect Quality refusal is the effect's maker's
+			# (FUN_00a51120, FUN_00a557f0): an AT_STOP / AT_ONE_FOLLOW /
+			# AT_LOOP row then skips the shake test (0xa52eec); every other
+			# row still reaches it, and a mover still flies, unseen, to land
+			# its hit and its shake (round 826).
+			if act > AT_LOOP:
+				_shake_at_play(r, caster)
+			if flies:
+				var carries_q: Callable = arrive if bool(r.get("dmg", false)) else Callable()
+				if carries_q.is_valid():
+					arrive = Callable()
+				_fly_row(null, caster, target, host, r, carries_q, "", drop, true)
+			continue
 		# Round 809: a .bsr object (BsrEffect), never in the returned list
 		# (its life is its clip's or its mover's).
 		if int(r.get("kind", KIND_EFP)) == KIND_BSR:
 			var carries_b: Callable = arrive if bool(r.get("dmg", false)) else Callable()
-			if _play_bsr(r, act, caster, target, host, option_mover, carries_b, skill_id, ani_type, start_event) \
+			if drop:
+				_fly_row(null, caster, target, host, r, carries_b, String(r["path"]), true)
+				if carries_b.is_valid():
+					arrive = Callable()
+			elif _play_bsr(r, act, caster, target, host, option_mover, carries_b, skill_id, ani_type, start_event) \
 					and carries_b.is_valid():
 				arrive = Callable()
+			_shake_at_play(r, caster)
 			continue
 		var fx := _make(String(r["path"]))
 		if fx == null:
 			print("EFFECTS skill %d %s/%d: %s did not load (%s)" % [skill_id,
 				SkillAudio._phase_name(ani_type), start_event, r["path"], EfpEffect.last_error])
+			# READ: no effect made skips the shake for AT_STOP..AT_LOOP.
+			if act > AT_LOOP:
+				_shake_at_play(r, caster)
 			continue
+		_shake_at_play(r, caster)
 		if fx.draw_count() == 0 and fx.sim != null and fx.sim.template != null \
 				and _draws_nothing(fx):
 			print("EFFECTS skill %d %s/%d: %s draws nothing (skipped: %s)" % [skill_id,
 				SkillAudio._phase_name(ani_type), start_event, r["path"], ", ".join(fx.skipped)])
 			fx.free()
-			continue
-		fx.reserved = own_body != null and (host == own_body or caster == own_body)
-		# Round 785: AT_LOOP of any phase is kept (the caller lets it go --
-		# SkillDeco's end); AT_STOP is placed once, where it is cast (READ).
-		fx.static_host = act == AT_STOP
-		if kept_act(act):
-			fx.loop = true
-			fx.max_life = READY_LOOP_MAX
-		var flies := option_mover or (act >= AT_MOV_1TAR and _valid(target) and target != caster and _valid(caster))
+			fx = null
+			if not flies:
+				continue
+		if fx != null:
+			fx.reserved = own_body != null and (host == own_body or caster == own_body)
+			# Round 785: AT_LOOP of any phase is kept (the caller lets it go --
+			# SkillDeco's end); AT_STOP is placed once, where it is cast (READ).
+			fx.static_host = act == AT_STOP
+			if kept_act(act):
+				fx.loop = true
+				fx.max_life = READY_LOOP_MAX
 		if flies:
 			var carries: Callable = arrive if bool(r.get("dmg", false)) else Callable()
 			if carries.is_valid():
 				arrive = Callable()
-			_fly(fx, caster, target, r, carries)
+			_fly_row(fx, caster, target, host, r, carries, "", drop)
 		else:
 			attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
+		if fx == null:
+			continue
 		started.append(fx)
 		print("EFFECTS skill %d %s/%d: %s %s at %s (%d nodes drawn%s) %s%s" % [skill_id,
 			SkillAudio._phase_name(ani_type), start_event, ACT_TYPES[act] if act >= 0 else "?",
 			r["path"], r["bone"], fx.draw_count(),
 			", skipped: " + ", ".join(fx.skipped) if not fx.skipped.is_empty() else "", what,
-			" -- flies to the target" if flies else ""])
+			(" -- falls on the target" if drop else " -- flies to the target") if flies else ""])
 	return started
+
+## Round 826: an AT_TARGET row whose MovTypeSpeed second number is not 0 is a
+## mover (READ, IDecoSkill::FUN_00a51bc0 case 3, `row+0x12 != 0`): it goes
+## from the target's position plus StartOffset to the target's position plus
+## TargetOffset -- both on the world's axes, the target's turn not applied
+## (the case adds the row's offset vectors, +0x40 and +0x58, to the target's
+## +0x80 position) -- and lands the hit the group carries there
+## (FUN_00a4d430 takes it). Before round 826 such a row was placed on the
+## target at StartBone + StartOffset and never fell (231 rows, MEASURED).
+static func is_target_mover(r: Dictionary) -> bool:
+	return int(r["act"]) == AT_TARGET and int(r.get("mov_b", 0)) != 0
+
+## A row offset (the original's x, y, z) on the world's axes here: z mirrored
+## (UserSpawnNet.world_xz).
+static func world_offset(o: Vector3) -> Vector3:
+	return Vector3(o.x, o.y, -o.z)
+
+## Flies one row: an AT_TARGET mover (`drop`) CreateCnt times from above the
+## target (READ: case 3's loop; the hit goes with the first), any other from
+## the caster (_fly).
+static func _fly_row(fx: EfpEffect, caster: Node3D, target: Node3D, host: Node3D, r: Dictionary,
+		carries: Callable, bsr_path: String, drop: bool, unseen := false) -> void:
+	if not drop:
+		_fly(fx, caster, target, r, carries, bsr_path)["unseen"] = unseen
+		return
+	var on: Node3D = target if _valid(target) else host
+	var base := on.global_position
+	var from := base + world_offset(r["offset"])
+	var to := base + world_offset(r.get("toffset", Vector3.ZERO))
+	for i in int(r.get("cnt", 1)):
+		var one := fx if i == 0 else (_make(String(r["path"])) if fx != null else null)
+		_fly(one, caster if _valid(caster) else on, null, r, carries if i == 0 else Callable(), bsr_path, from, to)["unseen"] = unseen
+
+## Round 826: the camera shake hook -- Callable(flags: int, caster: Node3D,
+## at_arrival: bool) -- World3D's (it holds the camera and knows who is
+## another player). Unset: no shake.
+static var shake_hook: Callable = Callable()
+
+## The shake test when a row plays (READ, FUN_00a51bc0 at 0xa52e5f): the
+## caster (the decoration's owner) is not another player, and the row has a
+## SHAKECAM0..3 flag. A row played with no caster in view starts none (the
+## original has no decoration for it).
+static func _shake_at_play(r: Dictionary, caster: Node3D) -> void:
+	var flags := int(r.get("script", 0)) & (0x8 | 0x10 | 0x80 | 0x100)
+	if flags != 0 and _valid(caster) and shake_hook.is_valid():
+		shake_hook.call(flags, caster, false)
 
 ## Whether effect group `start_event` of a phase carries the DMG event (a
 ## row with DMG Event TRUE): the group that shows the cast's next hit (READ,
@@ -609,10 +737,11 @@ static func group_dmg(skill_id: int, ani_type: int, start_event: int) -> bool:
 			return true
 	return false
 
-## Whether the group's DMG row is a projectile (its hit lands on arrival).
+## Whether the group's DMG row is a projectile (its hit lands on arrival) --
+## an AT_TARGET mover's too (round 826, is_target_mover).
 static func group_dmg_flies(skill_id: int, ani_type: int, start_event: int) -> bool:
 	for r in rows_for(skill_id, ani_type, start_event):
-		if bool(r.get("dmg", false)) and int(r["act"]) >= AT_MOV_1TAR:
+		if bool(r.get("dmg", false)) and (int(r["act"]) >= AT_MOV_1TAR or is_target_mover(r)):
 			return true
 	return false
 
@@ -690,12 +819,13 @@ static func mover_speed(mov: Array) -> float:
 	return maxf(b if c <= b else (b + c) * 0.5, 1.0)
 
 static func _fly(fx: EfpEffect, caster: Node3D, target: Node3D, row: Dictionary, on_arrive: Callable,
-		bsr_path: String = "") -> Dictionary:
+		bsr_path: String = "", from = null, to = null) -> Dictionary:
 	var carrier := Node3D.new()
 	carrier.name = "SkillFlight"
 	var parent := caster.get_parent() if caster.get_parent() != null else caster
 	parent.add_child(carrier)
-	var start := bone_point(caster, String(row["bone"]), row["offset"])
+	# Round 826: an AT_TARGET mover starts and ends at given points.
+	var start: Vector3 = from if from != null else bone_point(caster, String(row["bone"]), row["offset"])
 	carrier.global_position = start
 	if fx != null:
 		# Round 809 (READ, FUN_00a4cc70): a mover's effect is made kept
@@ -706,7 +836,10 @@ static func _fly(fx: EfpEffect, caster: Node3D, target: Node3D, row: Dictionary,
 	var f := {"carrier": carrier, "fx": fx, "target": target, "tbone": String(row.get("tbone", "none")),
 		"toffset": row.get("toffset", Vector3.ZERO), "speed": mover_speed(row.get("mov", [])), "on_arrive": on_arrive,
 		"age": 0.0, "row": row, "trail": [], "since": 0.0, "wait": float(row.get("mov_a", 0)) / 1000.0,
-		"heading": heading_of(caster)}
+		"heading": heading_of(caster), "caster": caster}
+	if to != null:
+		f["goal"] = to
+		f["target"] = null
 	if is_option_mover(row):
 		f["heading"] = RemoteFacing.wrap_heading(float(f["heading"]) + float((row["opt"] as Dictionary).get("angle", 0.0)))
 		f["goal"] = option_goal(start, heading_of(caster), row["opt"])
@@ -837,8 +970,15 @@ static func _land(f: Dictionary) -> void:
 	var row: Dictionary = f.get("row", {})
 	var fade: Array = row.get("fade", [0, 0])
 	var at: Vector3 = (carrier as Node3D).global_position if _valid(carrier) else Vector3.ZERO
-	if _valid(carrier) and String(row.get("obj2", "")) != "":
+	if _valid(carrier) and String(row.get("obj2", "")) != "" and not bool(f.get("unseen", false)):
 		_place_static(String(row["obj2"]), at, float(f.get("heading", 0.0)), (carrier as Node).get_parent(), false)
+	# Round 826 (READ, FUN_00a4c380 -> FUN_00a4bf00): the arrival's shake,
+	# SHAKECAM_MOV0..3, when the caster -- looked up again by id, so one gone
+	# from view passes -- is not another player.
+	var mov_flags := int(row.get("script", 0)) & (0x20 | 0x40 | 0x200 | 0x400)
+	if mov_flags != 0 and shake_hook.is_valid():
+		var c = f.get("caster")
+		shake_hook.call(mov_flags, c if _valid(c) else null, true)
 	var fxs: Array = []
 	if is_instance_valid(f["fx"]):
 		fxs.append(f["fx"])
@@ -1049,7 +1189,7 @@ static func rows_named(effect_id: String, ani_type: int) -> Array:
 	warm()
 	var out: Array = []
 	for r in _rows.get(effect_id, []):
-		if int(r["ani"]) == ani_type:
+		if int(r["ani"]) == ani_type and has_effect(r):
 			out.append(r)
 	return out
 

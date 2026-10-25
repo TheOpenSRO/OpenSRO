@@ -164,6 +164,22 @@ func _run() -> void:
 	fired.clear()
 	bar.call("activate_key", 2)
 	_check(fired == [3], "key 3 fires quick slot 3 (got %s)" % [fired])
+	# Round 826: the selection frame (0x60a820) on page slot 2, 4 left and 3 up of it.
+	var arrow := _at(broot, [103])
+	var slot3 := _at(broot, [42])
+	_check(arrow != null and arrow.visible and slot3 != null and arrow.position == slot3.position + Vector2(-4, -3)
+		and int(bar.call("slot_frame")) == 2, "key 3 shows the frame 103 on page slot 3, at (x - 4, y - 3)")
+	_check(arrow != null and arrow.mouse_filter == Control.MOUSE_FILTER_IGNORE, "the frame takes no clicks")
+	bar.call("set_page", 2)
+	bar.call("activate_key", 4)
+	_check(int(bar.call("slot_frame")) == 4 and arrow.position == _at(broot, [44]).position + Vector2(-4, -3),
+		"on F2 a key moves it to the same page position (slot 5)")
+	bar.call("activate_slot", 45)
+	bar.call("activate_mouse_slot")
+	_check(int(bar.call("slot_frame")) == 4 and arrow.visible, "slots 11..50 and the m slot leave it where it was")
+	bar.call("set_page", 1)
+	_check(arrow.visible and int(bar.call("slot_frame")) == 4, "a page flip leaves it too")
+	fired.clear()
 
 	# --- the mouse: RIGHT fires the slot (round 652: CIFSlotWithHelp's
 	# right-button-up, vslot 33 -> 0x682040 case 0x0c), LEFT picks it up,
@@ -172,6 +188,7 @@ func _run() -> void:
 	if s1 != null:
 		_click_on(s1, MOUSE_BUTTON_RIGHT)
 	_check(fired == [1], "a right click on slot 1 fires quick slot 1 (got %s)" % [fired])
+	_check(int(bar.call("slot_frame")) == 0, "... and moves the frame to it (round 826)")
 	fired.clear()
 	var picks: Array = []
 	if bar.has_signal("quickslot_pick_requested"):

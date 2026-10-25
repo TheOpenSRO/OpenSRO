@@ -185,4 +185,10 @@ func _test_own(world: Node) -> void:
 	world.set("_trade_established", false)
 	_check(String(world.call("_issue_walk", Vector3(100, 0, 10))) == "walk", "and one with neither walks")
 	world.set("_has_move_target", false)
+	# Round 826 (READ, FUN_009eb140's 0x2476 holds state 10's bit): no click
+	# walks while the pick-up clip plays.
+	world.set("_player_pickup_clip", BanReader.ParsedAnimation.new())
+	_check(String(world.call("_issue_walk", Vector3(100, 0, 10))) == "ignore", "a click during the pick-up clip walks nowhere")
+	world.set("_player_pickup_clip", null)
+	world.set("_has_move_target", false)
 	net.set("own_character_id", -1)

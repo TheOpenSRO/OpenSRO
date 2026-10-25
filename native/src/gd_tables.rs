@@ -198,6 +198,7 @@ impl SrNativeTables {
                 d.set("ext_ints", &ints(o.ext_ints));
                 d.set("ext_floats", &floats(o.ext_floats));
                 d.set("avatar_ints", &ints(o.avatar_ints));
+                d.set("cool_ints", &ints(o.cool_ints));
                 d
             }
             Err(f) => fallback(f),

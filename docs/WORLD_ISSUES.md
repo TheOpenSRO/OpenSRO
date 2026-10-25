@@ -7483,6 +7483,85 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-sixth round: the camera shake, falling AT_TARGET movers, the pick-up's lock, the hotbar's frame and cooldown figures, item re-use, the strip bar under windows
+
+The user (2026-10-25): "there's some screen shake effects for certain skills like Bash under Warrior. Can you
+verify this effect and implement it for any skills that do that and any other similar effects"; "when picking
+up items our game does it instantly but I think the original waits on the animation"; "add hotbar item
+selection highlighting" (a video, https://i.imgur.com/EYII52x.mp4); "items / skills show the time during
+cooldown ... match the style and font"; "When equipping a job item there's a yellow countdown timer bar ...
+That yellow bar appears over open GUI windows and it shouldn't."
+
+- **The camera shake (READ, docs/protocol/camera_shake.md).** One shake at a time on the game process
+  (`FUN_0078db50`): a strength that falls linearly over 500 ms, redrawn on a 20 or 25 ms timer as
+  `(rand() % 2s - s) / 100` on the look-at point's x and height. Started by a skill row's Script
+  SCT_SHAKECAM0..3 when it plays and SCT_SHAKECAM_MOV0..3 when its mover lands (strengths 50 / 200 / 300 /
+  400), unless the caster is another player (an exact CICUser test); and by this player's own blows: a
+  critical 50, any blow in berserk 50, a critical in berserk 200. Bash (SKILL_EU_WARRIOR_TWOHANDA_DASH_A)
+  is SHAKECAM0 on its SHOT/1 row. 391 rows carry one (MEASURED). Not built: the fortress structures'
+  shake (no structures) and the developer command `/cs`.
+- **AT_TARGET movers (READ, FUN_00a51bc0 case 3).** An AT_TARGET row with a non-zero MovTypeSpeed speed
+  falls from the target + StartOffset to the target + TargetOffset (world axes) and lands the group's hit;
+  231 rows (the China force bolts) had hung 100 units over the target and never landed their ObjName2.
+- **The pick-up (READ).** The click filter `FUN_009ec240` refuses a walk while `[player+0x65c] & 0x2476`
+  is set, and the state enter sets bit 1 << state (`0x9c9a19`), so the pick-up's state 10 (0x400) refuses
+  ground clicks until its 533 ms clip (MEASURED) ends; G does nothing in state 10 (`0x793d1f`). The item
+  itself goes into the bag at once in the original too (the server's `FUN_00526090`): no delay was added.
+- **The hotbar's frame (READ, `FUN_0060a820` / `FUN_0060bb80`).** Child 103 (`ub_slot_arrow.ddj`) moves to
+  the page slot of the last use numbered 1..10 -- a number key, or a right-click on a first-page slot -- at
+  (x - 4, y - 3), and stays (no fade, no hide; the user's video MEASURED over 324 frames, its bar art from
+  another client, the frame the same texture).
+- **Cooldown figures (READ, `0x67c920`).** A quick slot's time left: the veil `icon_effect.ddj` and white
+  seconds up to 60 s, yellow (0xffe1e700) minutes up to 3600 s, the `int_effect.ddj` veil and blue
+  (0xff000ca9) hours above, in the 8 x 12 bitmap figures `cool_time_0..9.ddj` (no font), centred. Quick
+  slots only: the skill window and the bag show none.
+- **Item re-use (READ, CItemReuseDelayManager; `Item_OnUseItemResult 0x87a7b0`, `0x67cbf0`).** The client
+  arms its own timers on an accepted use -- a potion 1000 ms (China) / 15000 ms (Europe) / 4000 ms (a
+  percentage potion) by kind, + 4000 in panic or combustion; the pills' 20000 / 1000; any item's COOLTIME
+  pair (the reader's new `cooltime_of`, GDScript and native) by its group -- and a quick slot shows the
+  sweep and the figures. OPEN: the kinds 0x10, 0x11, 0x13..0x1f (item classes not read), the bag's own
+  sweep (the original draws one; not built), 0x3077's restore at a relog (no server sends it).
+- **The strip bar (OURS fix).** StripBars (the job suit's 10 s bar) was the last child of the HUD, so it
+  drew over every window; it is now the first.
+- **Live** (`/var/tmp/r826/qa826.sh`, a China character, Cold 50, SKILL_CH_COLD_GIGONGSUL_B_01 on quick slot
+  1, cast at a weasel): 19 ice movers fall onto the target, three land with `CAMERA shake 50 ... a mover
+  arrived, flags 0x20` (the three SHAKECAM_MOV0 rows); key 1 during the 10 s re-use is refused with the
+  archive's "Still have time to reuse the skill." and frame 500 shows the gold frame on slot 1 with the
+  navy veil and a white "8".
+- **Tests.** `camera_shake826_test.gd` (the engine, the rows, the hook, the movers), `cool_time826_test.gd`,
+  `item_cooldowns826_test.gd`, `hud_underbar_test.gd` (the frame), `dest_walk_test.gd` (the pick-up's
+  refusal), the native `items` test (the new columns), `table_parity.gd` PASS.
+
+## Eight-hundred-and-twenty-fifth round: the region-crossing pause measured -- NPC placement, not shaders
+
+The user (2026-10-25): "Would shaders help us reduce the short pauses during regions?" No: a crossing
+compiles no shader at draw time, and the pause is one frame placing a region's NPCs.
+
+- **Method.** A throwaway probe (an autoload in a box-only copy, `/var/tmp/r825`, not committed) printed
+  every frame over 25 ms and every frame whose `Performance.PIPELINE_COMPILATIONS_*` counters moved,
+  beside the client's own `cell x/y built in` lines. Forward+, Godot 4.7.2, 1280 x 720, offline with
+  `OPENSRO_QA_LOCAL_NPCS=1` (the server's NPC records fed the same `_npc_records` path), a QA walk;
+  `XDG_DATA_HOME` per run so the shader cache was empty (cold) or the previous run's (warm).
+- **MEASURED.**
+
+  | walk | worst frame | its cost | draw-time compiles at the crossing |
+  |---|---|---|---|
+  | 97/166 -> 97/165 (row 163 streams: five sparse cells) | 25.5 ms | 9-14 ms a cell | 0 |
+  | 97/165 -> 97/166, cold cache (row 168: Jangan) | 450 ms | cell 97/168: npcs 358, objects 70 ms | 0 |
+  | the same, warm cache | 458 ms | npcs 363, objects 71 ms | 0 |
+
+  98/168 (122 objects) cost 87-88 ms (place 50). The world entry's ~75 draw-time compilations
+  (`PIPELINE_COMPILATIONS_DRAW` 74-80 at the end of the drain) all fall under the loading screen.
+- **Why (READ, World3D).** `_try_spawn_region_npcs` places every held NPC record of a region in the
+  frame its cell commits, and a model's first use runs `SkinnedBsrAssembler.assemble_from_archive` on
+  the main thread. Online play takes the same path (records from the server's spawns wait in
+  `_npc_records` until their region stands).
+- **What would help (not done).** Placing a region's NPCs a few a frame (the monster build queue's
+  budget) and assembling the models off the main thread; spreading a dense cell's object placement the
+  same way. Re-measure with the same walk (`run.sh` there: `MAPM='97\165.m' AT=1700,1020 HEAD=90`).
+- **OPEN.** Compatibility (OpenGL) has no pipeline counters and was not measured; its shader
+  compilation can add pauses of its own.
+
 ## Eight-hundred-and-twenty-fourth round: guild emblems (crests)
 
 The user (2026-10-24): "the guild emblem scroll can't be used?" (and earlier "make sure guild and union

@@ -375,7 +375,9 @@ func _canon_items(items: Dictionary) -> Dictionary:
 			it.phys_atk_upper, it.mag_atk_upper, it.phys_reinforce_upper, it.mag_reinforce_upper,
 			it.attack_rate_upper, it.critical_upper, it.armour_phys_reinforce, it.armour_mag_reinforce, it.desc_strid,
 			# Round 789: the avatar columns.
-			it.param2, it.param7, it.child_item_count]
+			it.param2, it.param7, it.child_item_count,
+			# Round 826: the re-use columns.
+			it.param4, it.cool_group, it.cool_ms]
 	return out
 
 ## The first place two results differ, for the FAIL line.

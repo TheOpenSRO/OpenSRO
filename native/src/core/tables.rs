@@ -773,6 +773,13 @@ const ITEM_COL_DESC_STRID: usize = 6;
 /// a dress that takes an attachment), in the order `items` stores them
 /// (/root/opensro-pk3av789/AVATAR_RESEARCH.md 2.2 and 6.1).
 pub const ITEM_AVATAR_INT_COLS: [usize; 3] = [120, 130, 159];
+/// Round 826 (item re-use): Param4 (124, a potion's MP %), and the first Param/Desc128 pair
+/// whose Desc128 names "COOLTIME:<group>" (Param1 118 / Desc128_1 119 ... the 20th pair at
+/// 156/157): the client's item parser keeps the group (wcstol base 16) and the Param as the
+/// re-use ms (`cooltime_of`).
+pub const ITEM_COL_PARAM4: usize = 124;
+const ITEM_COL_PARAM_FIRST: usize = 118;
+const ITEM_PARAM_PAIRS: usize = 20;
 pub const ICON_PREFIX: &str = "icon\\";
 
 /// itemdata's kept rows as columns, one entry (or a fixed group) per row in file order.
@@ -822,6 +829,30 @@ pub struct Items {
     pub ext_floats: Vec<f64>,
     /// 3 a row: ITEM_AVATAR_INT_COLS' values (round 789).
     pub avatar_ints: Vec<i64>,
+    /// 3 a row: Param4, the COOLTIME group and its ms (round 826, `cooltime_of`).
+    pub cool_ints: Vec<i64>,
+}
+
+/// The row's COOLTIME pair (round 826): the first Param/Desc128 pair whose Desc128 contains
+/// "cooltime" (any case) and a ':' with a base-16 number after it, and whose Param is an
+/// integer -> (group, ms); (0, 0) when none.
+pub fn cooltime_of(cols: &[&str]) -> (i64, i64) {
+    for k in 0..ITEM_PARAM_PAIRS {
+        let vi = ITEM_COL_PARAM_FIRST + 2 * k;
+        let Some(desc) = cols.get(vi + 1).map(|c| strip(c)) else { break };
+        if !desc.to_ascii_lowercase().contains("cooltime") {
+            continue;
+        }
+        let Some(colon) = desc.find(':') else { continue };
+        let g = desc[colon + 1..].trim();
+        let g = g.strip_prefix("0x").or_else(|| g.strip_prefix("0X")).unwrap_or(g);
+        let Ok(group) = i64::from_str_radix(g, 16) else { continue };
+        match cols.get(vi).map(|c| strip(c)) {
+            Some(t) if is_valid_int(t) => return (group, to_int(t)),
+            _ => continue,
+        }
+    }
+    (0, 0)
 }
 
 /// `_int_at`: 0 past the row's end or for a field that does not strip to an integer.
@@ -926,6 +957,8 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.ext_ints.extend(ITEM_EXT_INT_COLS.iter().map(|&c| int_at(cols, c)));
         o.ext_floats.extend_from_slice(&ext_floats);
         o.avatar_ints.extend(ITEM_AVATAR_INT_COLS.iter().map(|&c| int_at(cols, c)));
+        let (cool_group, cool_ms) = cooltime_of(cols);
+        o.cool_ints.extend_from_slice(&[int_at(cols, ITEM_COL_PARAM4), cool_group, cool_ms]);
     })?;
     bad.map_or(Ok(o), Err)
 }
@@ -1332,6 +1365,9 @@ mod tests {
         cols[120] = "1".into();
         cols[130] = "574".into();
         cols[159] = "1".into();
+        cols[124] = "30".into();
+        cols[128] = "20000".into();
+        cols[129] = "COOLTIME:0x00000010".into();
         let row = cols.join("\t");
         let nameless = "1\t5\tCODE\t\tx";
         let short = "1\t6\tCODE";
@@ -1370,6 +1406,8 @@ mod tests {
         assert_eq!(it.desc_strids, vec!["SN_ITEM_X_TT_DESC", ""]);
         // Round 789: Param2, Param7, ChildItemCount.
         assert_eq!(it.avatar_ints, vec![1, 574, 1, 0, 0, 0]);
+        // Round 826: Param4, the COOLTIME pair (Param6 20000 under "COOLTIME:0x10").
+        assert_eq!(it.cool_ints, vec![30, 16, 20000, 0, 0, 0]);
     }
 
     #[test]

@@ -1368,17 +1368,24 @@ func deposit_retail(src: int, dst: int, npc: int) -> void:
 func buyback_retail(npc: int, index: int) -> void:
 	_send(ItemOpNet.OP_BUYBACK, ItemOpNet.encode_buyback(npc, index))
 
+## Round 826: the bag slot of the last use asked for (-1 none) -- the reply
+## names no item, so its re-use timers are armed for what is there.
+var last_use_slot := -1
+
 ## Uses one item from a bag slot (a potion). The reply carries the new HP/MP.
 func use_item(char_name: String, inventory_slot: int) -> void:
+	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot))
 
 ## A reverse return scroll's use (round 778): the option the box or the map
 ## chose, and the map option's refoptionalteleport id.
 ## Round 824: a crest register's use with the crest's 256 bytes.
 func use_item_crest(char_name: String, inventory_slot: int, pixels: PackedByteArray) -> void:
+	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_crest(char_name, inventory_slot, pixels))
 
 func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
+	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot, option, target))
 
 ## The Auto potion window's settings (round 786): retail's 0x7158 type 2.

@@ -781,10 +781,44 @@ func _on_video_options_applied(o: VideoOptions) -> void:
 func _follow_with_camera(delta: float) -> void:
 	if _camera_pivot == null:
 		return
-	_camera_pivot.global_position = player.global_position
+	# Round 826: the camera shake moves the look-at point (CameraShake).
+	_shake_clock_ms += maxf(delta, 0.0) * 1000.0
+	_camera_shake.step(int(_shake_clock_ms))
+	_camera_pivot.global_position = player.global_position + _camera_shake.offset()
 	if _camera_view == CAMERA_VIEW_THIRD_PERSON:
 		_camera_pivot.rotation.y = player.rotation.y
 	_place_camera(delta)
+
+## Round 826: the original's one camera shake (CameraShake; READ, its header
+## and docs/protocol/camera_shake.md), on scene time.
+var _camera_shake := CameraShake.new()
+var _shake_clock_ms := 0.0
+
+## A skill row's shake (SkillEffects.shake_hook): refused when the caster is
+## another player -- READ, the test is the caster's class being exactly
+## CICUser (0xef1bc0; FUN_00b94b70 -> 0xb94b30, an equality): this player
+## (CICPlayer), monsters, NPCs and pets shake it. Every flag set starts its
+## shake in the client's order (0x8, 0x10, 0x80, 0x100; 0x20, 0x40, 0x200,
+## 0x400), each replacing the one before.
+func _on_skill_shake(flags: int, caster: Node3D, at_arrival: bool) -> void:
+	if caster != null and caster != player and _other_bodies.values().has(caster):
+		return
+	var which: Array = CameraShake.MOV_FLAGS if at_arrival else CameraShake.START_FLAGS
+	for sh in CameraShake.shakes_of(flags, which):
+		_camera_shake.start(CameraShake.MODE_BOTH, int(sh[0]), CameraShake.LENGTH_MS, int(sh[1]), int(_shake_clock_ms))
+		print("CAMERA shake %d for %d ms (tick %d ms) -- %s, flags 0x%x" % [int(sh[0]), CameraShake.LENGTH_MS,
+			int(sh[1]), "a mover arrived" if at_arrival else "a skill row played", flags])
+
+## One of this player's own blows lands (READ, FUN_00a49290 at 0xa495b8: the
+## damage entry's attacker is this player): a critical, or any blow while
+## berserk, shakes the camera (CameraShake.hit_shake).
+func _own_blow_shake(critical: bool) -> void:
+	var sh := CameraShake.hit_shake(critical, NetClient.own_body_mode == 1)
+	if sh.is_empty():
+		return
+	_camera_shake.start(CameraShake.MODE_BOTH, int(sh[0]), CameraShake.LENGTH_MS, int(sh[1]), int(_shake_clock_ms))
+	print("CAMERA shake %d for %d ms -- own blow%s%s" % [int(sh[0]), CameraShake.LENGTH_MS,
+		", critical" if critical else "", ", berserk" if NetClient.own_body_mode == 1 else ""])
 
 ## The original's camera placer and collision ray, once a physics step
 ## (round 778; READ, RetailCamera has each rule and address):
@@ -1570,7 +1604,10 @@ var _other_seated: Dictionary = {}
 ## cuts it short (_leave_sit_by_moving).
 var _player_sit_clip: BanReader.ParsedAnimation = null
 ## The pick-up clip playing as _player_one_shot, or null (round 785,
-## _on_pick_up_motion); a move cuts it short, as a move does the sit clips.
+## _on_pick_up_motion): retail's state 10. Round 826 (READ): while it plays a
+## ground click walks nowhere and G picks nothing (_issue_walk,
+## _key_pick_up_nearest), so the clip plays out; a move that still comes
+## (not from a click) cuts it short, as a move does the sit clips.
 var _player_pickup_clip: BanReader.ParsedAnimation = null
 ## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
 ## the player has put on the hotbar from the skill window. Activating a slot
@@ -2048,6 +2085,7 @@ func _ready() -> void:
 	SkillEffects.set_archive(_open_particles_pk2_if_set())
 	SkillEffects.warm_async()
 	SkillEffects.own_body = player
+	SkillEffects.shake_hook = _on_skill_shake
 	# Round 746's review, finding 4: the player's own weapon is the one whose
 	# world-axis effects simulate on their own (EquipFx.prefer_root). Deferred:
 	# the driver is a child of the viewport, which is still setting up.
@@ -14378,6 +14416,7 @@ func _on_pvp_result(result: CombatNet.AttackResult) -> void:
 			return
 		if dmg > 0:
 			_damage_text(b, _number_art(crit), dmg, true, true)
+		_own_blow_shake(crit)
 		if kind == JobPvpNet.TARGET_COS:
 			_cos_play(id, BsrReader.AnimationEntry.TYPE_HIT)
 		else:
@@ -15671,6 +15710,7 @@ func _own_skill_hit(h: int, result: CombatNet.AttackResult, skill: int, code: St
 		if hit_body != null and is_instance_valid(hit_body):
 			_damage_text(hit_body, _number_art(result.player_critical), dealt, false, true)
 			_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), code)
+		_own_blow_shake(result.player_critical)
 		print("CAST hit 0 of skill %d on monster %d: %d%s (the whole result; no hit block)" % [skill, monster, dealt,
 			", died" if died else ""])
 		return
@@ -15732,6 +15772,9 @@ func _land_skill_hit(t: SkillHits.Target, hit: SkillHits.Hit, h: int, hits: Skil
 	# monster, red on a player; another's cast only within 200 units of this
 	# player (`blow` is set for this player's own casts and chain links).
 	_damage_text_of_hit(body, hit, t.id_kind != SkillNet.OWNER_MONSTER, not blow.is_empty())
+	# Round 826: this player's own entry shakes for a critical or in berserk.
+	if not blow.is_empty():
+		_own_blow_shake(hit.critical())
 	if hit.hurts() or hit.kind == SkillHits.KIND_WALL:
 		_play_skill_hit_effect_on(body, height, code)
 		# The hit sound at the attacker (CombatAudio's header) -- this
@@ -15825,18 +15868,64 @@ func _tick_skill_cooldowns(delta: float) -> void:
 	var ms := int(_skill_cooldown_carry)
 	_skill_cooldown_carry -= float(ms)
 	_skill_cooldowns.tick(ms)
+	_tick_item_cooldowns(ms)
 	if _skill_cooldowns.count() == 0 and not _skill_cooldown_shown:
 		return
 	_skill_cooldown_shown = _skill_cooldowns.count() > 0
 	if _hud_underbar != null:
 		for slot in _quickslot_skills:
-			var f := _skill_cooldown_frames(int(_quickslot_skills[slot]["id"]))
-			_hud_underbar.set_slot_cooldown(int(slot), f[0], f[1])
+			var sid := int(_quickslot_skills[slot]["id"])
+			var f := _skill_cooldown_frames(sid)
+			# Round 826: and the time left in figures (CoolTimeText).
+			_hud_underbar.set_slot_cooldown(int(slot), f[0], f[1], _skill_cooldown_left(sid))
 	# The skill window's learned slots draw the same (round 786, READ: its
 	# slot is a CIFSlotWithHelp of the skill kind 0x49, drawn by the
 	# same 0x67cfb0 -- SkillBoard's header).
 	if _hud_panels != null:
 		_hud_panels.apply_skill_cooldowns(_skill_cooldown_frames)
+
+## Round 826: this player's item re-use timers (ItemCooldowns has the READ).
+var _item_cooldowns := ItemCooldowns.new()
+## Whether an item slot showed a re-use last tick (so a cleared one is redrawn).
+var _item_cooldown_shown := false
+
+## An accepted use arms the item's timers (Item_OnUseItemResult 0x87a7b0):
+## the item is the result's id, else the one in the bag slot this client
+## asked to use (READ: 0xB04C names the slot and the client finds the ref
+## through it).
+func _arm_item_cooldowns(result) -> void:
+	if _hud_panels == null:
+		return
+	var id := int(result.item_id)
+	if id == 0 and NetClient.last_use_slot >= 0:
+		id = _hud_panels._bag_item_id_at_slot(NetClient.last_use_slot)
+	var item: ItemTableReader.Item = _hud_panels.item_row(id) if id > 0 else null
+	if item == null:
+		return
+	var states := int((_abnormal_states.get(_fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER), {}) as Dictionary).get("mask", 0))
+	for a in ItemCooldowns.arms_of(id, item.type_ids, item.cool_group, item.cool_ms, item.param2, item.param4,
+			_race_of_body(_player_body) == 1, states):
+		_item_cooldowns.arm(String(a[0]), int(a[1]))
+		print("COOLDOWN: item %d (%s) re-usable in %d ms (%s)" % [id, item.code_name, int(a[1]), String(a[0])])
+
+## Counts the item timers down and draws each item quick slot's sweep and
+## time (READ, 0x67cfb0: the sweep as a skill's, no charged flash; the time
+## for a quick slot, 0x67cbf0 -> 0x67c920).
+func _tick_item_cooldowns(ms: int) -> void:
+	_item_cooldowns.tick(ms)
+	if _item_cooldowns.count() == 0 and not _item_cooldown_shown:
+		return
+	_item_cooldown_shown = _item_cooldowns.count() > 0
+	if _hud_underbar == null or _hud_panels == null:
+		return
+	for slot in _quickslot_items:
+		var id := int(_quickslot_items[slot]["item"])
+		var item: ItemTableReader.Item = _hud_panels.item_row(id)
+		if item == null:
+			continue
+		var key := ItemCooldowns.key_of(id, item.type_ids, item.cool_group, item.cool_ms)
+		_hud_underbar.set_slot_cooldown(int(slot), SkillCooldowns.delay_frame(_item_cooldowns.ratio(key)), -1,
+			_item_cooldowns.left_ms(key))
 
 ## A skill's [delay_frame, charge_frame] now (SkillCooldowns), -1 for none:
 ## the record of the skill itself or of its cooldown group.
@@ -26367,6 +26456,12 @@ func _job_setup() -> void:
 	_strip_bars.camera_of = func() -> Camera3D: return get_viewport().get_camera_3d()
 	_strip_bars.anchor_of = _strip_anchor
 	ui_control.add_child(_strip_bars)
+	# Round 826: under every window. The original draws it in the object's
+	# own pass (CICUser::vslot_010, READ), so before the interface (INFERRED
+	# from the pass order); added last here,
+	# it drew over open windows (the user: "That yellow bar appears over open
+	# GUI windows and it shouldn't").
+	ui_control.move_child(_strip_bars, 0)
 	NetClient.strip_started.connect(func(uid: int, secs: int) -> void:
 		_strip_bars.start(uid, secs, Time.get_ticks_msec()))
 	NetClient.strip_cancelled.connect(_on_strip_cancelled)
@@ -26858,6 +26953,14 @@ func _issue_walk(point: Vector3) -> String:
 	# And a walk to a ground item (round 653's review): its arrival or wall
 	# stop would ask for the item from wherever this walk ends.
 	_pending_pickup_id = -1
+	# Round 826: the click filter FUN_009ec240 first asks FUN_009eb140 --
+	# `([player+0x65c] & 0x2476) == 0` -- and sends nothing otherwise. +0x65c
+	# holds a bit per character state (the state enter ORs 1 << state in,
+	# 0x9c9a19); 0x2476 includes 0x400, state 10, the pick-up: a click while
+	# the pick-up clip plays walks nowhere (READ).
+	if _player_pickup_clip != null:
+		print("CLICK: walk refused -- the pick-up clip plays (state 10)")
+		return "ignore"
 	# The client's own click filter (FUN_009eb2a0, round 637's review
 	# follow-up; RemoteFacing.click_rule): with no movement order in effect a
 	# click under 5 units away is not sent -- nothing moves; a far click
@@ -29067,13 +29170,15 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 ## Retail 0x3036 (round 785): `motion.object_id` picked something up. READ,
 ## sro_client.exe FUN_008a78b0: the object is found by its id; it is set to
 ## face the angle at once (FUN_009c4260, no turn) and put in character state
-## 10, whose enter (0xa59a00) plays the body's action type 38 once
+## 10 (round 826: its bit 0x400 in +0x65c, which the click filter and G
+## refuse on -- _issue_walk), whose enter (0xa59a00) plays the body's action type 38 once
 ## (BsrReader.AnimationEntry.TYPE_PICKUP, the `_pickup` clip of the body's own
 ## table, through the lookup every type uses; its two 0xc8 arguments read as
 ## 200 ms blends, INFERRED -- OpenSRO's one-shots cut in and out) and leaves
 ## the state when no clip is found; its event handler (0xa59a60) leaves it when
 ## the clip ends. The state's prerequisite and exclusion masks (0xec6168 ..
-## 0xec616c) are zero: it blocks nothing. The clip's own sound track carries
+## 0xec616c) are zero: it blocks no other state (round 826: but the click
+## filter and G test its bit, above). The clip's own sound track carries
 ## `snd_pickup` (SOUND_FORMAT.md), which AnimSounds fires as for any one-shot.
 ## Not modelled: the handler skips an object for which FUN_009ce930 answers
 ## non-zero (its +0x2ac, looked up in 0x110f7d8 -- a ridden transport,
@@ -30493,18 +30598,22 @@ func _swing_numbers(body: Node3D, monster: int, result: CombatNet.AttackResult, 
 	if t == null:
 		if result.monster_damage > 0:
 			_damage_text(body, _number_art(result.player_critical), result.monster_damage, false, true)
+		# Round 826: the blow's shake (FUN_00a49290, one damage entry).
+		_own_blow_shake(result.player_critical)
 		return
 	for i in t.hits.size():
 		var hit: SkillHits.Hit = t.hits[i]
 		var later: float = float(offsets[i]) if i < offsets.size() else 0.0
 		if later <= 0.0:
 			_damage_text_of_hit(body, hit, false, true)
+			_own_blow_shake(hit.critical())
 		else:
 			var body_ref: WeakRef = weakref(body)
 			_after(later, func() -> void:
 				var b = body_ref.get_ref()
 				if b != null and is_instance_valid(b):
-					_damage_text_of_hit(b, hit, false, true))
+					_damage_text_of_hit(b, hit, false, true)
+				_own_blow_shake(hit.critical()))
 
 ## The offsets, in seconds, of a clip entry's hit events from its first (the
 ## BSR key times read as milliseconds, BsrReader.AnimationEntry.events); [0.0]
@@ -31838,6 +31947,10 @@ func _key_pick_up_nearest() -> String:
 			and Time.get_ticks_msec() - _pickup_inflight_since_ms < PICKUP_PENDING_MS:
 		return "a pick is still pending"
 	var ground_id := _ground_items.nearest_within(player.global_position, PICKUP_SEARCH_RADIUS)
+	# Round 826 (READ, 0x793d1f): after the search, G does nothing while the
+	# player is in state 10 (`[player+0x65c] >> 10 & 1`) -- one item a clip.
+	if _player_pickup_clip != null:
+		return "the pick-up clip plays: nothing picked"
 	if ground_id < 0:
 		return "no item within %.0f" % PICKUP_SEARCH_RADIUS
 	var dist := _ground_items.position_of(ground_id).distance_to(player.global_position)
@@ -34798,6 +34911,8 @@ func _on_use_item_result(result) -> void:
 		# archive's own category-1 message (ErrorText.scroll_line).
 		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
 		return
+	# Round 826: its re-use timers.
+	_arm_item_cooldowns(result)
 	# Round 824: a crest item's accepted use opens its result box.
 	if result.item_id != 0 and _hud_panels != null:
 		var code := _hud_panels.item_code_for_id(result.item_id)

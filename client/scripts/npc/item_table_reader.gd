@@ -296,6 +296,37 @@ const COL_MAX_MAGIC_OPTIONS := 158
 const COL_PARAM2 := 120
 const COL_PARAM7 := 130
 const COL_CHILD_ITEM_COUNT := 159
+## Round 826: Param4, and the twenty Param / Desc128 pairs from Param1 (118).
+const COL_PARAM4 := 124
+const PARAM_PAIRS := 20
+
+## The row's COOLTIME pair (round 826; READ, the client's item parser
+## 0x975a10 at 0x9761a1 keeps the group as wcstol(.., 16) and the Param as
+## the re-use ms): the first pair whose Desc128 contains "cooltime" (any
+## case) and a ':' with a base-16 number after it, and whose Param is an
+## integer -> [group, ms]; [0, 0] for none. The native reader's cooltime_of
+## is the same rule.
+static func cooltime_of(cols: PackedStringArray) -> Array:
+	for k in PARAM_PAIRS:
+		var vi := COL_PARAM1 + 2 * k
+		if vi + 1 >= cols.size():
+			break
+		var desc := cols[vi + 1].strip_edges()
+		if desc.to_lower().find("cooltime") < 0:
+			continue
+		var colon := desc.find(":")
+		if colon < 0:
+			continue
+		var g := desc.substr(colon + 1).strip_edges()
+		if g.to_lower().begins_with("0x"):
+			g = g.substr(2)
+		if g == "" or not g.is_valid_hex_number(false):
+			continue
+		var v := cols[vi].strip_edges()
+		if not v.is_valid_int():
+			continue
+		return [g.hex_to_int(), int(v)]
+	return [0, 0]
 ## The per-plus increments, in PLUS_INC_* order: PD 67, ER 70, PAR 73, MD 78,
 ## MAR 81, phy. atk 99, mag. atk 104, attack rate 115 (the fifth float of each
 ## group; ITEM_FORMAT.md). Lane B's "(+x%)" subtracts them (item_tooltip.md §2).
@@ -465,6 +496,11 @@ class Item:
 	var param2: int = 0
 	var param7: int = 0
 	var child_item_count: int = 0
+	## Round 826 (item re-use, ItemCooldowns): Param4 (COL_PARAM4, a potion's
+	## MP %), and the COOLTIME pair (cooltime_of): its group and its ms.
+	var param4: int = 0
+	var cool_group: int = 0
+	var cool_ms: int = 0
 	var parry := Vector2.ZERO
 	var phys_absorb := Vector2.ZERO
 	var mag_absorb := Vector2.ZERO
@@ -650,6 +686,10 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.param2 = _int_at(cols, COL_PARAM2)
 		item.param7 = _int_at(cols, COL_PARAM7)
 		item.child_item_count = _int_at(cols, COL_CHILD_ITEM_COUNT)
+		item.param4 = _int_at(cols, COL_PARAM4)
+		var cool := cooltime_of(cols)
+		item.cool_group = int(cool[0])
+		item.cool_ms = int(cool[1])
 		item.parry = Vector2(_float_at(cols, COL_PARRY_MIN), _float_at(cols, COL_PARRY_MAX))
 		item.phys_absorb = Vector2(_float_at(cols, COL_PHYS_ABSORB_MIN), _float_at(cols, COL_PHYS_ABSORB_MAX))
 		item.mag_absorb = Vector2(_float_at(cols, COL_MAG_ABSORB_MIN), _float_at(cols, COL_MAG_ABSORB_MAX))
@@ -722,6 +762,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	# Round 789: a library from before these columns has none (all 0: no
 	# avatar finds its visual row, so none is drawn -- build the library).
 	var avatar_ints: PackedInt64Array = rows.get("avatar_ints", PackedInt64Array())
+	# Round 826: a library from before these has none (no item re-use but the kind's).
+	var cool_ints: PackedInt64Array = rows.get("cool_ints", PackedInt64Array())
 	var m := 0
 	for i in ids.size():
 		var item := Item.new()
@@ -806,6 +848,11 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 			item.param2 = avatar_ints[av]
 			item.param7 = avatar_ints[av + 1]
 			item.child_item_count = avatar_ints[av + 2]
+		var co := i * 3
+		if co + 2 < cool_ints.size():
+			item.param4 = cool_ints[co]
+			item.cool_group = cool_ints[co + 1]
+			item.cool_ms = cool_ints[co + 2]
 		into[item.id] = item
 	return true
 

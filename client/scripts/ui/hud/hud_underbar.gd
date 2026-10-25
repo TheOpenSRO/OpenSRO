@@ -413,6 +413,10 @@ func _register_slot(index: int, node: Control) -> void:
 		# 0x682040, whose quick-slot case (0x0c) is the use (0x60bb80). The
 		# LEFT click picks the icon up instead (0x652540's release).
 		if mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and inside:
+			# Round 826: the use's number is the slot's own (+0x374): 1..10
+			# for the first page's, which moves the frame (0x60bb80).
+			if index >= 1 and index <= SLOTS_PER_PAGE:
+				select_slot_frame(index - 1)
 			quickslot_activated.emit(index)
 		elif mb.button_index == MOUSE_BUTTON_LEFT and inside and HeldIcon.is_pick_click(mb) and slot_has_item(index) \
 				and not bool(node.get_meta(PICK_LOCK_META, false)):
@@ -816,7 +820,9 @@ func apply_item_counts(quickslot_items: Dictionary, bag_slots: Array, shows: Cal
 ## 0x685e50 draws the overlays (0x67cfb0) before the count (0x67bd70), READ.
 const DELAY_NODE := SkillDelayOverlay.NODE
 
-func set_slot_cooldown(slot_index: int, delay_frame: int, charge_frame: int) -> void:
+## Round 826: `left_ms`, the time left, is drawn in figures after the sweep
+## and before the count (CoolTimeText, READ: 0x67c920 for a quick slot).
+func set_slot_cooldown(slot_index: int, delay_frame: int, charge_frame: int, left_ms: int = 0) -> void:
 	if not _slot_nodes.has(slot_index):
 		return
 	var node: Control = _slot_nodes[slot_index]
@@ -825,6 +831,13 @@ func set_slot_cooldown(slot_index: int, delay_frame: int, charge_frame: int) -> 
 		sheet_for = _ui_builder.load_texture
 	SkillDelayOverlay.apply(node, sheet_for, delay_frame, charge_frame, Rect2(),
 		node.get_node_or_null(ICON_NODE))
+	CoolTimeText.apply(node, sheet_for, left_ms, node.get_node_or_null(COUNT_NODE))
+
+## The figures a slot's re-use shows now ("" for none), for tests.
+func slot_cool_time(slot_index: int) -> String:
+	var t: CoolTimeText = (_slot_nodes[slot_index] as Control).get_node_or_null(CoolTimeText.NODE) \
+			if _slot_nodes.has(slot_index) else null
+	return t.shown_text() if t != null and t.visible else ""
 
 ## The cell a slot's re-use display shows, for tests: [sheet, frame] or [].
 func slot_cooldown_cell(slot_index: int) -> Array:
@@ -895,7 +908,46 @@ func slot_for_key(k: int) -> int:
 	return slot_index(_page + 1, k)
 
 func activate_key(k: int) -> void:
+	select_slot_frame(k)
 	quickslot_activated.emit(slot_for_key(k))
+
+## Round 826: the selection frame, child 103 (`ub_slot_arrow.ddj`), on page
+## slot `k` (0..9). READ, FUN_0060a820(k): the frame is shown (+0x5c(1)) and
+## moved (+0x9c) to the k-th of the first page's slots (+0x3d8 + k x 4, whose
+## positions every page's slots share) less 4 across and 3 down, and its alpha
+## set to 255 (0x46ca80(255, 0, 4.0, 0.0, 0); what its other arguments do is
+## OPEN -- the user's reference shows no fade). The quick-slot use
+## FUN_0060bb80(n) calls it first for a use numbered 1..10 -- abs = n +
+## page x 10, then 0x60a820((abs - 1) % 10) -- whether or not the use goes
+## through: the number keys (n = 1..10 on any page) and a right-click on a
+## first-page slot (n = the slot's own number, 1..10). The "m" slot (n 0),
+## slots 11..50 (n 11..50) and a page flip (0x60a730) leave it. Nothing else
+## touches +0x4a4: once shown it stays until the bar is rebuilt.
+func select_slot_frame(k: int) -> void:
+	if k < 0 or k >= PAGE_SLOT_IDS.size():
+		return
+	var arrow := _nodes.get(ID_SLOT_ARROW) as Control
+	var slot := _nodes.get(PAGE_SLOT_IDS[k]) as Control
+	if arrow == null or slot == null:
+		return
+	# OURS: it takes no mouse input, so the slot under it is still the one
+	# right-clicked.
+	arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for c in arrow.find_children("*", "Control", true, false):
+		(c as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	arrow.position = slot.position + SLOT_FRAME_OFFSET
+	arrow.modulate.a = 1.0
+	_set_shown(arrow, true)
+	_slot_frame = k
+
+## The frame's place against its slot (READ, 0x60a820: x - 4, y - 3).
+const SLOT_FRAME_OFFSET := Vector2(-4, -3)
+## The page slot the frame is on, -1 before the first use.
+var _slot_frame := -1
+
+## The page slot (0..9) the selection frame is on, -1 when hidden.
+func slot_frame() -> int:
+	return _slot_frame
 
 ## The middle button's slot, the "m" slot (0x60bb80(0) -> 0x60b850(0)).
 func activate_mouse_slot() -> void:
