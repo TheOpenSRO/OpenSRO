@@ -7531,6 +7531,12 @@ That yellow bar appears over open GUI windows and it shouldn't."
 - **Tests.** `camera_shake826_test.gd` (the engine, the rows, the hook, the movers), `cool_time826_test.gd`,
   `item_cooldowns826_test.gd`, `hud_underbar_test.gd` (the frame), `dest_walk_test.gd` (the pick-up's
   refusal), the native `items` test (the new columns), `table_parity.gd` PASS.
+- **Perf gate.** The first (`--base 81152aef --head cfd8453b --sites jangan,cross --frames 60000`, 3 runs)
+  read cross entry SLOWER (9376 -> 10733 ms): both builds swing between ~9.3 and ~10.8 s on this box, but
+  the GDScript item parse (native readers off in the gate) had grown 1913 -> 2045 ms from `cooltime_of`
+  copying 20 cells a row; it now tests `findn` first (59612531). The re-run, 5 runs: jangan frame 0.86 /
+  0.86 ms, entry 8744 / 9977 (base runs reach 10.7 s too), freeze 2794 / 2766, hitches 5 / 5; cross 1.01 /
+  1.01 ms, 9388 / 9336, 2770 / 2718, 5 / 5 -- all SAME, exit 0.
 
 ## Eight-hundred-and-twenty-fifth round: the region-crossing pause measured -- NPC placement, not shaders
 

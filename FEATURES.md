@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.584** plus what is merged on `dev`; updated 2026-10-24.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.585** plus what is merged on `dev`; updated 2026-10-25.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -21,13 +21,13 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
 | [UI / HUD](#ui--hud) | 14 | 4 |  | 1 | 19 |
-| [Graphics & effects](#graphics--effects) | 13 | 1 |  |  | 14 |
+| [Graphics & effects](#graphics--effects) | 14 | 1 |  |  | 15 |
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 7 |  | 1 | 1 | 9 |
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **159** | **33** | **1** | **35** | **228** |
+| **All** | **160** | **33** | **1** | **35** | **229** |
 
 ## Biggest gaps
 
@@ -172,7 +172,7 @@ Retail skill window and mastery economy for both races.
 | European masteries | 🟡 Partial | Learn and cast; stances, stealth and weapon-scaled heals incomplete |
 | Skill tooltips | ✅ Supported | Retail blue tooltip window |
 | Skill cooldowns | ✅ Supported | Server-enforced, including shared cooldown groups |
-| Cooldown overlay | ✅ Supported | Full-icon sweep on hotbar and skill window |
+| Cooldown overlay | ✅ Supported | Full-icon sweep on hotbar and skill window; hotbar slots also count down the time left with the original's digit images (seconds in white, minutes in yellow, hours in blue) |
 | Buffs kept over relog | ❌ Not yet | Buffs end on logout |
 | Skill withdraw | ❌ Not yet | Lowering masteries and forgetting skills not available |
 
@@ -187,7 +187,7 @@ Retail items with real stats, blues, alchemy and potions.
 | Equipment and paper doll | ✅ Supported | 13 worn slots with live 3D preview; others see your gear |
 | Item requirements | ✅ Supported | Level, race, gender and mastery checked; unmet shown in red |
 | Item tooltips | ✅ Supported | Retail tooltip with white stats %, blues, plus, durability, requirements |
-| Pick up drops | ✅ Supported | Click items or gold on the ground to pick up |
+| Pick up drops | ✅ Supported | Click items or gold on the ground to pick up; the pick-up animation plays out before you can walk or pick again, as in the original |
 | Drop items on the ground | ❌ Not yet | Players cannot drop items or gold yet |
 | Durability and broken items | ✅ Supported | Gear wears in combat; broken gear gives no stats |
 | Alchemy +N (elixirs) | ✅ Supported | Retail success rates, lucky powder, failure and destroy rules |
@@ -200,7 +200,7 @@ Retail items with real stats, blues, alchemy and potions.
 | HP/MP potions and vigors | ✅ Supported | Retail recovery amounts and reuse locks |
 | Cure pills | ✅ Supported | Universal and purification pills cure statuses |
 | Auto potion | ✅ Supported | HP, MP and cure thresholds; settings saved on the server |
-| Item cooldowns | 🟡 Partial | Server-enforced; cooldown sweep not drawn on potion slots |
+| Item cooldowns | 🟡 Partial | Server-enforced; potions, pills and items with a cooldown show the sweep and the time left on hotbar slots, using the original client's timings; the bag doesn't show the sweep yet, and a few special item kinds aren't timed |
 | Speed scrolls and drugs | ❌ Not yet | Refused as unusable |
 | Composite items | 🟡 Partial | Only the Energy of Life scroll kind works |
 | Avatars | ✅ Supported | Hat, dress, attachment and flag slots; worn avatars cover your gear for you and others, on the select screen too; avatar stats and blues apply |
@@ -297,7 +297,7 @@ Retail windows rebuilt from the game's own layout files.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page |
+| Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page; the gold frame marks the slot last used |
 | Drag to hotbar | ✅ Supported | Skills, items and actions; swap and clear slots |
 | Additional quick slot bars | ✅ Supported | The original's movable extra bar (Space+1-0) with its options, plus paged extra bars (Alt+1-0) |
 | Saved hotbar | 🟡 Partial | Saved on your PC per character, not on the server |
@@ -333,6 +333,7 @@ Retail models, particles and lighting re-created in Godot.
 | Placed object effects | ✅ Supported | Every placed object's ambient effects (fountain sprays, waterfall mist, lanterns, burners); they play out to the fog and fade into it (to the horizon with fog off), and lantern glows hide behind walls at once; scrolling water on fountains and waterfalls |
 | Fade-in of characters | ✅ Supported | Monsters and players fade in over 2 s, as retail |
 | Berserk look | ✅ Supported | Berserk aura, colour and sounds |
+| Camera shake | ✅ Supported | The skills that shake the screen in the original (Bash, the falling force bolts and more), and your own critical and berserk blows |
 | Cloth and hair (Dynamic Animation) | ✅ Supported | Robes, dresses, capes, wings, hair, tassels, banners, flags and tents sway and fall as in retail; the Video option turns it on and off |
 | Worn item effects | ✅ Supported | Talisman glows, the Europe talisman's turning ornaments, wing flaps and fullset shimmer from the items' own files |
 | Crowd rendering | ✅ Supported | GPU skinning for large crowds |
