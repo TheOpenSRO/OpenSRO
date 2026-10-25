@@ -311,9 +311,12 @@ static func cooltime_of(cols: PackedStringArray) -> Array:
 		var vi := COL_PARAM1 + 2 * k
 		if vi + 1 >= cols.size():
 			break
-		var desc := cols[vi + 1].strip_edges()
-		if desc.to_lower().find("cooltime") < 0:
+		# findn first: no copy of the cell for the 19 pairs of a row that are
+		# not one (round 826's perf gate: 20 copies a row cost the GDScript
+		# parse 130 ms over 15,338 rows).
+		if cols[vi + 1].findn("cooltime") < 0:
 			continue
+		var desc := cols[vi + 1].strip_edges()
 		var colon := desc.find(":")
 		if colon < 0:
 			continue
