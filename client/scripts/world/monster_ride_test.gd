@@ -246,11 +246,13 @@ func _test_dummy(world: Node) -> void:
 	if r == null:
 		_check(false, "an RT_DUMMY ride is made")
 		return
-	r.rider.scale = Vector3(1.5, 1.5, 1.5)
+	r.rider.scale = BodyMirror.SCALE * 1.5
 	r.rider_rest = r.rider.transform
 	body.rotation.y = -0.7
 	world.call("_step_monster_rides", true)
-	_check(r.root.global_transform.is_equal_approx(r.rider.global_transform), "RT_DUMMY: the ride takes the monster's whole transform")
+	# Round 828: both skeletons mirrored (BodyMirror), the root between them less the rider's.
+	_check(r.assembled.skeleton.global_transform.is_equal_approx(r.rider.global_transform)
+		and r.root.global_transform.basis.determinant() > 0.0, "RT_DUMMY: the ride takes the monster's whole transform")
 
 func _test_mirror(world: Node) -> void:
 	var r := _ride_of(world, 1)

@@ -424,11 +424,13 @@ func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float, fade_fr
 	# place while far is the holder's times its own transform.
 	if skel.get_parent() != node or not can_draw(skel, entry):
 		return false
-	# A mirrored body would draw with the wrong winding (round 747's review,
-	# F9): Godot flips a mirrored instance's cull from its transform, and a far
-	# part's instance transform is the identity. None is mirrored in the world.
-	if node.is_inside_tree() and (node.global_transform * skel.transform).basis.determinant() < 0.0:
-		_refuse("mirrored")
+	# Every body in the world is mirrored (round 828, BodyMirror), and the
+	# twins cull the other face for it (twin_code): a far part's instance
+	# transform is the identity, so Godot does not flip its cull from the
+	# transform as it does a dressed body's (round 747's review, F9). One that
+	# is not mirrored would draw inside out, so it stays dressed.
+	if node.is_inside_tree() and (node.global_transform * skel.transform).basis.determinant() > 0.0:
+		_refuse("unmirrored")
 		return false
 	var l := _layout_for(skel)
 	var parts = _parts_of(skel, l)
@@ -681,9 +683,9 @@ func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array
 		var q2 := Time.get_ticks_usec()
 		FrameSplit.add("ga_geo", q1 - q0)
 		FrameSplit.add("ga_lit", q2 - q1)
-	# A mirrored holder, as add() refuses one (review F9; none is mirrored).
-	if (node.global_transform * local).basis.determinant() < 0.0:
-		_refuse("mirrored")
+	# An unmirrored holder, as add() refuses one (round 828).
+	if (node.global_transform * local).basis.determinant() > 0.0:
+		_refuse("unmirrored")
 		return false
 	var b := Body.new()
 	b.ghost = true
@@ -2728,6 +2730,18 @@ static func _prewarm_rid(sh: Shader) -> void:
 var _prewarmed := {}
 var _tw_seen := {}
 
+## A render_mode line with its cull for a mirrored body (round 828): back
+## (Godot's default when none is named) becomes front, front back.
+static func mirrored_cull(line: String) -> String:
+	if line.contains("cull_back"):
+		return line.replace("cull_back", "cull_front")
+	if line.contains("cull_front"):
+		return line.replace("cull_front", "cull_back")
+	if line.contains("cull_disabled"):
+		return line
+	var semi := line.rfind(";")
+	return (line.substr(0, semi) + ", cull_front" + line.substr(semi)) if semi >= 0 else line + ", cull_front"
+
 static func twin_code(code: String) -> String:
 	if not code.contains("shader_type spatial"):
 		return ""
@@ -2742,6 +2756,14 @@ static func twin_code(code: String) -> String:
 			if lines[i].strip_edges().begins_with("shader_type"):
 				at = i
 				break
+	# Round 828: the bodies are mirrored (BodyMirror) and their far instances
+	# the identity, so the twin culls the face the dressed body's Godot flip
+	# would: back <-> front; disabled stays.
+	if lines[at].strip_edges().begins_with("render_mode"):
+		lines[at] = mirrored_cull(lines[at])
+	else:
+		lines.insert(at + 1, "render_mode cull_front;")
+		at += 1
 	lines.insert(at + 1, "#define CROWD_GPU\n#include \"%s\"" % HEAD_INCLUDE)
 	var out := "\n".join(lines)
 	# Round 756: a mod shader's fade twin takes its alpha per instance (a

@@ -183,6 +183,8 @@ func _make_body(scales: Dictionary = {}) -> Skeleton3D:
 	if not scales.is_empty():
 		CharacterAppearance.apply_volume(s, scales)
 	s.set_meta(MonsterCrowd.META_LAYOUT, "crowd_gpu_test|%d" % s.get_bone_count())
+	# Round 828: mirrored, as every body the world puts in (BodyMirror).
+	BodyMirror.apply(s)
 	return s
 
 ## A loop over the body's bones, every channel moving.
@@ -252,7 +254,7 @@ func _test_parity() -> void:
 		holder.set_meta("character_id", 100 + i)
 		holder.position = Vector3(30.0 * float(i), 0.0, -40.0)
 		holder.rotation.y = 0.7 * float(i)
-		skel.scale = Vector3.ONE * float(c[1])
+		skel.scale = BodyMirror.SCALE * float(c[1])
 		skel.rotation.y = PI
 		holder.add_child(skel)
 		root.add_child(holder)
@@ -732,7 +734,7 @@ func _test_frames_and_rebase() -> void:
 	holder.free()
 
 ## Round 747's review: F3 (pages), F7 (empty groups go), F8 (a blended part
-## keeps the body near), F9 (a mirrored body stays near), F11 (the switch).
+## keeps the body near), F9 (an unmirrored body stays near, round 828), F11 (the switch).
 func _test_review_fixes() -> void:
 	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
 	var skel := _make_body()
@@ -781,11 +783,20 @@ func _test_review_fixes() -> void:
 	piece.material_override = blend
 	_check(not crowd.add(holder, skel, entry, t) and crowd.refusals.has("blended"), "F8: a body with a blended part is not drawn far")
 	piece.material_override = plain
-	# F9: a mirrored body stays near.
+	# Round 828: a twin culls the other face (the far instance is the identity).
+	_check(CrowdGpu.mirrored_cull("render_mode blend_mix, cull_back;") == "render_mode blend_mix, cull_front;"
+		and CrowdGpu.mirrored_cull("render_mode cull_front, unshaded;") == "render_mode cull_back, unshaded;"
+		and CrowdGpu.mirrored_cull("render_mode unshaded, cull_disabled;") == "render_mode unshaded, cull_disabled;"
+		and CrowdGpu.mirrored_cull("render_mode unshaded;") == "render_mode unshaded, cull_front;",
+		"a twin's cull: back <-> front, disabled kept, none (back) -> front")
+	_check(CrowdGpu.twin_code("shader_type spatial;\nvoid fragment() {}").contains("render_mode cull_front;"),
+		"a shader naming no render_mode gets cull_front")
+	# F9, round 828: the twins cull for a mirrored body, so one that is not
+	# mirrored (here a holder mirroring it back) stays near.
 	holder.scale = Vector3(-1.0, 1.0, 1.0)
-	_check(not crowd.add(holder, skel, entry, t) and crowd.refusals.has("mirrored"), "F9: a mirrored body is not drawn far")
+	_check(not crowd.add(holder, skel, entry, t) and crowd.refusals.has("unmirrored"), "F9: an unmirrored body is not drawn far")
 	holder.scale = Vector3.ONE
-	_check(crowd.add(holder, skel, entry, t), "... and the same body, plain and unmirrored, is")
+	_check(crowd.add(holder, skel, entry, t), "... and the same body, mirrored as the world's are, is")
 	crowd.remove(skel)
 	root.remove_child(holder)
 	holder.free()

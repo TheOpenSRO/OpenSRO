@@ -436,7 +436,9 @@ func add_ghost_host(anchor: Node3D, row: Dictionary, archive: Pk2Reader) -> void
 	var efp := String(row["efp"])
 	var scale := float(row["scale"])
 	var key := kind_key(efp, scale)
-	var id := "%d|g%d|%d|%s|%s" % [anchor.get_instance_id(), int(row["wear"]), int(row["bone"]), key, str(snappedf(scale, 0.0001))]
+	# Round 828: and the model (a dual weapon's two carry the same rows on
+	# the same bone index of their own skeletons).
+	var id := "%d|g%d|m%d|%d|%s|%s" % [anchor.get_instance_id(), int(row["wear"]), int(row.get("model", 0)), int(row["bone"]), key, str(snappedf(scale, 0.0001))]
 	if _hosts.has(id) or not _kind_for(key, efp, archive, true):
 		return
 	var h := Host.new()

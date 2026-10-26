@@ -97,8 +97,11 @@ func place() -> void:
 		SoundTable.RIDE_DUMMY:
 			# The rider's whole transform as it is now -- round 813: with its
 			# slope tilt (SlopeTilt), which rider_rest does not carry.
-			if not root.transform.is_equal_approx(rider.transform):
-				root.transform = rider.transform
+			# Round 828: less the rider's mirror, which the ride's own
+			# skeleton carries (BodyMirror).
+			var want_root := BodyMirror.unmirrored(rider.transform)
+			if not root.transform.is_equal_approx(want_root):
+				root.transform = want_root
 		SoundTable.RIDE_NONE:
 			if root.transform != Transform3D.IDENTITY:
 				root.transform = Transform3D.IDENTITY
@@ -107,7 +110,9 @@ func place() -> void:
 				_saddle = skel.find_bone(SADDLE_BONE)
 			if _saddle < 0 or not skel.visible:
 				return
-			var t := seat(skel.transform, skel.get_bone_global_pose(_saddle), rider_rest.basis.get_scale())
+			# Round 828: the saddle's pose carries the ride's mirror, so the
+			# rider takes its size alone (get_scale is negative on a mirror).
+			var t := seat(skel.transform, skel.get_bone_global_pose(_saddle), rider_rest.basis.get_scale().abs())
 			if not rider.transform.is_equal_approx(t):
 				rider.transform = t
 		_:

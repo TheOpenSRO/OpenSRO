@@ -240,7 +240,13 @@ static func meshes_of(node: Node) -> Array[MeshInstance3D]:
 	return out
 
 ## Puts the glow of `row` (null: none) on every mesh under `nodes`, and the
-## particles of `particle_rows` on the item's own skeleton. Returns
+## particles of `particle_rows` on the item's own skeleton -- on EACH model's
+## (round 828, READ): CObjCharacter::FUN_00a60a90 calls FUN_00a5f3e0 twice,
+## with the visual record's two parts (+4, +8: the `_r` and the `_l` model of
+## a dual axe or dagger, FUN_00a5f4f0), and each call puts the glow and every
+## particle row on its part; a single model's second part is 0 and that call
+## does nothing. Until round 828 a row went to the first model carrying its
+## bone only, so the left axe and dagger had no seal effect. Returns
 ## {"meshes": n, "particles": n}.
 static func apply(nodes: Array, row: ItemGlowTables.GlowRow, particle_rows: Array, data: Pk2Reader,
 		particles: Pk2Reader, label: String = "") -> Dictionary:
@@ -258,8 +264,8 @@ static func apply(nodes: Array, row: ItemGlowTables.GlowRow, particle_rows: Arra
 				out["meshes"] += 1
 	for pr in particle_rows:
 		var r := pr as ItemGlowTables.ParticleRow
-		var host := _bone_host(nodes, r.bone)
-		if host == null:
+		var hosts := bone_hosts(nodes, r.bone)
+		if hosts.is_empty():
 			# READ: FUN_00c816c0 returns 0 when the bone is not found, and
 			# FUN_00c77ca0 frees the mod -- no effect.
 			stats["no_bone"] += 1
@@ -271,10 +277,22 @@ static func apply(nodes: Array, row: ItemGlowTables.GlowRow, particle_rows: Arra
 			continue
 		# Drawn through EquipFx: one simulation per (efp, scale), shared by
 		# every weapon showing it (OURS, see its header).
-		out["particles"] += EquipFx.attach(host, [r], particles)
+		for host in hosts:
+			out["particles"] += EquipFx.attach(host, [r], particles)
 	stats["items"] += 1
 	stats["meshes"] += out["meshes"]
 	stats["particles"] += out["particles"]
+	return out
+
+## Round 828: one item skeleton per model in `nodes` that has `bone` (each
+## part of the client's record gets the row: apply's header), in the models'
+## order.
+static func bone_hosts(nodes: Array, bone: String) -> Array[Skeleton3D]:
+	var out: Array[Skeleton3D] = []
+	for node in nodes:
+		var s := _bone_host([node], bone)
+		if s != null:
+			out.append(s)
 	return out
 
 ## The item skeleton under `nodes` that has `bone`, or null.

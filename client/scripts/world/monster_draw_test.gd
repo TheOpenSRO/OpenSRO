@@ -496,7 +496,7 @@ func _test_class_scale(world: Node) -> void:
 			return -1.0
 		for c in body.get_children():
 			if c is Skeleton3D:
-				return (c as Skeleton3D).scale.x
+				return absf((c as Skeleton3D).scale.x)
 		return -1.0
 	var label_y := func(id: int) -> float:
 		var body: Node = bodies.get(id)

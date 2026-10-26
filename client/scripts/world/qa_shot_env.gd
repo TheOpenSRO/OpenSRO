@@ -153,7 +153,7 @@ static func report_patches(world: Node, shot: String) -> void:
 			var b := blobs.blob(i)
 			if b == null or not b.visible:
 				continue
-			var half := b.global_transform.basis.get_scale().x * 0.5
+			var half := absf(b.global_transform.basis.get_scale().x) * 0.5
 			var lo := Vector2(INF, INF)
 			var hi := Vector2(-INF, -INF)
 			for corner in [Vector3(-half, 0, -half), Vector3(half, 0, -half), Vector3(-half, 0, half), Vector3(half, 0, half)]:

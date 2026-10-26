@@ -1075,7 +1075,7 @@ static func _play_bsr(r: Dictionary, act: int, caster: Node3D, target: Node3D, h
 		print(what + " at the target")
 		return false
 	var sk := skeleton_of(host)
-	var body_scale := (sk as Node3D).global_transform.basis.get_scale().x if sk != null and sk.is_inside_tree() else 1.0
+	var body_scale := absf((sk as Node3D).global_transform.basis.get_scale().x) if sk != null and sk.is_inside_tree() else 1.0
 	BsrEffect.spawn(p, {"parent": parent, "at": bone_point(host, String(r["bone"]), r["offset"]),
 		"basis": BsrEffect.host_turn(host), "scale": body_scale, "types": [BsrEffect.TYPE_FIRST],
 		"host": host, "bone": String(r["bone"]), "offset": r["offset"], "follow": act != AT_STOP,

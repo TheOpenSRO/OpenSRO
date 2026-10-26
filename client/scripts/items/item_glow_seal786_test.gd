@@ -54,6 +54,7 @@ func _initialize() -> void:
 	_test_locked_and_armour()
 	_test_inherited_copies()
 	_test_appearance()
+	_test_dual_models()
 	_test_effective_plus()
 	await _test_driver_while_readying()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
@@ -135,6 +136,30 @@ func _test_inherited_copies() -> void:
 ## The slot rule (READ: only FUN_00a60a90's kind-1 attachments, the weapon and
 ## the shield): a +12 unlocked piece glows in slot 6 or 7, nowhere else; the
 ## locked piece glows nowhere.
+## Round 828 (READ, CObjCharacter::FUN_00a60a90 -> FUN_00a5f3e0 twice, once a
+## part): a dual axe's or dagger's `_r` and `_l` models each take every row
+## whose bone their own skeleton has; a single model takes it once.
+func _item_model(bones: Array) -> Node3D:
+	var node := Node3D.new()
+	var sk := Skeleton3D.new()
+	for b in bones:
+		sk.add_bone(b)
+	node.add_child(sk)
+	return node
+
+func _test_dual_models() -> void:
+	var r := _item_model(["Bone01", "Bone03"])
+	var l := _item_model(["Bone01", "Bone03"])
+	var hosts := EquipGlow.bone_hosts([r, l], "Bone03")
+	_check(hosts.size() == 2 and hosts[0].get_parent() == r and hosts[1].get_parent() == l,
+		"a dual weapon's Bone03 row goes on both models, _r then _l")
+	_check(EquipGlow.bone_hosts([r], "Bone03").size() == 1, "a single model takes it once")
+	var bare := _item_model(["Bone01"])
+	_check(EquipGlow.bone_hosts([r, bare], "Bone03").size() == 1 and EquipGlow.bone_hosts([r, l], "ai_end").is_empty(),
+		"a model without the bone takes none (FUN_00c816c0 returns 0)")
+	for n in [r, l, bare]:
+		n.free()
+
 func _test_appearance() -> void:
 	var t := _tables()
 	var a := CharacterAppearance.new()

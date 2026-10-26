@@ -179,7 +179,7 @@ static func _clip(a: SkinnedBsrAssembler.AssembledCharacter, typ: int) -> BanRea
 func _follow_now() -> void:
 	if host == null or not is_instance_valid(host):
 		return
-	var s := global_transform.basis.get_scale().x
+	var s := absf(global_transform.basis.get_scale().x)
 	global_transform = Transform3D(host_turn(host).scaled(Vector3(s, s, s)), SkillEffects.bone_point(host, bone, offset))
 
 ## The turn of a body's drawn model (its skeleton's, scale taken out).

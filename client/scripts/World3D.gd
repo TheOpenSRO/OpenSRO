@@ -10584,9 +10584,9 @@ func _skeleton_bounds(skeleton: Skeleton3D) -> Vector2:
 		for i in range(skeleton.get_bone_count()):
 			if Skeleton3DBuilder.is_skeleton_bone(skeleton, i):
 				top = maxf(top, skeleton.get_bone_global_pose(i).origin.y)
-		return Vector2(NPC_MIN_RADIUS, top * skeleton.scale.y)
-	var depth: float = minf(aabb.size.x, aabb.size.z) * skeleton.scale.x
-	return Vector2(depth * 0.5, aabb.end.y * skeleton.scale.y)
+		return Vector2(NPC_MIN_RADIUS, top * absf(skeleton.scale.y))
+	var depth: float = minf(aabb.size.x, aabb.size.z) * absf(skeleton.scale.x)
+	return Vector2(depth * 0.5, aabb.end.y * absf(skeleton.scale.y))
 
 ## A body that stops the player walking through an NPC.
 func _npc_collider(bounds: Vector2) -> StaticBody3D:
@@ -10866,6 +10866,7 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 			holder.rotation.y = NpcFacing.holder_yaw(facing)
 			facing_source = "stand-in"
 		facing_usec = Time.get_ticks_usec() - facing_started
+	BodyMirror.apply(skeleton)
 	holder.add_child(skeleton)
 	var bounds := _skeleton_bounds(skeleton)
 	# Its idle is posed only while seen (round 655, MonsterDraw).
@@ -12739,6 +12740,8 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# bug. Turning the body 180deg aligns its front with the node's forward,
 	# so every facing (movement, click, combat) now points the right way.
 	skeleton.rotation.y = PI
+	# Round 828: and drawn as the original draws it, not mirrored (BodyMirror).
+	BodyMirror.apply(skeleton)
 	player.add_child(skeleton)
 	player_mesh.visible = false
 	_player_skeleton = skeleton
@@ -23394,7 +23397,7 @@ func _ghost_local_for(height: float) -> Transform3D:
 		return got
 	var n := Node3D.new()
 	n.rotation.y = PI
-	n.scale = Vector3.ONE * height
+	n.scale = BodyMirror.SCALE * height
 	var t := n.transform
 	n.free()
 	_ghost_local[height] = t
@@ -23484,6 +23487,7 @@ func _dress_other(character_id: int) -> void:
 		# _try_apply_real_player_character) -- the body's own front is -Z, and
 		# the node points +Z where it moves/faces.
 		skeleton.rotation.y = PI
+		BodyMirror.apply(skeleton)
 		node.add_child(skeleton)
 		if dt != null:
 			dt.mark("enter")
@@ -23869,6 +23873,7 @@ func _redress_other(character_id: int) -> void:
 		_anim_sounds.unregister(old)
 		old.queue_free()
 	skeleton.rotation.y = PI
+	BodyMirror.apply(skeleton)
 	node.add_child(skeleton)
 	# The new meshes take the body's Detail state (round 739, B2): casting
 	# only if it is one of the ten.
@@ -27762,7 +27767,7 @@ func _dress_job_mob(monster: CombatNet.MonsterSnapshot) -> Dictionary:
 	a.default_group = group
 	var idle := SkinnedBsrAssembler.animation_for(_data_pk2, a, BsrReader.AnimationEntry.TYPE_STAND) if _data_pk2 != null else null
 	a.idle_animation = idle if idle != null else tmpl.idle_animation
-	var lh := MonsterDraw.label_height(skeleton) * skeleton.scale.y
+	var lh := MonsterDraw.label_height(skeleton) * absf(skeleton.scale.y)
 	print("World3D: NPC %s (body byte %d) dressed as %d (%s) in %s, weapon type %d, group %s" % [
 		monster.code_name, body_byte, ref, "man" if man else "woman", str(items), weapon_type, group])
 	return {"assembled": a, "label_height": lh, "radius": MonsterDraw.cull_radius(skeleton, lh),
@@ -27903,6 +27908,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# too high (or low) above a real model of very different real size.
 	# (MonsterDraw.label_height, once per template since round 655.)
 	if monster_skeleton != null:
+		BodyMirror.apply(monster_skeleton)
 		body.add_child(monster_skeleton)
 		# Round 809: its ride, under the same body (MonsterRide).
 		if ride_model != "" and dressed.is_empty():
@@ -28161,6 +28167,7 @@ func _attach_monster_ride(monster_id: int, body: Node3D, rider: Skeleton3D, mode
 	a.skeleton.set_meta(MonsterDraw.META_HIDE, true)
 	a.skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(model))
 	a.skeleton.set_meta(MonsterCrowd.META_LAYOUT, model)
+	BodyMirror.apply(a.skeleton)
 	root.add_child(a.skeleton)
 	# Its own particles (BodyFx): the ambient set (Tahomet's devil glow) and its
 	# clips' keys (Uruchi's dragon dust), through a silent sound owner.
@@ -28334,7 +28341,7 @@ func _slope_tilt_body(e: Array, delta: float) -> bool:
 		model.transform = Transform3D(st.applied, Vector3.ZERO) * st.rest
 		# A dummy ride is the monster's whole transform (FUN_009d0660).
 		if ride != null and ride.ride_type == SoundTable.RIDE_DUMMY and is_instance_valid(ride.root):
-			ride.root.transform = model.transform
+			ride.root.transform = BodyMirror.unmirrored(model.transform)
 	return st.stale or (st.enabled and not (st.n_done and st.k_done))
 
 ## OPENSRO_QA_GUILD (round 814): every 60 frames, every guild line drawn --
@@ -33359,7 +33366,7 @@ func _play_hit_efp_on(body: Node3D, world_height: float, efp: String) -> void:
 		var decoded := EfpEffect.create(efp, particles)
 		if decoded != null and decoded.draw_count() > 0:
 			var skel := SkillEffects.skeleton_of(body)
-			var sy: float = skel.global_transform.basis.get_scale().y if skel != null else 1.0
+			var sy: float = absf(skel.global_transform.basis.get_scale().y) if skel != null else 1.0
 			decoded.reserved = true
 			SkillEffects.attach(decoded, body, "none", Vector3(0, world_height * 0.5 / maxf(sy, 0.0001), 0))
 			return
@@ -35421,6 +35428,7 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 			_cos_assembled[rec.uid] = assembled
 			height = _monster_templates.label_height_of(model)
 			skel.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(model))
+			BodyMirror.apply(skel)
 			body.add_child(skel)
 			_animate(assembled)
 			_body_fx_attach(skel, assembled.parsed, model)
