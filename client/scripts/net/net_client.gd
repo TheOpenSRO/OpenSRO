@@ -351,6 +351,9 @@ var character_states := {}
 ## OPENSRO_QA_SPAWN_LOG=1 prints one line per player spawned or despawned
 ## (live checks); off, only one line per group.
 var _spawn_log := OS.get_environment("OPENSRO_QA_SPAWN_LOG") != ""
+## OPENSRO_QA_BAG_LIST_DELAY_MS holds each bag list back that long (round
+## 830): the order a real network gives an equip's two replies.
+var _qa_bag_list_delay_ms := int(OS.get_environment("OPENSRO_QA_BAG_LIST_DELAY_MS"))
 var _spawn_types: UserSpawnNet.Types = null
 var _pending_spawns: Array = []
 ## Round 762 (QA, counted only while FrameSplit is on): every packet's bytes
@@ -2437,7 +2440,15 @@ func _dispatch(p: Packet) -> void:
 			last_inventory_instances = _note_instances("bag", r.instances)
 			if r.capacity > 0:
 				last_inventory_capacity = r.capacity
-			inventory_list_result.emit(r.slots, r.error)
+			if _qa_bag_list_delay_ms > 0 and Engine.get_main_loop() is SceneTree:
+				# QA only (round 830): the bag list a moment after the worn
+				# list, as over a real network.
+				var slots := r.slots
+				var err := r.error
+				(Engine.get_main_loop() as SceneTree).create_timer(_qa_bag_list_delay_ms / 1000.0).timeout.connect(
+					func() -> void: inventory_list_result.emit(slots, err))
+			else:
+				inventory_list_result.emit(r.slots, r.error)
 		InventoryNet.OP_MOVE_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities

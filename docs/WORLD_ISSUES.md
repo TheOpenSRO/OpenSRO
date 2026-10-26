@@ -7483,6 +7483,34 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirtieth round: a hotbar swap emptied the previous item's key
+
+The user (video): "When switching to a new item from the bar the previous item disappears." Each
+key press put its item on, and the key of the item that came off emptied. A bow's key also emptied
+the shield's key, since the bow pushes the shield into the bag.
+
+- **Cause (MEASURED).** An equip gets two replies: the worn list, then the bag list that the client
+  asks for right after the equip. Round 829 re-checked the bar on the worn list, still against the
+  bag from before the equip. There the item that came off is neither worn nor in the bag, so its key
+  was cleared, and the bar saved without it. On the render box both replies land in the same frame,
+  so round 829's live check passed. Over the network to prod the worn list arrives first.
+- **Fix (OURS).** `EquipTarget.quick_slot_binding` decides where a key's item binding goes. The worn
+  list's re-check passes `bag_fresh = false`: an item missing there stays on the bar, inert, and only
+  a bag list can clear a key. The original re-binds from the move reply itself (0x60e540), which names
+  both slots, so it never has this gap.
+- **QA hook.** `OPENSRO_QA_BAG_LIST_DELAY_MS` holds each bag list back by that many milliseconds.
+- **Live** (`/var/tmp/r830q/qa830.sh`, delay 300 ms). Sword 71 and shield 251 worn, bow 215 in the
+  bag; keys 1 bow, 2 shield, 3 sword; pressed 1, 3, 2.
+  - **Fixed:** key 1 puts the bow on, and keys 2 and 3 follow the shield and sword into the bag.
+    Pressing 3 puts the sword back on, and key 1 follows the bow. Pressing 2 puts the shield on. All
+    three icons stay on the bar.
+  - **Control** (the same run with the re-check marked fresh): pressing 1 logs "quickslot 2 cleared"
+    and "quickslot 3 cleared", and keys 3 and 2 then do nothing. That is the user's video.
+- **Tests:** `equip_target_test` (the swap and the displaced shield, against a stale bag and a fresh
+  one). 364 client suites, 0 failing. Client only: no server change, no perf gate.
+- **Not recoverable:** a key cleared before this fix stays cleared (the bar file was saved without
+  it). Put the item on the key again.
+
 ## Eight-hundred-and-twenty-ninth round: gear from the hotbar, the equipment window's drop rule, the held count, the repair flow, worn-out marks and the gear figure
 
 The user asked for five things: weapons and shields on the hotbar that are put on when pressed;

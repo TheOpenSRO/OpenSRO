@@ -95,3 +95,27 @@ static func equips_from_quick_slot(types: PackedInt32Array) -> bool:
 	if types[1] == 3:
 		return types[2] == 4
 	return types[1] != 2
+
+## Round 830: where a quick slot's item binding goes after a list (World3D.
+## _resync_quickslot_items): the bag slot the item is in now, KEEP_INERT (-1,
+## the slot stays on the bar and does nothing) or CLEAR (-2, the item is gone).
+## `bag` is {bag slot: item id}; `worn` / `pending` the ids worn now and those
+## with an equip on its way. `bag_fresh` is false when the list that triggered
+## this is a worn list: an equip answers with the worn list first and the bag
+## list (its own request) after, so an item the worn list just dropped -- the
+## one a swap put back in the bag, the shield a two-hander displaced -- is in
+## neither until that bag list lands, and must not be cleared from a stale
+## bag. Clearing it there was the round 830 bug (the previous weapon's quick
+## slot emptied on a swap over a real network; on one box the bag list beat
+## the deferred resync).
+const KEEP_INERT := -1
+const CLEAR := -2
+
+static func quick_slot_binding(item_id: int, bag_slot: int, bag: Dictionary, worn: Dictionary,
+		pending: Dictionary, equipment_known: bool, bag_fresh: bool) -> int:
+	var found := HudUnderbar.resolve_item_binding(item_id, bag_slot, bag)
+	if found >= 0:
+		return found
+	if worn.has(item_id) or pending.has(item_id) or not equipment_known or not bag_fresh:
+		return KEEP_INERT
+	return CLEAR

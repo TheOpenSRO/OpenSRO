@@ -47,5 +47,36 @@ func _initialize() -> void:
 		"a quick slot equips weapons, shields, ammo and avatars")
 	_check(not EquipTarget.equips_from_quick_slot(_t(3, 3, 1, 1)) and not EquipTarget.equips_from_quick_slot(_t(3, 2, 1, 1))
 		and not EquipTarget.equips_from_quick_slot(_t(3, 3, 3, 2)), "and uses potions, scrolls and pet items")
+	_swap_keeps_both_keys()
 	print("FAILURES: %d" % _failures if _failures > 0 else "ALL PASS")
 	quit(1 if _failures > 0 else 0)
+
+## Round 830: key 1 holds sword 71 (worn), key 2 sword 3632 in bag slot 20.
+## Key 2 is pressed: the server's worn list (3632 in 6) comes first, the bag
+## list (71 in 20) after it.
+func _swap_keeps_both_keys() -> void:
+	var KEEP := EquipTarget.KEEP_INERT
+	var old_bag := {20: 3632}
+	var new_bag := {20: 71}
+	var worn_after := {3632: 6}
+	# The worn list's resync, still on the old bag: 71 is neither in the bag
+	# nor worn, and must not be cleared.
+	_check(EquipTarget.quick_slot_binding(71, -1, old_bag, worn_after, {}, true, false) == KEEP,
+		"the worn list's resync keeps the swapped-out item's key (the bag is stale)")
+	_check(EquipTarget.quick_slot_binding(3632, 20, old_bag, worn_after, {}, true, false) == 20,
+		"(the stale bag still shows the new weapon in 20)")
+	# The bag list's resync: 71 follows to 20, 3632 goes inert.
+	_check(EquipTarget.quick_slot_binding(71, -1, new_bag, worn_after, {}, true, true) == 20,
+		"the bag list puts the swapped-out item's key on its new bag slot")
+	_check(EquipTarget.quick_slot_binding(3632, 20, new_bag, worn_after, {}, true, true) == KEEP,
+		"and the worn item's key goes inert")
+	# A two-hander's displaced shield (key 3, item 500) lands in bag slot 25.
+	_check(EquipTarget.quick_slot_binding(500, -1, {20: 71}, {9001: 6}, {}, true, false) == KEEP
+		and EquipTarget.quick_slot_binding(500, -1, {20: 71, 25: 500}, {9001: 6}, {}, true, true) == 25,
+		"a displaced shield's key survives the worn list and follows the bag list")
+	# An item truly gone (sold, dropped) is cleared by a bag list.
+	_check(EquipTarget.quick_slot_binding(71, 20, {}, {}, {}, true, true) == EquipTarget.CLEAR,
+		"an item in neither a fresh bag nor the worn list is cleared")
+	_check(EquipTarget.quick_slot_binding(71, 20, {}, {}, {71: true}, true, true) == KEEP
+		and EquipTarget.quick_slot_binding(71, 20, {}, {}, {}, false, true) == KEEP,
+		"(not while its equip is pending, nor before the first worn list)")

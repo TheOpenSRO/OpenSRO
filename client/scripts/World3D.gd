@@ -13574,7 +13574,12 @@ func _on_skill_use_requested(skill_id: int, basic_code: String) -> void:
 ## just emptied and its key works again. Ours finds the item by id in the
 ## bag (the original by the slot the move named, checked against the
 ## RefItemID): the same outcome for these moves.
-func _resync_quickslot_items(slots: Array) -> void:
+##
+## `bag_fresh` is false on the worn list's resync (_on_equipment_result): the
+## bag it holds is from before the equip, and the item a swap put back in the
+## bag shows up only on the bag list after it (EquipTarget.quick_slot_binding,
+## round 830).
+func _resync_quickslot_items(slots: Array, bag_fresh := true) -> void:
 	if _hud_underbar == null or _quickslot_items.is_empty():
 		return
 	var by_slot := {}
@@ -13587,16 +13592,18 @@ func _resync_quickslot_items(slots: Array) -> void:
 	for qs in _quickslot_items.keys():
 		var want := int(_quickslot_items[qs]["item"])
 		var bag := int(_quickslot_items[qs]["slot"])
-		var found := HudUnderbar.resolve_item_binding(want, bag, by_slot)
+		var known := _hud_panels == null or _hud_panels.equipment_known
+		var found := EquipTarget.quick_slot_binding(want, bag, by_slot, worn, pending, known, bag_fresh)
 		if found >= 0:
 			if found != bag:
 				changed = true
 				print("World3D: quickslot %d follows item %d from bag slot %d to %d" % [qs, want, bag, found])
 			_quickslot_items[qs]["slot"] = found
-		elif worn.has(want) or pending.has(want) or (_hud_panels != null and not _hud_panels.equipment_known):
+		elif found == EquipTarget.KEEP_INERT:
 			if bag >= 0:
 				changed = true
-				print("World3D: quickslot %d keeps item %d, worn now (inert until it is back in the bag)" % [qs, want])
+				print("World3D: quickslot %d keeps item %d, %s (inert until it is back in the bag)" % [qs, want,
+					"worn now" if worn.has(want) or pending.has(want) else "off the worn list, bag list on its way"])
 			_quickslot_items[qs]["slot"] = -1
 		else:
 			_quickslot_items.erase(qs)
@@ -33597,7 +33604,9 @@ func _on_equip_pressed(slot: int) -> void:
 func _on_equipment_result(items: Array, error: String) -> void:
 	# Round 829: the bar's items follow what is worn (after HudPanels has
 	# stored the list: deferred), and the worn-out figure redraws (0x778b20).
-	call_deferred("_resync_quickslot_items", _inventory_slots)
+	# The bag is not fresh here: the equip's bag list comes after this
+	# (round 830), so nothing is cleared on it.
+	call_deferred("_resync_quickslot_items", _inventory_slots, false)
 	call_deferred("_refresh_equip_state")
 	if error != "":
 		equipment_status_label.text = "Error: %s" % error
