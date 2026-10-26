@@ -249,6 +249,7 @@ func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: U
 	_text_table = text_table
 
 func _ready() -> void:
+	set_process(false)
 	setup()
 	if OS.get_environment("OPENSRO_QA_SLOTS") != "":
 		add_to_group("qa_slots")
@@ -914,15 +915,14 @@ func activate_key(k: int) -> void:
 ## Round 826: the selection frame, child 103 (`ub_slot_arrow.ddj`), on page
 ## slot `k` (0..9). READ, FUN_0060a820(k): the frame is shown (+0x5c(1)) and
 ## moved (+0x9c) to the k-th of the first page's slots (+0x3d8 + k x 4, whose
-## positions every page's slots share) less 4 across and 3 down, and its alpha
-## set to 255 (0x46ca80(255, 0, 4.0, 0.0, 0); what its other arguments do is
-## OPEN -- the user's reference shows no fade). The quick-slot use
-## FUN_0060bb80(n) calls it first for a use numbered 1..10 -- abs = n +
-## page x 10, then 0x60a820((abs - 1) % 10) -- whether or not the use goes
-## through: the number keys (n = 1..10 on any page) and a right-click on a
-## first-page slot (n = the slot's own number, 1..10). The "m" slot (n 0),
+## positions every page's slots share) less 4 across and 3 down, and a fade
+## started on it: 0x46ca80(255, 0, 4.0, 0.0, 0) (round 827, `step_slot_frame`).
+## The quick-slot use FUN_0060bb80(n) calls it first for a use numbered 1..10
+## -- abs = n + page x 10, then 0x60a820((abs - 1) % 10) -- whether or not the
+## use goes through: the number keys (n = 1..10 on any page) and a right-click
+## on a first-page slot (n = the slot's own number, 1..10). The "m" slot (n 0),
 ## slots 11..50 (n 11..50) and a page flip (0x60a730) leave it. Nothing else
-## touches +0x4a4: once shown it stays until the bar is rebuilt.
+## touches +0x4a4: once shown it stays (faded out) until the bar is rebuilt.
 func select_slot_frame(k: int) -> void:
 	if k < 0 or k >= PAGE_SLOT_IDS.size():
 		return
@@ -936,14 +936,69 @@ func select_slot_frame(k: int) -> void:
 	for c in arrow.find_children("*", "Control", true, false):
 		(c as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 	arrow.position = slot.position + SLOT_FRAME_OFFSET
-	arrow.modulate.a = 1.0
 	_set_shown(arrow, true)
 	_slot_frame = k
+	# 0x46ca80: from 255 (+0x130), now 255 (+0x131), to 0 (+0x132), over 4.0
+	# (+0x134, 0xd8ada8), 0.0 gone (+0x138), no hide at the end (+0x18c 0).
+	_frame_alpha = SLOT_FRAME_FROM
+	_frame_length = SLOT_FRAME_LENGTH
+	_frame_gone = 0.0
+	arrow.modulate.a = _frame_alpha / 255.0
+	set_process(true)
 
 ## The frame's place against its slot (READ, 0x60a820: x - 4, y - 3).
 const SLOT_FRAME_OFFSET := Vector2(-4, -3)
 ## The page slot the frame is on, -1 before the first use.
 var _slot_frame := -1
+
+## Round 827: the frame's fade, the window fade every CGWnd carries (READ;
+## the fields on its +0x84 part). Each frame the window's update (vslot 12,
+## 0x46cd80) hands the part (+0x84 vslot 1, 0x470780) the frame's seconds
+## (DAT_0110f7fc, held at 3.0 -- 0xd8adc4 -- beside the 3000 ms cap on the
+## ms one, 0xba4101..0xba412f): with a length not 0, gone += seconds; gone
+## > 0 sets the alpha by 0x470a00 -- the end alpha once gone >= length,
+## else trunc(from x (1 - gone / length) + to x gone / length) (the x87
+## round mode forced to chop, 0x470a65) -- and gone <= 0 the start alpha;
+## then gone >= length zeroes gone and length (the fade stops) and calls
+## +0x1c (0x46cd10: message 0x8064, and a hide only when +0x18c is 1 and the
+## end alpha 0 -- here +0x18c is 0, so the frame stays shown, at alpha 0).
+## A new use starts it over at 255. So the frame fades linearly from full to
+## nothing over 4 seconds after each use.
+const SLOT_FRAME_FROM := 255
+const SLOT_FRAME_TO := 0
+const SLOT_FRAME_LENGTH := 4.0
+const FRAME_SECONDS_CAP := 3.0
+var _frame_alpha := SLOT_FRAME_FROM
+var _frame_length := 0.0
+var _frame_gone := 0.0
+
+func _process(delta: float) -> void:
+	step_slot_frame(minf(delta, FRAME_SECONDS_CAP))
+
+## One frame of the frame's fade, `seconds` long (0x470780).
+func step_slot_frame(seconds: float) -> void:
+	if _frame_length == 0.0:
+		set_process(false)
+		return
+	_frame_gone += seconds
+	if _frame_gone > 0.0:
+		if _frame_gone >= _frame_length:
+			_frame_alpha = SLOT_FRAME_TO
+		else:
+			var t := _frame_gone / _frame_length
+			_frame_alpha = int(SLOT_FRAME_FROM * (1.0 - t) + SLOT_FRAME_TO * t)
+	else:
+		_frame_alpha = SLOT_FRAME_FROM
+	if _frame_gone >= _frame_length:
+		_frame_gone = 0.0
+		_frame_length = 0.0
+	var arrow := _nodes.get(ID_SLOT_ARROW) as Control
+	if arrow != null:
+		arrow.modulate.a = _frame_alpha / 255.0
+
+## The frame's alpha now, 0..255 (+0x131).
+func slot_frame_alpha() -> int:
+	return _frame_alpha
 
 ## The page slot (0..9) the selection frame is on, -1 when hidden.
 func slot_frame() -> int:

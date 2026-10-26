@@ -7483,6 +7483,44 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-seventh round: the hotbar's selection frame fades out over 4 seconds
+
+The user reported that the gold frame on the last used quick slot fades. Round 826 had read the call
+in `FUN_0060a820` as "alpha 255" and left its other arguments OPEN; they are a fade.
+
+- **The call (READ, 0x60a86e..0x60a88f).** `0x46ca80(255, 0, 4.0, 0.0, 0)` on child 103: start alpha
+  `+0x130` = 255, current `+0x131` = 255, end alpha `+0x132` = 0, length `+0x134` = 4.0 (`0xd8ada8`, read
+  from the exe's .rdata), time gone `+0x138` = 0.0, hide-at-end `+0x18c` = 0.
+- **The fade (READ, the CGWnd part at +0x84; its fields there are +0xac..+0xb4).** The window's
+  vslot 12 (`0x46cd80`) hands vslot 1 of that part (`0x470780`) the frame's seconds `DAT_0110f7fc`. A
+  length of 0 does nothing. Otherwise gone += seconds. When gone > 0, `0x470a00` sets the alpha: the
+  end alpha once gone >= length, else `trunc(from x (1 - gone/length) + to x gone/length)` (the x87
+  control word forced to chop, 0x470a65). When gone <= 0, the start alpha. Then, once gone >= length,
+  gone and length go to 0 and vslot 7 (`0x46cd10`) runs: message 0x8064, and a hide only when
+  `+0x18c` is 1 and the end alpha is 0. Here `+0x18c` is 0, so the frame stays shown at alpha 0.
+  The next use starts it again from 255.
+- **The seconds (READ; the unit INFERRED).** `0xba4117` copies the app's float `+0x9c` into
+  `DAT_0110f7fc`, capped at 3.0 (`0xd8adc4`), beside `DAT_0110f7f8` = the ms delta `+0x98` capped at
+  3000 (0xbb8). The paired caps make it seconds. The writer of `+0x9c` was not traced.
+- **The user's round 826 video (MEASURED again, `hotbar_vid/gold.txt`).** Its longest hold is 1.73 s
+  (slot 1, 2.67-4.40 s), with the gold at 99 -> 102 throughout. Under the code above it would be at
+  57 %. That client (another server's, with its own bar art) does not fade; ours follows the binary.
+- **OURS:** `HudUnderbar.step_slot_frame(seconds)` with `_process` passing `min(delta, 3.0)`;
+  `set_process` only while a fade runs. `modulate.a` = alpha / 255. Godot's float64 stands in for the
+  x87 float32 (at most one alpha step at a boundary).
+- **Tests.** `hud_underbar_test.gd`: 255 at the use, 191 at 1 s, 95 at 2.5 s, 255 again on a new use,
+  6 at 3.9 s, 0 (still shown) past 4 s and after. 361 suites, 0 failing.
+- **Live** (`qa826.sh`, HOTKEY=470:1, 60 fps movie, `/var/tmp/r827/s1`). The gold of slot 1's top
+  edge (R - B over x 342..379, y 485..488):
+  - 3.8 before the use;
+  - 61.4 at frame 490, falling about 2.45 every 10 frames (51.6 at 530, 37.0 at 590, 22.4 at 650,
+    10.2 at 700, 5.5 at 720);
+  - back to 3.8 at 730.
+
+  That is a straight line over ~242 frames, about 4.0 s. The frame first shows about 16 frames after
+  the scripted key tick (the QA hook's input path, as in round 826).
+- UI only: no perf gate, no server change, no prod restart.
+
 ## Eight-hundred-and-twenty-sixth round: the camera shake, falling AT_TARGET movers, the pick-up's lock, the hotbar's frame and cooldown figures, item re-use, the strip bar under windows
 
 The user (2026-10-25): "there's some screen shake effects for certain skills like Bash under Warrior. Can you
@@ -7509,7 +7547,7 @@ That yellow bar appears over open GUI windows and it shouldn't."
   itself goes into the bag at once in the original too (the server's `FUN_00526090`): no delay was added.
 - **The hotbar's frame (READ, `FUN_0060a820` / `FUN_0060bb80`).** Child 103 (`ub_slot_arrow.ddj`) moves to
   the page slot of the last use numbered 1..10 -- a number key, or a right-click on a first-page slot -- at
-  (x - 4, y - 3), and stays (no fade, no hide; the user's video MEASURED over 324 frames, its bar art from
+  (x - 4, y - 3), and stays (no hide; no fade in the user's video, MEASURED over 324 frames -- but the binary fades it, round 827; its bar art from
   another client, the frame the same texture).
 - **Cooldown figures (READ, `0x67c920`).** A quick slot's time left: the veil `icon_effect.ddj` and white
   seconds up to 60 s, yellow (0xffe1e700) minutes up to 3600 s, the `int_effect.ddj` veil and blue

@@ -170,6 +170,22 @@ func _run() -> void:
 	_check(arrow != null and arrow.visible and slot3 != null and arrow.position == slot3.position + Vector2(-4, -3)
 		and int(bar.call("slot_frame")) == 2, "key 3 shows the frame 103 on page slot 3, at (x - 4, y - 3)")
 	_check(arrow != null and arrow.mouse_filter == Control.MOUSE_FILTER_IGNORE, "the frame takes no clicks")
+	# Round 827: it fades from 255 to 0 over 4 s (0x46ca80(255, 0, 4.0, 0.0, 0), 0x470780).
+	_check(int(bar.call("slot_frame_alpha")) == 255 and is_equal_approx(arrow.modulate.a, 1.0),
+		"the frame starts at alpha 255")
+	bar.call("step_slot_frame", 1.0)
+	_check(int(bar.call("slot_frame_alpha")) == 191, "1 s in: trunc(255 x 0.75) = 191 (got %s)" % bar.call("slot_frame_alpha"))
+	bar.call("step_slot_frame", 1.5)
+	_check(int(bar.call("slot_frame_alpha")) == 95, "2.5 s in: trunc(255 x 0.375) = 95 (got %s)" % bar.call("slot_frame_alpha"))
+	bar.call("activate_key", 2)
+	_check(int(bar.call("slot_frame_alpha")) == 255, "a new use starts it over at 255")
+	bar.call("step_slot_frame", 3.9)
+	_check(int(bar.call("slot_frame_alpha")) == 6, "3.9 s in: trunc(255 x 0.025) = 6 (got %s)" % bar.call("slot_frame_alpha"))
+	bar.call("step_slot_frame", 0.2)
+	_check(int(bar.call("slot_frame_alpha")) == 0 and arrow.visible and is_equal_approx(arrow.modulate.a, 0.0),
+		"past 4 s it is 0 and still shown (+0x18c 0: no hide)")
+	bar.call("step_slot_frame", 1.0)
+	_check(int(bar.call("slot_frame_alpha")) == 0, "the stopped fade stays at 0")
 	bar.call("set_page", 2)
 	bar.call("activate_key", 4)
 	_check(int(bar.call("slot_frame")) == 4 and arrow.position == _at(broot, [44]).position + Vector2(-4, -3),

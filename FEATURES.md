@@ -297,7 +297,7 @@ Retail windows rebuilt from the game's own layout files.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page; the gold frame marks the slot last used |
+| Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page; the gold frame marks the slot last used and fades out over 4 seconds |
 | Drag to hotbar | ✅ Supported | Skills, items and actions; swap and clear slots |
 | Additional quick slot bars | ✅ Supported | The original's movable extra bar (Space+1-0) with its options, plus paged extra bars (Alt+1-0) |
 | Saved hotbar | 🟡 Partial | Saved on your PC per character, not on the server |
