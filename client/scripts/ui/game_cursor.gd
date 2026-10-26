@@ -141,6 +141,10 @@ static func scaled_entry(id: int, factor: float) -> Array:
 static func show(id: int, window: Window, force: bool = false) -> bool:
 	if _base.is_empty() or _suspended:
 		return false
+	# Round 829: a forced cursor (the store's repair hammer) wins over every
+	# hover cursor until it is cleared.
+	if forced_id >= 0:
+		id = forced_id
 	if not _base.has(id):
 		id = CursorSet.ID_NORMAL
 	var factor := _factor_of(window)
@@ -161,6 +165,19 @@ static func show(id: int, window: Window, force: bool = false) -> bool:
 	_current_id = id
 	_current_key = key
 	return true
+
+## Round 829: the forced cursor, GInterface +0x50c (READ: 0x777e70(id) sets
+## it, 0x777e70(-1) clears it; while it is set the hover cursor does not
+## change it, and the held icon's pick-up is refused -- held_icon.gd). -1
+## for none. The store's Repair button sets 0x96, the hammer.
+static var forced_id := -1
+
+static func force(id: int, window: Window) -> void:
+	forced_id = id
+	if id >= 0:
+		show(id, window, true)
+	else:
+		show(CursorSet.ID_NORMAL, window, true)
 
 static func show_kind(kind: String, window: Window) -> bool:
 	return show(id_for(kind), window)

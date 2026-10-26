@@ -46,6 +46,12 @@ const KEY_POTION := "UI:snd_potion:-:-:-:-"
 const KEY_ERROR := "UI:snd_error:-:-:-:-"
 const KEY_REPAIR := "UI:snd_repair:-:-:-:-"
 const KEY_REVIVE := "UI:snd_revive:-:-:-:-"
+## Round 829: a worn item's wear (0x3052, 0x8adf50): to 0 snd_eqbreak, to
+## exactly 6 snd_eqdanger (the table gives them each other's .wav names as
+## authored -- SND_EQBREAK Itemdanger.wav, SND_EQDANGER itembreak.wav,
+## MEASURED; the key is what the client plays).
+const KEY_EQBREAK := "UI:snd_eqbreak:-:-:-:-"
+const KEY_EQDANGER := "UI:snd_eqdanger:-:-:-:-"
 ## Round 819: a quest notice of SN_TALK_COMMON_END (0x30EC's handler
 ## 0x884a30 plays snd_quest_end, READ; effectsound.txt's UI SND_QUEST_END row).
 const KEY_QUEST_END := "UI:snd_quest_end:-:-:-:-"
@@ -244,18 +250,13 @@ static func item_used(type_ids: PackedInt32Array, what: String) -> void:
 ## The durability reply 0x3052 (FUN_0x8adf50), per slot (read): a durability
 ## that rose plays snd_revive if it was 0 (a broken item made whole) and
 ## snd_repair otherwise. So snd_revive is an item's, not the player's:
-## 0xddefc0 has no other reference in the exe. (A fall to 0 or to exactly 6
-## on a worn item plays snd_eqbreak / snd_eqdanger; this client learns of no
-## wear, so those are not played.) `before` and `after` map slot ->
-## current durability.
+## 0xddefc0 has no other reference in the exe. A fall to 0 or to exactly 6 on
+## a worn item plays snd_eqbreak / snd_eqdanger (durability_key; round 829:
+## the server sends 0x3052 on every wear step). `before` and `after` map slot
+## -> current durability (a bag slot as 13 + n).
 ##
-## The `before` state is the latest this client knows (`worn_durability`):
-## every equipment list replaces it and every repair reply updates it. The
-## server wears items in combat without telling the client, so HudPanels asks
-## for the equipment list just before it sends a repair; the one connection
-## delivers that list first (ours). Retail sounds bag slots 0xd..0x6f too;
-## this server repairs worn items only and its repair reply carries only
-## worn slots, so no bag durability ever rises here.
+## The repair reply sounds every item it raised, worn and bag alike, against
+## the durability HudPanels noted when it sent the request (round 829).
 static func durability_keys(before: Dictionary, after: Dictionary) -> Array:
 	var keys: Array = []
 	var slots := after.keys()
@@ -268,6 +269,21 @@ static func durability_keys(before: Dictionary, after: Dictionary) -> Array:
 		if now > was:
 			keys.append(KEY_REVIVE if was == 0 else KEY_REPAIR)
 	return keys
+
+## Round 829: one 0x3052 (0x8adf50, READ): a rise sounds the repair (from 0
+## the revive); a worn item's fall to 0 snd_eqbreak, to exactly 6
+## snd_eqdanger. `worn` false for a bag slot (rises only).
+static func durability_key(was: int, now: int, worn: bool) -> String:
+	if was < 0:
+		return ""
+	if now > was:
+		return KEY_REVIVE if was == 0 else KEY_REPAIR
+	if worn and now < was:
+		if now == 0:
+			return KEY_EQBREAK
+		if now == 6:
+			return KEY_EQDANGER
+	return ""
 
 static func durability_changed(before: Dictionary, after: Dictionary, what: String) -> void:
 	for key in durability_keys(before, after):

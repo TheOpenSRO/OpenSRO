@@ -195,31 +195,26 @@ func _initialize() -> void:
 		status.free()
 		chat.free()
 
-	# HudPanels._on_repair_result writes the store's status line. The store is
-	# a bare HudWindow holding a ShopStatus label (the store builds none since
-	# round 725, which sends the line to system_notice as well);
-	# with no character name set, a result sends no request.
+	# HudPanels._on_repair_result (round 829): a refusal's code goes to the
+	# system window (0xB03E -> 0x778190(0xd, code), READ) through
+	# system_notice; a success shows nothing (result 1 does nothing).
 	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
 	var panels_ok := panels_script != null and panels_script.can_instantiate()
 	_check(panels_ok, "HudPanels compiles in _initialize")
 	if panels_ok:
 		var panels: Node = panels_script.new()
-		var store := HudWindow.new()
-		var status := Label.new()
-		status.name = "ShopStatus"
-		store.add_child(status)
-		(panels.get("_windows") as Dictionary)["store"] = store
+		var lines: Array = []
+		panels.connect("system_notice", func(t: String) -> void: lines.append(t))
 		panels.set("_builder", UiBuilder.new(null, fixture))
 		panels.call("_on_repair_result", 0x1c07, 0, [])
-		_check(status.text == "Fixture no gold", "a 0x1c07 repair refusal shows the table's text in the store (got '%s')" % status.text)
+		_check(lines.size() == 1 and lines[0] == "Fixture no gold", "a 0x1c07 repair refusal says the table's text in the system window (got %s)" % str(lines))
 		panels.call("_on_repair_result", 0x1c09, 0, [])
-		_check(status.text == "Nothing needs repairing.", "a 0x1c09 repair refusal shows its fallback (got '%s')" % status.text)
+		_check(lines.size() == 2 and lines[1] == "Nothing needs repairing.", "a 0x1c09 repair refusal says its fallback (got %s)" % str(lines))
 		# NEGATIVE (round 518): a repair refused while trading.
 		panels.call("_on_repair_result", 0x1c0b, 0, [])
-		_check(status.text == "Fixture on other business", "a 0x1c0b repair refusal shows the table's IM_BUSY text in the store (got '%s')" % status.text)
+		_check(lines.size() == 3 and lines[2] == "Fixture on other business", "a 0x1c0b repair refusal says the table's IM_BUSY text (got %s)" % str(lines))
 		panels.call("_on_repair_result", 0, 1234, [])
-		_check(status.text == "Repaired for 1,234 gold.", "a repair shows its cost (got '%s')" % status.text)
-		store.free()
+		_check(lines.size() == 3, "a repair that went through says nothing (got %s)" % str(lines))
 		panels.free()
 
 	if _failures == 0:

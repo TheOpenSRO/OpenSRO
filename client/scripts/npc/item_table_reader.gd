@@ -298,6 +298,12 @@ const COL_PARAM7 := 130
 const COL_CHILD_ITEM_COUNT := 159
 ## Round 826: Param4, and the twenty Param / Desc128 pairs from Param1 (118).
 const COL_PARAM4 := 124
+## Round 829 (the repair, RepairQuote): CanRepair (ref +0xaa), CostRepair
+## (+0xc0) and CostRevive (+0xc4) -- itemdata columns 22, 27 and 28 (READ,
+## GlobalDataManager::FUN_00972910's reads, counted).
+const COL_CAN_REPAIR := 22
+const COL_COST_REPAIR := 27
+const COL_COST_REVIVE := 28
 const PARAM_PAIRS := 20
 
 ## The row's COOLTIME pair (round 826; READ, the client's item parser
@@ -504,6 +510,10 @@ class Item:
 	var param4: int = 0
 	var cool_group: int = 0
 	var cool_ms: int = 0
+	## Round 829: COL_CAN_REPAIR, COL_COST_REPAIR, COL_COST_REVIVE.
+	var can_repair: int = 0
+	var cost_repair: int = 0
+	var cost_revive: int = 0
 	var parry := Vector2.ZERO
 	var phys_absorb := Vector2.ZERO
 	var mag_absorb := Vector2.ZERO
@@ -693,6 +703,9 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		var cool := cooltime_of(cols)
 		item.cool_group = int(cool[0])
 		item.cool_ms = int(cool[1])
+		item.can_repair = _int_at(cols, COL_CAN_REPAIR)
+		item.cost_repair = _int_at(cols, COL_COST_REPAIR)
+		item.cost_revive = _int_at(cols, COL_COST_REVIVE)
 		item.parry = Vector2(_float_at(cols, COL_PARRY_MIN), _float_at(cols, COL_PARRY_MAX))
 		item.phys_absorb = Vector2(_float_at(cols, COL_PHYS_ABSORB_MIN), _float_at(cols, COL_PHYS_ABSORB_MAX))
 		item.mag_absorb = Vector2(_float_at(cols, COL_MAG_ABSORB_MIN), _float_at(cols, COL_MAG_ABSORB_MAX))
@@ -767,6 +780,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var avatar_ints: PackedInt64Array = rows.get("avatar_ints", PackedInt64Array())
 	# Round 826: a library from before these has none (no item re-use but the kind's).
 	var cool_ints: PackedInt64Array = rows.get("cool_ints", PackedInt64Array())
+	# Round 829: likewise (no repair quote but the server's).
+	var repair_ints: PackedInt64Array = rows.get("repair_ints", PackedInt64Array())
 	var m := 0
 	for i in ids.size():
 		var item := Item.new()
@@ -856,6 +871,10 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 			item.param4 = cool_ints[co]
 			item.cool_group = cool_ints[co + 1]
 			item.cool_ms = cool_ints[co + 2]
+		if co + 2 < repair_ints.size():
+			item.can_repair = repair_ints[co]
+			item.cost_repair = repair_ints[co + 1]
+			item.cost_revive = repair_ints[co + 2]
 		into[item.id] = item
 	return true
 

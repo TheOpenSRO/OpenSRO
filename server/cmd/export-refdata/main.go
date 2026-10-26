@@ -121,6 +121,9 @@ const (
 	// KeepingFee, column 30 -- see refdata.Item.KeepingFee for why the column
 	// is INFERRED rather than READ.
 	fKeepingFee = 30
+	// fReviveCost is _RefObjCommon's CostRevive (+0xa8), column 28 (round 829;
+	// refdata.Item.ReviveCost).
+	fReviveCost = 28
 	// The alchemy columns (round 768; refdata.Item.CashItem): _RefObjCommon's
 	// CashItem (column 7, the TypeID word's bit 0 IsCashItem tests), the
 	// Param block's Param1/Param5 (118/126) and Desc128_1/Desc128_4
@@ -974,6 +977,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 90: Desc2, Desc128_2 column 121 (round 795): a ride scroll's level
 		// list (refdata.Item.Desc2).
 		str(fDesc2), // 90 Desc2 (col 121)
+		// 91: ReviveCost, itemdata column 28 (round 829, see
+		// refdata.Item.ReviveCost).
+		num(fReviveCost),
 	}, true
 }
 

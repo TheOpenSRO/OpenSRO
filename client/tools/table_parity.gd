@@ -377,7 +377,9 @@ func _canon_items(items: Dictionary) -> Dictionary:
 			# Round 789: the avatar columns.
 			it.param2, it.param7, it.child_item_count,
 			# Round 826: the re-use columns.
-			it.param4, it.cool_group, it.cool_ms]
+			it.param4, it.cool_group, it.cool_ms,
+			# Round 829: the repair columns.
+			it.can_repair, it.cost_repair, it.cost_revive]
 	return out
 
 ## The first place two results differ, for the FAIL line.

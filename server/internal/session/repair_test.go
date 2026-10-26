@@ -105,7 +105,7 @@ func TestRepairHandlerRestoresAndCharges(t *testing.T) {
 	before, _ := chars.GetByID(ctx, c.ID)
 	goldBefore := before.Gold
 
-	handle := gateway.Chain(LoginHandler(accounts), RepairHandler(chars, eq, items, nil))
+	handle := gateway.Chain(LoginHandler(accounts), RepairHandlerWithBag(chars, eq, nil, items, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -166,4 +166,171 @@ func durabilityMaxForTest(variance uint64) int {
 		m = 1
 	}
 	return m
+}
+
+// Round 829: a repair-all mends the bag too (the retail server's 0x703E
+// type 2 walks every slot), reporting a bag item as RepairBagSlotBase + its
+// slot; and a single repair names a bag item the same way.
+func TestRepairHandlerMendsTheBag(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: 100, MaxStack: 1, DurabilityMin: 62, DurabilityMax: 76, RepairCost: 198,
+			TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, Country: equipment.CountryChina},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	inv.SetDurabilityLookup(items)
+	eq := equipment.NewMemStore(inv)
+	// Bag 0 worn as the weapon, bag 1 and 2 two spare swords left in the bag.
+	for i := 0; i < 3; i++ {
+		if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
+			t.Fatalf("add: %v", err)
+		}
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equip: %v", err)
+	}
+	_ = eq.SetDurability(ctx, c.ID, equipment.SlotWeapon, 10)
+	bag, _ := inv.List(ctx, c.ID)
+	var spare []int
+	for _, b := range bag {
+		spare = append(spare, b.Index)
+		_ = inv.SetDurability(ctx, c.ID, b.Index, 5)
+	}
+	if len(spare) != 2 {
+		t.Fatalf("want two spare swords in the bag, got %d", len(spare))
+	}
+	handle := gateway.Chain(LoginHandler(accounts), RepairHandlerWithBag(chars, eq, inv, items, nil))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	// One bag sword alone.
+	res, err := DecodeRepairResult(send(OpRepair, (&RepairRequest{CharacterName: "Aria", Slot: int32(RepairBagSlotBase + spare[0])}).Encode()).Data)
+	if err != nil || res.Code != 0 {
+		t.Fatalf("a single bag repair: %v code 0x%x", err, res.Code)
+	}
+	bag, _ = inv.List(ctx, c.ID)
+	for _, b := range bag {
+		full := b.Durability > 5
+		if (b.Index == spare[0]) != full {
+			t.Errorf("bag slot %d at %d after repairing slot %d alone", b.Index, b.Durability, spare[0])
+		}
+	}
+	// Then everything: the weapon and the other spare.
+	res, err = DecodeRepairResult(send(OpRepair, (&RepairRequest{CharacterName: "Aria", Slot: RepairAllSlots}).Encode()).Data)
+	if err != nil || res.Code != 0 {
+		t.Fatalf("repair all: %v code 0x%x", err, res.Code)
+	}
+	sawBag := false
+	for _, d := range res.Durabilities {
+		if d.Slot == RepairBagSlotBase+spare[1] && d.Durability == d.MaxDurability {
+			sawBag = true
+		}
+	}
+	if !sawBag {
+		t.Errorf("the reply does not report bag slot %d mended: %+v", spare[1], res.Durabilities)
+	}
+	worn, _ := eq.Get(ctx, c.ID)
+	if worn[0].Durability <= 10 {
+		t.Errorf("the weapon was not mended: %d", worn[0].Durability)
+	}
+}
+
+// Round 829: 0x3052's payload is the retail {u8 slot, u32 durability}.
+func TestEncodeDurabilityChanged(t *testing.T) {
+	got := EncodeDurabilityChanged(RepairBagSlotBase+2, 300)
+	want := []byte{15, 0x2c, 0x01, 0, 0}
+	if string(got) != string(want) {
+		t.Errorf("EncodeDurabilityChanged = %v, want %v", got, want)
+	}
+}
+
+// Round 829: a broken item pays its restore fee (ReviveCost) and is mended
+// as from 1 -- the same total the client quotes (RepairQuote.cost: the fee
+// plus the points from 1 times CostRepair / max, cut).
+func TestRepairChargesTheReviveFee(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: 100, MaxStack: 1, DurabilityMin: 62, DurabilityMax: 76, RepairCost: 198, ReviveCost: 297,
+			TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, Country: equipment.CountryChina},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	inv.SetDurabilityLookup(items)
+	eq := equipment.NewMemStore(inv)
+	if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equip: %v", err)
+	}
+	_ = eq.SetDurability(ctx, c.ID, equipment.SlotWeapon, 0)
+	worn, _ := eq.Get(ctx, c.ID)
+	max := durabilityMaxForTest(worn[0].Variance)
+	want := int64(297) + int64(float64(max-1)*(198.0/float64(max)))
+	handle := gateway.Chain(LoginHandler(accounts), RepairHandlerWithBag(chars, eq, inv, items, nil))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	res, err := DecodeRepairResult(send(OpRepair, (&RepairRequest{CharacterName: "Aria", Slot: RepairAllSlots}).Encode()).Data)
+	if err != nil || res.Code != 0 {
+		t.Fatalf("repair: %v code 0x%x", err, res.Code)
+	}
+	if res.GoldSpent != want {
+		t.Errorf("a broken weapon cost %d, want the fee and the rest from 1: %d", res.GoldSpent, want)
+	}
+	worn, _ = eq.Get(ctx, c.ID)
+	if worn[0].Durability != max {
+		t.Errorf("mended to %d, want %d", worn[0].Durability, max)
+	}
 }

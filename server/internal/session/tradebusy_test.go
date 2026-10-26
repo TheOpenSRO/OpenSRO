@@ -39,7 +39,7 @@ func TestNPCServicesRefusedWhileTrading(t *testing.T) {
 		return []gateway.Handler{
 			ShopHandler(d.chars, &shop.Service{Gold: d.chars, Inv: d.inv, Items: shopItems}, d.trades),
 			StorageHandler(d.chars, &storage.Service{Bag: d.inv, Warehouse: warehouse, Gold: d.chars, Accounts: d.accounts}, d.trades),
-			RepairHandler(d.chars, eq, nil, d.trades),
+			RepairHandlerWithBag(d.chars, eq, nil, nil, d.trades),
 			EquipmentHandlerWithRules(d.chars, eq, d.inv, nil, d.trades),
 		}
 	})

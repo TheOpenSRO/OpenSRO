@@ -138,6 +138,10 @@ var itemCSVColumns = []string{
 	// Item.Desc2). A strict suffix; an older export reads "", and every
 	// ride scroll summons its Desc1 row.
 	"Desc2",
+	// Appended later still (round 829): ReviveCost, itemdata column 28 (see
+	// Item.ReviveCost). A strict suffix; an older export reads 0, and a
+	// broken item is mended without its restore fee.
+	"ReviveCost",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -449,6 +453,9 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 90 {
 		it.Desc2 = strings.TrimSpace(f[90])
+	}
+	if len(f) > 91 {
+		it.ReviveCost = int64(parseInt(f[91]))
 	}
 
 	if err != nil {

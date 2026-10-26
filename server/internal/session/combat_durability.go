@@ -9,7 +9,43 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
+
+// OpDurabilityChanged is the retail 0x3052 (round 829): one item's new
+// current durability, {u8 slot, u32 durability} -- the slot as is for a worn
+// item, the bag slot + 13 for a bag one (the client's handler 0x8adf50,
+// READ). The original's ChangeItemDurability sends it on every change; ours
+// on every wear step (before round 829 a loss was saved and logged only, so
+// the client learnt of it at the next equipment list).
+const OpDurabilityChanged uint16 = 0x3052
+
+// durabilityHub finds a character's session for OpDurabilityChanged; nil
+// (tests, tools) sends nothing.
+var durabilityHub *world.Hub
+
+// SetDurabilityHub wires the wear notices to the world's sessions.
+func SetDurabilityHub(h *world.Hub) { durabilityHub = h }
+
+// EncodeDurabilityChanged is OpDurabilityChanged's payload.
+func EncodeDurabilityChanged(slot int, durability int) []byte {
+	out := []byte{byte(slot), 0, 0, 0, 0}
+	v := uint32(int32(durability))
+	out[1], out[2], out[3], out[4] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+	return out
+}
+
+// notifyDurability tells the character's client (if in the world) that the
+// item in slot now has durability d.
+func notifyDurability(characterID int64, slot int, d int) {
+	if durabilityHub == nil {
+		return
+	}
+	if e, ok := durabilityHub.EntityByCharacterID(characterID); ok && e.Session != nil {
+		_ = e.Session.Send(&proto.Packet{Opcode: OpDurabilityChanged, Data: EncodeDurabilityChanged(slot, d)})
+	}
+}
 
 // durabilityAlwaysLose forces every wear roll to succeed. A QA accelerant
 // (OPENSRO_DURABILITY_LOSS_ALWAYS=1), never real play: at the real 2% a hit
@@ -64,6 +100,7 @@ func wearOneSlot(ctx context.Context, eq equipment.Store, characterID int64, slo
 			character.InvalidateBonus(characterID) // round 769: a broken piece counts nothing
 		}
 		slog.Info("durability lost", "character", characterID, "slot", int(slot), "durability", next, "broke", broke)
+		notifyDurability(characterID, int(slot), next)
 		return broke
 	}
 	return false

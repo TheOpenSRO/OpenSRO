@@ -81,8 +81,10 @@ static func is_pick_click(event: InputEvent) -> bool:
 	if not (event is InputEventMouseButton):
 		return false
 	var mb := event as InputEventMouseButton
+	# Round 829: and only with the normal cursor -- not under a forced one
+	# (the store's hammer: 0x777e70 clears 0x00eb6a48, READ).
 	return mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed \
-		and not mb.ctrl_pressed and not mb.shift_pressed and not mb.alt_pressed
+		and not mb.ctrl_pressed and not mb.shift_pressed and not mb.alt_pressed and GameCursor.forced_id < 0
 
 ## Picks an icon up. Refused (false) while one is already held: the click
 ## that would pick up is the one that drops the held icon first.
@@ -107,10 +109,44 @@ func pick_up(what: Dictionary, icon: Texture2D, source: CanvasItem, at: Vector2)
 		_ghost.z_index = 4096
 		_ghost.modulate = Color(1, 1, 1, 0.85)
 		add_child(_ghost)
+		_carry_count(source)
 		follow(at)
 	print("HeldIcon: picked up %s" % describe(payload))
 	changed.emit(payload, "picked")
 	return true
+
+## The slot's stack count rides on the cursor too (round 829, the user's
+## report: "the quantities go away when being held then show back up when
+## placed"). READ: the held slot is drawn at the cursor by its own draw
+## (0xb9d810 -> 0xb9d7f0 -> CIFSlotWithHelp::vslot_013 0x685e50), and that
+## draw is the one that puts the count's digits on (0x67bd70) -- so the
+## count is drawn on the held icon exactly as on the slot. Ours copies the
+## source's count (a `CountLabel`, ItemCountLabel, on the icon or beside it
+## in its cell) onto the ghost at the same place against the icon.
+const COUNT_NODE := "CountLabel"
+
+func _carry_count(source: CanvasItem) -> void:
+	var icon := source as Control
+	if icon == null or not is_instance_valid(icon) or _ghost == null:
+		return
+	var count := count_of(icon)
+	if count == null or not count.is_visible_in_tree() or count.text.strip_edges() == "":
+		return
+	var copy := count.duplicate() as Label
+	copy.name = COUNT_NODE
+	copy.top_level = false
+	copy.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	copy.position = count.global_position - icon.global_position
+	copy.size = count.size
+	copy.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ghost.add_child(copy)
+
+## The count drawn with `icon`: its own `CountLabel` child, or its cell's.
+static func count_of(icon: Control) -> Label:
+	var c := icon.get_node_or_null(COUNT_NODE) as Label
+	if c == null and icon.get_parent() != null:
+		c = icon.get_parent().get_node_or_null(COUNT_NODE) as Label
+	return c
 
 ## The source's control changed under the held icon (a bag page turn
 ## redraws the cells): dim the new one instead.

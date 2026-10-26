@@ -7483,6 +7483,123 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-ninth round: gear from the hotbar, the equipment window's drop rule, the held count, the repair flow, worn-out marks and the gear figure
+
+The user asked for five things: weapons and shields on the hotbar that are put on when pressed;
+dropping an item anywhere on the character area to equip it (rings went wrong); a carried stack
+keeping its count; the repair flow as in their video (https://i.imgur.com/svVTDIk.mp4), confirm box
+included; and the broken-item look ("red and flashing", plus a figure on the main screen). Three
+research passes read the client; everything below is READ from sro_client.exe unless marked.
+
+- **The equipment window's drop (`CIFEquipment::vslot_028`, 0x6ad180).**
+  - It takes a held bag slot (kind 0x46) only; anything else is put back and nothing is sent.
+  - It never looks at what is under the cursor. Every worn slot hands the drop to its parent
+    (`CIFSlotWithHelp::vslot_028` 0x666560), and so does the picture. The item's TypeIDs pick the
+    slot, then 0x7034 type 0 is sent:
+    - 3/1/7: 8;
+    - avatars: their storage;
+    - weapons: 6;
+    - shields and ammo: 7;
+    - armour by TypeID4 (jump table 0x6ad594): 1 → 0, 2 → 2, 3 → 1, 4 → 4, 5 → 3, 6 → 5;
+    - earring: 9; necklace: 10;
+    - **ring: 11 if 11 is empty, else 12 if 12 is empty, else 11** (0x6ad502..0x6ad516).
+  - Ours sent the slot under the cursor: a ring on a filled ring slot swapped it even with the other
+    empty, and a drop on the picture did nothing. `EquipTarget.worn_slot_for` is the rule;
+    `HudPanels.equip_from_bag` sends it. A worn item dropped on the window now stays worn (it was
+    unequipped).
+- **Gear on the hotbar (0x60b850 case 0x46, 0x60b94f..0x60ba95).**
+  - The bar takes any bag, worn or avatar item (`CNIFUnderMenuBar::vslot_028` 0x60e950: no type
+    filter).
+  - Pressing a bag item that is not 3/3/x (ammo aside) or 3/2/x goes through that same handler: the
+    slot is held, CIFEquipment's vslot 28 is called, then the slot is let go. Ours sent a use.
+  - The binding follows the moves: `FUN_0060e540`, run by every 0xB034 reply over the 0x33 slots,
+    moves a slot pointing at the source to the destination, swaps the destination's onto the source,
+    and clears only on an item gone.
+  - So a weapon put on stays on its key, **inert** (a worn binding breaks out of 0x60b850's switch).
+    The weapon it swapped lands in the bag slot just emptied, and that weapon's key works.
+  - Ours: a worn item keeps its slot at bag slot -1 (`World3D._resync_quickslot_items`; in-flight
+    equips and the first worn list guard the race). The original matches the bag slot plus the
+    RefItemID; ours matches the id anywhere in the bag. The outcome is the same for these moves.
+- **The server's two-hander rule (INFERRED from the original server's `CGObjPC::AttachEquipItem`
+  0x524cd0).** A two-hander put on over a shield takes the shield off into the bag, and a shield
+  under a two-hander takes the weapon off. Ours refused both, which would have broken the swap.
+  `twoHandedDisplaced` now unequips the other hand first. OPEN: the arrows moved to 7 with a bow,
+  and the original's fallback to the weapon's own bag slot when the bag is full (ours refuses).
+- **The held count.** The held slot is drawn by its own draw (0xb9d810 → 0x685e50), which draws the
+  count (0x67bd70), so the count belongs on the cursor. Ours copied the texture only.
+  `HeldIcon._carry_count` copies the slot's `CountLabel`.
+- **The repair flow** (CIFStore control 0xb → 0x6cea60, 0xc → 0x6cfc00):
+  - **Repair All** quotes on the client: worn slots 0..7 and the whole bag. An item counts if it is
+    3/1, not an accessory, can be repaired (0x8bd0e0: no MATTR_NOT_REPARABLE, no MATTR_REPAIR ≤ 1)
+    and costs more than 0.
+    - The cost (`SOItem::FUN_008bacc0`): a broken item is CostRevive (column 28) plus the points
+      from 1; then trunc(missing × clamp(CostRepair (col 27) / max, 1, 9.99e37)).
+    - A total of 0 says UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR and opens nothing.
+    - Otherwise CMessageBoxManager purpose 0x0C opens (`RepairBox`, MsgBoxINIF, the geometry from
+      0x646400..0x64671a). The client never holds the total against the purse.
+  - **Repair** toggles the hammer cursor 0x96: forced cursor 0x777e70, new `GameCursor.forced_id`,
+    which also refuses the pick-up. A worn or bag slot clicked under it:
+    - CanRepair (col 22) 0: nothing;
+    - unrepairable: 0x1c11;
+    - full: nothing;
+    - otherwise it repairs at once, with no box. Hiding the store ends the hammer.
+  - **The reply.** Success shows nothing (ours wrote "Repaired for X gold."). A refusal goes to the
+    system window.
+  - **Per item whose durability rose:** snd_repair (from 0: snd_revive), and the slot's flash
+    (`RepairFlash`): `icon_mall_repair.ddj`, 20 cells of 32 × 32 at 50 ms, drawn 72 × 72 at
+    (-20, -20).
+  - **Server.** It repairs the bag too (bag slots as 13 + n), stops at the first 0x1c07, and charges a
+    broken item's restore fee before mending it as from 1 (`HandleRepairRequest`,
+    docs/protocol/durability.md). The fee needs the new `ReviveCost` column: itemdata col 28, CSV
+    column 91, `items.revive_cost`.
+  - **The client's table.** The item table gained CanRepair, CostRepair and CostRevive, in both
+    readers (`repair_ints`; TABLE PARITY PASS).
+- **Worn-out marks** (the slot draw, 0x67dfb8..0x67e2c7; `DurabilityMark`).
+  - The icon is never darkened (ours greyed a broken one).
+  - **Broken** (0 with a maximum): `icon_item_broken.ddj`, a still red box.
+  - **Low** (1..6 on equipment that is no accessory): `icon_item_warning.ddj`, 16 frames of 16 × 16,
+    n = ftol(c / 17 × 16). c is the interface counter: 80 ms steps (timer 3, 0x7872b0), wrapping at
+    17, a 1360 ms loop.
+  - On the bag and the worn slots, and on a quick slot (frame 0, which has no counter). OPEN: the
+    `icon_disable.ddj` overlay for an item unusable for another reason too.
+- **The gear figure** (`CEquipStateImg`, ginterface.txt GDR_EQUIP_STATE_WND, `EquipStateImg`).
+  - 68 × 96 at (width - 200, 74).
+  - One `com_re_*` overlay per worn slot 0..7, in `_y` (1..6) or `_r` (0), on the `com_re_avatar`
+    knight (0x65cc50 / 0x65cb40).
+  - Hidden when nothing is worn out; no flashing.
+- **Live wear (0x3052).**
+  - The original sends `{u8 slot, u32 durability}` on every change. Ours saved and logged wear and
+    sent nothing.
+  - The server now sends it on every wear step (`notifyDurability`). The client handles it
+    (`NetClient.durability_changed`): the stored lists, snd_eqbreak at 0 and snd_eqdanger at exactly
+    6 on a worn item (the table authors them with each other's .wav), the slot's mark and the figure.
+- **Live** (`/var/tmp/r829q/qa829.sh`, the Jangan smith; a China level-30 character with sword 71,
+  mail 899, helm 791 and shield 251 put on through the equip message, then `/durability` weapon 3,
+  mail 0, helm 20).
+  - **Before the repair:**
+    - the weapon slot pulses;
+    - the mail slot shows the red box;
+    - the figure shows the knight with a red chest and a yellow sword.
+  - **Repair All:** "Repair All quotes 522 gold". The box has "Agreement window", the "Repair all"
+    bar, the sentence, "522 Gold", and Yes / No.
+  - **Yes:** "repaired 3 item(s) for 522 gold". The quote matches the charge, the revive fee
+    included; before the fee was built it was 521 quoted against 351 charged.
+  - **After:** snd_repair and snd_revive play; the sparks show on the three slots; the marks and the
+    figure clear.
+  - **Hotbar** (keys 1 and 2, two swords):
+    - 1 puts on sword 71, and key 1 goes inert;
+    - 2 puts on 3632; 71 lands in bag slot 0, and key 1 follows it;
+    - 1 puts 71 on again.
+- **Tests:**
+  - `equip_target_test`, `repair829_test`, `durability829_test`;
+  - `held_icon_test` (the count, and the doll's mail drop by type);
+  - `error_text_test` (repair refusals to the system window);
+  - server: `TestEquipTwoHandedClearsTheOtherHand`, `TestRepairHandlerMendsTheBag`,
+    `TestRepairChargesTheReviveFee`, `TestEncodeDurabilityChanged`, refdata column 91.
+  - 364 client suites, 0 failing; the server suite passes; native 87.
+- **Deploy:** a server change and the items table re-imported for `revive_cost` (deploy/README.md,
+  "ROUND 829"). UI and server only: no perf gate.
+
 ## Eight-hundred-and-twenty-eighth round: bodies drawn the right way round, seal effects on both hands of a dual weapon
 
 The user: "the two handed sword in the original game is held in the right hand not the left like

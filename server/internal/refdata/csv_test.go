@@ -733,12 +733,19 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	if got := load(append(append([]string(nil), row...), "1")).ChildItemCount; got != 1 {
 		t.Errorf("column 89 loaded ChildItemCount %d, want 1", got)
 	}
-	if ItemCSVColumnCount != 91 {
-		t.Errorf("ItemCSVColumnCount %d, want 91", ItemCSVColumnCount)
+	if ItemCSVColumnCount != 92 {
+		t.Errorf("ItemCSVColumnCount %d, want 92", ItemCSVColumnCount)
 	}
 	// Round 795: column 90 is Desc2, a ride scroll's level list.
 	withDesc := append(append([]string(nil), row...), "1", "120")
 	if got := load(withDesc).Desc2; got != "120" {
 		t.Errorf("column 90 loaded Desc2 %q, want 120", got)
+	}
+	// Round 829: column 91 is ReviveCost (itemdata column 28).
+	if got := load(append(append([]string(nil), withDesc...), "297")).ReviveCost; got != 297 {
+		t.Errorf("column 91 loaded ReviveCost %d, want 297", got)
+	}
+	if got := load(withDesc).ReviveCost; got != 0 {
+		t.Errorf("a 91-column export loaded ReviveCost %d, want 0", got)
 	}
 }

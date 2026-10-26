@@ -473,6 +473,12 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* skilldataenc.txt charact
 #   b. re-run `export-refdata -mode monsters` (step 2): monsters.csv grows two columns,
 #      Knockdown and KORecoverTime (characterdata cols 81/82). Without them every monster is
 #      knockable (3) with a 3000 ms recovery -- the table's commonest values.
+# ROUND 829 (the repair's restore fee) NEEDS THE ITEMS RE-EXPORT: re-run `export-refdata -mode items`
+# with the NEW binary (items.csv grows to 92 columns, the new column 91 ReviveCost, itemdata column 28),
+# then the NEW `import-refdata -items-csv` (its store adds items.revive_cost BIGINT NOT NULL DEFAULT 0),
+# then restart the server. Until then a broken item is mended without its restore fee while the client
+# quotes it. Check: `SELECT revive_cost FROM items WHERE id = 71;` answers 297 (ITEM_CH_SWORD_01_A).
+
 # ROUND 728 (the warehouse deposit fee) NEEDS THE ITEMS RE-EXPORT ON opensro-01: re-run
 # `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 73 columns, the new
 # column 72 KeepingFee, itemdata column 30), then the NEW `import-refdata` (step 3) -- its store adds

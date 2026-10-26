@@ -10,7 +10,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 |---|--:|--:|--:|--:|--:|
 | [Account & login](#account--login) | 14 |  |  |  | 14 |
 | [World & movement](#world--movement) | 16 | 3 |  | 2 | 21 |
-| [NPCs](#npcs) | 7 | 4 |  |  | 11 |
+| [NPCs](#npcs) | 8 | 3 |  |  | 11 |
 | [Monsters](#monsters) | 14 | 3 |  |  | 17 |
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
@@ -27,7 +27,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **160** | **33** | **1** | **35** | **229** |
+| **All** | **161** | **32** | **1** | **35** | **229** |
 
 ## Biggest gaps
 
@@ -103,7 +103,7 @@ Retail NPCs in their retail spots, with talk menus, shops, storage and quests.
 | NPC talk window | ✅ Supported | Retail talk box titled with the NPC's name and service lines |
 | NPC shops | ✅ Supported | Retail goods and prices; buy, sell, buyback, Ctrl+click quick-sell |
 | Storage (warehouse) | ✅ Supported | Per-account items and gold with deposit fee |
-| Repair NPCs | 🟡 Partial | Repair and Repair All cover worn gear only, not bag items |
+| Repair NPCs | ✅ Supported | The original's flow: Repair All shows the cost in its own Yes/No box and mends worn gear and bag items alike; Repair turns the cursor into a hammer that mends the item you click; broken items pay their revive fee; each repaired item flashes and plays the repair sound |
 | Quests | 🟡 Partial | 564 of 696 quests reachable, NPC quest marks; the original's talk pages (Accept/Refuse, OK closes the talk, the reward's "Quest completed." notice), party-only quests and their refusals; timed and job quests missing |
 | Guild manager NPC | 🟡 Partial | Create, leave and disband (the master) with the original's confirm boxes; level-up, master hand-over and the other lines not done |
 | Test Items NPC | ✅ Supported | Jangan NPC; free +12 full-blue gear, elixirs, stones; server option |
@@ -184,12 +184,12 @@ Retail items with real stats, blues, alchemy and potions.
 |---|---|---|
 | Inventory window | ✅ Supported | 96-slot bag over pages; drag, move and swap |
 | Stacking, merging, splitting | ✅ Supported | Retail stack sizes; Shift+click opens the split box |
-| Equipment and paper doll | ✅ Supported | 13 worn slots with live 3D preview; others see your gear |
+| Equipment and paper doll | ✅ Supported | 13 worn slots with live 3D preview; others see your gear; drop an item anywhere on the equipment window and it goes to its own slot (a ring to the empty ring slot first), as in the original |
 | Item requirements | ✅ Supported | Level, race, gender and mastery checked; unmet shown in red |
 | Item tooltips | ✅ Supported | Retail tooltip with white stats %, blues, plus, durability, requirements |
 | Pick up drops | ✅ Supported | Click items or gold on the ground to pick up; the pick-up animation plays out before you can walk or pick again, as in the original |
 | Drop items on the ground | ❌ Not yet | Players cannot drop items or gold yet |
-| Durability and broken items | ✅ Supported | Gear wears in combat; broken gear gives no stats |
+| Durability and broken items | ✅ Supported | Gear wears in combat; broken gear gives no stats; a broken item's slot shows the original's red box and a worn-out one (6 points or fewer) its pulsing warning; the gear figure under the top-right corner shows the worn-out pieces yellow and the broken ones red; the break and warning sounds play |
 | Alchemy +N (elixirs) | ✅ Supported | Retail success rates, lucky powder, failure and destroy rules |
 | Alchemy window | 🟡 Partial | Reinforce and stones work; advanced elixir, other tabs, sockets missing |
 | Magic options (blues) | ✅ Supported | Drop with blues, apply when worn, shown in tooltips |
@@ -297,8 +297,8 @@ Retail windows rebuilt from the game's own layout files.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page; the gold frame marks the slot last used and fades out over 4 seconds |
-| Drag to hotbar | ✅ Supported | Skills, items and actions; swap and clear slots |
+| Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page; the gold frame marks the slot last used and fades out over 4 seconds; a weapon, shield or other gear on the bar is put on when pressed, and its key works again once it is swapped back into the bag |
+| Drag to hotbar | ✅ Supported | Skills, items, gear and actions; swap and clear slots; a stack keeps showing its count while you carry it |
 | Additional quick slot bars | ✅ Supported | The original's movable extra bar (Space+1-0) with its options, plus paged extra bars (Alt+1-0) |
 | Saved hotbar | 🟡 Partial | Saved on your PC per character, not on the server |
 | Character window | ✅ Supported | Stats, attack/defence ranges, balance; spend STR/INT points |

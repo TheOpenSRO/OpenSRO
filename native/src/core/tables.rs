@@ -778,6 +778,9 @@ pub const ITEM_AVATAR_INT_COLS: [usize; 3] = [120, 130, 159];
 /// 156/157): the client's item parser keeps the group (wcstol base 16) and the Param as the
 /// re-use ms (`cooltime_of`).
 pub const ITEM_COL_PARAM4: usize = 124;
+/// Round 829 (the repair): CanRepair, CostRepair and CostRevive -- itemdata columns 22, 27
+/// and 28 (ref +0xaa, +0xc0, +0xc4 on the client, GlobalDataManager::FUN_00972910).
+pub const ITEM_REPAIR_INT_COLS: [usize; 3] = [22, 27, 28];
 const ITEM_COL_PARAM_FIRST: usize = 118;
 const ITEM_PARAM_PAIRS: usize = 20;
 pub const ICON_PREFIX: &str = "icon\\";
@@ -831,6 +834,8 @@ pub struct Items {
     pub avatar_ints: Vec<i64>,
     /// 3 a row: Param4, the COOLTIME group and its ms (round 826, `cooltime_of`).
     pub cool_ints: Vec<i64>,
+    /// 3 a row: ITEM_REPAIR_INT_COLS' values (round 829).
+    pub repair_ints: Vec<i64>,
 }
 
 /// The row's COOLTIME pair (round 826): the first Param/Desc128 pair whose Desc128 contains
@@ -959,6 +964,7 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.avatar_ints.extend(ITEM_AVATAR_INT_COLS.iter().map(|&c| int_at(cols, c)));
         let (cool_group, cool_ms) = cooltime_of(cols);
         o.cool_ints.extend_from_slice(&[int_at(cols, ITEM_COL_PARAM4), cool_group, cool_ms]);
+        o.repair_ints.extend(ITEM_REPAIR_INT_COLS.iter().map(|&c| int_at(cols, c)));
     })?;
     bad.map_or(Ok(o), Err)
 }
@@ -1368,6 +1374,9 @@ mod tests {
         cols[124] = "30".into();
         cols[128] = "20000".into();
         cols[129] = "COOLTIME:0x00000010".into();
+        cols[22] = "1".into();
+        cols[27] = "198".into();
+        cols[28] = "297".into();
         let row = cols.join("\t");
         let nameless = "1\t5\tCODE\t\tx";
         let short = "1\t6\tCODE";
@@ -1408,6 +1417,8 @@ mod tests {
         assert_eq!(it.avatar_ints, vec![1, 574, 1, 0, 0, 0]);
         // Round 826: Param4, the COOLTIME pair (Param6 20000 under "COOLTIME:0x10").
         assert_eq!(it.cool_ints, vec![30, 16, 20000, 0, 0, 0]);
+        // Round 829: CanRepair, CostRepair, CostRevive.
+        assert_eq!(it.repair_ints, vec![1, 198, 297, 0, 0, 0]);
     }
 
     #[test]

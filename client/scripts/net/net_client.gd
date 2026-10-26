@@ -117,6 +117,10 @@ signal equipment_result(items: Array, error: String)
 ## A repair's outcome: 0 = repaired, otherwise a refusal code; the gold spent
 ## and the worn slots' durability afterwards (EquipmentNet.RepairResult).
 signal repair_result(code: int, gold_spent: int, durabilities: Array)
+## Round 829: 0x3052, one item's durability changed (a wear step): `slot` the
+## worn slot, or the bag slot + 13; `was` the value held before (-1 unknown).
+## The stored durability lists are updated before it fires.
+signal durability_changed(slot: int, durability: int, was: int)
 ## Round 735 (lane A's hook for the glow): another player's worn item changed
 ## -- retail 0x3038 (put on, or its plus changed: `ref_id` and `plus` >= 0) or
 ## 0x3039 (taken off from `slot`, the message's own slot byte as retail's
@@ -2454,6 +2458,19 @@ func _dispatch(p: Packet) -> void:
 		EquipmentNet.OP_REPAIR_RESULT:
 			var rr := EquipmentNet.decode_repair_result(p.data)
 			repair_result.emit(rr.code, rr.gold_spent, rr.durabilities)
+		EquipmentNet.OP_DURABILITY_CHANGED:
+			# Round 829: {u8 slot, u32 durability} (0x3052, READ 0x8adf50).
+			if p.data.size() >= 5:
+				var dslot := p.data.decode_u8(0)
+				var dval := p.data.decode_s32(1)
+				var list: Array = last_equipment_durabilities if dslot < EquipmentNet.BAG_SLOT_BASE else last_inventory_durabilities
+				var key := dslot if dslot < EquipmentNet.BAG_SLOT_BASE else dslot - EquipmentNet.BAG_SLOT_BASE
+				var was := -1
+				for d in list:
+					if d != null and int(d.slot) == key:
+						was = int(d.current)
+						d.current = dval
+				durability_changed.emit(dslot, dval, was)
 		EquipmentNet.OP_EQUIP_BROADCAST, EquipmentNet.OP_UNEQUIP_BROADCAST:
 			var eb := EquipmentNet.decode_broadcast(p.data)
 			if eb != null:

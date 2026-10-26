@@ -279,29 +279,63 @@ func equipRefusal(ctx context.Context, chars character.Store, store equipment.St
 	if err := equipment.Refusal(c, item, slot); err != nil {
 		return refusalMessage(err)
 	}
-	// A two-handed weapon and a shield cannot be held at once. Checked here
-	// rather than in equipment.Refusal because it is the only rule that
-	// depends on what is ALREADY worn, not on the incoming item alone.
-	if store != nil {
-		if worn, err := store.Get(ctx, characterID); err == nil {
-			byslot := map[equipment.Slot]*equipment.ItemStats{}
-			for _, w := range worn {
-				it, err := items.GetItem(ctx, w.ItemID)
-				if err != nil || it == nil {
-					// An unknown worn item cannot be shown to be two-handed,
-					// so it does not block anything -- but it still occupies
-					// its slot, which is what the shield case needs.
-					byslot[w.Slot] = &equipment.ItemStats{}
-					continue
-				}
-				byslot[w.Slot] = &equipment.ItemStats{TwoHanded: it.TwoHanded}
+	return ""
+}
+
+// twoHandedDisplaced is the worn slot an equip must clear first: a
+// two-handed weapon put in slot 6 while a shield is worn takes the shield
+// off, and a shield put in slot 7 under a two-handed weapon takes the
+// weapon off (round 829). INFERRED from the original server's
+// CGObjPC::AttachEquipItem (0x524cd0, the meanings of its item calls not
+// READ): the other hand goes to the first empty bag slot; with no room the
+// weapon case answers 0x1807, which ours answers as before ("both hands are
+// on your weapon"). Before round 829 ours refused both, so a weapon or
+// shield on a quick slot could not swap a two-hander out. Not built (OPEN):
+// the original's fallback to the weapon's own source slot, and the bow's
+// arrows moved into slot 7 (FindItemHasSameTID).
+func twoHandedDisplaced(ctx context.Context, store equipment.Store, inv inventory.Store, items ItemLookup,
+	characterID int64, slot equipment.Slot, inventorySlot int) (equipment.Slot, bool) {
+	if store == nil || inv == nil || items == nil || (slot != equipment.SlotWeapon && slot != equipment.SlotShield) {
+		return 0, false
+	}
+	slots, err := inv.List(ctx, characterID)
+	if err != nil {
+		return 0, false
+	}
+	var incoming *equipment.ItemStats
+	for _, sl := range slots {
+		if sl.Index == inventorySlot {
+			if it, err := items.GetItem(ctx, sl.ItemID); err == nil && it != nil {
+				incoming = &equipment.ItemStats{TwoHanded: it.TwoHanded}
 			}
-			if equipment.TwoHandedConflict(byslot, slot, &equipment.ItemStats{TwoHanded: item.TwoHanded}) {
-				return refusalMessage(equipment.ErrTwoHandedShield)
-			}
+			break
 		}
 	}
-	return ""
+	if incoming == nil {
+		return 0, false
+	}
+	worn, err := store.Get(ctx, characterID)
+	if err != nil {
+		return 0, false
+	}
+	byslot := map[equipment.Slot]*equipment.ItemStats{}
+	for _, w := range worn {
+		it, err := items.GetItem(ctx, w.ItemID)
+		if err != nil || it == nil {
+			// An unknown worn item cannot be shown to be two-handed, but it
+			// still occupies its slot, which is what the shield case needs.
+			byslot[w.Slot] = &equipment.ItemStats{}
+			continue
+		}
+		byslot[w.Slot] = &equipment.ItemStats{TwoHanded: it.TwoHanded}
+	}
+	if !equipment.TwoHandedConflict(byslot, slot, incoming) {
+		return 0, false
+	}
+	if slot == equipment.SlotWeapon {
+		return equipment.SlotShield, true
+	}
+	return equipment.SlotWeapon, true
 }
 
 // refusalMessage turns an equipment.Refusal error into the text the client
@@ -397,6 +431,14 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 
 	if refusal := equipRefusal(ctx, chars, store, inv, items, characterID, req.Slot, req.InventorySlot); refusal != "" {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: refusal}).Encode()})
+	}
+	// Round 829: the other hand comes off first (twoHandedDisplaced).
+	if other, ok := twoHandedDisplaced(ctx, store, inv, items, characterID, req.Slot, req.InventorySlot); ok {
+		removed := wornIn(ctx, store, characterID, other)
+		if err := store.Unequip(ctx, characterID, other); err != nil {
+			return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: refusalMessage(equipment.ErrTwoHandedShield)}).Encode()})
+		}
+		broadcastUnworn(hub, characterID, other, removed)
 	}
 	// Round 800: a job suit goes on over 10 seconds (jobsuit.go).
 	if req.Slot == equipment.SlotJobSuit {

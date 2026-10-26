@@ -50,6 +50,7 @@ func _initialize() -> void:
 	await process_frame
 	root.size = Vector2i(1920, 1080)
 	await _state_machine_checks()
+	await _count_checks()
 	_encoder_checks()
 	await _panel_checks()
 	if _failures == 0:
@@ -164,6 +165,39 @@ func _state_machine_checks() -> void:
 	await process_frame
 
 # --- The encoder -------------------------------------------------------------------
+
+## Round 829: a stack's count rides on the held icon (the slot's own draw
+## draws it: 0x685e50 -> 0x67bd70), where it sits against the slot's icon.
+func _count_checks() -> void:
+	var held := HeldIcon.new()
+	root.add_child(held)
+	var cell := Control.new()
+	cell.position = Vector2(100, 100)
+	cell.size = Vector2(36, 36)
+	root.add_child(cell)
+	var icon := TextureRect.new()
+	icon.size = Vector2(32, 32)
+	cell.add_child(icon)
+	var count := ItemCountLabel.new()
+	count.name = "CountLabel"
+	count.text = "17"
+	count.position = Vector2(0, 0)
+	count.size = Vector2(32, 32)
+	cell.add_child(count)
+	await process_frame
+	held.pick_up({"kind": "bag", "slot": 13, "item_id": 8, "qty": 17}, _texture(32, 32), icon, Vector2(400, 300))
+	var ghost: Control = held.ghost()
+	var copy := ghost.get_node_or_null("CountLabel") as Label if ghost != null else null
+	_check(copy != null and copy.text == "17" and copy is ItemCountLabel and copy.position == Vector2.ZERO,
+		"a held stack of 17 shows its count on the cursor, where the slot draws it")
+	held.cancel()
+	count.text = ""
+	held.pick_up({"kind": "bag", "slot": 13, "item_id": 8, "qty": 1}, _texture(32, 32), icon, Vector2(400, 300))
+	ghost = held.ghost()
+	_check(ghost != null and ghost.get_node_or_null("CountLabel") == null, "a slot drawing no count carries none")
+	held.cancel()
+	held.free()
+	cell.free()
 
 func _encoder_checks() -> void:
 	var plain: PackedByteArray = EquipmentNet.encode_unequip("Ab", 5)
@@ -322,6 +356,13 @@ func _panel_checks() -> void:
 		return
 	# Slot 0 holds a potion, so the first free slot is 1 -- not the 10 the
 	# player clicks.
+	# Round 829: the doll's drop goes where the item's TypeIDs say
+	# (EquipTarget), so the mail piece in slot 3 carries its row: 3/1/1/3, mail.
+	var mail_row := ItemTableReader.Item.new()
+	mail_row.id = 4843
+	mail_row.type_ids = PackedInt32Array([3, 1, 1, 3])
+	(panels.get("_items") as Dictionary)[4843] = mail_row
+	panels.set("_items_loaded", true)
 	panels.call("_fill_inventory_grid", [_bag_slot(0, 4, 5), _bag_slot(3, 4843, 1)])
 	panels.call("_fill_equipment_slots", [_worn(5, 4842)])
 	await process_frame

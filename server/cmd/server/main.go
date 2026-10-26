@@ -1756,6 +1756,7 @@ func main() {
 	// The avatar inventory (round 789): the spawn record's avatar block, the
 	// stats, the world entry's integrity check and the expiry notices read it.
 	session.SetAvatarStore(avatars, inv, refItems, hub)
+	session.SetDurabilityHub(hub) // round 829: 0x3052 on every wear step
 
 	// Passive recovery: CGObjPC::vslot_362 on each character's own 4 s timer,
 	// a percentage of the MAXIMUM HP and MP -- 0.8% standing still, 8%
@@ -2574,7 +2575,7 @@ func main() {
 		// the console), and everyone under -teleport-free.
 		session.TeleportHandler(chars, eq, hub, teleportNetwork, gmGate, *teleportFree, logger, zerkTracker),
 		session.ShopHandler(chars, shopSvc, trades),
-		session.RepairHandler(chars, eq, refItems, trades),
+		session.RepairHandlerWithBag(chars, eq, inv, refItems, trades),
 		session.StorageHandler(chars, storageSvc, trades),
 		// Round 728: split, sell, deposit and the buy back on the retail
 		// 0x7034/0xB034 and 0x7168/0xB168 (session/itemop.go).

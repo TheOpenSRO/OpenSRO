@@ -399,6 +399,52 @@ func _over_equipment_pane(at: Vector2) -> bool:
 	var pane := _popup.pane_control("GDR_EQUIPMENT") if _popup != null else null
 	return pane != null and pane.is_visible_in_tree() and pane.get_global_rect().has_point(at)
 
+## Round 829: a bag item put down on the equipment window, or a quick slot
+## holding it pressed (0x60b850 case 0x46 -> the same CIFEquipment::vslot_028,
+## 0x6ad180): the worn slot its TypeIDs choose (EquipTarget.worn_slot_for --
+## the ring to slot 11, else 12 when 11 is worn, else 11 again), 0x7034 type
+## 0 to it; an avatar to its storage slot (_drop_avatar_from_bag). The server
+## swaps out what is worn there. False when the item has no slot (nothing is
+## sent and nothing said, as in the original).
+func equip_from_bag(from: int) -> bool:
+	var types := bag_item_types(from)
+	if AvatarEquipment.is_avatar_item(types):
+		_drop_avatar_from_bag(from)
+		return true
+	var worn := EquipTarget.worn_slot_for(types, func(s: int) -> bool: return not worn_item_types(s).is_empty())
+	if worn < 0:
+		print("HudPanels: bag slot %d (%s) has no worn slot -- nothing sent" % [from, str(types)])
+		return false
+	var who := NetClient.current_character_name
+	if who == "" or not NetClient.is_connected_to_server():
+		return false
+	# The server swaps with what is worn there; its equipment result redraws
+	# the doll, and the bag is re-read since the item left it.
+	UiSounds.expect_move(types, "equipped (bag -> equipment)")
+	print("HudPanels: equip bag slot %d into worn slot %d" % [from, worn])
+	var id := _bag_item_id_at_slot(from)
+	if id >= 0:
+		equip_pending[id] = true
+	NetClient.equip(who, worn, from)
+	NetClient.list_inventory(who)
+	return true
+
+## Round 829: items whose equip is on its way (until the next equipment
+## reply), so a quick slot holding one is not cleared by a bag list that
+## arrives before the worn list does (World3D._resync_quickslot_items).
+var equip_pending := {}
+## Whether an equipment list has come in this session (before it, a quick
+## slot holding a worn item cannot be told from one whose item is gone).
+var equipment_known := false
+
+## The item ids worn now (the server's last equipment list).
+func worn_item_ids() -> Dictionary:
+	var out := {}
+	for e in _equipped_items:
+		if e is EquipmentNet.Equipped:
+			out[(e as EquipmentNet.Equipped).item_id] = (e as EquipmentNet.Equipped).slot
+	return out
+
 ## A bag avatar put down on the equipment window (READ CIFEquipment::vslot_028
 ## c:0x6ad180, either mode -- the research names no mode test, and the hovered
 ## slot is not looked at): the client's own refusal in the system line, or
@@ -2448,6 +2494,15 @@ func _wire_repair_buttons(window: HudWindow) -> void:
 	var one_btn := window.node("GDR_STORE_BTN_REPAIR") as BaseButton
 	if one_btn != null and not one_btn.pressed.is_connected(_on_repair_one_pressed):
 		one_btn.pressed.connect(_on_repair_one_pressed)
+	# Round 829: the store hiding ends the hammer (CIFStore::vslot_023,
+	# 0x6d0166: +0x7c8 = 0, 0x777e70(-1)) and closes its question.
+	if not window.has_meta("repair_hide_wired"):
+		window.set_meta("repair_hide_wired", true)
+		window.visibility_changed.connect(func() -> void:
+			if not window.is_visible_in_tree():
+				_end_repair_mode("the store closed")
+				if is_instance_valid(_repair_box):
+					_repair_box.close())
 
 ## Shows Repair and Repair All only at an NPC the server gives interaction 4
 ## (NpcServiceReader.offers_repair: the town smiths and armour merchants, and
@@ -2468,45 +2523,298 @@ func _show_repair_buttons(window: HudWindow, npc_code: String) -> void:
 	print("STORE %s repair buttons %s (interaction 4: %s)" % [
 		npc_code, "shown" if shown else "hidden", shown])
 
+## Round 829: Repair All (CIFStore control 0xc -> 0x6cfc00, READ): the
+## client's own quote of every worn (0..7) and bag item it would mend
+## (RepairQuote); 0 says UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR in the
+## system window and opens nothing; otherwise the agreement box (RepairBox),
+## whose Yes sends the repair of everything. Until round 829 it sent at once.
 func _on_repair_all_pressed() -> void:
-	var who := NetClient.current_character_name
-	if who != "":
-		# The worn durability as it stands now, so the repair's sounds compare
-		# against today's wear (UiSounds.worn_durability).
-		NetClient.list_equipment(who)
-		NetClient.repair(who, EquipmentNet.REPAIR_ALL)
+	if NetClient.current_character_name == "":
+		return
+	var total := repair_all_quote()
+	print("HudPanels: Repair All quotes %d gold" % total)
+	if total <= 0:
+		system_notice.emit(_resolve_ui("UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR", "No item needs repairing."))
+		return
+	if is_instance_valid(_repair_box):
+		_repair_box.close()
+	if _builder == null:
+		return
+	var box := RepairBox.new()
+	if not box.build_repair_all(_builder, total):
+		box.free()
+		return
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	box.accepted.connect(func(_t: String) -> void: _send_repair(EquipmentNet.REPAIR_ALL))
+	_repair_box = box
+	_qa_print_buttons(box, str(box.name))
 
+var _repair_box: RepairBox = null
+
+## QA (OPENSRO_QA_SHOP_STEPS' "repair:<what>", round 829).
+func qa_repair_step(what: String) -> String:
+	match what:
+		"all":
+			_on_repair_all_pressed()
+			return "quote %d, box %s (%s)" % [repair_all_quote(), "up" if is_instance_valid(_repair_box) else "none",
+				_repair_box.amount_text() if is_instance_valid(_repair_box) else ""]
+		"yes":
+			if not is_instance_valid(_repair_box):
+				return "no box"
+			var ok := _repair_box.button("GDR_MBIN_BTN_OK")
+			if ok != null:
+				ok.emit_signal("pressed")
+			return "Yes pressed"
+		"hammer":
+			_on_repair_one_pressed()
+			return "repair mode %s, forced cursor 0x%x" % [_repair_mode, GameCursor.forced_id]
+	if what.begins_with("worn"):
+		_repair_click("worn", int(what.trim_prefix("worn")))
+		return "clicked worn %s" % what.trim_prefix("worn")
+	if what.begins_with("bag"):
+		_repair_click("bag", int(what.trim_prefix("bag")))
+		return "clicked bag %s" % what.trim_prefix("bag")
+	return "unknown"
+
+## Round 829: Repair (control 0xb -> 0x6cea60, READ) is a toggle: with a
+## forced cursor up it clears it (0x777e70(-1)); otherwise it sets the store's
+## repair mode (+0x7c8) and the hammer (0x777e70(0x96)). The store hiding
+## (CIFStore::vslot_023 0x6d0166) ends it too. A slot clicked meanwhile is
+## repaired (_repair_click). Until round 829 the button repaired everything.
 func _on_repair_one_pressed() -> void:
+	if GameCursor.forced_id >= 0 or _repair_mode:
+		_end_repair_mode("the Repair button again")
+		return
+	_repair_mode = true
+	GameCursor.force(CursorSet.ID_REPAIR, get_window())
+	print("HudPanels: repair mode on (the hammer)")
+
+var _repair_mode := false
+
+func _end_repair_mode(why: String) -> void:
+	if not _repair_mode:
+		return
+	_repair_mode = false
+	GameCursor.force(-1, get_window())
+	print("HudPanels: repair mode off (%s)" % why)
+
+## Whether the store's hammer is up.
+func repair_mode() -> bool:
+	return _repair_mode
+
+## Round 829: a slot clicked under the hammer (CIFSlotWithHelp::vslot_029,
+## branch 0x6811e9, READ): a worn or bag slot holding an item; CanRepair
+## (column 22) 0 does nothing; an item that cannot be repaired
+## (RepairQuote.can_be_repaired) says 0x1c11 as the server would (the client
+## posts itself 0xB03E {2, 0x1c11}); one at its maximum does nothing;
+## otherwise the repair goes at once, with no box, and the hammer stays up.
+## `where` is "worn" or "bag".
+func _repair_click(where: String, slot: int) -> void:
+	var item_id := _worn_item_id_at(slot) if where == "worn" else _bag_item_id_at_slot(slot)
+	if item_id < 0:
+		return
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null or item.can_repair == 0:
+		return
+	var types := item_types(item_id)
+	var inst := _item_instance("equipment" if where == "worn" else "bag", slot)
+	var options: Array = ItemTooltipInstance.option_entries(inst, item.item_class) if inst != null else []
+	if not RepairQuote.can_be_repaired(types, options):
+		system_notice.emit(ErrorText.repair_line(0x1c11, _text_table()))
+		return
+	var dur := _durability_of(where, slot)
+	if dur.size() != 2 or int(dur[0]) >= int(dur[1]):
+		return
+	_send_repair(slot if where == "worn" else REPAIR_BAG_BASE + slot)
+
+## The bag's slot numbering in a repair (the original's: bag slot + 13).
+const REPAIR_BAG_BASE := 13
+
+## [current, maximum] of a worn ("worn") or bag ("bag") slot, or [].
+func _durability_of(where: String, slot: int) -> Array:
+	var list: Array = NetClient.last_equipment_durabilities if where == "worn" else NetClient.last_inventory_durabilities
+	for d in list:
+		if d != null and d.get("slot") != null and int(d.get("slot")) == slot:
+			return [int(d.get("current")), int(d.get("maximum"))]
+	return []
+
+func _worn_item_id_at(slot: int) -> int:
+	for e in _equipped_items:
+		if e is EquipmentNet.Equipped and (e as EquipmentNet.Equipped).slot == slot:
+			return (e as EquipmentNet.Equipped).item_id
+	return -1
+
+## The client's Repair All quote (RepairQuote's rules over the worn slots
+## 0..7 and every bag slot).
+func repair_all_quote() -> int:
+	_load_items()
+	var total := 0
+	var parts := [["worn", _equipped_worn_pairs()], ["bag", _bag_pairs()]]
+	for part in parts:
+		var where: String = part[0]
+		for pair in part[1]:
+			var slot := int(pair[0])
+			var item_id := int(pair[1])
+			if where == "worn" and slot >= RepairQuote.WORN_SLOTS:
+				continue
+			var item: ItemTableReader.Item = _items.get(item_id)
+			if item == null:
+				continue
+			var types := item_types(item_id)
+			if not RepairQuote.counts(types):
+				continue
+			var inst := _item_instance("equipment" if where == "worn" else "bag", slot)
+			var options: Array = ItemTooltipInstance.option_entries(inst, item.item_class) if inst != null else []
+			if not RepairQuote.can_be_repaired(types, options):
+				continue
+			var dur := _durability_of(where, slot)
+			if dur.size() != 2:
+				continue
+			total += RepairQuote.cost(int(dur[0]), int(dur[1]), item.cost_repair, item.cost_revive)
+	return total
+
+func _equipped_worn_pairs() -> Array:
+	var out: Array = []
+	for e in _equipped_items:
+		if e is EquipmentNet.Equipped:
+			out.append([(e as EquipmentNet.Equipped).slot, (e as EquipmentNet.Equipped).item_id])
+	return out
+
+func _bag_pairs() -> Array:
+	var out: Array = []
+	for d in NetClient.last_inventory_durabilities:
+		if d != null and d.get("slot") != null:
+			var s := int(d.get("slot"))
+			var id := _bag_item_id_at_slot(s)
+			if id >= 0:
+				out.append([s, id])
+	return out
+
+## Sends a repair (a worn slot, a bag slot + 13, or EquipmentNet.REPAIR_ALL),
+## noting every item's durability first so the reply can tell which rose.
+func _send_repair(slot: int) -> void:
 	var who := NetClient.current_character_name
 	if who == "":
 		return
-	# Without a selected slot, "Repair" behaves like "Repair All" rather than
-	# doing nothing -- a repair NPC never leaves a broken item unrepairable.
-	NetClient.list_equipment(who)
-	NetClient.repair(who, _repair_selected_slot if _repair_selected_slot >= 0 else EquipmentNet.REPAIR_ALL)
+	_repair_before = {}
+	for d in NetClient.last_equipment_durabilities:
+		if d != null and d.get("slot") != null:
+			_repair_before[int(d.get("slot"))] = int(d.get("current"))
+	for d in NetClient.last_inventory_durabilities:
+		if d != null and d.get("slot") != null:
+			_repair_before[REPAIR_BAG_BASE + int(d.get("slot"))] = int(d.get("current"))
+	print("HudPanels: repair %s" % ("everything" if slot == EquipmentNet.REPAIR_ALL else "slot %d" % slot))
+	NetClient.repair(who, slot)
 
-## A repair's outcome in the store's status line. A refusal shows the game's
-## own message where the client has one (0x1c07 not enough gold, 0x1c0b busy
-## with a trade, 0x1c11 cannot be repaired, 0x1c12 cannot be revived) and our
-## own wording otherwise; the table and its grounding are in
-## scripts/net/error_text.gd.
-## Until round 515 a refusal went to the log file only and the store showed
-## nothing.
+var _repair_before := {}
+
+## A repair's outcome. Round 829 (READ): 0xB03E's result 1 shows nothing
+## (0x880a20) -- every item whose durability rose sounds snd_repair (from 0:
+## snd_revive) and plays its slot's flash (0x3052's handler 0x8adf50 ->
+## 0x6ab8a0 / 0x6b44a0, RepairFlash), worn and bag alike; any other result's
+## code goes to the system window (0x778190(0xd, code)): 0x1c07 not enough
+## gold, 0x1c0b busy, 0x1c11 cannot be repaired, 0x1c12 cannot be revived
+## (ErrorText). Before round 829 a success put our own "Repaired for X gold."
+## in the store and a refusal went there too.
 func _on_repair_result(code: int, gold_spent: int, durabilities: Array) -> void:
 	var who := NetClient.current_character_name
-	if code == 0:
-		# Per worn slot whose durability rose: snd_revive from 0, else
-		# snd_repair (0x3052's handler 0x8adf50, read).
-		UiSounds.worn_repaired(_durability_by_slot(durabilities), "repair reply")
-		print("HudPanels: repaired for %d gold" % gold_spent)
-		_set_shop_status("Repaired for %s gold." % _grouped(gold_spent))
-		if who != "":
-			# Refresh the worn list (durability + doll) and the purse.
-			NetClient.list_equipment(who)
-			NetClient.character_stats(who)
-	else:
+	if code != 0:
 		print("HudPanels: repair refused (0x%x)" % code)
-		_set_shop_status(ErrorText.repair_line(code, _text_table()))
+		system_notice.emit(ErrorText.repair_line(code, _text_table()))
+		return
+	var after := {}
+	for d in durabilities:
+		if d != null and d.get("slot") != null:
+			after[int(d.get("slot"))] = int(d.get("current"))
+	var rose := 0
+	var keys := after.keys()
+	keys.sort()
+	for k in keys:
+		if not _repair_before.has(k) or int(after[k]) <= int(_repair_before[k]):
+			continue
+		rose += 1
+		_flash_repaired(int(k))
+	UiSounds.durability_changed(_repair_before, after, "repair reply")
+	for k in after:
+		if int(k) < REPAIR_BAG_BASE:
+			UiSounds.worn_durability[int(k)] = after[k]
+	print("HudPanels: repaired %d item(s) for %d gold" % [rose, gold_spent])
+	if who != "":
+		# Refresh the worn list (durability + doll), the bag and the purse.
+		NetClient.list_equipment(who)
+		NetClient.list_inventory(who)
+		NetClient.character_stats(who)
+
+## Round 829: 0x3052, one item's durability (0x8adf50, READ): the sound
+## (UiSounds.durability_key), a rise's flash, the slot's mark redrawn, and --
+## a worn slot -- the HUD's figure (worn_durability_changed; 0x778b20 from
+## 0x8ae126).
+signal worn_durability_changed
+
+func _on_durability_changed(slot: int, durability: int, was: int) -> void:
+	var worn := slot < REPAIR_BAG_BASE
+	var key := UiSounds.durability_key(was, durability, worn)
+	if key != "":
+		UiSounds.play(key, "0x3052 slot %d %d -> %d" % [slot, was, durability])
+	if was >= 0 and durability > was:
+		_flash_repaired(slot)
+	if worn:
+		UiSounds.worn_durability[slot] = durability
+		_fill_equipment_slots(_equipped_items)
+		worn_durability_changed.emit()
+	else:
+		_draw_bag_page()
+
+## Round 829: an item's worn-out mark on its slot icon (DurabilityMark).
+func _mark_durability(icon: Control, item_id: int, cur: int, maximum: int, animated := true) -> void:
+	var st := DurabilityMark.state_for(item_types(item_id), cur, maximum)
+	if st != DurabilityMark.State.NONE and _mark_broken_tex == null and _builder != null:
+		_mark_broken_tex = _builder.load_texture(DurabilityMark.BROKEN_DDJ)
+		_mark_warning_tex = _builder.load_texture(DurabilityMark.WARNING_DDJ)
+	DurabilityMark.apply(icon, st, _mark_broken_tex, _mark_warning_tex, animated)
+
+var _mark_broken_tex: Texture2D = null
+var _mark_warning_tex: Texture2D = null
+
+## The mark a bag slot's item gets on a quick slot (no counter there: frame
+## 0), for World3D's bar.
+func mark_quick_slot(icon: Control, bag_slot: int) -> void:
+	var item_id := _bag_item_id_at_slot(bag_slot) if bag_slot >= 0 else -1
+	var dur := _durability_of("bag", bag_slot) if item_id >= 0 else []
+	if dur.size() != 2:
+		DurabilityMark.apply(icon, DurabilityMark.State.NONE, null, null)
+		return
+	_mark_durability(icon, item_id, int(dur[0]), int(dur[1]), false)
+
+## The flash on the slot of `key` (a worn slot, or bag slot + 13), if shown.
+func _flash_repaired(key: int) -> void:
+	var icon := _repair_slot_icon(key)
+	if icon == null:
+		return
+	if _repair_sheet == null and _builder != null:
+		_repair_sheet = _builder.load_texture(RepairFlash.DDJ)
+	RepairFlash.play_on(icon, _repair_sheet)
+
+var _repair_sheet: Texture2D = null
+
+## The icon control of a worn slot (key < 13) or of bag slot key - 13 on the
+## page shown, or null.
+func _repair_slot_icon(key: int) -> Control:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return null
+	if key < REPAIR_BAG_BASE:
+		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + key)) as Control
+		return slot.get_node_or_null("ItemIcon") as Control if slot != null else null
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
+	if grid == null:
+		return null
+	for c in grid.find_children("*", "TextureRect", true, false):
+		if (c as Control).has_meta("inv_slot") and int((c as Control).get_meta("inv_slot")) == key - REPAIR_BAG_BASE:
+			return c as Control
+	return null
 
 ## Fills the store's 6x5 grid (GDR_STORE_LAT) with the icons of the goods, in
 ## the tab's own order. One page for now -- our NPCs' tabs each fit the 30
@@ -5035,6 +5343,7 @@ func _draw_bag_page() -> void:
 			_set_item_tip(icon, -1)
 			_set_item_seal_edge(icon, -1)
 			icon.modulate = Color.WHITE
+			DurabilityMark.apply(icon, DurabilityMark.State.NONE, null, null)
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			for m in ["inv_slot", "inv_item_id", "inv_qty"]:
 				if icon.has_meta(m):
@@ -5071,9 +5380,10 @@ func _draw_bag_page() -> void:
 			var dur: Array = durability.get(index, [])
 			if dur.size() == 2:
 				_set_item_tip(icon, int(item_id), "bag", index, dur[0], dur[1])
-				# A broken item (0 durability) is dimmed. The exact treatment
-				# the original uses is not recovered; this grey is ours.
-				icon.modulate = Color(0.45, 0.45, 0.45) if dur[0] == 0 else Color.WHITE
+				# Round 829: a worn-out item's mark over the icon, which is
+				# never darkened (DurabilityMark, READ 0x67dfb8..; the grey
+				# that stood here was ours).
+				_mark_durability(icon, int(item_id), dur[0], dur[1])
 			else:
 				_set_item_tip(icon, int(item_id), "bag", index)
 				icon.modulate = Color.WHITE
@@ -5147,6 +5457,10 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	var slot := int(icon.get_meta("inv_slot"))
 	var item_id := int(icon.get_meta("inv_item_id"))
 	var qty := int(icon.get_meta("inv_qty"))
+	# Round 829: under the store's hammer a left click repairs the item.
+	if _repair_mode and mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
+		_repair_click("bag", slot)
+		return
 	# Used on the right RELEASE, over the slot: CIFSlotWithHelp's right press
 	# (vslot 32, 0x6665b0) only captures the mouse and its release (vslot 33,
 	# 0x685ee0) uses (READ) -- the same as the quick slots.
@@ -5383,9 +5697,13 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 				# CIFGrantMagicAttributeWnd::vslot_028 c:0x80a320, source kind
 				# 0x46 only).
 				_grant_offer(from)
-			elif on_bag and _bag_slot_at(at) < 0 and _over_equipment_pane(at) and AvatarEquipment.is_avatar_item(bag_item_types(from)):
-				# Round 789: an avatar put down on the equipment window.
-				_drop_avatar_from_bag(from)
+			elif on_bag and _bag_slot_at(at) < 0 and (_over_equipment_pane(at) or _equipment_slot_at(at) >= 0):
+				# Round 829: put down anywhere on the equipment window -- a
+				# worn slot or the character picture -- the item goes where
+				# its TypeIDs say (EquipTarget, READ CIFEquipment::vslot_028
+				# 0x6ad180: the hovered slot is not looked at); round 789's
+				# avatars through the same handler.
+				equip_from_bag(from)
 			elif on_bag and (_bag_slot_at(at) >= 0 or _equipment_slot_at(at) >= 0):
 				_dropping_item_id = item_id
 				_drop_bag_item(from, at)
@@ -5440,7 +5758,10 @@ func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
 	var who := NetClient.current_character_name
 	if who == "" or not NetClient.is_connected_to_server():
 		return
-	if _equipment_slot_at(at) >= 0:
+	# Round 829: the equipment window takes only a bag item (CIFEquipment::
+	# vslot_028 0x6ad180 puts anything else back): a worn item put down on a
+	# worn slot or the character picture stays worn.
+	if _equipment_slot_at(at) >= 0 or _over_equipment_pane(at):
 		return
 	var to := _bag_slot_at(at)
 	if to < 0 and not _over_inventory_window(at):
@@ -5506,15 +5827,10 @@ func _drop_bag_item(from: int, at: Vector2) -> void:
 			UiSounds.expect_move(bag_item_types(from), "moved in the bag")
 			NetClient.move_item(who, from, to)
 		return
-	var worn := _equipment_slot_at(at)
-	if worn >= 0:
-		# Equip out of that bag slot; the server refuses a wrong kind of
-		# item for the slot, and swaps with what is worn there. Its
-		# equipment result redraws the doll, and the bag is re-read since
-		# the item left it.
-		UiSounds.expect_move(bag_item_types(from), "equipped (bag -> equipment)")
-		NetClient.equip(who, worn, from)
-		NetClient.list_inventory(who)
+	if _equipment_slot_at(at) >= 0:
+		# Round 829: whichever worn slot it was put on, the item's own
+		# (equip_from_bag).
+		equip_from_bag(from)
 		return
 	# Neither a bag slot nor the doll: offer it to the quickslot bar, which
 	# World3D owns. It ignores a release that is not over a slot.
@@ -5779,9 +6095,6 @@ func qa_fill_sample_inventory() -> void:
 ## The worn items as last reported, so opening the equipment window fills
 ## its slots even if the list arrived while it was closed.
 var _equipped_items: Array = []
-## The worn slot the store's single "Repair" button acts on, or -1 for
-## "repair all" (no per-slot selection UI exists yet -- disclosed).
-var _repair_selected_slot: int = -1
 
 ## The masteries the window shows: the player's race's (round 691), from the
 ## whole table read once from the player's own Media.pk2 (_mastery_table).
@@ -6887,6 +7200,7 @@ func _fill_equipment_slots(items: Array) -> void:
 				icon.texture = null
 				_set_item_tip(icon, -1)
 				_set_item_seal_edge(icon, -1)
+				DurabilityMark.apply(icon, DurabilityMark.State.NONE, null, null)
 	var durability := _durability_map(NetClient.last_equipment_durabilities)
 	for entry in items:
 		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
@@ -6903,7 +7217,8 @@ func _fill_equipment_slots(items: Array) -> void:
 			var dur: Array = durability.get(int(slot_index), [])
 			if dur.size() == 2:
 				_set_item_tip(icon, int(item_id), "equipment", int(slot_index), dur[0], dur[1])
-				icon.modulate = Color(0.45, 0.45, 0.45) if dur[0] == 0 else Color.WHITE
+				icon.modulate = Color.WHITE
+				_mark_durability(icon, int(item_id), dur[0], dur[1])
 			else:
 				_set_item_tip(icon, int(item_id), "equipment", int(slot_index))
 				icon.modulate = Color.WHITE
@@ -6918,6 +7233,11 @@ func _fill_equipment_slots(items: Array) -> void:
 			if not icon.has_meta("worn_click_wired"):
 				icon.set_meta("worn_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void:
+					# Round 829: under the store's hammer a left click repairs it.
+					if _repair_mode and ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
+							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot"):
+						_repair_click("worn", int(icon.get_meta("worn_slot")))
+						return
 					if _is_pick_click_on(ev, icon) and icon.texture != null and icon.has_meta("worn_slot"):
 						pick_up_icon({"kind": "worn", "slot": int(icon.get_meta("worn_slot")),
 							"item_id": int(icon.get_meta("worn_item_id", 0)), "icon": icon.texture},
@@ -6940,7 +7260,9 @@ func connect_net() -> void:
 	NetClient.avatar_move_result.connect(_on_avatar_move_result)
 	NetClient.avatar_grant_result.connect(_on_avatar_grant_result)
 	NetClient.avatar_spirit_expired.connect(func(_slot: int) -> void: _fill_avatar_slots())
+	NetClient.durability_changed.connect(_on_durability_changed)
 	NetClient.equipment_result.connect(func(items: Array, error: String) -> void:
+		equip_pending.clear()
 		# An equip or unequip reply sounds the moved item (0x87ba20, read).
 		if UiSounds.has_pending_move():
 			UiSounds.move_replied(error == "")
@@ -6952,6 +7274,7 @@ func connect_net() -> void:
 			print("HudPanels: equipment refused: %s" % error)
 			return
 		_equipped_items = items
+		equipment_known = true
 		if held_icon != null and held_icon.kind() == "worn":
 			var still := false
 			for e in items:

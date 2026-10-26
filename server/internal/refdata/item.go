@@ -436,6 +436,14 @@ type Item struct {
 	// to 1..10,000,000 (storage.DepositFee). 0 on an older import.
 	KeepingFee int64
 
+	// ReviveCost is a broken item's flat restore fee, itemdata column 28
+	// (round 829): _RefObjCommon +0xa8 CostRevive (see KeepingFee's list),
+	// charged by GObjNPCNPC::HandleRepairRequest (0x4c7af0) before the repair
+	// proper when the item is broken (docs/protocol/durability.md), and quoted
+	// by the client (SOItem::FUN_008bacc0 adds ref +0xc4). 0 on an older
+	// import.
+	ReviveCost int64
+
 	// The alchemy columns (round 768), which the enchant operations read off
 	// the elixirs, powders and stones and the equipment they work on
 	// (docs/protocol/alchemy.md, "Round 768"). All 0 / empty / false on an

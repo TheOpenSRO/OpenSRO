@@ -228,3 +228,108 @@ func TestEquipRefusesWhatTheItemTableForbids(t *testing.T) {
 		t.Errorf("an HP potion in the weapon slot: got %q, want refusal", got)
 	}
 }
+
+// TestEquipTwoHandedClearsTheOtherHand (round 829): a two-handed weapon put
+// on while a shield is worn takes the shield off into the bag, and a shield
+// put on under a two-handed weapon takes the weapon off -- the original
+// server's CGObjPC::AttachEquipItem (INFERRED), where ours used to refuse.
+func TestEquipTwoHandedClearsTheOtherHand(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: 3632, MaxStack: 1, TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, TypeID3: equipment.FamilyWeapon, TypeID4: 2,
+			Country: equipment.CountryChina, ReqGender: equipment.ReqGenderAny},
+		{ID: 3640, MaxStack: 1, TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, TypeID3: equipment.FamilyWeapon, TypeID4: 5,
+			Country: equipment.CountryChina, ReqGender: equipment.ReqGenderAny, TwoHanded: true},
+		{ID: 3650, MaxStack: 1, TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, TypeID3: equipment.FamilyShield, TypeID4: 1,
+			Country: equipment.CountryChina, ReqGender: equipment.ReqGenderAny},
+	}); err != nil {
+		t.Fatalf("importing items: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	eq := equipment.NewMemStore(inv)
+	// Bag 0 a sword, 1 a glaive (two-handed), 2 a shield.
+	for _, id := range []int64{3632, 3640, 3650} {
+		if err := inv.AddItem(ctx, c.ID, id, 1); err != nil {
+			t.Fatalf("seeding item %d: %v", id, err)
+		}
+	}
+	handle := gateway.Chain(LoginHandler(accounts), EquipmentHandlerWithRules(chars, eq, inv, items, nil))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	equip := func(slot equipment.Slot, bagSlot int) string {
+		res, err := DecodeEquipmentResult(send(OpEquip, (&EquipRequest{CharacterName: "Aria", Slot: slot, InventorySlot: bagSlot}).Encode()).Data)
+		if err != nil {
+			t.Fatalf("DecodeEquipmentResult: %v", err)
+		}
+		return res.Error
+	}
+	worn := func() map[equipment.Slot]int64 {
+		out := map[equipment.Slot]int64{}
+		list, _ := eq.Get(ctx, c.ID)
+		for _, w := range list {
+			out[w.Slot] = w.ItemID
+		}
+		return out
+	}
+	bagHas := func(id int64) bool {
+		slots, _ := inv.List(ctx, c.ID)
+		for _, s := range slots {
+			if s.ItemID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if got := equip(equipment.SlotWeapon, 0); got != "" {
+		t.Fatalf("the sword: %q", got)
+	}
+	if got := equip(equipment.SlotShield, 2); got != "" {
+		t.Fatalf("the shield beside the sword: %q", got)
+	}
+	// The glaive (bag 1) for the sword: the shield comes off into the bag.
+	if got := equip(equipment.SlotWeapon, 1); got != "" {
+		t.Fatalf("the glaive over a shield: refused with %q", got)
+	}
+	if w := worn(); w[equipment.SlotWeapon] != 3640 || w[equipment.SlotShield] != 0 || !bagHas(3650) || !bagHas(3632) {
+		t.Errorf("after the glaive: worn %v, shield in bag %v, sword in bag %v", w, bagHas(3650), bagHas(3632))
+	}
+	// The shield back on under the glaive: the glaive comes off.
+	shieldAt := -1
+	slots, _ := inv.List(ctx, c.ID)
+	for _, s := range slots {
+		if s.ItemID == 3650 {
+			shieldAt = s.Index
+		}
+	}
+	if got := equip(equipment.SlotShield, shieldAt); got != "" {
+		t.Fatalf("the shield under a glaive: refused with %q", got)
+	}
+	if w := worn(); w[equipment.SlotShield] != 3650 || w[equipment.SlotWeapon] != 0 || !bagHas(3640) {
+		t.Errorf("after the shield: worn %v, glaive in bag %v", w, bagHas(3640))
+	}
+}

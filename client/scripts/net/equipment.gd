@@ -185,6 +185,10 @@ const OP_REPAIR := 0x007a        # client -> server
 const OP_REPAIR_RESULT := 0x007b # server -> client
 ## Slot value meaning "repair everything worn" (session.RepairAllSlots).
 const REPAIR_ALL := -1
+## Round 829: 0x3052, one item's durability (the retail opcode and layout:
+## {u8 slot, u32 durability}, the slot a worn one or the bag slot + 13).
+const OP_DURABILITY_CHANGED := 0x3052
+const BAG_SLOT_BASE := 13
 
 ## Result of decode_repair_result(): a refusal code (0 = repaired), the gold
 ## spent, and the worn slots' durability afterwards (InventoryNet.Durability).

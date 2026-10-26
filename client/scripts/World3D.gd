@@ -2526,6 +2526,10 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_underbar.name = "HudUnderbar"
 	ui_control.add_child(_hud_underbar)
+	# Round 829: the worn-out gear figure (CEquipStateImg) at (width - 200, 74).
+	_equip_state_img = EquipStateImg.new()
+	_equip_state_img.build(func(path: String) -> Texture2D: return _ui_builder.load_texture(path) if _ui_builder != null else null)
+	ui_control.add_child(_equip_state_img)
 	# Centred and flush to the bottom, as the client puts it: 0x786f30 calls
 	# the bar's SetPos((screen_w - 800) / 2, screen_h - 0x44) right after
 	# loading it (0x7871dc..0x787210). The size is the file's root rect,
@@ -2860,6 +2864,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.revive_requested.connect(_on_revive_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to the system window (round 639).
 	_hud_panels.system_notice.connect(_log_system)
+	_hud_panels.worn_durability_changed.connect(_refresh_equip_state)
+	NetClient.durability_changed.connect(func(_s: int, _d: int, _w: int) -> void: _refresh_quickslot_counts())
 	# M: the world map's toggle, the same one the minimap's map button calls
 	# (KeyMap's slot 7 and HudPanels' world_map_toggle_requested have the
 	# retail binding's addresses).
@@ -13216,6 +13222,21 @@ func _on_quickslot_activated(slot_index: int) -> void:
 	# 2026-09-20).
 	var item = _quickslot_items.get(slot_index)
 	if item != null and NetClient.current_character_name != "":
+		# Round 829: a slot whose item is worn now does nothing (0x60b850:
+		# a worn binding, kind 0x47, breaks out of the switch, READ).
+		if int(item["slot"]) < 0:
+			print("World3D: quickslot %d holds item %d, worn now -- nothing to do" % [slot_index, int(item["item"])])
+			return
+		# Round 829: equipment on the bar is put on, through the equipment
+		# window's own drop (0x60b850 case 0x46 -> CIFEquipment::vslot_028,
+		# READ: anything but 3/3/x -- ammo 3/3/4 aside -- and 3/2/x), and only
+		# with nothing on the cursor (0xb9db60).
+		if _hud_panels != null and EquipTarget.equips_from_quick_slot(_hud_panels.bag_item_types(int(item["slot"]))):
+			if _hud_panels.held_icon != null and _hud_panels.held_icon.is_holding():
+				return
+			print("World3D: quickslot %d equips item %d from bag slot %d" % [slot_index, int(item["item"]), int(item["slot"])])
+			_hud_panels.equip_from_bag(int(item["slot"]))
+			return
 		print("World3D: quickslot %d uses item %d at bag slot %d" % [slot_index, int(item["item"]), int(item["slot"])])
 		# A reverse return scroll opens its box (round 778), as the bag's
 		# right-click does.
@@ -13539,7 +13560,20 @@ func _on_skill_use_requested(skill_id: int, basic_code: String) -> void:
 	_cast_skill(skill_id, basic_code)
 
 ## Keeps the bar's item slots pointing at the right bag slots, and clears any
-## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn.
+## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn,
+## and (round 829) whenever the worn list changes.
+##
+## Round 829: an item put on stays on its quick slot, pointing at the worn
+## slot (bag slot -1 here) and doing nothing when pressed, and points at the
+## bag again once it is back there -- READ, NetProcessInInner::FUN_0060e540,
+## which every 0xB034 move reply runs over the 0x33 quick slots: a slot that
+## pointed at the move's source follows it to the destination, one that
+## pointed at the destination takes the source (a swap), and only an item
+## gone (destination kind 0) clears it. So two weapons on two keys take turns:
+## the one put on goes inert, the one it swapped out lands in the bag slot
+## just emptied and its key works again. Ours finds the item by id in the
+## bag (the original by the slot the move named, checked against the
+## RefItemID): the same outcome for these moves.
 func _resync_quickslot_items(slots: Array) -> void:
 	if _hud_underbar == null or _quickslot_items.is_empty():
 		return
@@ -13548,6 +13582,8 @@ func _resync_quickslot_items(slots: Array) -> void:
 	for entry in slots:
 		var sl: InventoryNet.Slot = entry
 		by_slot[sl.slot_index] = sl.item_id
+	var worn := _hud_panels.worn_item_ids() if _hud_panels != null else {}
+	var pending := _hud_panels.equip_pending if _hud_panels != null else {}
 	for qs in _quickslot_items.keys():
 		var want := int(_quickslot_items[qs]["item"])
 		var bag := int(_quickslot_items[qs]["slot"])
@@ -13557,6 +13593,11 @@ func _resync_quickslot_items(slots: Array) -> void:
 				changed = true
 				print("World3D: quickslot %d follows item %d from bag slot %d to %d" % [qs, want, bag, found])
 			_quickslot_items[qs]["slot"] = found
+		elif worn.has(want) or pending.has(want) or (_hud_panels != null and not _hud_panels.equipment_known):
+			if bag >= 0:
+				changed = true
+				print("World3D: quickslot %d keeps item %d, worn now (inert until it is back in the bag)" % [qs, want])
+			_quickslot_items[qs]["slot"] = -1
 		else:
 			_quickslot_items.erase(qs)
 			_hud_underbar.set_slot_item(qs, null)
@@ -13744,6 +13785,29 @@ func _refresh_quickslot_counts() -> void:
 	var shows := func(item_id: int, qty: int) -> bool:
 		return panels.bar_shows_count(item_id, qty) if panels != null else qty > 1
 	_hud_underbar.apply_item_counts(_quickslot_items, _inventory_slots, shows)
+	# Round 829: a bag item's worn-out mark rides on its quick slot too
+	# (DurabilityMark: the slot kind 0x0c over 0x46 draws it; no counter, so
+	# frame 0 of the warning).
+	if panels != null:
+		for qs in _quickslot_items:
+			var icon := _hud_underbar.slot_icon_rect(int(qs))
+			if icon != null:
+				panels.mark_quick_slot(icon, int(_quickslot_items[qs]["slot"]))
+
+## Round 829: the worn-out gear figure (EquipStateImg): worn slots 0..7.
+var _equip_state_img: EquipStateImg = null
+
+func _refresh_equip_state() -> void:
+	if _equip_state_img == null or _hud_panels == null:
+		return
+	var cur := {}
+	for d in NetClient.last_equipment_durabilities:
+		if d != null and d.get("slot") != null:
+			cur[int(d.get("slot"))] = int(d.get("current"))
+	var states: Array = []
+	for s in EquipStateImg.SLOTS:
+		states.append(EquipStateImg.state_for(_hud_panels.worn_item_types(s), int(cur.get(s, 99))) if cur.has(s) else EquipStateImg.State.NONE)
+	_equip_state_img.show_states(states)
 
 func _refresh_quickslot_seals() -> void:
 	if _hud_underbar == null or _hud_panels == null:
@@ -18765,6 +18829,11 @@ func _qa_step() -> void:
 					print("QA SHOP_STEPS tab %s at tick %d: %s" % [what[1], _qa_tick, _hud_panels.qa_select_shop_tab(int(what[1]))])
 				"buy":
 					print("QA SHOP_STEPS buy cell %s at tick %d: %s" % [what[1], _qa_tick, _hud_panels.qa_buy_shop_cell(int(what[1]))])
+				"repair":
+					# Round 829: "repair:all" presses Repair All, "repair:yes"
+					# the box's Yes, "repair:hammer" Repair, "repair:worn<n>" /
+					# "repair:bag<n>" a slot under the hammer.
+					print("QA SHOP_STEPS repair %s at tick %d: %s" % [what[1], _qa_tick, _hud_panels.qa_repair_step(what[1])])
 				"cols":
 					# OPENSRO_QA_COLUMNS' report at this tick, once the
 					# regions are in: "cols:x,z|x,z@tick".
@@ -33526,6 +33595,10 @@ func _on_equip_pressed(slot: int) -> void:
 # --- Equipment tab ---------------------------------------------------------
 
 func _on_equipment_result(items: Array, error: String) -> void:
+	# Round 829: the bar's items follow what is worn (after HudPanels has
+	# stored the list: deferred), and the worn-out figure redraws (0x778b20).
+	call_deferred("_resync_quickslot_items", _inventory_slots)
+	call_deferred("_refresh_equip_state")
 	if error != "":
 		equipment_status_label.text = "Error: %s" % error
 		# Round 800: a job suit's refusal names the client's own message
