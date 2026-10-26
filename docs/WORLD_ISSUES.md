@@ -7505,6 +7505,11 @@ in `FUN_0060a820` as "alpha 255" and left its other arguments OPEN; they are a f
 - **The user's round 826 video (MEASURED again, `hotbar_vid/gold.txt`).** Its longest hold is 1.73 s
   (slot 1, 2.67-4.40 s), with the gold at 99 -> 102 throughout. Under the code above it would be at
   57 %. That client (another server's, with its own bar art) does not fade; ours follows the binary.
+- **The user's second video (MEASURED, https://i.imgur.com/7yoGsft.mp4, 30 fps, slot 7's top edge
+  luma over x 520..569, y 46..47).** The frame appears at 0.23 s and is back at the slot's own border
+  (luma 49.2, from 217.1) 4.0 s later. Its alpha, (luma - floor) / (start - floor), stays within 0.02 of
+  1 - t/4 throughout: 0.82 at 0.80 s (linear 0.80), 0.47 at 2.13 s (0.47), 0.20 at 3.20 s (0.20),
+  0 at 4.00 s.
 - **OURS:** `HudUnderbar.step_slot_frame(seconds)` with `_process` passing `min(delta, 3.0)`;
   `set_process` only while a fade runs. `modulate.a` = alpha / 255. Godot's float64 stands in for the
   x87 float32 (at most one alpha step at a boundary).
