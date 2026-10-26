@@ -61,7 +61,7 @@ forbids, clears); enter `0x9c9920`, leave `0x9c8810`; the live mask `+0x65c`.
 | 6 SIT `0xa5a270` | 14 loop; from STAND also 13 (sit down) one-shot over it | 200; 0 / 200 |
 | 6's exit `0xa59440` | stops 14 | 200 |
 | 7 FIDGET `0xa59460` | one of 122, 61, 81 at random (missing: 122; missing: nothing) | 400 / 400; its end stops it over 200 (`0xa59560`) |
-| 8 IDLE `0xa59640` → `0xa592f0` | 6 (battle stance) while `+0x4e0 > 0`, else 0 | 200 |
+| 8 IDLE `0xa59640` → `0xa592f0` | 6 (battle stance) while `+0x4e0 > 0`, else 0; nothing when that is the idle already playing (`+0x568`) | **0** in (`(type, 0, 200, 0, 1.0, 1.0)`: A = 0; the 200 is B, unused by a loop); the idle it replaces stops over 200. *Round 831 correction: round 808 had 200 in.* |
 | 8's exit `0xa59660` | stops the idle, enters 9 | 200 |
 | 9 MOVE `0xa59680` | walk 1, run 7; speed `min(mover +0x8c, 1.3)` | walk 200, run **100** |
 | 9's exit `0xa5a6b0` | stops the gait, enters 8 | 200 |
@@ -86,6 +86,32 @@ it; NPC bodies carry type 122 (128 entries, MEASURED: `..._time` clips).
 
 **The gait's clip rate** is not scaled by the run speed; `mover +0x8c` is a catch-up factor (1.1
 behind by more than 5 units along the travel, 0.9 ahead; `0x9e06a0..0x9e07ab`), capped at 1.3.
+
+## A weapon change (round 831)
+
+READ. The 0x3038 handler (`0x8a9260`, also for the own player) installs the item on the same
+character (`CObjCharacter::InstallEquipVisual` `0xa61010`: the slot's old visual detached, the new
+one attached; nothing rebuilt, the pose and the name untouched), then calls vtable `+0x40`
+(`0x9db940`) → `CCObjCharacter` slot 8 (`0xa61c60`) → `RefreshAnimationGroup` (`0xa5bd10`).
+That reads the weapon slot's TypeID4 and the race into a group name (`FUN_00a5a7d0`; on a ride
+the `cart` group). **The same group changes nothing.** A new group leaves the live states 9, 3
+and 6 (`0x9c8810`), stores the group, and enters them again (`0x9c9920(n, 0)`):
+
+- STAND's exit (`0xa59430`) leaves 8 and 9 (`0x9c76d0(0x300)`). IDLE's exit (`0xa59660`) stops
+  the idle over 200 and tries MOVE, which needs STAND and so fails there.
+- STAND's enter (`0xa5a160`) enters IDLE (8 needs 3 and forbids itself; the state table's masks at
+  `+0x20` / `+0x22` / `+0x24`: 3 forbids 0x0002 and clears 0x8050; 8 needs 0x0008, forbids
+  0x0102, clears 0x0200; 9 needs 0x0008, forbids 0x0200, clears 0x21a0; 6 forbids 0x0040, clears
+  0x0008). IDLE plays the new group's stand with no fade-in over the old one fading out over 200,
+  so the mix starts it at half. When the new clip is the same clip, the mixer's replay
+  (`0xc55360` → the layer's vslot 1) restarts it from its first frame at full weight.
+- SIT's enter (`0xa5a270`) plays loop 14 in over 200 (and the sit-down 13 only from STAND).
+- OPEN: re-entering 9 runs before 3 is back, so MOVE's needs fail there. Whether the mover
+  re-enters 9 at once is not read. OpenSRO restarts a moving body's run (or walk) in the new group
+  with its fade.
+
+The state table's function pointers are written at run time (`0xd772a2..`, member-function
+pointers 8 bytes apart: enter `+0x00`, update `+0x08`, event `+0x10`, exit `+0x18`).
 
 ## OpenSRO
 

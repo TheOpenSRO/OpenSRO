@@ -160,6 +160,7 @@ func _init() -> void:
 	_check(wrapped.is_equal_approx(Vector3(20, 0, 0)), "a loop at one duration is back on its first key (got %s)" % wrapped)
 
 	_check_stored_world_binds()
+	_check_copy_pose()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -261,3 +262,30 @@ func _check_stored_world_binds() -> void:
 	bad.root_transform = _bone_bytes(BskReader.ROOT_TRANSFORM_LEN, 4, Vector3(3.7e24, 0, 0), Vector3(3.7e24, 0, 0))
 	_check(not Skeleton3DBuilder.stored_world_binds(bad).has("Root"), "a root whose stored bind is 3.7e24 away is not used")
 	skeleton.free()
+
+## Round 831: a body rebuilt for an equipment change takes the old one's pose
+## (bone by name), so it is never drawn in its bind pose for a frame.
+func _bones(names: Array) -> Skeleton3D:
+	var sk := Skeleton3D.new()
+	for n in names:
+		sk.add_bone(String(n))
+	for b in range(1, sk.get_bone_count()):
+		sk.set_bone_parent(b, 0)
+	return sk
+
+func _check_copy_pose() -> void:
+	var old := _bones(["Root", "Bip01 R UpperArm", "Bip01 L UpperArm"])
+	var arm := Quaternion(Vector3.FORWARD, 1.2)
+	old.set_bone_pose_rotation(1, arm)
+	old.set_bone_pose_position(2, Vector3(0, 3, 0))
+	# The new body lists its bones in another order and has one more.
+	var fresh := _bones(["Root", "Bip01 L UpperArm", "Bip01 R UpperArm", "Weapon"])
+	var copied := Skeleton3DBuilder.copy_pose(old, fresh)
+	_check(copied == 3, "copy_pose copies the three shared bones (%d)" % copied)
+	_check(fresh.get_bone_pose_rotation(2).is_equal_approx(arm), "the right arm's pose lands on its own bone, by name")
+	_check(fresh.get_bone_pose_position(1).is_equal_approx(Vector3(0, 3, 0)), "and the left arm's")
+	_check(fresh.get_bone_pose_rotation(3).is_equal_approx(Quaternion.IDENTITY), "a bone the old body lacks keeps its own pose")
+	_check(Skeleton3DBuilder.copy_pose(null, fresh) == 0 and Skeleton3DBuilder.copy_pose(fresh, fresh) == 0,
+		"nothing to copy from: nothing done")
+	old.free()
+	fresh.free()

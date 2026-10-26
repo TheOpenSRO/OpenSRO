@@ -8961,10 +8961,16 @@ func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation, hint: A
 ## clip is a texel write; it is beyond the near bodies by construction).
 var _pose_fades := {}
 
-## A run fades in over 100 ms, any other loop over 200 (READ, 0xa59680 and
-## 0xa592f0; ClipMixer).
+## A loop's fade-in by the state that plays it (READ; ClipMixer): the run
+## 100 ms, the walk and the sit 200 (0xa59680, 0xa5a270), the stand and the
+## battle stance none (the idle state, 0xa592f0 -- round 831's correction).
 static func _loop_in_ms(action: int) -> float:
-	return ClipMixer.RUN_IN_MS if action == BsrReader.AnimationEntry.TYPE_RUN else ClipMixer.LOOP_IN_MS
+	match action:
+		BsrReader.AnimationEntry.TYPE_RUN:
+			return ClipMixer.RUN_IN_MS
+		BsrReader.AnimationEntry.TYPE_STAND, BsrReader.AnimationEntry.TYPE_STAND_BATTLE:
+			return ClipMixer.IDLE_IN_MS
+	return ClipMixer.LOOP_IN_MS
 
 ## Blends `skeleton`'s change of clip over the pose just written, if one is
 ## in progress; drops it once over. OURS (the crowd gate: +0.3 ms a frame
@@ -9308,6 +9314,9 @@ func _refresh_player_name_plate() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	var existing := player.get_node_or_null("Name")
+	# Round 831: a plate re-made over a shown one stays shown (the sweep hides
+	# a new plate until it first measures it: a flicker on every redress).
+	var was_shown: bool = existing != null and (existing as Node3D).visible
 	if existing != null:
 		# Out of the tree at once: a plate re-made in the same frame (round
 		# 800's suit change) must take the name "Name" itself.
@@ -9331,6 +9340,8 @@ func _refresh_player_name_plate() -> void:
 	# Round 811: the original's plate (_retail_plate_look), white (c:0x9cfd50).
 	_retail_plate_look(plate, PLAYER_NAME_COLOUR)
 	player.add_child(plate)
+	if was_shown:
+		plate.visible = true
 	_plate_job_level = NetClient.job_level
 	_job_plate_decor(plate, plate, js, NetClient.job_level, _race_of_body(_player_body) == 1, false)
 	# Round 814: its own guild line, in the own colour.
@@ -12736,6 +12747,9 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# change redresses the character, leaving it would stack a second dressed
 	# body on the player every time anything was equipped or taken off.
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		# Round 831: the new body stands as the old one does from its first
+		# frame (a T-pose for a frame on every quick swap otherwise).
+		Skeleton3DBuilder.copy_pose(_player_skeleton, skeleton)
 		_anim_sounds.unregister(_player_skeleton)
 		_player_skeleton.queue_free()
 		_player_skeleton = null
@@ -12769,7 +12783,15 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_body = body
 	_player_scale = scale
 	_apply_player_race()
+	var group_before := _player_anim_group()
 	_player_weapon_group = _weapon_group_for(equipped, body)
+	# Round 831 (READ, RefreshAnimationGroup 0xa5bd10): a new group leaves and
+	# re-enters the live states, and the idle replays its loop from its first
+	# frame even when the new group's clip is the one already playing (the
+	# mixer restarts a clip played again, 0xc55360). Forgetting the mixed loop
+	# makes _mix_player play it again on the next step.
+	if _player_anim_group() != group_before:
+		_mix_loop = null
 	# The body's sounds: the footstep material is the cell the walk carries
 	# (_nav_footing), the swing's token the weapon just equipped.
 	var sound_owner := _audio_pc_owner("player", body, equipped, player)
@@ -13032,13 +13054,7 @@ func _refresh_other_loop(character_id: int) -> void:
 	var gait: Dictionary = _other_gaits.get(character_id, {})
 	if gait.is_empty() or not is_instance_valid(gait.get("skeleton")) or bool(gait.get("sitting", false)):
 		return
-	var moving := bool(gait["moving"])
-	var action := BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND
-	# A walker walks (round 781): type 1, its body's walk.
-	if moving and _other_walking.has(character_id):
-		action = BsrReader.AnimationEntry.TYPE_WALK
-	elif not moving and _other_stance_until.has(character_id) and not _riders.has(character_id):
-		action = BsrReader.AnimationEntry.TYPE_STAND_BATTLE
+	var action := _other_loop_action(character_id)
 	var anim := _body_animation_for(gait["body"], action, gait["group"])
 	var frames := _frame_count(anim)
 	if frames <= 1:
@@ -13054,6 +13070,31 @@ func _refresh_other_loop(character_id: int) -> void:
 		gait["at"] = [-1]
 		_other_hint_by_skel[(gait["skeleton"] as Object).get_instance_id()] = gait["at"]
 	_swap_other_loop(gait["skeleton"], anim, gait["at"], _loop_in_ms(action))
+
+## The loop another player's body plays standing or moving: the run (the
+## walk for a walker, round 781), the stand, or the battle stance after a
+## swing, a cast or a blow (round 808; not on a mount).
+func _other_loop_action(character_id: int) -> int:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	var moving := bool(gait.get("moving", false))
+	if moving:
+		return BsrReader.AnimationEntry.TYPE_WALK if _other_walking.has(character_id) else BsrReader.AnimationEntry.TYPE_RUN
+	if _other_stance_until.has(character_id) and not _riders.has(character_id):
+		return BsrReader.AnimationEntry.TYPE_STAND_BATTLE
+	return BsrReader.AnimationEntry.TYPE_STAND
+
+## Round 831: `skeleton`'s looping entry in _animated (a one-shot's resume
+## loop when a one-shot is on it), or [] when it has none.
+func _animated_loop_entry(skeleton: Skeleton3D) -> Array:
+	for entry in _animated:
+		if entry[0] != skeleton:
+			continue
+		if entry[4]:
+			return entry
+		if entry.size() > 6 and entry[6] is Array:
+			return entry[6]
+		return []
+	return []
 
 ## Round 756: a ghost starting or stopping: its loop swapped on the GPU (a
 ## texel write), or, when the new loop is not baked, it is dressed now and
@@ -22333,7 +22374,7 @@ func _mix_player(anim: BanReader.ParsedAnimation, action: int) -> void:
 		_mix_action = action
 		_player_mixer.stop_loops_except(anim, ClipMixer.STOP_MS)
 		if anim != null:
-			_player_mixer.play_loop(anim, ClipMixer.RUN_IN_MS if action == BsrReader.AnimationEntry.TYPE_RUN else ClipMixer.LOOP_IN_MS)
+			_player_mixer.play_loop(anim, _loop_in_ms(action))
 		_mix_loop = anim
 	var restarted := _player_one_shot != null and not _player_one_shot_loop and _player_one_shot_start != _mix_shot_start
 	if _player_one_shot != _mix_shot or restarted:
@@ -23942,10 +23983,18 @@ func _redress_other(character_id: int) -> void:
 	if skeleton == null:
 		return
 	var old = gait.get("skeleton")
+	# Round 831: the old body's clip entries, moved onto the new body below.
+	var carried := 0
 	if old != null and is_instance_valid(old):
+		# Posed as the old body is, not in its bind pose for a frame.
+		Skeleton3DBuilder.copy_pose(old, skeleton)
 		# Off the far instances now, not when it leaves the tree at the end of
 		# the frame (round 747, CrowdGpu).
 		_crowd_wake(old)
+		_end_body_fidget(old)
+		_pose_fades.erase((old as Object).get_instance_id())
+		_other_hint_by_skel.erase((old as Object).get_instance_id())
+		carried = _repoint_animated(old, skeleton)
 		_anim_sounds.unregister(old)
 		old.queue_free()
 	skeleton.rotation.y = PI
@@ -23958,19 +24007,60 @@ func _redress_other(character_id: int) -> void:
 	var group := _weapon_group_for(equipped, body)
 	var moving := bool(gait.get("moving", false))
 	var sitting := bool(gait.get("sitting", false))
-	_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false, "sitting": sitting}
+	var regrouped := group != String(gait.get("group", "")) or body != String(gait.get("body", ""))
 	var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
 	owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
 	_anim_sounds.register(skeleton, owner)
-	var action := BsrReader.AnimationEntry.TYPE_SITTING if sitting else BsrReader.AnimationEntry.TYPE_STAND
-	var loop := _body_animation_for(body, action, group)
-	var frames := _frame_count(loop)
-	if frames > 1:
-		_animated.append([skeleton, loop, frames, 0.0, true, _idle_anim_time, null])
-	if moving:
-		_set_other_gait(character_id, true)
+	if carried > 0:
+		# Round 831, as the original: the item goes onto the same character
+		# (CObjCharacter::InstallEquipVisual 0xa61010 from 0x3038's handler
+		# 0x8a9260), then CCObjCharacter vslot 8 (0xa61c60) ->
+		# RefreshAnimationGroup (0xa5bd10). An unchanged group touches no
+		# clip; a new one leaves and re-enters the live states 9 (move), 3
+		# (stand -> 8, idle or stance) and 6 (sit), each of which plays its
+		# loop in the new group from its first frame over the old (100 ms for
+		# the run, 200 for the rest: animation_mixer.md).
+		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": moving, "sitting": sitting}
+		if regrouped:
+			# Its loop in the new group; the clip already playing is restarted
+			# from its first frame (the mixer's replay, 0xc55360), any other
+			# swapped in with the state's fades.
+			var action := BsrReader.AnimationEntry.TYPE_SITTING if sitting else _other_loop_action(character_id)
+			var want := _body_animation_for(body, action, group)
+			var entry := _animated_loop_entry(skeleton)
+			if not entry.is_empty() and entry[1] == want:
+				entry[3] = -_idle_anim_time
+				entry[5] = _idle_anim_time
+			elif sitting:
+				if _frame_count(want) > 1:
+					_swap_other_loop(skeleton, want, [], _loop_in_ms(action))
+			else:
+				_refresh_other_loop(character_id)
+	else:
+		# No entry to carry (a body not posed yet): its loop from the start.
+		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false, "sitting": sitting}
+		var action := BsrReader.AnimationEntry.TYPE_SITTING if sitting else BsrReader.AnimationEntry.TYPE_STAND
+		var loop := _body_animation_for(body, action, group)
+		var frames := _frame_count(loop)
+		if frames > 1:
+			_animated.append([skeleton, loop, frames, 0.0, true, _idle_anim_time, null])
+		if moving:
+			_set_other_gait(character_id, true)
 	node.remove_meta(CharacterLight.META_VALUE)
 	_light_character(node)
+
+## Round 831: every clip entry of `old` in _animated (its loop, a one-shot
+## and the loop it resumes) now drives `fresh`, its clip, phase and start
+## kept. Returns how many entries moved.
+func _repoint_animated(old: Skeleton3D, fresh: Skeleton3D) -> int:
+	var moved := 0
+	for entry in _animated:
+		if entry[0] == old:
+			entry[0] = fresh
+			moved += 1
+		if entry.size() > 6 and entry[6] is Array and not (entry[6] as Array).is_empty() and entry[6][0] == old:
+			entry[6][0] = fresh
+	return moved
 
 ## Another player's position (OpEntityMoved): their body's new walk target,
 ## and (round 637) the heading toward it, which the body turns to at the
@@ -32792,7 +32882,7 @@ func _apply_other_motion(character_id: int, value: int) -> void:
 		_:
 			return
 	var loop := _body_animation_for(gait["body"], loop_type, gait["group"])
-	_swap_other_loop(gait["skeleton"], loop)
+	_swap_other_loop(gait["skeleton"], loop, [], _loop_in_ms(loop_type))
 	if once_type != -1:
 		var once := _body_animation_for(gait["body"], once_type, gait["group"])
 		if once != null:

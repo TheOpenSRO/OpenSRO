@@ -230,6 +230,30 @@ static func refresh_global_poses(skeleton: Skeleton3D) -> void:
 		skeleton.show_rest_only = skeleton.show_rest_only
 	skeleton.force_update_all_bone_transforms()
 
+## Round 831: `to` takes `from`'s pose, bone by bone by name -- a body rebuilt
+## for an equipment change (World3D._apply_player_equipment_visual,
+## _redress_other) stands as the one it replaces from its first drawn frame.
+## A new skeleton is in its bind pose (arms out) until the next animation
+## step, which a redress between the step and the draw showed for a frame.
+## The original swaps the item on the same character object, so it never has
+## such a frame (INFERRED from InstallEquipVisual, round 734). Bones `from`
+## lacks keep their pose. Returns how many bones were copied.
+static func copy_pose(from: Skeleton3D, to: Skeleton3D) -> int:
+	if from == null or to == null or not is_instance_valid(from) or from == to:
+		return 0
+	var copied := 0
+	for b in to.get_bone_count():
+		var src := b if b < from.get_bone_count() and from.get_bone_name(b) == to.get_bone_name(b) \
+			else from.find_bone(to.get_bone_name(b))
+		if src < 0:
+			continue
+		to.set_bone_pose_position(b, from.get_bone_pose_position(src))
+		to.set_bone_pose_rotation(b, from.get_bone_pose_rotation(src))
+		to.set_bone_pose_scale(b, from.get_bone_pose_scale(src))
+		copied += 1
+	refresh_global_poses(to)
+	return copied
+
 ## Moves every BoneAttachment3D on `skeleton` to the pose just set, now,
 ## rather than at the skeleton's update later in the frame.
 ##

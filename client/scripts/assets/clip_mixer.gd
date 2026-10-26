@@ -45,8 +45,21 @@ class_name ClipMixer
 ## The fades the character states pass (READ, the state table at 0xec5fb8:
 ## the enter and exit functions' pushed constants; docs/protocol/
 ## animation_mixer.md has the table).
+## The gait's loop: a run in over 100 ms, a walk over 200 (0xa59680:
+## `(7, 100, 200, 1, ...)` / `(1, 200, 200, 1, ...)`); the sit loop over 200
+## (0xa5a270: `(14, 200, 0, 0, ...)`).
 const RUN_IN_MS := 100.0
 const LOOP_IN_MS := 200.0
+## Round 831 (READ, correcting round 808): the idle state 8 plays the stand 0
+## or the battle stance 6 with NO fade-in -- 0xa592f0 pushes `(type, 0, 200,
+## 0, 1.0, 1.0)`, and the play call's second argument is the loop's fade-in
+## (0x9cfb40 -> 0xa5b6d0 -> CCObjAnimation 0xa5b550 -> CCompChar slot 29
+## 0xc31f00, whose record carries it into AniMixer 0xc55360 -> 0xc731a0,
+## the layer's +0x88; the 200 is the one-shot fade-out, unused by a loop).
+## Round 808 read the 200 as the stand's fade-in. The outgoing loop still
+## fades out over STOP_MS, so the mix (a normalised average) starts the new
+## stand at half and takes it to whole over those 200 ms.
+const IDLE_IN_MS := 0.0
 const STOP_MS := 200.0
 ## A one-shot a state starts with no fade-in and hands back over 200 ms: sit
 ## down 13, stand up 15, a hit 3, the death 4 (0xa5a270, 0xa5a160, 0xa59b10,

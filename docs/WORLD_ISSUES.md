@@ -7483,6 +7483,66 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-first round: a quick swap shows no T-pose and no plate flicker; the release badge
+
+The user (videos, ours against a private server's): "when quickly swapping weapons/shields the
+character tposes and the name plate + guild text flicker". In our video, on a swap, the body stands
+one frame in its bind pose with its arms out, and the plate (name and guild line) is gone for one
+frame. The reference shows neither.
+
+- **Cause, the pose.** Every equipment change rebuilds the body
+  (`_apply_player_equipment_visual`, and `_redress_other` for others). The new `Skeleton3D` enters
+  the tree in its bind pose and is posed at the next animation step. A worn list handled between
+  that step and the draw put the bind pose on screen for a frame.
+- **Cause, the plate.** The redress re-makes the own plate (`_refresh_player_name_plate`), and the
+  plate sweep hides a new plate until it first measures it (`NamePlates.Sweep.add`). The guild line
+  is the plate's child, so it went with it.
+- **Fix (OURS; the original swaps the item on the same character object, so it has neither frame,
+  INFERRED from InstallEquipVisual).**
+  - `Skeleton3DBuilder.copy_pose(old, new)`, by bone name, before the old body is freed, on both
+    paths.
+  - A plate re-made over a shown one stays shown, and the sweep takes it from there.
+- **The release badge.** v0.1.589's run finished 4 minutes after v0.1.590's, and GitHub marked
+  v0.1.589 Latest. The user saw "the release isn't there". v0.1.590 was marked Latest by hand.
+  `release.yml` now sets `make_latest` only when the tag is the highest `v*` tag (`sort -V`).
+- **The original's swap, read** (the user: "check the original game code how it handles the switching
+  to match it exactly"; `animation_mixer.md`, "A weapon change", has the addresses).
+  - 0x3038's handler installs the item on the same character object: no new body, no new plate.
+    Ours rebuilds the body, so it carries the old pose (copy_pose) and keeps the plate shown.
+  - The animation changes only when the weapon's group does (`RefreshAnimationGroup`). A new group
+    re-enters STAND / IDLE (or SIT, or MOVE).
+- **Correction to round 808 (READ):** IDLE plays the stand or the battle stance with a fade-in of
+  0, not 200. `0xa592f0` pushes `(type, 0, 200, ...)`, and A is a loop's fade-in all the way down
+  (CCompChar slot 29's record → AniMixer `0xc55360` → the layer's `+0x88`). The old loop still
+  fades out over 200, so the new stand starts at half weight in the mix.
+  - `ClipMixer.IDLE_IN_MS = 0`, used by `_loop_in_ms` for stand and stance on every body (player,
+    others, monsters) and on another player's stand-up.
+  - The walk (200), the run (100) and the sit (200) were read right.
+- **Same clip, new group:** a group change whose stand resolves to the clip already playing restarts
+  it from frame 0 (the mixer's replay). `_mix_loop` is forgotten for the player; another player's
+  loop entry is restarted.
+- **Other players' redress.** Their clip entries now move onto the new body (`_repoint_animated`),
+  so an unchanged group's clip runs on. Before this round every swap restarted it from frame 0 with
+  no blend.
+- **OPEN:** a weapon change while moving. The original re-enters MOVE before STAND is back, so
+  MOVE's needs fail there (read); what the mover does next is not read. Ours restarts the run in the
+  new group with its 100 ms fade.
+- **Live** (`/var/tmp/r830q/qa830.sh` with `OPENSRO_QA_MIX_LOG=1`; sword 71 and shield 251 worn,
+  bow 215 on key 1; keys 1, 3, 2, 1 at ticks 700 / 740 / 780 / 820).
+  - Sword → bow → sword: the group changes, and both groups' stand is `chinaman_fighter_standcity`,
+    so the stand restarts from frame 0 (t = 317 ms 20 ticks after each press).
+  - The shield (group unchanged) leaves the clip running.
+  - Frames 695..860: no one-frame jump (the frame-difference spike test), and the name plate is in
+    every frame.
+  - The round 829 build did not show the T-pose on the box either: there the worn list lands
+    before the frame's pose. The user's video shows it over the network to prod. The fix does not
+    depend on that timing: the new body never has a bind-pose frame.
+- **Tests:** `skeleton3d_builder_test` (copy_pose: bones matched by name, extra bones kept). 364 client
+  suites, 0 failing. Client and CI only: no server change.
+- **Perf gate** (`--frames 60000`, base 4a3367f9 vs the working tree, 1280x720, median of 3): every
+  number SAME. Frame ms: jangan 0.86 / 0.86, reeds 0.85 / 0.85, cross 1.02 / 1.02. Entry: jangan
+  +84, reeds -19, cross -1256 ms. Freeze: -39, -5, +2 ms. Hitches: 5 / 5, 2 / 2, 4 / 5. Exit 0.
+
 ## Eight-hundred-and-thirtieth round: a hotbar swap emptied the previous item's key
 
 The user (video): "When switching to a new item from the bar the previous item disappears." Each

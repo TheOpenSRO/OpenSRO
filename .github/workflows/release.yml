@@ -188,10 +188,28 @@ jobs:
           fi
           cat "${RUNNER_TEMP}/release_body.md"
 
+      # "Latest" goes to the highest version tag, not to whichever run ends
+      # last: two tags pushed minutes apart (v0.1.589, v0.1.590) finished out
+      # of order and left the older one marked Latest.
+      - name: Decide whether this is the latest release
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: latest
+        shell: bash
+        run: |
+          highest=$(git ls-remote --tags --refs origin 'v*' \
+            | sed 's#.*refs/tags/##' | sort -V | tail -1)
+          echo "highest tag: ${highest}, this tag: ${GITHUB_REF_NAME}"
+          if [ "${highest}" = "${GITHUB_REF_NAME}" ]; then
+            echo "make_latest=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "make_latest=false" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          make_latest: ${{ steps.latest.outputs.make_latest }}
           files: |
             client/dist/opensro-windows.zip
             client/dist/opensro-linux.zip
