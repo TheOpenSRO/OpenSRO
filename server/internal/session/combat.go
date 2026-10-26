@@ -1153,6 +1153,9 @@ func combatHandler(
 			if deadBySession(hub, sess) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 			}
+			// Round 832: the attack is pushed, and Push drops a running trace
+			// for it, silently (trace.go).
+			dropTraceFor(characterID)
 			// Round 786 (arrival.go): an untouchable attacker -- held, or in
 			// the arrival's body mode 2 -- is refused 0x3020 (GObjPC::
 			// FUN_005291d0, attacker mode 2 at 0x529240, READ). Nothing

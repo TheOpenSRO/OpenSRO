@@ -62,6 +62,10 @@ signal state_changed(change: WorldNet.StateChange)
 ## An emote someone played (WorldNet.OP_EMOTE, round 781), this player's own
 ## included: the client plays its own emote on this answer, not on the press.
 signal emote_received(object_id: int, emote: int)
+## Round 832: 0xB074, the character action's answer (ActionNet.decode_result).
+signal action_result(result: int, depth: int, code: int)
+## Round 832 (OURS): the Extra tab's ping came back.
+signal ping_echo(token: int)
 
 signal inventory_list_result(slots: Array, error: String)
 ## The most recent inventory/equipment list's per-slot durability
@@ -1256,6 +1260,21 @@ func move_order_heading(command: int, angle: int) -> void:
 func request_motion(value: int) -> void:
 	_send(WorldNet.OP_MOTION_REQUEST, WorldNet.encode_motion_request(value))
 
+## Round 832: trace the object `target` (0x7074 [01 03 01 <u32>], READ
+## 0x793b00 case 1003); 0 for a selection that is no player (ActionNet).
+func action_trace(target: int) -> void:
+	_send(ActionNet.OP_ACTION_REQUEST, ActionNet.encode_trace(target))
+
+## Round 832: 0x7074 [02], the running action's cancel (READ 0x78f8d0).
+func action_cancel() -> void:
+	_send(ActionNet.OP_ACTION_REQUEST, ActionNet.encode_cancel())
+
+## Round 832 (OURS): the Extra tab's ping.
+func send_ping(token: int) -> void:
+	# Not to a legacy agent (round 788): it carries the lobby only.
+	if _retail == null and is_connected_to_server():
+		_send(ActionNet.OP_PING, ActionNet.encode_ping(token))
+
 ## Plays an emote (WorldNet.OP_EMOTE [byte], the action window, round 781).
 func request_emote(emote: int) -> void:
 	_send(WorldNet.OP_EMOTE, WorldNet.encode_emote(emote))
@@ -2431,6 +2450,14 @@ func _dispatch(p: Packet) -> void:
 			var em := WorldNet.decode_emote(p.data)
 			if not em.is_empty():
 				emote_received.emit(int(em[0]), int(em[1]))
+		ActionNet.OP_ACTION_RESULT:
+			var ar := ActionNet.decode_result(p.data)
+			if not ar.is_empty():
+				action_result.emit(int(ar["result"]), int(ar["depth"]), int(ar["code"]))
+		ActionNet.OP_PING_ECHO:
+			var token := ActionNet.decode_ping_echo(p.data)
+			if token >= 0:
+				ping_echo.emit(token)
 		UseItemNet.OP_SCROLL_CANCEL_RESULT:
 			# READ: FUN_008727a0 shows nothing for a refusal (round 779).
 			print("NetClient: scroll cancel refused (code %d)" % UseItemNet.decode_cancel_result(p.data))

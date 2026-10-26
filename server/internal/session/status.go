@@ -308,6 +308,7 @@ func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, mons
 		h = &statuseffect.Holder{}
 		s.pcs[characterID] = h
 	}
+	before := h.Mask()
 	for _, r := range recs {
 		r.SourceID, r.SourceIsMonster = monster.ID, true
 		h.Put(r)
@@ -315,6 +316,13 @@ func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, mons
 	msg := &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: characterID, Mask: h.Mask(), Levels: h.Levels()}
 	stopped := !h.CanMove()
 	s.mu.Unlock()
+	// Round 832: freezing, sleep and stun (the appliers AbnormalState_Apply00,
+	// _Apply06 and _Apply14, 0x4a4570 / 0x4a49f0 / 0x4a4ec0, READ) call slot
+	// 348 (0x4aa340), which for a PC also empties the action queue
+	// (0x4ad320(1)): a running trace ends with 0xB074 {2, 0}.
+	if (msg.Mask&^before)&queueClearingStates != 0 {
+		cancelActions(characterID)
+	}
 	s.tracef("status: character %d took %v from monster %d (mask %#x)", characterID, codesOf(recs), monster.ID, msg.Mask)
 	if e, ok := entityOf(d.hub, characterID); ok {
 		broadcastStatus(d.hub, e.Zone, msg)

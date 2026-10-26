@@ -64,6 +64,20 @@ Find all the effects this applies to and what exact times they trigger."
       night lighting (no night-lit layer reaches it), the far crowd's GPU twins (no worn item
       carries the bit).
 
+## Round 832 follow-ups (trace, the target menu, the Extra tab; docs/protocol/trace.md)
+
+- [ ] **The Game tab**: build it (`optionwnd.2dt` pane 149, its four sub-tabs and the
+      CNIFGameOptionSlot rows) and move "Activate action short cut" there from the Extra tab; which
+      row holds it (the checkbox array's entry 0xD, label set at 0x600560) is READ, its sub-tab not.
+- [ ] **What ends a trace that OpenSRO has no system for** (READ, docs/protocol/trace.md): knockdown
+      and knockback on players, `stns` / `pao` / `hide`, stalls, arena and flag worlds, the PK
+      relation list, and the walker's refusal under a `stns` stun.
+- [ ] **A running auto-attack and a new trace**: retail queues the trace behind the attack's execute
+      or keep-up phase (depth 2) and the keep-up ends itself; OpenSRO ends the attack at once.
+- [ ] **The arrow keys' cancel** (`0x78f7c0`, its +0x65c bit-2 condition unread, a 2 s gap): not built.
+- [ ] OPEN: Esc and the target menu; the fresh-install value of option +0x1a; whether the menu's
+      frame draws its UIIT_CTL_AUTOTRACE_TT caption; whether `0x78ee20`'s pick can return the own body.
+
 ## Round 795 follow-ups (pets, rides and transports; docs/protocol/pets.md "Round 795")
 
 - [ ] **The item mall, next round (prep).** What the pets round leaves ready for it:

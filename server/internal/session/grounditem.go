@@ -489,6 +489,9 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 			if errStr != "" {
 				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: req.GroundItemID})
 			}
+			// Round 832: retail's pick-up is a 0x7074 kind-2 action, and Push
+			// drops a running trace for it, silently (trace.go).
+			dropTraceFor(characterID)
 			entity, ok := hub.EntityBySession(sess.ID())
 			if !ok || ground == nil || inv == nil {
 				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: req.GroundItemID})

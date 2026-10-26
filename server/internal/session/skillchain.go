@@ -137,7 +137,20 @@ func forgetCharacterSkillState(characterID int64) {
 // chain was cancelled only by a new cast). Every place the player's own
 // action ends the keep-up -- a move, a sit, a new attack, death, a zone
 // change, the logout -- calls this.
+//
+// Round 832: and the trace, with 0xB074 {2, 0} when one was running, as
+// 0x4ad320 empties the whole action queue (trace.go). A move ends the rest
+// only (moveCancelsActions).
 func cancelActions(characterID int64) {
+	moveCancelsActions(characterID)
+	traces.end(characterID)
+}
+
+// moveCancelsActions is cancelActions without the trace: what a move ends
+// (destmove.go, the older position stream). The trace's own walk is the
+// client's moves (trace.go), and the player's click walk ends the trace with
+// its own cancel first, as retail's client sends 0x7074 [02] (0x78f8d0).
+func moveCancelsActions(characterID int64) {
 	keepUp.Cancel(characterID)
 	// Round 802: the swing repeated at a player or a COS (jobpvp.go) ends
 	// with the monster's.

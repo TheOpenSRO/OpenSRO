@@ -730,6 +730,8 @@ static func _set_shown(window: HudWindow, control_name: String, shown: bool) -> 
 signal system_option_requested
 ## The Option window's Video tab was stored (Apply / Confirm; round 694).
 signal video_options_applied(options: VideoOptions)
+## Round 832: the Option window's Extra tab on Apply / Confirm.
+signal extra_options_applied(values: Dictionary)
 signal system_restart_requested
 signal system_exit_requested
 signal system_help_requested
@@ -1152,6 +1154,7 @@ func toggle_option() -> OptionWindow:
 		return null
 	window.closed.connect(close_option)
 	window.video_applied.connect(func(o: VideoOptions) -> void: video_options_applied.emit(o))
+	window.extra_applied.connect(func(v: Dictionary) -> void: extra_options_applied.emit(v))
 	_option = window
 	window.show()
 	window.place_centred()
@@ -6392,6 +6395,10 @@ func _load_skill_catalog_for(race: int) -> void:
 						# Round 622: the target groups (SkillDataReader.TARGET_BIT_*),
 						# for SelfCast.plan's friendly-target rules.
 						"target_groups": int(bs.level_target_groups[i]) if i < bs.level_target_groups.size() else 0,
+						# Round 832: Basic_Activity (level 1's): a cast of 2
+						# takes the action queue's place, so it ends a trace;
+						# another runs at once beside it (0x4ad870, READ).
+						"activity": int(bs.activity),
 					}
 	print("HudPanels: skill catalog (race %d) -- %d masteries with groups, %d group-rows of skills"
 		% [race, _skill_groups.size(), _skill_grid.size()])

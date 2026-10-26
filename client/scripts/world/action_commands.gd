@@ -76,7 +76,6 @@ const PANELS := {ALCHEMY: "alchemy", AUTO_POTION: "autopotion", ACADEMY: "academ
 
 ## The system line for an action OpenSRO has no system for (OURS).
 const UNSUPPORTED := {
-	TRACE: "Trace is not available yet: this server does not follow a target.",
 	AUTO_RUN: "Auto Run does nothing in the original client either.",
 	STALL: "Stalls are not available yet on this server.",
 	HELPER: "The helper mark is not available yet on this server.",
@@ -86,7 +85,7 @@ const UNSUPPORTED := {
 }
 
 ## What OpenSRO does for an action id: {"kind": ..., ...}.
-##   sit, walk_run, auto_attack, auto_select, exchange, party, auto_get
+##   sit, walk_run, auto_attack, auto_select, exchange, party, auto_get, trace
 ##   panel     {"panel": HudPanels id}
 ##   emote     {"emote": the 0x3091 byte}
 ##   unsupported {"line": the system line}
@@ -113,6 +112,8 @@ static func plan(id: int) -> Dictionary:
 			return {"kind": "party"}
 		AUTO_GET:
 			return {"kind": "auto_get"}
+		TRACE:
+			return {"kind": "trace"}
 	return {"kind": "unknown"}
 
 ## The 0x704f byte the Walk/Run button sends (0x9d4a00, READ): 2 (walk) while

@@ -2010,7 +2010,7 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// a running auto-attack as it did (keepup.go); a stop report or a
 	// placement is not a move the player asked for.
 	if !req.Relocated && !req.Stopped {
-		cancelActions(entity.CharacterID)
+		moveCancelsActions(entity.CharacterID)
 	}
 	// Round 749: relayed as retail's 0xB023 (the stop/position message,
 	// FUN_008a4f80, which snaps the body there and ends its turn) to the

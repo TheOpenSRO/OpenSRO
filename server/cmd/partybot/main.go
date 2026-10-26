@@ -73,6 +73,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/charmsg"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -830,6 +831,38 @@ var botEntry struct {
 // joining window stays up until the backstop).
 var botSilent bool
 
+// botWalk (round 832, OURS, a QA aid): waypoints the bot walks in a loop with
+// real 0x7021 destination moves, one every botWalkEvery -- a target for the
+// trace. Each is "region:localX,localZ", the region word as Go reads an
+// integer literal (0x61a8 is Jangan).
+var botWalk string
+var botWalkEvery time.Duration
+
+// walkStep sends the destination move to waypoint n of botWalk.
+func (b *bot) walkStep(name string, n int) {
+	points := strings.Split(botWalk, ";")
+	p := points[n%len(points)]
+	var region int64
+	var lx, lz float64
+	head, tail, ok := strings.Cut(p, ":")
+	if !ok {
+		return
+	}
+	region, err := strconv.ParseInt(head, 0, 32)
+	if err != nil {
+		return
+	}
+	if _, err := fmt.Sscanf(tail, "%f,%f", &lx, &lz); err != nil {
+		return
+	}
+	b.mu.Lock()
+	y := b.y
+	b.mu.Unlock()
+	m := &proto.Movement{Kind: 1, Region: uint16(region), LocalX: int16(lx), LocalY: int16(y), LocalZ: int16(lz)}
+	b.send(proto.OpMovementRequest, m.Encode())
+	fmt.Printf("[%s] -> 0x7021 walk to %s\n", name, p)
+}
+
 // botZone (round 780, OURS, a QA aid): a zone label the bot asks for on entry
 // (0x0026, the zone box's request), e.g. "dungeon/32769", so a live run can
 // stand a party member in a dungeon beside a client sent there by /goto.
@@ -889,8 +922,18 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	var expelC <-chan time.Time
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
+	var walkC <-chan time.Time
+	walkN := 0
+	if botWalk != "" {
+		w := time.NewTicker(botWalkEvery)
+		defer w.Stop()
+		walkC = w.C
+	}
 	for {
 		select {
+		case <-walkC:
+			b.walkStep(name, walkN)
+			walkN++
 		case p, open := <-b.in:
 			if !open {
 				return errors.New("connection closed")
@@ -1012,6 +1055,8 @@ func main() {
 	flag.DurationVar(&botKill.after, "kill-after", 10*time.Second, "bot -kill: how long after joining the party")
 	flag.BoolVar(&botSilent, "silent", false, "bot: leave party-match join requests unanswered (the server's 15 s backstop answers)")
 	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
+	flag.StringVar(&botWalk, "walk-loop", "", "bot (round 832): \"region:lx,lz;...\" waypoints walked in a loop with 0x7021, e.g. 0x61a8:1002,1060;0x61a8:1060,1060")
+	flag.DurationVar(&botWalkEvery, "walk-loop-every", 6*time.Second, "bot -walk-loop: the time between waypoints")
 	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026), e.g. dungeon/32769")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	flag.StringVar(&botGuild.create, "guild-create", "", "bot: found a guild of this name once in the world (raises itself to the founder's level and gold; a GM account)")

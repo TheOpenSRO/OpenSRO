@@ -59,6 +59,18 @@ const KEY_SEASONAL := "seasonal"
 ## match the record in force.
 const KEY_WATER_REFLECTION := "water_reflection"
 
+## Round 832: the Option window's Extra tab (OURS, private-server add-ons).
+const SECTION_EXTRA := "extra"
+## The draggable Ping / FPS box, and where it was left (a Vector2, top-left).
+const KEY_PING_FPS := "ping_fps_counter"
+const KEY_PING_FPS_POS := "ping_fps_position"
+## Round 832: retail's "Activate action short cut" (UIIT_CTL_ACTION_LIST_ACTIVE,
+## the option byte +0x1a), which opens the right-click target menu. Its
+## Default is off (READ, 0x5fce10); shown on the Extra tab until the Game tab
+## is built.
+const SECTION_GAME := "game"
+const KEY_ACTION_SHORTCUT := "action_short_cut"
+
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:
 	var file := ConfigFile.new()
 	if file.load(PATH) != OK:
@@ -73,6 +85,12 @@ static func set_value(section: String, key: String, value: Variant) -> bool:
 	file.load(PATH) # a missing file is fine; it is about to exist
 	file.set_value(section, key, value)
 	return file.save(PATH) == OK
+
+static func ping_fps_shown() -> bool:
+	return bool(get_value(SECTION_EXTRA, KEY_PING_FPS, false))
+
+static func action_shortcut() -> bool:
+	return bool(get_value(SECTION_GAME, KEY_ACTION_SHORTCUT, false))
 
 static func server_address() -> String:
 	return str(get_value(SECTION_SERVER, KEY_ADDRESS, ""))

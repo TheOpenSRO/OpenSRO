@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.591** plus what is merged on `dev`; updated 2026-10-26.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.592** plus what is merged on `dev`; updated 2026-10-26.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -74,6 +74,7 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Click-to-walk | ✅ Supported | Click the ground to walk; arrival lands exactly on the point |
 | Sky-click run | ✅ Supported | Clicking sky or far ground runs on that heading until blocked |
 | Keyboard (arrow keys) movement | ✅ Supported | Up runs where the character faces, Left/Right turn it on the spot (seated too); as in retail the server hears a turn in 45° steps and exactly on release |
+| Trace (follow a player) | ✅ Supported | From the action window, a hotbar slot or the right-click player menu. Follows as the original server does: runs to just short of the player and keeps up, and stops when they die or move out of range, or when you sit, are stunned, trade, mount or click to walk |
 | Walk/run toggle and sitting | ✅ Supported | Walk/run, sit and stand through the action window and keys; a click while seated stands up first, as retail |
 | Movement animation | ✅ Supported | Retail blending: a run starts from its first frame and fades in, a stop lets the stride finish, 5 s battle stance, idle fidgets for players and NPCs, footprints in sand and snow |
 | Collision | 🟡 Partial | Terrain and buildings on the game's own navigation mesh, on the client and now on the server too: walks and monsters stop at walls, wandering monsters turn back from them; compound objects, gates and doors, and dungeons on the server still to come |
@@ -307,11 +308,13 @@ Retail windows rebuilt from the game's own layout files.
 | Target window with buffs | ✅ Supported | Target's HP, rank and buff/debuff icons |
 | Quest window | 🟡 Partial | Quest list and objectives; counts and timers partly missing |
 | System message window and banners | ✅ Supported | System messages, notice banners and area names |
-| Action window | ✅ Supported | Sit, walk/run, emotes, auto attack, exchange, party, auto grab |
+| Action window | ✅ Supported | Sit, walk/run, emotes, auto attack, trace, exchange, party, auto grab |
+| Right-click player menu | ✅ Supported | Whisper, Exchange, Add friend, Invite party and Trace, as the original; switched on by "Activate action short cut" (Option > Extra for now) |
 | NPC talk and message boxes | 🟡 Partial | Retail talk box; some dialogs not yet retail layouts |
 | Option window: Video | ✅ Supported | Retail rows, presets, brightness, sight range |
 | Option window: Audio | ✅ Supported | Volume sliders |
 | Option window: Input and Game tabs | ❌ Not yet | Drawn but not wired |
+| Option window: Extra | ✅ Supported | OpenSRO add-ons, switched by a check mark: a Ping / FPS box you can drag anywhere (a private-server feature); also holds the original's "Activate action short cut" until the Game tab is built |
 | Keybinds | 🟡 Partial | Retail default key table; no rebinding |
 | Escape menu and Help window | ✅ Supported | Option, Help, Restart, Exit; in-client help |
 | Game cursors | ✅ Supported | Retail cursors read from your own sro_client.exe |

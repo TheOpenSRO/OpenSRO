@@ -596,6 +596,11 @@ func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Pac
 		return nil
 	}
 
+	// Round 832: CTradeMgr::EstablishTradeSession (0x47f970) calls slot 426
+	// on both players, which empties their action queues (0x4aa340 ->
+	// 0x4ad320(1), READ): a running trace ends.
+	cancelActions(characterID)
+	cancelActions(requester.CharacterID)
 	if err := sess.Send(&proto.Packet{Opcode: OpTradeStarted, Data: (&TradeStarted{PartnerName: requester.Name}).Encode()}); err != nil {
 		return err
 	}

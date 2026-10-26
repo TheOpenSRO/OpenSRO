@@ -2624,6 +2624,11 @@ func main() {
 		// The action window's emotes (round 781): the retail 0x3091, the
 		// byte echoed to the character's watchers.
 		session.EmoteHandler(hub),
+		// Trace (round 832): the retail 0x7074 kind 3 and its 0xB074
+		// answers; the client walks.
+		session.ActionHandler(hub),
+		// The Extra tab's ping counter (round 832, OURS): an echo.
+		session.PingHandler(),
 		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
 		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
 		session.NPCTalkHandler(hub, trades),

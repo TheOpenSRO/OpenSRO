@@ -756,6 +756,27 @@ func _on_node_added_for_range(n: Node) -> void:
 		if _character_range > 0.0:
 			_apply_character_range_to(n as GeometryInstance3D)
 
+## Round 832 (OURS): the Ping / FPS box (PingFpsCounter), shown or removed.
+## It sits just above the minimap, under the windows.
+var _ping_fps: PingFpsCounter = null
+
+func _apply_ping_fps_counter(on: bool) -> void:
+	var have := _ping_fps != null and is_instance_valid(_ping_fps)
+	if on and not have:
+		_ping_fps = PingFpsCounter.new()
+		_ping_fps.net = NetClient
+		ui_control.add_child(_ping_fps)
+		if _hud_minimap != null and _hud_minimap.get_parent() == ui_control:
+			ui_control.move_child(_ping_fps, _hud_minimap.get_index() + 1)
+	elif not on and have:
+		_ping_fps.queue_free()
+		_ping_fps = null
+
+## Round 832: the Option window's Extra tab on Apply / Confirm. The action
+## short cut is read where the right click asks for it.
+func _on_extra_options_applied(values: Dictionary) -> void:
+	_apply_ping_fps_counter(bool(values.get("ping_fps", false)))
+
 ## The Option window's Apply / Confirm (HudPanels.video_options_applied):
 ## the display (window mode, size), the View row, then the world.
 func _on_video_options_applied(o: VideoOptions) -> void:
@@ -2238,6 +2259,7 @@ func _ready() -> void:
 		print("World3D: %s refused: untouchable" % what)
 		_log_system(ArrivalGuard.refusal_text(_ui_text_table)))
 	NetClient.emote_received.connect(_on_emote_received)
+	NetClient.action_result.connect(_on_action_result)
 	NetClient.buff_started.connect(_on_buff_started)
 	NetClient.buff_ended.connect(_on_buff_ended)
 	NetClient.skill_moved.connect(_on_skill_moved)
@@ -2501,6 +2523,8 @@ func _try_initialize_pk2_ui() -> void:
 	# A second setup() here used to build a second map stacked on the first.
 	ui_control.add_child(_hud_minimap)
 	place_minimap(_hud_minimap)
+	# Round 832 (OURS): the Extra tab's Ping / FPS box, when it is switched on.
+	_apply_ping_fps_counter(ClientSettings.ping_fps_shown())
 
 	# The world map (CNIFWorldMap, res_ui\worldmapguide.2dt), opened by M and
 	# by the minimap's own map button -- both reach the client's 0x79abe0. It
@@ -2780,6 +2804,8 @@ func _try_initialize_pk2_ui() -> void:
 		_hud_panels.toggle_option())
 	# The Option window's Video tab (round 694): Apply / Confirm.
 	_hud_panels.video_options_applied.connect(_on_video_options_applied)
+	# Round 832: the Extra tab (OURS add-ons and the action short cut).
+	_hud_panels.extra_options_applied.connect(_on_extra_options_applied)
 	# Restart is one scene change: NetClient.disconnect_from_server() emits
 	# `disconnected` unconditionally, and _on_disconnected is what takes this
 	# instance to Login -- for a dropped peer, for the Log Out button
@@ -13913,6 +13939,7 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 		print("World3D: skill %d is still re-using for %d ms -- refused here (0x3005), nothing sent" % [skill_id, left])
 		_log_system(_resolve_any_text(COOLDOWN_TEXT_KEY, COOLDOWN_TEXT_FALLBACK))
 		return
+	_drop_trace_for_action(skill_id, "skill %d" % skill_id)
 	var reach: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
 	var character_selected := _selected_character != -1 and (_other_bodies.has(_selected_character)
 		or _selected_character == _own_id())
@@ -14379,6 +14406,7 @@ func _attack_pvp(kind: int, id: int, skill_id: int = 0, basic_code: String = "",
 	# Round 808: a seated swing stands instead (0x791d40, READ; as _attack_monster).
 	if skill_id == 0 and _stand_instead("an attack on %s %d" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id]):
 		return
+	_drop_trace_for_action(skill_id, "an attack on %s %d" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id])
 	_drop_pending_attack()
 	_pending_pvp = {}
 	if _pvp_ground(kind, id) == null:
@@ -15387,6 +15415,7 @@ func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = ""
 	# into reach stands the player instead (_physics_step, OURS).
 	if skill_id == 0 and _stand_instead("an attack on monster %d" % monster_id):
 		return
+	_drop_trace_for_action(skill_id, "an attack on monster %d" % monster_id)
 	LatencyProbe.attack_click(monster_id, Time.get_ticks_msec())
 	# A new attack replaces one still walking into reach, and the walk that was
 	# for it ends too: a self-cast pressed on the way (the no_walk path below)
@@ -17983,6 +18012,61 @@ func _qa_job_step() -> void:
 				_move_target = Vector3(float(xz[0]), player.position.y, float(xz[1]))
 				_has_move_target = true
 				print("QA JOB: tick %d walk to (%s, %s) from (%.0f, %.0f)" % [_qa_tick, xz[0], xz[1], player.position.x, player.position.z])
+		# Round 832 (QA only): the trace and the target menu. shortcut:<0|1>
+		# sets the action short cut option; select:<name> selects that player
+		# as a click does; rclick:<name> right-clicks his drawn body (press
+		# and release at its screen point); menu:<id> presses a target menu
+		# button; click_walk:<dx>,<dz> is a ground click that far from the
+		# player (its cancel
+		# included); trace_state logs the trace; ping_fps:<0|1> the counter.
+		elif what.begins_with("shortcut:"):
+			ClientSettings.set_value(ClientSettings.SECTION_GAME, ClientSettings.KEY_ACTION_SHORTCUT, what.substr(9) == "1")
+			print("QA TRACE: tick %d action short cut %s" % [_qa_tick, what.substr(9)])
+		elif what.begins_with("select:") or what.begins_with("rclick:"):
+			var who := what.substr(what.find(":") + 1)
+			var found := -1
+			for oid in _other_bodies:
+				var ob = _other_bodies[oid]
+				if ob != null and is_instance_valid(ob) and String((ob as Node).get_meta("character_name", "")) == who:
+					found = int(oid)
+			if found < 0:
+				print("QA TRACE: tick %d %s is not drawn" % [_qa_tick, who])
+			elif what.begins_with("select:"):
+				_select_character(found, who)
+			else:
+				var at3 := (_other_bodies[found] as Node3D).global_position + Vector3(0, 8, 0)
+				var at2 := camera_3d.unproject_position(at3)
+				_target_menu_right_button(true, at2)
+				_target_menu_right_button(false, at2)
+				print("QA TRACE: tick %d right click on %s at %s -> menu %s" % [_qa_tick, who, str(at2.round()),
+					"open" if _target_menu != null and _target_menu.visible else "not open"])
+		elif what.begins_with("menu:"):
+			if _target_menu != null and _target_menu.visible and _target_menu.button(int(what.substr(5))) != null:
+				_target_menu.button(int(what.substr(5))).pressed.emit()
+			print("QA TRACE: tick %d menu button %s" % [_qa_tick, what.substr(5)])
+		elif what.begins_with("click_walk:"):
+			var cxz := what.substr(11).split(",")
+			if cxz.size() == 2:
+				_cancel_action_for_click()
+				print("QA TRACE: tick %d ground click (%s, %s) -> %s" % [_qa_tick, cxz[0], cxz[1],
+					_issue_walk(_walkable_point(player.global_position + Vector3(float(cxz[0]), 0.0, float(cxz[1]))))])
+		elif what == "trace_state":
+			var tb = _other_bodies.get(int(_trace.get("target", -1)))
+			print("QA TRACE: tick %d depth %d trace %s dist %s walk mode %s moving %s" % [_qa_tick, _action_depth, str(_trace),
+				"%.1f" % player.global_position.distance_to((tb as Node3D).global_position) if tb != null and is_instance_valid(tb) else "-",
+				str(_walk_mode), str(_has_move_target)])
+		elif what == "option":
+			_hud_panels.toggle_option()
+			print("QA TRACE: tick %d option window toggled" % _qa_tick)
+		elif what.begins_with("option_tab:"):
+			var ow := _hud_panels.option_window() if _hud_panels != null else null
+			var tab := ow.control([int(what.substr(11))]) as BaseButton if ow != null else null
+			if tab != null:
+				tab.pressed.emit()
+			print("QA TRACE: tick %d option tab %s (%s)" % [_qa_tick, what.substr(11), "pressed" if tab != null else "missing"])
+		elif what.begins_with("ping_fps:"):
+			_apply_ping_fps_counter(what.substr(9) == "1")
+			print("QA TRACE: tick %d ping/fps box %s" % [_qa_tick, what.substr(9)])
 		elif what == "pvp_state":
 			print("QA PVP: tick %d target %s pending %s selected %d HP %s dead %s board safe %s" % [_qa_tick, str(_pvp_target),
 				str(_pending_pvp), _selected_character, _hud_player_info._hp_text.text if _hud_player_info != null and _hud_player_info._hp_text != null else "-", str(_player_dead),
@@ -21689,6 +21773,8 @@ func _physics_step(delta: float) -> void:
 		_pending_friend_cast = {}
 	# A talk approach's arrival (round 701): the walk ended last tick.
 	_step_talk_approach(locked)
+	# Round 832: the trace's walker, every 100 ms.
+	_step_trace(locked)
 	# The QA walk (round 808): held while seated or in the transition, as a
 	# click's walk is.
 	var qa_walking := _qa_walk != "" and not _player_dead and not _sit.sitting and not _motion_locked()
@@ -21833,6 +21919,9 @@ func _physics_step(delta: float) -> void:
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
 	if not _sit.sitting and not _motion_locked():
 		_sync_move_order()
+		# Round 832: a trace's walk asks for the run after its 0x7021, as the
+		# server's walker posts 0x704f [03] after its move (0x4b0490).
+		_send_trace_run()
 
 	# Smooths every other real entity toward its latest known position
 	# instead of teleporting the instant an update arrives -- see
@@ -25617,7 +25706,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			_right_button_held = event.pressed
+			_target_menu_right_button(event.pressed, event.position)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
+			# Round 832: a left press on the world closes the target menu
+			# (FUN_00468c50(0xAE), READ 0x77c486).
+			if event.pressed:
+				_close_target_menu()
 			# The press is the click (round 701; READ): retail's WM_LBUTTONDOWN
 			# runs the whole pick -- CGInterface::vslot_017 case 0x201
 			# (0x77c4a7) -> 0x793570 -> the object click 0x792f00 or the ground
@@ -25768,6 +25862,11 @@ func _input(event: InputEvent) -> void:
 	# and while the camera turns: retail's default rotate method leaves the
 	# cursor free and its tick reads where it is (round 697 review, L3). The
 	# orbit above is untouched.
+	# Round 832: a right drag of more than 5 pixels opens no target menu
+	# (GI+0x82c cleared, READ 0x77c260).
+	if _target_menu_armed and event is InputEventMouseMotion \
+			and (event as InputEventMouseMotion).position.distance_to(_target_menu_press) > TargetMenu.DRAG_PX:
+		_target_menu_armed = false
 	if event is InputEventMouseMotion:
 		_hover_pos = (event as InputEventMouseMotion).position
 		_hover_reached_world = false
@@ -26390,6 +26489,9 @@ func _start_talk_approach(node: Node3D) -> bool:
 	# flag), so seated it stands instead of walking; the selection stands.
 	if _stand_instead("a walk to talk to %s" % str(node.get_meta("npc_name", node.name))):
 		return true
+	# Round 832: the walk to an NPC is the same ground click (0x78f8d0), and
+	# cancels a running action first.
+	_cancel_action_for_click()
 	var far :=TALK_APPROACH_GATE_RANGE if structure else TALK_APPROACH_NPC_RANGE
 	var d := _talk_rng.randf_range(TALK_APPROACH_NEAR, far)
 	var point := _walkable_point(talk_approach_point(target, player.global_position, d))
@@ -27078,6 +27180,8 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 ## direction (FUN_0078f8d0 -> FUN_009ebec0). Returns "walk", "run", "keep"
 ## (a run already on that heading goes on unchanged) or "ignore".
 func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceState3D) -> String:
+	# Round 832: the ground click (0x78f8d0) first cancels a running action.
+	_cancel_action_for_click()
 	# Only the ground and placed objects can be a destination. Left to the
 	# default mask the ray also hit the player's own capsule, the invisible
 	# navmesh walls (NAVMESH_WALL_COLLISION_LAYER) and NPC capsules, and a
@@ -29447,6 +29551,9 @@ func _try_pick_up_item(screen_pos: Vector2) -> bool:
 ## player ends up in reach if they were not, walks toward the item; the
 ## arrival branch asks again.
 func _pick_up_ground_item(ground_id: int) -> void:
+	# Round 832: a pick-up is an action (0x7074 kind 2 in retail) and takes a
+	# trace's place.
+	_drop_trace_for_action(0, "a pick-up of ground item %d" % ground_id)
 	_pending_pickup_id = ground_id
 	# Only WALK if the drop is actually out of reach. Setting a move target
 	# unconditionally is what made a pick-up report its own success as a
@@ -31511,6 +31618,12 @@ const WALK_SPEED_FALLBACK := 16.0
 ## server's enter / runAgain and stand), so the window's buttons that show
 ## otherwise swap back; nobody else is known to walk until told.
 func _reset_walk_for_entry() -> void:
+	# Round 832: no action runs in the new zone (GI+0x620 is reset by
+	# CGInterface::FUN_0078d050, READ; the server ended the trace).
+	_action_depth = 0
+	_trace = {}
+	_trace_sent = -1
+	_trace_run_due = false
 	var was_walking := _walk_mode
 	_walk_mode = false
 	_other_walking.clear()
@@ -31519,6 +31632,307 @@ func _reset_walk_for_entry() -> void:
 	if _hud_panels != null and _hud_panels.action_pane != null \
 			and String(_hud_panels.action_pane.icon_paths.get(ActionCommands.SIT, "")).ends_with("icon_cha_stand.ddj"):
 		_action_motion_shown(WorldNet.MOTION_STAND)
+
+## Round 832: the right-click target menu (TargetMenu, CNIFTargetMenu). READ,
+## CGInterface::vslot_017 (0x77c260), all only while the option byte +0x1a
+## ("Activate action short cut") is set -- with it off a right click is the
+## camera's alone and selects nothing:
+##   - WM_RBUTTONDOWN destroys the menu and arms GI+0x82c;
+##   - a right drag of more than 5 pixels disarms it;
+##   - WM_RBUTTONUP, armed, over a CICUser (FUN_0077b5e0): the player is
+##     selected (FUN_00778650 + 0x7045) and the menu opens, its top-left at
+##     the cursor.
+## The name box is filled by the select reply's target-window update, and
+## the select request is not sent for a player already selected with the
+## target window up (0x78f5f0) -- so the box stays empty then (INFERRED from
+## those two READ steps).
+var _target_menu: TargetMenu = null
+var _target_menu_armed := false
+var _target_menu_press := Vector2.ZERO
+
+func _target_menu_right_button(pressed: bool, at: Vector2) -> void:
+	if not ClientSettings.action_shortcut():
+		return
+	if pressed:
+		_close_target_menu()
+		_target_menu_armed = true
+		_target_menu_press = at
+		return
+	if not _target_menu_armed:
+		return
+	_target_menu_armed = false
+	var who := _player_under_cursor(at)
+	if who.is_empty():
+		return
+	var id := int(who["id"])
+	var already := _selected_character == id and _hud_target != null and _hud_target.visible
+	if _selected_character != id:
+		_select_character(id, String(who["name"]))
+	_open_target_menu(at, "" if already else String(who["name"]))
+
+## The player under the cursor: the first body the click's pick meets
+## (monsters and other players, as _pick_character), if it is a player.
+func _player_under_cursor(at: Vector2) -> Dictionary:
+	if not NetClient.is_connected_to_server() or _objects_hidden or camera_3d == null:
+		return {}
+	var from := camera_3d.project_ray_origin(at)
+	var dir := camera_3d.project_ray_normal(at)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = MONSTER_COLLISION_LAYER | OTHER_PLAYER_COLLISION_LAYER
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return {}
+	var node := hit["collider"] as Node
+	while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id") or node.has_meta("cos_uid")):
+		node = node.get_parent()
+	if node == null or not node.has_meta("character_id"):
+		return {}
+	return {"id": int(node.get_meta("character_id")), "name": String(node.get_meta("character_name", ""))}
+
+func _open_target_menu(at: Vector2, target_name: String) -> void:
+	if _target_menu == null or not is_instance_valid(_target_menu):
+		_target_menu = TargetMenu.new()
+		if not _target_menu.build(_ui_builder):
+			print("TARGET MENU: %s did not build" % TargetMenu.FILE)
+			_target_menu.free()
+			_target_menu = null
+			return
+		ui_control.add_child(_target_menu)
+		_target_menu.chosen.connect(_on_target_menu_chosen)
+	_target_menu.open_at(at, target_name)
+	print("TARGET MENU: open at %s for '%s'" % [str(at), target_name])
+
+func _close_target_menu() -> void:
+	if _target_menu != null and is_instance_valid(_target_menu) and _target_menu.visible:
+		_target_menu.hide()
+
+## The five handlers (message map 0xeb4ec8, READ). The first four need the
+## selection (GI+0x628) to be another player (exists, not this one, a
+## CICUser) and do nothing otherwise; Trace is the action dispatcher's 1003
+## with no test of its own.
+func _on_target_menu_chosen(id: int) -> void:
+	if id == TargetMenu.ID_TRACE:
+		print("TARGET MENU: trace -> %s" % _run_action(ActionCommands.TRACE))
+		return
+	var target := _selected_character
+	if target < 0 or target == _own_id() or not _other_bodies.has(target):
+		print("TARGET MENU: button %d -- the selection is no other player, nothing done" % id)
+		return
+	var body = _other_bodies.get(target)
+	var who := String((body as Node).get_meta("character_name", "")) if body != null and is_instance_valid(body) else ""
+	match id:
+		TargetMenu.ID_WHISPER:
+			# 0x60a1f0: the chat line "$name " (FUN_007ab470), shown and focused.
+			if who != "" and who != NetClient.current_character_name and _hud_chat != null:
+				_hud_chat.open_with("$%s " % who)
+		TargetMenu.ID_EXCHANGE:
+			# 0x60a280 -> SendTradeMsg_081: the alchemy window up refuses it
+			# with 0x5419 (category 0x12), then the asking line and 0x7081.
+			if _hud_panels != null and _hud_panels.alchemy_window() != null and _hud_panels.alchemy_window().visible:
+				_log_system(_resolve_any_text("UIIT_MSG_REINFORCERR_CANNOT_TRADE", "Cannot open the alchemy window while trading."))
+			else:
+				print("TARGET MENU: exchange -> %s" % _action_exchange())
+		TargetMenu.ID_FRIEND:
+			# 0x60a2d0 -> SendMessengerMsg_302: the name, no line.
+			if who != "":
+				NetClient.friend_request(NetClient.current_character_name, who)
+		TargetMenu.ID_PARTY:
+			# 0x60a330: create out of a party, invite as leader or with
+			# anyone-invite, else nothing (HudPartyPane.press_invite).
+			if _hud_panels != null and _hud_panels.party_pane != null:
+				_hud_panels.party_pane.press_invite()
+
+## Round 832: Trace. The request, its answers and its end are retail's
+## (ActionNet, server/internal/session/trace.go); the walk is the server's
+## walker (TraceFollow), run here because OpenSRO's server does not move
+## players (OURS: the place, not the rules). docs/protocol/trace.md.
+##
+## The action byte GI+0x620 (READ): the depth the last 0xB074 carried. At 2
+## or more the client sends no action and no cancel (FUN_0077c9b0).
+var _action_depth := 0
+## The running trace: {"target", "stop", "restart", "next_ms", "walking"};
+## empty when none. Set by the 0xB074 that starts it, ended by the one that
+## ends it, by the ground click's cancel, or by another action (Push).
+var _trace := {}
+## The target of a trace request not yet answered, or -1 (OURS bookkeeping:
+## retail's client keeps no trace target, its server walks).
+var _trace_sent := -1
+## A trace walk went out this tick and asks for the run after it.
+var _trace_run_due := false
+
+## Trace (0x793b00 case 1003, READ): the UI gate FUN_0077c8e0(0) and the busy
+## test FUN_0077c9b0, then 0x7074 [01 03 01 <selection>] -- no test of what is
+## selected (a monster, nothing at all: the server refuses it). OpenSRO's
+## monster ids overlap its character ids, so a selection that is no player
+## goes out as 0, which the server resolves to no one, as retail's resolves a
+## monster to no PC (OURS).
+func _action_trace() -> String:
+	if not NetClient.is_connected_to_server():
+		return "not sent (not connected)"
+	if _action_ui_blocked():
+		return "not sent (a window that holds actions is open)"
+	if _action_depth >= ActionNet.BUSY_DEPTH:
+		return "not sent (busy: action depth %d)" % _action_depth
+	var target := trace_target_of(_selected_character, _own_id(), _other_bodies.has(_selected_character))
+	_trace_sent = target
+	NetClient.action_trace(target)
+	return "0x7074 [01 03 01 %d] sent" % target
+
+## The uid a trace names for the selection (see _action_trace).
+static func trace_target_of(selected: int, own: int, is_other_player: bool) -> int:
+	if selected >= 0 and (is_other_player or selected == own):
+		return selected
+	return 0
+
+## FUN_0077c8e0(0), the part of it this client has windows for (READ): the
+## alchemy window existing (0xa8), the exchange window shown (0x1a). Its
+## other windows and modes (the stall 0x21, 0x8c, 0x96, the open market 0xbe,
+## the delay board's busy flag, GI+0x504) are not built.
+func _action_ui_blocked() -> bool:
+	if _hud_panels == null:
+		return false
+	if _hud_panels.alchemy_window() != null:
+		return true
+	return _hud_panels.is_open("exchange")
+
+## 0xB074 (FUN_00880b60, READ): the depth is stored; a result of 3 shows its
+## code's line. The trace starts and ends with it here (OURS bookkeeping).
+func _on_action_result(result: int, depth: int, code: int) -> void:
+	_action_depth = depth
+	match result:
+		ActionNet.RESULT_STARTED:
+			if _trace_sent >= 0:
+				_start_trace(_trace_sent)
+			_trace_sent = -1
+		ActionNet.RESULT_ENDED:
+			if not _trace.is_empty():
+				_end_trace("the server ended it", true)
+		ActionNet.RESULT_ERROR:
+			_trace_sent = -1
+			var key := String(ActionNet.ERROR_LINES.get(code, ""))
+			if key != "":
+				_log_system(_resolve_any_text(key, key))
+			print("ACTION: refused 0x%04x%s" % [code, "" if key != "" else " (no line, as retail's 0x4003/0x4004)"])
+
+func _start_trace(target: int) -> void:
+	var body_code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
+	var own_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
+	var target_bc := CombatNet.PLAYER_BC_RADIUS
+	var gait: Dictionary = _other_gaits.get(target, {})
+	if not gait.is_empty():
+		target_bc = int(_bc_radius_by_code.get(String(gait["body"]), CombatNet.PLAYER_BC_RADIUS))
+	var bands := TraceFollow.bands(own_bc, target_bc)
+	_trace = {"target": target, "own_bc": own_bc, "target_bc": target_bc, "stop": bands.x, "restart": bands.y,
+		"next_ms": 0, "walking": false}
+	print("TRACE: started on %d (stop %d, walk again beyond %d)" % [target, bands.x, bands.y])
+
+## Ends the trace here. `stop_walk`: the walk it ordered stops where it is
+## (FinishFront's 0x4b03f0, READ).
+func _end_trace(why: String, stop_walk: bool) -> void:
+	if _trace.is_empty():
+		return
+	if stop_walk and bool(_trace["walking"]) and _has_move_target:
+		_stop_own_walk()
+	print("TRACE: ended (%s)" % why)
+	_trace = {}
+	_trace_run_due = false
+
+func _stop_own_walk() -> void:
+	_has_move_target = false
+	_move_heading_run = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+
+## The ground click's cancel (0x78f8d0, READ): 0x7074 [02] when an action
+## runs (GI+0x620 not 0) and the client is not busy (below 2). The trace ends
+## here at once; the click's own walk follows.
+func _cancel_action_for_click() -> void:
+	if _action_depth == 0 or _action_depth >= ActionNet.BUSY_DEPTH:
+		return
+	NetClient.action_cancel()
+	_end_trace("a click walk cancelled it", false)
+
+## Push (READ, 0x4ad630): a new action drops a running trace, silently -- a
+## cast of Basic_Activity 2, a swing (skill 0), a pick-up. A cast of another
+## Activity runs at once and leaves it (0x4ad870). The server drops its own
+## copy when the request arrives (trace.go).
+func _drop_trace_for_action(skill_id: int, why: String) -> void:
+	if _trace.is_empty():
+		return
+	if skill_id != 0 and _hud_panels != null:
+		var reach: Dictionary = _hud_panels.skill_reach(skill_id)
+		if int(reach.get("activity", 2)) != 2:
+			return
+	_action_depth = 0
+	_end_trace("%s took its place" % why, true)
+
+## One walker tick (TraceFollow.step) every TICK_MS while a trace runs.
+func _step_trace(locked: bool) -> void:
+	if _trace.is_empty() or player == null:
+		return
+	var now := Time.get_ticks_msec()
+	if now < int(_trace["next_ms"]):
+		return
+	_trace["next_ms"] = now + TraceFollow.TICK_MS
+	if locked:
+		return
+	var body = _other_bodies.get(int(_trace["target"]))
+	if body == null or not is_instance_valid(body):
+		_trace_let_go()
+		return
+	# The walk's direction (pc+0x24..0x2c): a heading run's own heading
+	# (SkyRun.velocity's), a destination walk's line to its point.
+	var moving := Vector3.ZERO
+	if _has_move_target and _move_heading_run:
+		var f := RemoteFacing.facing_of(_move_heading)
+		moving = Vector3(f.x, 0.0, f.y)
+	elif _has_move_target:
+		var d := _move_target - player.global_position
+		d.y = 0.0
+		if d.length() > 0.001:
+			moving = d.normalized()
+	var step := TraceFollow.step(player.global_position, (body as Node3D).global_position, moving,
+		int(_trace["own_bc"]), int(_trace["target_bc"]), int(_trace["stop"]), int(_trace["restart"]))
+	match String(step["do"]):
+		"end":
+			_trace_let_go()
+		"walk":
+			_trace_walk(step["point"], true)
+		"back":
+			_trace_walk(step["point"], false)
+
+## The walker lets go (0x4b03f0): its walk stops; the trace stays, and the
+## walker starts again on the next tick (the handler's phase 1, READ).
+func _trace_let_go() -> void:
+	if bool(_trace.get("walking", false)) and _has_move_target:
+		_stop_own_walk()
+	_trace["walking"] = false
+
+## The walker's 0x7021 (and, walking forward, its 0x704f [03] after it).
+## What the server's move handler refuses goes nowhere (the stun and root
+## states, a trade, the pick-up clip, the seat -- the trace ends on a sit).
+func _trace_walk(point: Vector3, run: bool) -> void:
+	if _own_move_blocked() or _wall_root() != 0 or _player_pickup_clip != null or _sit.sitting:
+		return
+	_player_move_order = true
+	_move_target = _walkable_point(point)
+	_has_move_target = true
+	_move_heading_run = false
+	_trace["walking"] = true
+	_trace_run_due = run
+	print("TRACE: %s to (%.1f, %.1f) from (%.1f, %.1f)" % ["walk" if run else "step back", _move_target.x, _move_target.z,
+		player.global_position.x, player.global_position.z])
+
+## Retail's walker asks for the run unless the motion state is already RUN
+## (slot 63 != 3, READ): here, while the walk mode is on.
+func _send_trace_run() -> void:
+	if not _trace_run_due:
+		return
+	_trace_run_due = false
+	if _walk_mode and not _motion_locked():
+		NetClient.request_motion(ActionCommands.MOTION_RUN)
+		print("TRACE: walking -> 0x704f [03], the walker's run")
 
 ## Runs an action-window button (ActionCommands.plan). Returns a line for the
 ## log saying what it did.
@@ -31547,6 +31961,8 @@ func _run_action(action_id: int) -> String:
 				what = _action_party()
 			"auto_get":
 				what = _key_pick_up_nearest()
+			"trace":
+				what = _action_trace()
 			"panel":
 				what = _run_panel_key("panel:" + String(plan["panel"]))
 			"unsupported":

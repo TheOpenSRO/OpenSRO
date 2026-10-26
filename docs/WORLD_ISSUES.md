@@ -7483,6 +7483,90 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-second round: Trace, the right-click target menu, and the Option window's Extra tab
+
+The user asked for trace "exactly how the original game has it", then for an Extra tab under
+Esc -> Option with check-mark add-ons, the first a draggable Ping / FPS box like a private server's
+(their video). The whole reading is in `docs/protocol/trace.md`.
+
+**Trace (READ, both binaries).**
+- **The request.** The client sends 0x7074 `[01 03 01 <selection>]` from the action window, a
+  hotbar slot or the target menu, and checks nothing about the target.
+- **The server's handling.**
+  - It queues a kind-3 action on `CGCharAutoCommandActor`.
+  - Every 30 ms it tests the target: a player, not dead, within the 3 x 3 regions.
+  - Its walker (`0x4b0490`, every 100 ms) runs the tracer to both BCRadius + 50 short of the
+    target, and only walks again past both + 80.
+  - It leaves alone a walk that already heads within 15 degrees of the target.
+  - It steps back out of the other body.
+  - Past 1000 units it stands still (the trace stays).
+  - It posts 0x704f `[03]` (run) after each forward walk.
+- **The end.** The trace never finishes on arrival. 0xB074 `{2, 0}` ends it:
+  - on the target's death or departure;
+  - on the client's 0x7074 `[02]`, which the ground click sends;
+  - on sitting, stun, sleep or freezing, a trade, mounting, death, a warp or logout.
+  A new action replaces it silently. A buff (Basic_Activity other than 2) leaves it running.
+- **No text.** Trace shows no message at all: the server sends no code the client prints.
+
+**Built.**
+- **Server:** `session/trace.go` answers 0x7074 and runs the 30 ms test. `cancelActions` ends a
+  trace everywhere it already ended the auto-attack, except on moves (`moveCancelsActions`): the
+  client's own trace walks are moves.
+  - Freezing, sleep and stun landing now call `cancelActions`, as their appliers do.
+  - So do a trade being established and a mount.
+  - The attack, a Basic_Activity 2 cast and a pick-up drop the trace silently (Push).
+- **Client:** `world/trace_follow.gd` is the walker line by line. World3D runs it every 100 ms
+  (OURS: the place; OpenSRO's server does not move players), sends the cancel on a ground click,
+  and keeps the action byte GI+0x620.
+- **The target menu:** `ui/hud/target_menu.gd`, built from `res_ui\targetmenu.2dt`. It opens on a
+  right click over a player when "Activate action short cut" is on (retail's option byte +0x1a,
+  Default off), top-left at the cursor. Its five buttons do what the original's handlers do.
+- **The Extra tab (OURS):** a fifth tab copied from the Game tab's button one step (125) to the
+  right. Its pane is built from the Game pane's frame and CNIFGameOptionSlot rows.
+  - Row 1, "Show the Ping / FPS counter": `ui/hud/ping_fps_counter.gd`, 87 x 54 with the reference
+    video's three-line border (MEASURED on its 2x capture). It can be dragged anywhere and is saved
+    where it is left. FPS refreshes every 0.5 s. Ping is an echo (OURS opcodes 0x00FC / 0x00FD,
+    `session/ping.go`) sent every 5 s.
+  - Row 2: the action short cut, until the Game tab is built.
+- **QA aid:** partybot `-walk-loop` walks a bot round waypoints, so a trace has a moving target.
+
+**Live** (`/var/tmp/r832q/qa832.sh`; bot Tracee runs a 160 x 120 loop round the client, 5 s a leg):
+- **The action window's Trace:** `0x7074 [01 03 01 1]`, then `started on 1 (stop 58, walk again
+  beyond 88)`. The tracer re-aims as the bot turns and holds 75-109 units behind a target that
+  keeps running (stop 58 + the bot's lead).
+- **The ground click:** the cancel, `trace ended (a click walk cancelled it)`; the click walk
+  follows.
+- **The target menu:** right click on Tracee opens the menu at the cursor (name box empty: he was
+  already selected, as retail's select request is skipped then). Trace there starts it again.
+- **No target selected** (the first run, the bot out of view): sent as 0, started and ended at
+  once, as retail's IsPC refusal does.
+- **The Extra tab and the box:** rendered (the box beside the minimap; the ping there is the
+  offline movie writer's frame time, not the network).
+
+**Tests.**
+- Server: `trace_test.go` covers the layout, regions, death, an unknown id, the double answer to a
+  cancel, sit, Push's silent drop and another kind refused. `ping_test.go` covers the echo.
+- Client:
+  - `trace_follow_test` checks every walker branch at its exact edges.
+  - `trace832_test` checks the wire, the target choice and the box's ping and arithmetic. On the
+    real Media.pk2 it also builds the Extra tab, switches tabs, runs Apply and Default, and builds,
+    opens and presses the target menu.
+  - The full run: 366 client suites, 1 failing -- `buff_persist_test`, the known timing-sensitive
+    one (this file, the 282-suite run). It passed twice on its own. Server: `go test ./...` passes.
+- **Review fix:** the walker's "already heading within 15 degrees" now uses a heading run's own
+  heading too (an arrow-key or sky-click run), as the server's pc+0x24 does; it first read a
+  heading run as standing.
+- **Perf gate** (`--frames 60000`, base b82d70ad), median of 3:
+
+  | view | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.89 / 0.89 SAME | 8822 / 8800 SAME | 2804 / 2783 SAME | 5 / 5 SAME |
+  | reeds | 0.86 / 0.86 SAME | 7876 / 6467 FASTER (load noise) | 1472 / 1470 SAME | 2 / 2 SAME |
+  | cross | 1.04 / 1.04 SAME | 9555 / 9567 SAME | 2825 / 2825 SAME | 5 / 4 SAME |
+
+  The gate's head copy predates the review fix (one branch in a 100 ms tick).
+- **Prod:** the server half (0x7074, the ping echo) needs the new server; deployed with this round.
+
 ## Eight-hundred-and-thirty-first round: a quick swap shows no T-pose and no plate flicker; the release badge
 
 The user (videos, ours against a private server's): "when quickly swapping weapons/shields the

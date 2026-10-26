@@ -1207,6 +1207,13 @@ func useSkillHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusalText(r)}).Encode()})
 			}
 		}
+		// Round 832: the cast is pushed here (the 0x7074 handler's gate has
+		// passed, the reach is the tick's): an action row (Basic_Activity 2)
+		// drops a running trace, silently; a row of any other Activity runs at
+		// once and leaves it running (Push's RunInstantSkill 0x4ad870, READ).
+		if castRow != nil && castRow.Activity == 2 {
+			dropTraceFor(characterID)
+		}
 		// A character target is measured as a monster one is (round 622,
 		// characterInReach), before the costs.
 		if friendly {

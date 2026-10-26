@@ -386,8 +386,9 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 		return nil
 	}
 	motions.walking(e.CharacterID, legEnd(r.Entity.Move, now))
-	// A move is the player's own cancel of a running auto-attack (keepup.go).
-	cancelActions(e.CharacterID)
+	// A move is the player's own cancel of a running auto-attack (keepup.go);
+	// not of a trace, whose walk this may be (round 832, trace.go).
+	moveCancelsActions(e.CharacterID)
 	region, lx, lz := regionLocalOf(r.Entity.Zone, r.Entity.Pos)
 	// A rider's move is its COS's (round 795, moverUID).
 	echo := encodeMoveEcho(moverUID(e.CharacterID), movementBytes(m, angle), region, r.Entity.Pos, lx, lz)

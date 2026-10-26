@@ -110,6 +110,9 @@ func mountCOS(ctx context.Context, sess *gateway.Session, owner int64, o *cosObj
 	if cosDistance(pos, e.Pos) > cos.MountRange {
 		return refuse(cos.ErrRideTooFar)
 	}
+	// Round 832: the mount (0x4ec640) calls slot 426 first, which empties
+	// the action queue (READ): a running trace ends.
+	cancelActions(owner)
 	cosWorld.mu.Lock()
 	o.ridden, o.moving, o.pos, o.heading = true, false, e.Pos, e.Heading
 	cosWorld.mu.Unlock()

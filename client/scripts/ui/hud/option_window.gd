@@ -69,6 +69,26 @@ const ID_TAB_VIDEO := 10
 const ID_TAB_AUDIO := 14
 const ID_TAB_INPUT := 15
 const ID_TAB_GAME := 16
+## Round 832 (OURS): the Extra tab, private-server add-ons switched by a check
+## mark. Built from the Game tab's own records: its tab button one tab step
+## (125, the four tabs' spacing) to the right -- inside the window, whose
+## inner frame ends at 740 --, and a pane holding the Game pane's frame (104)
+## and its CNIFGameOptionSlot rows (label + check box, two columns).
+const ID_TAB_EXTRA := 17
+const ID_PANE_EXTRA := 900
+const ID_PANE_GAME := 149
+const ID_GAME_FRAME := 104
+const GAME_SLOT_CLASS := "CNIFGameOptionSlot"
+const TAB_STEP := 125.0
+const EXTRA_TAB_TEXT := "Extra"
+## The Extra rows, in slot order (left column first): [settings key, label
+## text or text id]. The ping counter is OURS; the action short cut is
+## retail's Game-tab option (ClientSettings.KEY_ACTION_SHORTCUT), here until
+## that tab is built.
+const EXTRA_ROWS := [
+	["ping_fps", "Show the Ping / FPS counter"],
+	["action_short_cut", "UIIT_CTL_ACTION_LIST_ACTIVE"],
+]
 const ID_PANE_AUDIO := 269
 const ID_FRAME_BGM := 250
 const ID_FRAME_EFFECT := 259
@@ -104,11 +124,16 @@ var _stored := false
 var _dragging_row := -1
 ## The Video tab (round 694).
 var video: OptionVideoPage
+## Round 832: the Extra tab's values being edited, and its check boxes.
+var _extra_edit := {}
+var _extra_boxes := {}
 
 signal applied(options: AudioOptions)
 ## Apply / Confirm on any tab store the Video tab's record too; it is handed
 ## to whoever applies it (HudPanels -> World3D).
 signal video_applied(options: VideoOptions)
+## Round 832: the Extra tab's values on Apply / Confirm, {key: bool}.
+signal extra_applied(values: Dictionary)
 
 func _init(builder: UiBuilder = null) -> void:
 	super._init()
@@ -147,6 +172,7 @@ func build_option() -> bool:
 	var win := get_window() if is_inside_tree() else null
 	var screen := DisplayServer.screen_get_size() if DisplayServer.get_name() != "headless" else Vector2i.ZERO
 	video.build(VideoOptions.in_force(), ClientSettings.camera_view(), screen, win.size if win != null else Vector2i.ZERO)
+	_build_extra_tab()
 	_wire_buttons()
 	_settle()
 	var svc := AudioService.instance()
@@ -297,6 +323,90 @@ func _apply_live() -> void:
 	if svc != null:
 		svc.set_options(_edit, false)
 
+# --- the Extra tab (round 832, OURS) -------------------------------------------------
+
+func _record_index(id: int, parent_id: int) -> int:
+	for r in _file.records:
+		if r.id == id and r.parent_id == parent_id:
+			return r.index
+	return -1
+
+func _build_extra_tab() -> void:
+	var root_id := _file.root().id
+	var tab_i := _record_index(ID_TAB_GAME, root_id)
+	var pane_i := _record_index(ID_PANE_GAME, root_id)
+	var frame_i := _record_index(ID_GAME_FRAME, ID_PANE_GAME)
+	if tab_i < 0 or pane_i < 0 or frame_i < 0:
+		return
+	var tab := _twodt.build_record(_file, tab_i)
+	tab.name = "Tab%d" % ID_TAB_EXTRA
+	tab.set_meta(TwoDtBuilder.META_ID, ID_TAB_EXTRA)
+	tab.set_meta(TwoDtBuilder.META_TAB_PANE, ID_PANE_EXTRA)
+	tab.position.x += TAB_STEP
+	# The settling pass places every node at its authored rect: the copy's
+	# moves with it.
+	var authored: Rect2 = tab.get_meta(UiBuilder.AUTHORED_RECT_META)
+	tab.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(authored.position + Vector2(TAB_STEP, 0.0), authored.size))
+	_twodt.set_text(tab, EXTRA_TAB_TEXT, _file.records[tab_i])
+	panel_root.add_child(tab)
+	var pane := _twodt.build_record(_file, pane_i)
+	pane.name = "Wnd%d" % ID_PANE_EXTRA
+	pane.set_meta(TwoDtBuilder.META_ID, ID_PANE_EXTRA)
+	panel_root.add_child(pane)
+	var frame := _twodt.build_record(_file, frame_i)
+	pane.add_child(frame)
+	var slots: Array[int] = []
+	for r in _file.records:
+		if r.parent_id == ID_GAME_FRAME and r.name == GAME_SLOT_CLASS:
+			slots.append(r.index)
+	for k in mini(EXTRA_ROWS.size(), slots.size()):
+		var key := String(EXTRA_ROWS[k][0])
+		var slot := _twodt.build_record(_file, slots[k])
+		frame.add_child(slot)
+		for ci in _file.records[slots[k]].children:
+			var c := _twodt.build_record(_file, ci)
+			slot.add_child(c)
+			if c is BaseButton:
+				_extra_boxes[key] = c
+				(c as BaseButton).toggled.connect(func(on: bool) -> void: _extra_edit[key] = on)
+			elif _file.records[ci].type == TwoDtReader.TYPE_STATIC:
+				var label_text := String(EXTRA_ROWS[k][1])
+				_twodt.set_text(c, _builder.resolve_text(label_text) if label_text.begins_with("UIIT_") else label_text, _file.records[ci])
+		_extra_edit[key] = extra_saved(key)
+	TwoDtBuilder.set_tab_checked(tab, false)
+	for key in _extra_boxes:
+		set_extra(key, bool(_extra_edit[key]))
+
+## The stored value of an Extra row.
+static func extra_saved(key: String) -> bool:
+	match key:
+		"ping_fps":
+			return ClientSettings.ping_fps_shown()
+		"action_short_cut":
+			return ClientSettings.action_shortcut()
+	return false
+
+## Sets an Extra row's check box (and its edit value).
+func set_extra(key: String, on: bool) -> void:
+	_extra_edit[key] = on
+	var box := _extra_boxes.get(key) as BaseButton
+	if box != null:
+		box.button_pressed = on
+
+func extra_value(key: String) -> bool:
+	return bool(_extra_edit.get(key, false))
+
+func extra_box(key: String) -> BaseButton:
+	return _extra_boxes.get(key) as BaseButton
+
+## Apply / Confirm: the Extra rows stored and handed on.
+func store_extra() -> void:
+	if _extra_edit.is_empty():
+		return
+	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_PING_FPS, extra_value("ping_fps"))
+	ClientSettings.set_value(ClientSettings.SECTION_GAME, ClientSettings.KEY_ACTION_SHORTCUT, extra_value("action_short_cut"))
+	extra_applied.emit(_extra_edit.duplicate())
+
 # --- the buttons ------------------------------------------------------------------
 
 func _wire_buttons() -> void:
@@ -307,9 +417,9 @@ func _wire_buttons() -> void:
 		if btn != null:
 			btn.pressed.connect(wiring[id])
 
-## Which top tab is checked (10, 14, 15 or 16), or 0.
+## Which top tab is checked (10, 14, 15, 16 or the Extra tab's 17), or 0.
 func current_tab() -> int:
-	for id in [ID_TAB_VIDEO, ID_TAB_AUDIO, ID_TAB_INPUT, ID_TAB_GAME]:
+	for id in [ID_TAB_VIDEO, ID_TAB_AUDIO, ID_TAB_INPUT, ID_TAB_GAME, ID_TAB_EXTRA]:
 		if TwoDtBuilder.is_checked(_at([id])):
 			return id
 	return 0
@@ -317,6 +427,12 @@ func current_tab() -> int:
 ## 0x5fda90: the checked tab's defaults; on the audio tab 0x5f6660, on the
 ## video tab 0x5fc340 (OptionVideoPage.press_default).
 func press_default() -> void:
+	if current_tab() == ID_TAB_EXTRA:
+		# OURS: every add-on off; the action short cut's Default is off too
+		# (READ, 0x5fce10).
+		for key in _extra_edit:
+			set_extra(key, false)
+		return
 	if current_tab() == ID_TAB_VIDEO and video != null:
 		video.press_default()
 		return
@@ -343,6 +459,7 @@ func press_apply() -> void:
 	applied.emit(_saved)
 	if video != null and video.edit != null:
 		video_applied.emit(video.store())
+	store_extra()
 
 ## Confirm: store, then close.
 func press_confirm() -> void:
