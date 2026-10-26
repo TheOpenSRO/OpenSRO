@@ -7511,6 +7511,26 @@ the shield's key, since the bow pushes the shield into the bag.
 - **Not recoverable:** a key cleared before this fix stays cleared (the bar file was saved without
   it). Put the item on the key again.
 
+### Round 830, second fix: the portrait showed the back of the body (a round 828 regression)
+
+The user: "the character portrait at the top left is off now. It shows the body, not the head"; then
+"almost looks like it's looking at the back and upside down".
+
+- **Cause.** `PlayerPortrait.set_character` copies the world body and keeps its scale. Since round
+  828 that scale is BodyMirror's (-h, h, h), and the portrait stage mirrors itself (`_mirror`, z ->
+  -z). Two mirrors make a half turn, so the camera faced the body's back. Setting the avatar's yaw
+  then decomposed that reflection into a negative scale on every axis: the user's "upside down".
+- **Fix.** The copy takes the unsigned scale (`skeleton.scale.abs()`), as before round 828.
+- **The other body copies** were checked: the paper doll and the party portraits build fresh,
+  unmirrored bodies; a skill's afterimage copies the world transform, mirror included, which is right.
+  Only the player portrait copied a world body into a stage of its own.
+- **Live:** `/var/tmp/r830q/p1`, frame 690: the face, front-on and upright. It matches round 826's
+  frame and not round 829's.
+- **Test:** `player_portrait_test` dresses a BodyMirror'd copy and an unmirrored one. They must
+  match: the same basis, upright, the same camera.
+- **Round 828's miss:** its check of every `.scale` read missed this one, which takes the scale
+  whole rather than as a size.
+
 ## Eight-hundred-and-twenty-ninth round: gear from the hotbar, the equipment window's drop rule, the held count, the repair flow, worn-out marks and the gear figure
 
 The user asked for five things: weapons and shields on the hotbar that are put on when pressed;

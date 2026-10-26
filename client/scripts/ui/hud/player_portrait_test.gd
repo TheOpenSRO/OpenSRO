@@ -275,6 +275,23 @@ func _render_setup(script) -> void:
 	await process_frame
 	_check(not is_instance_valid(sk) or sk.is_queued_for_deletion() or sk.get_parent() == null, "the old body is dropped")
 	_check(int(p.renders_requested) >= 2, "a second dress renders again")
+	# Round 830: the world body the portrait copies carries BodyMirror (x
+	# negated, round 828). The stage mirrors itself, so the copy must come in
+	# unmirrored: upright, facing the camera, at its height -- as a plain body.
+	var plain := _skeleton()
+	plain.scale = Vector3.ONE * 1.2
+	p.set_character(plain, _pose())
+	var plain_basis := plain.transform.basis
+	var plain_eye := (p.camera() as Camera3D).transform.origin
+	var worldly := _skeleton()
+	worldly.scale = Vector3.ONE * 1.2
+	BodyMirror.apply(worldly)
+	_check(BodyMirror.is_mirrored(worldly), "(the copy comes in mirrored, as the world body is)")
+	p.set_character(worldly, _pose())
+	_check(not BodyMirror.is_mirrored(worldly) and worldly.transform.basis.is_equal_approx(plain_basis),
+		"a mirrored world body is dressed exactly as an unmirrored one: %s" % str(worldly.transform.basis))
+	_check(worldly.transform.basis.y.y > 0.0, "upright, not upside down")
+	_check(_near3((p.camera() as Camera3D).transform.origin, plain_eye), "and the camera frames the same head")
 	p.queue_free()
 
 ## The block shows the render in GDR_PMI_PICTURE through the mask.

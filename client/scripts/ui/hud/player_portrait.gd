@@ -301,7 +301,10 @@ func set_character(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> voi
 	# borrows is dressed by FUN_00a619e0, which ends with FUN_00a5b960 (the
 	# scale byte at the character info's +0x30) -- the world body's uniform
 	# scale, about its feet. The head, read after it, is the scaled head.
-	var height := skeleton.scale
+	# Unsigned (round 830): the world body this copies carries BodyMirror's
+	# negative x, and this stage mirrors itself (_mirror) -- both together
+	# turned the body round and the camera framed the back of its shoulders.
+	var height := skeleton.scale.abs()
 	skeleton.transform = Transform3D(Basis.from_scale(height), Vector3.ZERO)
 	_mirror.add_child(skeleton)
 	if pose != null:
