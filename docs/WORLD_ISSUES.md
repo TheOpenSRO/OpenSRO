@@ -7483,6 +7483,85 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-twenty-eighth round: bodies drawn the right way round, seal effects on both hands of a dual weapon
+
+The user: "the two handed sword in the original game is held in the right hand not the left like
+ours. Double check which hands all weapons / shield should be in. Also ... double axes only show the
+seal effect on just one axe, same with daggers."
+
+- **Which bone each weapon names (MEASURED, all 3,455 item `.bsr` of the archive; the attach is the
+  file's own, READ `CCompChar::FUN_00c4fc70`).**
+  - `Bip01 R HandMid`: swords, blades, spears, glaives, the two-handed sword (30 of 31), crossbows,
+    dark and light staves, and the `_r` of dual axes and daggers.
+  - `Bip01 L HandMid2`: the two-handed staff, the harp, and the `_l` of dual axes and daggers.
+  - `Bip01 L Hand`: bows (21; 5 on `L HandMid2`) and shields (Europe: 19, and 6 on `L HandMid`).
+
+  `tools/probe_weapon_hands.gd` confirms that our build hangs each model from exactly that bone. So
+  the bone was never the fault.
+- **The body was a mirror image (MEASURED, READ).** The readers keep the files' left-handed
+  coordinates as written, and round 61's z -> -z sits on the terrain group only. Bodies hang outside
+  it.
+  - An unmirrored CHAR_EU_MAN_NOBLE faces -Z (right foot to right toe) with `Bip01 R Hand` at
+    x -6.96, on its left: (R - L) . right = -13.92.
+  - The PI turn of round 31 faced the body forward. It cannot undo a reflection.
+  - So every right-hand weapon showed in the left hand and every shield on the right arm. NPCs,
+    monsters and pets were mirrored too.
+  - The paper doll, portrait, select and create screens were right already: each has a `D3DSpace`
+    node with scale.z = -1.
+- **The fix (OURS): `BodyMirror.apply`** negates the body skeleton's own x where a body enters the
+  world: the player, other players (both build paths), NPCs, monsters, monster rides, pets, and the
+  crowd ghosts' local transform. An x mirror in the body's frame is the world's z flip composed with
+  a turn of PI, so the -Z front and every heading read off it (`SkillEffects.heading_of`,
+  `MonsterMotion.facing_yaw`) stay. With the mirror the probe reads +13.92: the right hand on the
+  right. Effects at bones inherit it (`EfpEffect` already flips its cull for a mirrored host, as the
+  terrain's objects need).
+- **What the mirror touched:**
+  - **CrowdGpu.** A far instance's transform is the identity, so Godot cannot flip its cull. Its twin
+    shaders now cull the other face (`mirrored_cull`: back <-> front, disabled kept, none -> front),
+    and it refuses an unmirrored body instead of a mirrored one.
+  - **Scale reads.** A mirrored basis's `get_scale()` is negative, and so is the scale of a node
+    whose transform was set whole. Six readers now take `absf`: skill effects' body scale, BsrEffect,
+    the NPC bounds, the monster label height, the far plate height and a QA helper.
+  - **Monster rides.** The seat takes the rider's size alone (the saddle pose carries the ride's
+    mirror). A dummy ride's root is the rider's transform less its mirror, since the ride's own
+    skeleton carries one: `BodyMirror.unmirrored`, in `MonsterRide.place` and the slope tilt's copy.
+- **Seal effects on both hands (READ).** `CObjCharacter::FUN_00a60a90` calls `FUN_00a5f3e0` at
+  0xa60bde and 0xa60bff, once each for the visual record's +4 and +8. Those are the `_r` and `_l`
+  models of a dual axe or dagger (`FUN_00a5f4f0`: TypeID4 9 or 13; a plain model and 0 otherwise).
+  Each call puts the glow and every particle row on its own part. A 0 part does nothing.
+  - Ours put each row on the first model with the bone (`_bone_host`), so the left axe and dagger
+    went bare. `EquipGlow.bone_hosts` now gives one host per model, in `EquipGlow.apply` and the far
+    recipe (`_far_fx_row`).
+  - A ghost's host id gains the model, since the two models carry the same rows on the same bone
+    index.
+  - This closes weapon_glow.md's OPEN 4. Other weapons have one model, so spears, glaives and
+    two-handed staves are unchanged, as the user expected.
+- **Live** (`/var/tmp/r828/qa828.sh`, no server, the Jangan spawn, four sides):
+  - **The two-handed sword:** seen from behind, it is in the right hand.
+  - **Pain's own kit (prod's character 12):** body 14878, the degree-11 Nova set +12, and from the
+    bag the Nova axe, dagger, two-handed sword, and sword with shield, all +12.
+  - **Dual weapons:** `QA EQUIPFX` logs the axes' three `eternity_11_nova_bow` rows and the +8
+    `system_enchantbow_a_01` 28 times each, on two hosts. The dagger's `eternity_11_nova` rows do the
+    same. One-model weapons log 14, one host.
+  - **Shield:** the shield is on the left arm, seen from behind.
+- **The far path, drawn both ways (MEASURED, `tools/crowd_gpu_probe.gd --mode=pixels`, Forward+,
+  1280 x 720; its bodies mirrored as the world's).** 8 Figures with kits, both races and sexes, the
+  weapon and shield at +13: 8 of 8 drawn far, `refused={}`. Near against far (`frame_ab.py`) gives
+  d2 = 0.00000, dmax 5 at t = 0.37 and dmax 2 at t = 1.13. The far bodies draw solid, not inside out.
+- **Perf gate** (`--base 5a4e52e1 --head 60681194 --sites jangan,cross --frames 60000`, 3 runs, exit 0):
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.87 / 0.87 SAME | 9995 / 8610 FASTER (the base's first run, 9995 against 8685 and 8650) | 2760 / 2753 SAME | 3 / 5 SAME |
+  | cross | 1.01 / 1.01 SAME | 9351 / 9327 SAME | 2767 / 2766 SAME | 4 / 4 SAME |
+
+- **Not checked (OPEN):** an effect placed in world space with only the caster's heading (not hung
+  from a bone or the body's basis) is still drawn from the raw left-handed file, so a chiral one (a
+  spiral's turn) may spin the other way. Bone-hung effects and BsrEffects follow the body's mirror now.
+- **Tests.** `crowd_gpu_test` (bodies mirrored as the world's; `mirrored_cull`; F9 now refuses an
+  unmirrored body), `item_glow_seal786_test` (`bone_hosts`: two models, one, none), and the ride,
+  rarity-scale and ghost-plate checks with signed scales. 361 suites, 0 failing.
+
 ## Eight-hundred-and-twenty-seventh round: the hotbar's selection frame fades out over 4 seconds
 
 The user reported that the gold frame on the last used quick slot fades. Round 826 had read the call

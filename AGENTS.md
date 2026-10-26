@@ -157,6 +157,12 @@ Do not re-derive or contradict these without new evidence; each is recorded with
   loader (`MapLoader::FUN_0042b8b0` -> `FUN_0043cda0`, a row-vector Y rotation) and measured
   against the navmesh's linked edges (round 506). The positive yaw had every shop in Jangan facing
   away from its street, and a picture of a straight wall "confirmed" it.
+- **Bodies carry their own mirror: `BodyMirror.apply` (skeleton x negated) where a body enters the
+  world** (round 828). The readers keep the files' left-handed coordinates; round 61's z -> -z is on
+  the terrain group only, and a body outside it drawn raw is its own mirror image (its `Bip01 R Hand`
+  on its left, every weapon in the wrong hand). The PI turn that faces it forward does not undo
+  that. Screens with a `D3DSpace` node (paper doll, portrait, select, create) mirror themselves.
+  Read a body's size with `absf`: a mirrored basis's `get_scale()` is negative.
 - **`.o2` list 2** is a region's own objects; the other lists cross-reference objects belonging
   elsewhere, and drawing them duplicates region-straddling structures.
 - **Jangan**: town is region 97/168 (square and dragon at local ~1002, 917), palace is 98/168

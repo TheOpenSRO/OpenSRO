@@ -101,6 +101,8 @@ func _build_row(count: int, action: String) -> void:
 				holder.position = Vector3(float(i) * 14.0, 0.0, 0.0)
 				holder.rotation.y = 0.35 * float(i)
 				skel.rotation.y = PI
+				# Round 828: mirrored as the world puts bodies in (BodyMirror).
+				BodyMirror.apply(skel)
 				holder.add_child(skel)
 				_world.add_child(holder)
 				# What MonsterCrowd.CullCache does for another player's skeleton:

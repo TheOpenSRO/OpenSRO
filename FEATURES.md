@@ -195,7 +195,7 @@ Retail items with real stats, blues, alchemy and potions.
 | Magic options (blues) | ✅ Supported | Drop with blues, apply when worn, shown in tooltips |
 | Sockets | ❌ Not yet | No socket system yet |
 | Seal of Star/Moon/Sun/Nova items | ✅ Supported | Seal items usable; retail seal edge drawn on icons |
-| Seal effects | ✅ Supported | Each seal piece shows its own Seal of Star/Moon/Sun/Nova effects, on you and others |
+| Seal effects | ✅ Supported | Each seal piece shows its own Seal of Star/Moon/Sun/Nova effects, on you and others; dual axes and daggers show them on both hands |
 | Plus glows | ✅ Supported | Weapons and shields glow by plus (+3, then +5 to +14); +8 sparkle; armour never glows, as retail |
 | HP/MP potions and vigors | ✅ Supported | Retail recovery amounts and reuse locks |
 | Cure pills | ✅ Supported | Universal and purification pills cure statuses |
@@ -323,7 +323,7 @@ Retail models, particles and lighting re-created in Godot.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Character models | ✅ Supported | Retail bodies dressed from the item table's models |
+| Character models | ✅ Supported | Retail bodies dressed from the item table's models, drawn the right way round: weapons in the right hand, shields and bows on the left, as retail |
 | Equipment visuals | ✅ Supported | Worn weapons and armour drawn on every character |
 | Particle effects (EFP) | ✅ Supported | Retail particle effects for skill casts, projectiles, hits and level-up |
 | Effects stay on moving bodies | ✅ Supported | Effects follow their holder at any frame rate |

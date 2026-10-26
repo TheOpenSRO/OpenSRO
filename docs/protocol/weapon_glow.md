@@ -475,9 +475,13 @@ particle loader is called with first (READ, §1).
    reader fills with OptLevel + the advanced elixir (c:0x8bb070), a u8. Others: `0x3038`'s byte. The
    server's `0x3038` value is lane B's.
 3. **`0x3015` per-item OptLevel**: closed in round 735 (§5): u32 RefItemID + u8 effective plus per equipment item, `0x9de2f0`.
-4. **The two compound parts** that `FUN_00a60a90` passes: still OPEN. OpenSRO glows every mesh of the
-   item (both `_l`/`_r` models of a dual weapon) and puts each particle row on the first item skeleton
-   carrying its bone.
+4. **The two compound parts** that `FUN_00a60a90` passes: READ (round 828). They are the visual
+   record's +4 and +8 (`FUN_00a604f0` copies the record `FUN_00a5f4f0` builds): the `_r` and the `_l`
+   model of a dual axe or dagger (TypeID4 9 or 13), the plain model and 0 for anything else.
+   `FUN_00a5f3e0` runs once for each (0xa60bde, 0xa60bff) and does nothing for a 0 part, so each model
+   of a dual weapon takes the glow AND every particle row. OpenSRO glows every mesh of the item and,
+   from round 828, puts each particle row on every model's skeleton that has the bone
+   (`EquipGlow.bone_hosts`); before, the first only, which left the left axe and dagger bare.
 5. **The particle attach: READ (round 734).** `CRTModParticle::FUN_00c816c0`: the first string
    (+0x10) is the efp (assigned with `FUN_00425bf0`), the second (+0x2c) the bone, compared with
    "none"; an unknown bone returns 0 and the mod is freed. The `1` goes to +0xb4 and becomes
