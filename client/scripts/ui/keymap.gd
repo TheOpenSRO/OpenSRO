@@ -14,9 +14,10 @@ class_name KeyMap
 ## label is the option window's own label for the slot (`0x5fb9e0`, which
 ## writes one label per row; `0x5f68e0` copies the 33 live keys into row i,
 ## so row i is slot i). The retail option window rebinds these rows and
-## saves them to `Setting\SROptionSet.dat` (`0x5f7ce0`); this client has no
-## such window yet (docs/UI_TODO.md), so the keys are the defaults. A
-## rebinding window changes `key` and nothing else: a slot's action, like
+## saves them to `Setting\SROptionSet.dat` (`0x5f7ce0`). Round 833 built that
+## window's Key Map tab (OptionKeyPage): `key` below is the slot's DEFAULT,
+## and key_of_slot the live one (saved in ClientSettings, not the retail
+## file). A rebinding changes the key and nothing else: a slot's action, like
 ## its retail command, does not move with the key.
 ##
 ## Each slot's `state`:
@@ -190,21 +191,79 @@ const NOT_BOUND := ["Down", "F12"]
 
 static var _by_key: Dictionary = {}
 
-## The slot a key is bound to by default, or null. Keys are Godot keycodes
-## (the retail table follows the key's scan code, 0xba62d0; that bindings
-## follow key position is inferred and not copied here).
+## Round 833: the live keys, slot -> keycode, where they differ from SLOTS'
+## defaults -- the Option window's Key Map tab rebinds a slot's key and
+## nothing else (its action and command stay, as 0x778310's do). Saved in
+## ClientSettings (SECTION_KEYMAP, all 33 keys in slot order); loaded once
+## by load_saved().
+static var _bound: Dictionary = {}
+static var _loaded := false
+## Round 833: while the Option window's Key Map tab waits for a key, the
+## callable that takes it (keycode -> bool, true when it took the key);
+## KeyInput asks it before anything else.
+static var capture: Callable = Callable()
+
+## The key a slot answers to now (KEY_NONE when it has none).
+static func key_of_slot(slot: int) -> int:
+	_ensure_loaded()
+	if _bound.has(slot):
+		return int(_bound[slot])
+	return int(SLOTS[slot]["key"]) if slot >= 0 and slot < SLOTS.size() else KEY_NONE
+
+## The 33 default keys, in slot order (0x7778b0's dwords).
+static func default_keys() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for slot in SLOTS:
+		out.append(int(slot["key"]))
+	return out
+
+## The 33 live keys, in slot order.
+static func live_keys() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for i in SLOTS.size():
+		out.append(key_of_slot(i))
+	return out
+
+## Puts `keys` (33, slot order) in force, and saves them when `save`.
+static func set_keys(keys: PackedInt32Array, save: bool = true) -> void:
+	_loaded = true
+	_bound.clear()
+	for i in mini(keys.size(), SLOTS.size()):
+		if int(keys[i]) != int(SLOTS[i]["key"]):
+			_bound[i] = int(keys[i])
+	_by_key.clear()
+	if save:
+		ClientSettings.set_value(ClientSettings.SECTION_KEYMAP, ClientSettings.KEY_KEYMAP_SLOTS, Array(keys))
+
+static func _ensure_loaded() -> void:
+	if _loaded:
+		return
+	_loaded = true
+	var saved = ClientSettings.get_value(ClientSettings.SECTION_KEYMAP, ClientSettings.KEY_KEYMAP_SLOTS, null)
+	if saved is Array and (saved as Array).size() == SLOTS.size():
+		set_keys(PackedInt32Array(saved), false)
+
+## Back to the defaults in memory only (tests).
+static func reset_to_defaults_unsaved() -> void:
+	set_keys(default_keys(), false)
+
+## The slot a key is bound to now, or null. Keys are Godot keycodes (the
+## retail table follows the key's scan code, 0xba62d0; that bindings follow
+## key position is inferred and not copied here).
 static func slot_for_key(keycode: int) -> Variant:
+	_ensure_loaded()
 	if _by_key.is_empty():
 		for slot in SLOTS:
-			if int(slot["key"]) != KEY_NONE:
-				_by_key[int(slot["key"])] = slot
+			var k := key_of_slot(int(slot["slot"]))
+			if k != KEY_NONE:
+				_by_key[k] = slot
 	return _by_key.get(keycode)
 
-## The key bound to an action (e.g. "panel:skill"), or KEY_NONE.
+## The key bound to an action (e.g. "panel:skill") now, or KEY_NONE.
 static func key_for(action: String) -> int:
 	for slot in SLOTS:
 		if slot["action"] == action:
-			return int(slot["key"])
+			return key_of_slot(int(slot["slot"]))
 	return KEY_NONE
 
 ## The slot whose action is `action`, or null.

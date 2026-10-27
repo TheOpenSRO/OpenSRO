@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.592** plus what is merged on `dev`; updated 2026-10-26.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.593** plus what is merged on `dev`; updated 2026-10-26.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -309,13 +309,14 @@ Retail windows rebuilt from the game's own layout files.
 | Quest window | 🟡 Partial | Quest list and objectives; counts and timers partly missing |
 | System message window and banners | ✅ Supported | System messages, notice banners and area names |
 | Action window | ✅ Supported | Sit, walk/run, emotes, auto attack, trace, exchange, party, auto grab |
-| Right-click player menu | ✅ Supported | Whisper, Exchange, Add friend, Invite party and Trace, as the original; switched on by "Activate action short cut" (Option > Extra for now) |
+| Right-click player menu | ✅ Supported | Whisper, Exchange, Add friend, Invite party and Trace, as the original; switched on by "Activate action short cut" (Option > Extra Settings for now) |
 | NPC talk and message boxes | 🟡 Partial | Retail talk box; some dialogs not yet retail layouts |
 | Option window: Video | ✅ Supported | Retail rows, presets, brightness, sight range |
 | Option window: Audio | ✅ Supported | Volume sliders |
-| Option window: Input and Game tabs | ❌ Not yet | Drawn but not wired |
-| Option window: Extra | ✅ Supported | OpenSRO add-ons, switched by a check mark: a Ping / FPS box you can drag anywhere (a private-server feature); also holds the original's "Activate action short cut" until the Game tab is built |
-| Keybinds | 🟡 Partial | Retail default key table; no rebinding |
+| Option window: Key Map | ✅ Supported | The original's tab: click a row and press a key to rebind it (a key already in use is taken from its old row, as the original does), the two mouse layouts (shortcut on the wheel or on the right button), Default and Apply |
+| Option window: Setting (Game) tab | ❌ Not yet | Drawn but not wired |
+| Option window: Extra Settings | ✅ Supported | OpenSRO add-ons, switched by a check mark: a Ping / FPS box you can drag anywhere (a private-server feature); also holds the original's "Activate action short cut" until the Game tab is built |
+| Keybinds | ✅ Supported | The original's 33 rebindable keys, saved per PC; the rest of the retail key table (F1-F4 pages, digits, Space/Ctrl chords) is fixed, as in the original |
 | Escape menu and Help window | ✅ Supported | Option, Help, Restart, Exit; in-client help |
 | Game cursors | ✅ Supported | Retail cursors read from your own sro_client.exe |
 | Debug panel and tester console | ✅ Supported | Shift+F3 panel and /help chat commands for bug reports |

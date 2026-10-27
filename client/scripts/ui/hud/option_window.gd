@@ -80,7 +80,7 @@ const ID_PANE_GAME := 149
 const ID_GAME_FRAME := 104
 const GAME_SLOT_CLASS := "CNIFGameOptionSlot"
 const TAB_STEP := 125.0
-const EXTRA_TAB_TEXT := "Extra"
+const EXTRA_TAB_TEXT := "Extra Settings"
 ## The Extra rows, in slot order (left column first): [settings key, label
 ## text or text id]. The ping counter is OURS; the action short cut is
 ## retail's Game-tab option (ClientSettings.KEY_ACTION_SHORTCUT), here until
@@ -124,6 +124,8 @@ var _stored := false
 var _dragging_row := -1
 ## The Video tab (round 694).
 var video: OptionVideoPage
+## The Key Map tab (round 833).
+var keymap_page: OptionKeyPage
 ## Round 832: the Extra tab's values being edited, and its check boxes.
 var _extra_edit := {}
 var _extra_boxes := {}
@@ -134,6 +136,9 @@ signal applied(options: AudioOptions)
 signal video_applied(options: VideoOptions)
 ## Round 832: the Extra tab's values on Apply / Confirm, {key: bool}.
 signal extra_applied(values: Dictionary)
+## Round 833: the mouse mode (GI+0x4f9) put in force -- by the Key Map tab's
+## Apply / Confirm, or at once by its Default (0x5fcda0, READ).
+signal mouse_mode_changed(mode: int)
 
 func _init(builder: UiBuilder = null) -> void:
 	super._init()
@@ -172,6 +177,9 @@ func build_option() -> bool:
 	var win := get_window() if is_inside_tree() else null
 	var screen := DisplayServer.screen_get_size() if DisplayServer.get_name() != "headless" else Vector2i.ZERO
 	video.build(VideoOptions.in_force(), ClientSettings.camera_view(), screen, win.size if win != null else Vector2i.ZERO)
+	keymap_page = OptionKeyPage.new(_builder, panel_root)
+	keymap_page.build(KeyMap.live_keys(), ClientSettings.mouse_mode())
+	KeyMap.capture = _capture_key
 	_build_extra_tab()
 	_wire_buttons()
 	_settle()
@@ -427,6 +435,13 @@ func current_tab() -> int:
 ## 0x5fda90: the checked tab's defaults; on the audio tab 0x5f6660, on the
 ## video tab 0x5fc340 (OptionVideoPage.press_default).
 func press_default() -> void:
+	if current_tab() == ID_TAB_INPUT and keymap_page != null:
+		# 0x5fcda0: the rows to the defaults (in force on Apply), radio 110,
+		# and mode 0 in force at once.
+		keymap_page.press_default()
+		ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_MOUSE_MODE, 0)
+		mouse_mode_changed.emit(0)
+		return
 	if current_tab() == ID_TAB_EXTRA:
 		# OURS: every add-on off; the action short cut's Default is off too
 		# (READ, 0x5fce10).
@@ -460,11 +475,38 @@ func press_apply() -> void:
 	if video != null and video.edit != null:
 		video_applied.emit(video.store())
 	store_extra()
+	# Round 833: Apply stores the current tab (0x5fe670's table, READ); the
+	# Key Map tab's keys and mouse mode only from that tab, or on Confirm.
+	if current_tab() == ID_TAB_INPUT:
+		store_keys()
 
 ## Confirm: store, then close.
 func press_confirm() -> void:
 	press_apply()
+	# 0x5fe5a0 stores every tab, the Key Map's included (0x5f6970).
+	if current_tab() != ID_TAB_INPUT:
+		store_keys()
 	_on_close_pressed()
+
+## 0x5f6970: the radios' mode into GI+0x4f9 and the rows' keys into the live
+## table, then saved (0x5f7ce0).
+func store_keys() -> void:
+	if keymap_page == null or keymap_page.keys.size() != KeyMap.SLOTS.size():
+		return
+	KeyMap.set_keys(keymap_page.keys)
+	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_MOUSE_MODE, keymap_page.mouse_mode)
+	mouse_mode_changed.emit(keymap_page.mouse_mode)
+
+## KeyMap.capture while this window lives: a key-down for the Key Map tab's
+## selected row (0x5fb460 answers only while +0x798 is that tab, READ).
+func _capture_key(keycode: int) -> bool:
+	if keymap_page == null or not is_visible_in_tree() or current_tab() != ID_TAB_INPUT:
+		return false
+	keymap_page.tab_shown = true
+	if not keymap_page.wants_key(keycode):
+		return false
+	keymap_page.take_key(keycode)
+	return true
 
 ## Cancel: close without storing.
 func press_cancel() -> void:
@@ -496,6 +538,8 @@ func _notification(what: int) -> void:
 		if vp != null and not vp.size_changed.is_connected(_on_view_resized):
 			vp.size_changed.connect(_on_view_resized)
 	elif what == NOTIFICATION_EXIT_TREE:
+		if KeyMap.capture == Callable(self, "_capture_key"):
+			KeyMap.capture = Callable()
 		var vp := get_viewport()
 		if vp != null and vp.size_changed.is_connected(_on_view_resized):
 			vp.size_changed.disconnect(_on_view_resized)

@@ -69,6 +69,10 @@ const KEY_PING_FPS_POS := "ping_fps_position"
 ## Default is off (READ, 0x5fce10); shown on the Extra tab until the Game tab
 ## is built.
 const SECTION_GAME := "game"
+## Round 833: the Key Map tab's keys (KeyMap.set_keys): 33 Godot keycodes in
+## slot order.
+const SECTION_KEYMAP := "keymap"
+const KEY_KEYMAP_SLOTS := "slots"
 const KEY_ACTION_SHORTCUT := "action_short_cut"
 
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:
@@ -88,6 +92,13 @@ static func set_value(section: String, key: String, value: Variant) -> bool:
 
 static func ping_fps_shown() -> bool:
 	return bool(get_value(SECTION_EXTRA, KEY_PING_FPS, false))
+
+## Round 833: GI+0x4f9, the Key Map tab's mouse mode (0 or 1; READ, it starts
+## at 0).
+const KEY_MOUSE_MODE := "mouse_mode"
+
+static func mouse_mode() -> int:
+	return clampi(int(get_value(SECTION_UI, KEY_MOUSE_MODE, 0)), 0, 1)
 
 static func action_shortcut() -> bool:
 	return bool(get_value(SECTION_GAME, KEY_ACTION_SHORTCUT, false))

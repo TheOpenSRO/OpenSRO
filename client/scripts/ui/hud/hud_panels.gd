@@ -732,6 +732,8 @@ signal system_option_requested
 signal video_options_applied(options: VideoOptions)
 ## Round 832: the Option window's Extra tab on Apply / Confirm.
 signal extra_options_applied(values: Dictionary)
+## Round 833: the Key Map tab's mouse mode put in force.
+signal mouse_mode_changed(mode: int)
 signal system_restart_requested
 signal system_exit_requested
 signal system_help_requested
@@ -1155,6 +1157,7 @@ func toggle_option() -> OptionWindow:
 	window.closed.connect(close_option)
 	window.video_applied.connect(func(o: VideoOptions) -> void: video_options_applied.emit(o))
 	window.extra_applied.connect(func(v: Dictionary) -> void: extra_options_applied.emit(v))
+	window.mouse_mode_changed.connect(func(m: int) -> void: mouse_mode_changed.emit(m))
 	_option = window
 	window.show()
 	window.place_centred()

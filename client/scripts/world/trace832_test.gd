@@ -108,7 +108,7 @@ func _archive() -> void:
 		and extra.position.y == game.position.y and extra.size == game.size,
 		"the Extra tab: the Game tab's button one step (125) to the right")
 	var label := extra.get_node_or_null(TwoDtBuilder.TEXT_NODE) as Label if extra != null else null
-	_check(label != null and label.text == "Extra", "labelled Extra")
+	_check(label != null and label.text == "Extra Settings", "labelled Extra Settings (the user's reference)")
 	var pane := win.control([OptionWindow.ID_PANE_EXTRA])
 	_check(pane != null and not pane.visible, "its pane starts hidden")
 	if extra != null and pane != null:

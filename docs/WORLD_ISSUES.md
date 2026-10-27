@@ -7483,6 +7483,73 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-third round: the Option window's Key Map tab
+
+The user asked for key mapping in the settings, from a picture of the Option window's Key Map tab
+(a private server's client: its fifth tab reads "Extra Settings", so ours does now too).
+
+**Read (sro_client.exe; a fork's reading, addresses in `ui/hud/option_key_page.gd` and `ui/key_names.gd`).**
+- **The page.** Pane 109 holds:
+  - radios 110 / 111 with labels 189 / 190;
+  - fourteen CNIFKeyOptionSlot rows (two a line), each a key box 211 and a label 212;
+  - scroll bar 20, over lines 0..10;
+  - "Custom shortcut", a lone tab with no pane.
+  Row i is key slot i, and line L shows rows 2L and 2L + 1.
+- **Rebinding.**
+  - A left press on a row selects it, and its key box shows `opt_key_select.ddj`.
+  - The next key-down the row takes (0x5fb460's table: no digits, F1-F12, arrows, Esc, numpad,
+    NumLock / ScrollLock, PrintScreen or Pause) unbinds any other row holding that key -- no
+    swap, no message -- and is the row's.
+  - The row stays selected for the next key until another row is pressed.
+  - Esc is refused; its WM_CHAR closes the window.
+  - The box text is 0x6ed9e0's switch ("Tab", "C/L", "Space", "PgUp", "F1".., the OEM signs, else
+    the VK's character).
+- **The mouse radios** are GI+0x4f9:
+  - mode 0 (default): the middle button fires the mouse quick slot and the right button turns the
+    camera;
+  - mode 1: the other way round (CGInterface::vslot_017 0x77c260).
+- **Default** (0x5fcda0): mode 0 at once, the rows back to the defaults.
+- **Apply / Confirm.** Apply stores the current tab only (0x5fe670); Confirm stores every tab.
+- **The checked tab's caption** is semi-bold (0x47a950: flag 2, lfWeight 600) -- in every window.
+
+**Built.**
+- **KeyMap:** live keys over the defaults (`key_of_slot`, `set_keys`, saved in ClientSettings
+  `keymap/slots`). Every key path already asked KeyMap, so a rebinding reaches all of them.
+- **`OptionKeyPage`:** the tab, over the file's controls; the scroll bar is the Video tab's.
+- **`KeyNames`:** the accept table and the names, on VK codes, with a Godot-keycode map.
+- **Capture:** KeyInput hands a key to the page first (`KeyMap.capture`) while the tab is up and a
+  row is selected (OURS: such a key is not also run by the game; whether the original's dispatcher
+  sees it is OPEN).
+- **Mouse mode:** World3D and the hotbar's body follow the mode (`set_mouse_mode`). The target
+  menu opens on the camera's button, as the original's WM_MBUTTONUP path does in mode 1.
+- **Checked tab caption:** semi-bold via HudNotice's weight-600 path (the face's bold file, or the
+  glyph again one pixel right).
+
+**Departures, disclosed.**
+- Alt is refused: it arrives as WM_SYSKEYDOWN, which the window does not take (INFERRED, so the
+  original never binds it although its table would).
+- The keys are saved per PC in ClientSettings, not in `SROptionSet.dat`.
+- Slots 25-28 and 31-32 can be bound now, but their features are still not built.
+- The reference picture's scroll bar is longer than the file's record (198 px); ours keeps the
+  record.
+
+**Tests.**
+- `option_key_page_test` covers, on the real Media.pk2:
+  - the accept table and names;
+  - live keys;
+  - the mode-1 camera drag;
+  - the fourteen rows and their text;
+  - select, take, unbind the other row, refuse a digit, leave Esc;
+  - the end of the scroll;
+  - nothing in force before Apply, no capture on another tab;
+  - Apply (keys and mode), Default (mode at once, keys not);
+  - the semi-bold caption.
+- The full run: 367 client suites, 0 failing.
+- Live render: the tab against the user's picture (rows, radios, header tab, the selected row's
+  box, the bold caption).
+- Perf gate (`--frames 60000`, base 0a9dffcc): every number SAME (jangan 0.86 / 0.86 ms a frame,
+  reeds 0.85 / 0.85, cross 1.02 / 1.02). Client only: no server change, no prod restart.
+
 ## Eight-hundred-and-thirty-second round: Trace, the right-click target menu, and the Option window's Extra tab
 
 The user asked for trace "exactly how the original game has it", then for an Extra tab under

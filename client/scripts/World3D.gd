@@ -911,7 +911,30 @@ func _camera_wheel(notches: float) -> void:
 const MOVE_TARGET_STOP_DISTANCE := 0.3 * PLAYER_SCALE_RATIO
 
 var _camera_orbiting := false
+## The camera's button is held (the right one; the middle in mouse mode 1).
 var _right_button_held := false
+## Round 833: GI+0x4f9, the Key Map tab's mouse mode (READ, OptionKeyPage):
+## 0 "Wheel [use shortcut], Right Button [change view]", 1 the other way.
+var _mouse_mode := ClientSettings.mouse_mode()
+
+## The button that turns the camera and opens the target menu.
+func _orbit_button() -> int:
+	return MOUSE_BUTTON_MIDDLE if _mouse_mode == 1 else MOUSE_BUTTON_RIGHT
+
+## The button that fires the mouse quick slot over the world.
+func _mouse_slot_button() -> int:
+	return MOUSE_BUTTON_RIGHT if _mouse_mode == 1 else MOUSE_BUTTON_MIDDLE
+
+## The mode in force (the Key Map tab's Apply / Confirm / Default).
+func set_mouse_mode(mode: int) -> void:
+	_mouse_mode = clampi(mode, 0, 1)
+	_right_button_held = false
+	_camera_orbiting = false
+	_target_menu_armed = false
+	if _hud_underbar != null:
+		_hud_underbar.mouse_slot_button = _mouse_slot_button()
+	print("World3D: mouse mode %d (camera on the %s button, the mouse slot on the %s)" % [_mouse_mode,
+		"middle" if _mouse_mode == 1 else "right", "right" if _mouse_mode == 1 else "middle"])
 ## Whether the left button is down over the world (retail's input byte +0x258,
 ## set by WM_LBUTTONDOWN and cleared by WM_LBUTTONUP in 0xba7240). Nothing in
 ## the walk reads it: a press is one click and holding it does nothing more
@@ -2549,6 +2572,7 @@ func _try_initialize_pk2_ui() -> void:
 	# res_ui\nifundermenubar.2dt (HudUnderbar has the reading).
 	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_underbar.name = "HudUnderbar"
+	_hud_underbar.mouse_slot_button = _mouse_slot_button()
 	ui_control.add_child(_hud_underbar)
 	# Round 829: the worn-out gear figure (CEquipStateImg) at (width - 200, 74).
 	_equip_state_img = EquipStateImg.new()
@@ -2806,6 +2830,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.video_options_applied.connect(_on_video_options_applied)
 	# Round 832: the Extra tab (OURS add-ons and the action short cut).
 	_hud_panels.extra_options_applied.connect(_on_extra_options_applied)
+	# Round 833: the Key Map tab's mouse mode.
+	_hud_panels.mouse_mode_changed.connect(set_mouse_mode)
 	# Restart is one scene change: NetClient.disconnect_from_server() emits
 	# `disconnected` unconditionally, and _on_disconnected is what takes this
 	# instance to Login -- for a dropped peer, for the Log Out button
@@ -18064,6 +18090,12 @@ func _qa_job_step() -> void:
 			if tab != null:
 				tab.pressed.emit()
 			print("QA TRACE: tick %d option tab %s (%s)" % [_qa_tick, what.substr(11), "pressed" if tab != null else "missing"])
+		elif what.begins_with("key_row:"):
+			# Round 833 (QA only): a press on the Key Map tab's visible slot n.
+			var kow := _hud_panels.option_window() if _hud_panels != null else null
+			if kow != null and kow.keymap_page != null:
+				kow.keymap_page.select_row(kow.keymap_page.row_at_slot(int(what.substr(8))))
+			print("QA TRACE: tick %d key row %s" % [_qa_tick, what.substr(8)])
 		elif what.begins_with("ping_fps:"):
 			_apply_ping_fps_counter(what.substr(9) == "1")
 			print("QA TRACE: tick %d ping/fps box %s" % [_qa_tick, what.substr(9)])
@@ -25690,11 +25722,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	# world; a press over a STOP HUD surface never gets here, and the hotbar
 	# fires it for them (_relay_middle_button_to_hotbar).
 	#
-	# NOT YET REBINDABLE. The client moves it to the right button when its
-	# interface flag +0x4f9 is set from the options; this client has no such
-	# option (docs/PLAYTEST_2026_09_20b.md records the request).
+	# Round 833: the Key Map tab's mouse mode (GI+0x4f9, OptionKeyPage) moves
+	# it to the right button and the camera to the middle one (READ,
+	# CGInterface::vslot_017 0x77c260: WM_MBUTTONDOWN 0x77c4cc fires the slot
+	# in mode 0, WM_RBUTTONDOWN 0x77c67f in mode 1; WM_MOUSEMOVE 0x77c2d5
+	# turns the camera on the right button in mode 0, the middle in mode 1).
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
-			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_MIDDLE \
+			and (event as InputEventMouseButton).button_index == _mouse_slot_button() \
 			and _hud_underbar != null:
 		_hud_underbar.activate_mouse_slot()
 		get_viewport().set_input_as_handled()
@@ -25704,7 +25738,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hover_reached_world = true
 
 	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.button_index == _orbit_button():
+			# The camera's button (the right one, or the middle in mouse mode
+			# 1; the target menu follows it, WM_MBUTTONUP in mode 1, READ).
 			_right_button_held = event.pressed
 			_target_menu_right_button(event.pressed, event.position)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
@@ -25786,10 +25822,11 @@ static func wheel_over_window(hovered: Control) -> bool:
 ## Static so the suite can drive it without a running world. Every view takes
 ## the drag since round 778 (the third-person view turns its pitch; READ,
 ## RetailCamera's view note); _input decides which angle each view turns.
-static func orbit_motion_applies(event: InputEvent, orbiting: bool, _view: String) -> bool:
+static func orbit_motion_applies(event: InputEvent, orbiting: bool, _view: String,
+		mask: int = MOUSE_BUTTON_MASK_RIGHT) -> bool:
 	if not orbiting or not (event is InputEventMouseMotion):
 		return false
-	return ((event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_RIGHT) != 0
+	return ((event as InputEventMouseMotion).button_mask & mask) != 0
 
 ## Real Silkroad-style click-to-move: raycasts from the camera through the
 ## real clicked screen position into the 3D world (real terrain/object
@@ -25846,7 +25883,8 @@ func _input(event: InputEvent) -> void:
 	# The orbit turns the camera here, before the GUI can consume the motion
 	# (orbit_motion_applies has why). The event is not marked handled: the
 	# control under the cursor still sees it, as before.
-	if orbit_motion_applies(event, _camera_orbiting, _camera_view):
+	if orbit_motion_applies(event, _camera_orbiting, _camera_view,
+			MOUSE_BUTTON_MASK_MIDDLE if _mouse_mode == 1 else MOUSE_BUTTON_MASK_RIGHT):
 		# READ (round 778, RetailCamera): the pitch turns unless the view is
 		# the quarter view, the yaw unless it is the third-person one (whose
 		# yaw the heading sets every frame).

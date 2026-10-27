@@ -422,7 +422,7 @@ func _register_slot(index: int, node: Control) -> void:
 		elif mb.button_index == MOUSE_BUTTON_LEFT and inside and HeldIcon.is_pick_click(mb) and slot_has_item(index) \
 				and not bool(node.get_meta(PICK_LOCK_META, false)):
 			quickslot_pick_requested.emit(index)
-		elif mb.pressed and mb.button_index == MOUSE_BUTTON_MIDDLE:
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_MIDDLE and mouse_slot_button == MOUSE_BUTTON_MIDDLE:
 			activate_mouse_slot())
 
 func _apply_hover_strings() -> void:
@@ -675,13 +675,19 @@ static func _set_shown(node: Control, shown: bool) -> void:
 ## World3D's other STOP surfaces -- the minimap, the player-info block and the
 ## target window -- share this one path (round 531). Connected once, however
 ## often it is asked, so a surface fires once per press.
+## Round 833: the button that fires the "m" slot on the bar's body and the
+## relayed surfaces -- the middle one, or the right one in mouse mode 1 (the
+## Key Map tab, World3D.set_mouse_mode). A slot's own right button stays its
+## use.
+var mouse_slot_button := MOUSE_BUTTON_MIDDLE
+
 func relay_middle_button(surface: Control) -> void:
 	if surface == null or surface.gui_input.is_connected(_on_body_gui_input):
 		return
 	surface.gui_input.connect(_on_body_gui_input)
 
 func _on_body_gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE:
+	if event is InputEventMouseButton and event.pressed and event.button_index == mouse_slot_button:
 		activate_mouse_slot()
 
 # --- the readouts (CNIFUnderMenuBar::vslot_012, 0x60b440) -------------------

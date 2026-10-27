@@ -541,7 +541,8 @@ largest interface directory — so the art is all there. Landmark names come fro
 where a position lands on it, is now recovered** — see the end of this file and
 `docs/protocol/WORLDMAP_FORMAT.md`.
 
-### 7. The key-rebinding rows of the option window (round 608: the table is built, the window is not)
+### 7. ~~The key-rebinding rows of the option window~~ -- **done in round 833** (the Key Map tab, `OptionKeyPage`; WORLD_ISSUES has the reading). Left: the features of slots 25-28 and 31-32 (their keys can be bound, their actions are not built), and the scroll bar's length (the reference picture's is longer than the record's 198 px)
+(round 608's text follows)
 The keyboard is the retail client's own 33-slot key table since round 608, in one place:
 `client/scripts/ui/keymap.gd` (`KeyMap.SLOTS`, slot i = the option window's row i). The retail
 option window lists the 33 rows ("ShortCut" / "Custom shortcut", row builder `0x5fb9e0`, labels at

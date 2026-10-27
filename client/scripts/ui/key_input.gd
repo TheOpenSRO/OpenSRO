@@ -138,6 +138,11 @@ func _input(event: InputEvent) -> void:
 	if not key.pressed:
 		_on_release(key)
 		return
+	# Round 833: a key the Option window's Key Map tab takes for its selected
+	# row goes to that row, not to the game (OptionKeyPage).
+	if KeyMap.capture.is_valid() and bool(KeyMap.capture.call(key_code_of(key))):
+		get_viewport().set_input_as_handled()
+		return
 	if key_code_of(key) == KEY_SPACE:
 		# Alt+Space is the OS's window menu (KeyMap.is_os_combination).
 		if not _typing() and not KeyMap.is_os_combination(KEY_SPACE, key.alt_pressed):

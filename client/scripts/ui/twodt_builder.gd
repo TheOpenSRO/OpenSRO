@@ -405,12 +405,48 @@ static func set_tab_checked(tab: Control, checked: bool) -> void:
 	var art_key := META_TAB_ON if checked else META_TAB_OFF
 	if btn != null and tab.has_meta(art_key):
 		btn.texture_normal = tab.get_meta(art_key)
+	_caption_weight(tab, checked)
 	var pane_id := int(tab.get_meta(META_TAB_PANE, TwoDtReader.NO_PANE))
 	if pane_id == TwoDtReader.NO_PANE:
 		return
 	var pane := child(tab.get_parent(), pane_id)
 	if pane != null:
 		pane.visible = checked
+
+## Round 833: a checked tab's caption is semi-bold (READ: the look 0x47a950
+## ORs flag 2 into the caption's state-0 flags, 0x4774f0(0, 2), and clears it
+## unchecked, 0x477690(0, 2); flag 2 picks the font's style 2 (0x476350),
+## which 0xbaa110 builds with lfWeight 600; the colour stays the record's).
+## Drawn as the notice banner draws weight 600 (HudNotice): the face's own
+## weight-600 file when the system has one, else each glyph again one pixel
+## to the right with its advance one pixel wider.
+const META_CAPTION_FONT := "twodt_caption_font"
+
+static func _caption_weight(tab: Control, checked: bool) -> void:
+	var label := tab.get_node_or_null(TEXT_NODE) as Label
+	if label == null:
+		return
+	if not label.has_meta(META_CAPTION_FONT):
+		label.set_meta(META_CAPTION_FONT, label.get_theme_font("font"))
+	var base := label.get_meta(META_CAPTION_FONT) as Font
+	if not checked:
+		label.add_theme_font_override("font", base)
+		label.remove_theme_constant_override("shadow_offset_x")
+		label.remove_theme_constant_override("shadow_offset_y")
+		label.remove_theme_color_override("font_shadow_color")
+		return
+	var bold := HudNotice.bold_file(base)
+	if bold != null:
+		label.add_theme_font_override("font", bold)
+		return
+	var wide := FontVariation.new()
+	wide.base_font = base
+	wide.spacing_glyph = 1
+	label.add_theme_font_override("font", wide)
+	label.add_theme_color_override("font_shadow_color", label.get_theme_color("font_color"))
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 0)
+	label.add_theme_constant_override("shadow_outline_size", 0)
 
 ## A tab click (0x47a240, on the button's release, message 0x202): every tab
 ## of the same group under the same parent is unchecked and its pane hidden,
