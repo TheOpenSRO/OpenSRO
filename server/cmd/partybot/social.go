@@ -27,13 +27,17 @@ var botSocial struct {
 	exchangeGold   int64
 	delay          time.Duration
 	askAfter       time.Duration // -exchange-ask-after: the wait before 0x7081 once in view
+	confirmWhen    string        // -exchange-confirm: first, second or never
+	hold           time.Duration // -exchange-hold: the wait before offering
 
 	mu            sync.Mutex
 	askedFriend   bool
 	askedExchange bool
+	offered       bool // the offer is in; "second" confirms after it
 	confirmed     bool
 	partnerDone   bool
 	approved      bool
+	confirmSent   bool
 }
 
 func socialLog(b *bot, format string, args ...any) {
@@ -85,6 +89,7 @@ var bagSlots = struct {
 
 func (b *bot) offerAndConfirm() {
 	s := &botSocial
+	time.Sleep(s.hold)
 	_ = b.send(session.OpInventoryList, (&session.CharacterNameRequest{Name: b.name}).Encode())
 	time.Sleep(s.delay)
 	for _, f := range strings.Split(s.exchangeSlots, ",") {
@@ -120,9 +125,28 @@ func (b *bot) offerAndConfirm() {
 		socialLog(b, "offers %d gold (0x7034 {0xd})", s.exchangeGold)
 		_ = b.send(session.OpItemMove, binary.LittleEndian.AppendUint64([]byte{session.ItemMoveExchangeGold}, uint64(s.exchangeGold)))
 	}
-	time.Sleep(s.delay)
-	socialLog(b, "confirms (0x7082)")
-	_ = b.send(session.OpExchangeConfirm, nil)
+	s.mu.Lock()
+	s.offered = true
+	s.mu.Unlock()
+	b.maybeConfirm()
+}
+
+// maybeConfirm sends 0x7082 when -exchange-confirm says it is time: first
+// right after the offer, second once the partner's 0x3086 came too.
+func (b *bot) maybeConfirm() {
+	s := &botSocial
+	s.mu.Lock()
+	go1 := s.offered && !s.confirmSent && (s.confirmWhen == "first" || (s.confirmWhen == "second" && s.partnerDone))
+	if go1 {
+		s.confirmSent = true
+	}
+	s.mu.Unlock()
+	if go1 {
+		b.later(func() {
+			socialLog(b, "confirms (0x7082)")
+			_ = b.send(session.OpExchangeConfirm, nil)
+		})
+	}
 }
 
 func (b *bot) maybeApprove() {
@@ -200,6 +224,7 @@ func (b *bot) noteSocial(op uint16, data []byte) {
 		s.mu.Lock()
 		s.partnerDone = true
 		s.mu.Unlock()
+		b.maybeConfirm()
 		b.maybeApprove()
 	case session.OpInventoryListResult:
 		if r, err := session.DecodeInventoryListResult(data); err == nil {

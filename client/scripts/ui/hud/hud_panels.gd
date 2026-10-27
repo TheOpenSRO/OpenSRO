@@ -224,12 +224,22 @@ const REGISTRY_FRAMES := {
 ##   ShowWindow(0)); it is shown only when a member's face is filled in
 ##   (0x6e9f31). GDR_APPRENTICESHIP_LEADER_STATUS (ID 46), at the same rect,
 ##   is never shown or hidden -- only its image changes -- so it stays.
+## - **exchange** (round 834's fix): CIFExchange::Create (0x7b27d0) fetches
+##   GDR_EXCHANGE_USER_NAME (ID 153, `effect\icon\icon_effect1.ddj` at the
+##   opponent grid's rect) into +0x33e0 and hides it at once (0x7b29c0..
+##   0x7b29dd, vslot +0x5c with 0) -- the only control Create hides. Left
+##   shown, its dark blue art covered the opponent's grid from the start.
+##   0x7b2210 shows it again only while 0x81a620 holds for control 14
+##   (+0x7c4): that control's +0x7b0 set and equal to the global at
+##   0x110f608. What sets those is OPEN (exchange.md OPEN 8); it stays
+##   hidden here.
 ##
 ## (The alchemy entry went with the panel it hid a button of: that panel was
 ## ifalchemyprocess.txt, CIFAlchemyProcess inside GDR_ALCHEMYBOX, which the
 ## client never shows; Y opens CNIFEnchantWnd, AlchemyWindow.)
 const HIDDEN_AT_CREATE := {
 	"academy": ["GDR_APPRENTICESHIP_PICTURE"],
+	"exchange": ["GDR_EXCHANGE_USER_NAME"],
 }
 
 func _hide_at_create(panel_id: String, window: HudWindow) -> void:
@@ -3894,6 +3904,13 @@ func exchange_button(key: String, enabled: bool) -> void:
 	if _builder != null:
 		_builder.set_button_text(b, _resolve_ui(key, key))
 	b.disabled = not enabled
+
+## The button's state alone (0x655ec0), its caption kept.
+func exchange_button_enabled(enabled: bool) -> void:
+	var window: HudWindow = _windows.get(ExchangeController.WINDOW)
+	var b := window.node("GDR_EXCHANGE_BUTTON_EXCHANGE") as BaseButton if window != null else null
+	if b != null:
+		b.disabled = not enabled
 
 ## The gold amounts greyed once their side confirmed (+0x36c).
 func exchange_gold_greyed(mine: bool, other: bool) -> void:

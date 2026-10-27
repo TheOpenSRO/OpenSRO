@@ -82,6 +82,9 @@ func _run() -> void:
 	if w == null:
 		return
 	_check(w.size == Vector2(254, 361), "retail's 254 x 361 (got %s)" % str(w.size))
+	var user_name := w.node("GDR_EXCHANGE_USER_NAME") as CanvasItem
+	_check(user_name != null and not user_name.is_visible_in_tree(),
+		"USER_NAME (153, icon_effect1.ddj over the opponent's grid) hidden at Create (c:0x7b29dd)")
 	_check(_label(w.node("GDR_EXCHANGE_OTHER_SUBFRAME")) == "[Pain - Verizon]'s item"
 		and _label(w.node("GDR_EXCHANGE_MY_SUBFRAME")) == "[Sarada - Did not join any guild]'s item",
 		"the headers: opponent on top, own below, 'Did not join any guild' (got '%s' / '%s')" % [
@@ -132,6 +135,27 @@ func _run() -> void:
 	panels.call("exchange_closed", 0x182c)
 	_check(not w.visible and net.sent == ["cancel", "cancel"] and lines.size() == 1 and String(lines[0][0]) == "The trade has been cancelled.",
 		"0x3088 {0x182c}: closed, 0x7084 sent back while in exchange mode, the line (got %s)" % str(lines))
+	# The opponent confirms first (0x7b2670(1) with +0x7bd clear): their grid
+	# blue, ours not, and the button left as it was -- "Confirm", enabled.
+	panels.call("open_exchange", {"id": 5, "name": "Pain", "guild": "", "normal": true}, {"id": 1, "name": "Sarada", "guild": "", "normal": true})
+	await process_frame
+	var my_tint := w.node("GDR_EXCHANGE_LAT_MY").get_child(0).get_node("ExchangeTint") as Control
+	var other_tint := w.node("GDR_EXCHANGE_LAT_OTHER").get_child(0).get_node("ExchangeTint") as Control
+	_check(not my_tint.visible and not other_tint.visible, "a new exchange starts with neither grid blue")
+	net.sent.clear()
+	x.on_offer({"owner": 5, "own": false, "items": [_offered(0, -1, 100, 1)]})
+	x.on_partner_gold(100)
+	x.on_partner_confirmed()
+	_check(other_tint.visible and not my_tint.visible, "0x3086 first: their grid blue, ours not")
+	_check(_label(button) == "Confirm" and not button.disabled, "0x3086 first: the button stays Confirm and enabled (got '%s', disabled %s)" % [_label(button), str(button.disabled)])
+	x.on_offer({"owner": 1, "own": true, "items": [_offered(0, 2, 200, 5)]})
+	button.pressed.emit()
+	_check(net.sent == ["confirm"], "we can still confirm (got %s)" % str(net.sent))
+	x.on_result(0x3082, 1)
+	_check(_label(button) == "Approve" and not button.disabled and my_tint.visible, "0xB082 {1} after theirs: Approve, enabled, our grid blue")
+	button.pressed.emit()
+	_check(net.sent == ["confirm", "approve"], "and approve")
+	panels.call("exchange_closed", 0x182c)
 	# The boxes.
 	var req = panels.call("show_exchange_request", 5, "Pain")
 	_check(req != null and req.size == Vector2(308, 148), "the request box: 308 x 148")

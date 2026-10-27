@@ -1090,6 +1090,8 @@ func main() {
 	flag.StringVar(&botSocial.exchangeSlots, "exchange-slots", "", "bot (round 834): the bag indexes it offers, \"0,1\"; it then confirms and approves")
 	flag.Int64Var(&botSocial.exchangeGold, "exchange-gold", 0, "bot (round 834): the gold it offers")
 	flag.DurationVar(&botSocial.askAfter, "exchange-ask-after", 0, "bot (round 834): wait this long more before -exchange-with's request (to walk into reach first)")
+	flag.StringVar(&botSocial.confirmWhen, "exchange-confirm", "first", "bot (round 834): when it confirms -- first (right after offering), second (once the partner confirmed, 0x3086) or never")
+	flag.DurationVar(&botSocial.hold, "exchange-hold", 0, "bot (round 834): wait this long after the exchange opens before offering")
 	flag.DurationVar(&botSocial.delay, "social-delay", 2*time.Second, "bot (round 834): the wait before each friend or exchange step")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")

@@ -536,7 +536,7 @@ the focus and sends `0x7084`. **The window stays until `0xb084 [1]`** (hide, `0x
 | Event | Effect |
 |---|---|
 | `0xb082 [1]` → `CIFExchange::FUN_007b2700(1)` | `+0x7bd` = 1, `+0x7bc` = 0, `_MYMONEY +0x36c = 0x80000000` (grey), own 12 slots `+0x595 = 1` (blue) and not pickable, button text **UIIT_CTL_ACKNOWLEDGMENT "Approve"**, button enabled only if `+0x7be` (`0x655ec0`) |
-| `0x3086` → `FUN_007b2670(1)` | `+0x7be` = 1, `_OTHERMONEY` grey, opponent 12 slots blue and not pickable, button enabled if `+0x7bd` |
+| `0x3086` → `FUN_007b2670(1)` | `+0x7be` = 1, `_OTHERMONEY` grey, opponent 12 slots blue and not pickable; if `+0x7bd` the button is enabled (`0x7b2310` → `0x655ec0(1)`), otherwise it is **not touched** -- a side that has not confirmed keeps "Confirm" enabled (v0.1.594 disabled it, so the second side could not confirm) |
 | `0xb083 [1]` | `+0x7bc` = 1, button disabled (`0x7b22f0`) |
 | `0xb08x [2][code]` | category-1 message for the code |
 
@@ -685,5 +685,9 @@ Gaps against this spec:
 7. Window 0xb2's role at completion. Also: the server's `vslot 0x144(0x21, 0, item)` for items
    with vslot `0xb8 ≠ 0` at completion (`s:0x480530`), whether that sends an item update.
 8. When the player is in exchange mode, `0x81a620` decides whether USER_NAME (153), the
-   opponent-name overlay, is shown (`vslot_012`). INFERRED: on hover.
+   opponent-name overlay, is shown (`vslot_012`). INFERRED: on hover. READ (round 834's fix):
+   Create hides it (`0x7b29c0..0x7b29dd`, vslot `+0x5c` with 0); `0x7b2210` shows it only while
+   `0x81a620` holds for control 14 (`+0x7c4`): its `+0x7b0` set and equal to the global at
+   `0x110f608`. The client keeps it hidden; v0.1.594 left it shown, and its
+   `icon_effect1.ddj` drew the opponent's grid dark blue from the start.
 9. Whether the private layout's exact rects can be recovered (only measured from screenshots).

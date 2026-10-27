@@ -209,11 +209,16 @@ func on_partner_gold(gold: int) -> void:
 	other_gold = gold
 	panels.set_exchange_money(-1, gold)
 
+## 0x3086 (0x7b2670(1)): the opponent's gold grey and grid blue; the button
+## is enabled when this side has confirmed (0x7b2310 -> 0x655ec0(1)) and
+## otherwise left alone -- its caption and state stay as they were, so a
+## side that has not confirmed yet can still press Confirm.
 func on_partner_confirmed() -> void:
 	other_confirmed = true
 	panels.exchange_gold_greyed(mine_confirmed, true)
 	_redraw()
-	_set_button("UIIT_CTL_ACKNOWLEDGMENT" if mine_confirmed else "UIIT_CTL_CONFIRM", mine_confirmed and not busy)
+	if mine_confirmed:
+		panels.exchange_button_enabled(true)
 
 ## 0xB082 / 0xB083 / 0xB084: the request's opcode (0x3082...) and 1 or the
 ## code.

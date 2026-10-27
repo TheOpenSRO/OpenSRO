@@ -18060,7 +18060,8 @@ func _qa_job_step() -> void:
 		# Round 834 (QA only): the exchange and friends. xreq:<name> asks that
 		# player to exchange; xans:<0|1> answers the request box; xoffer:<bag
 		# index> offers it through the item box's OK; xgold:<n> through the
-		# gold box's; xbtn presses Confirm / Approve; xcancel the Cancel;
+		# gold box's; xbtn clicks Confirm / Approve (a real click, so a
+		# disabled button refuses it); xcancel the Cancel;
 		# xstate prints the exchange; fask:<name> asks to be friends;
 		# fans:<0|1> answers the friend box; panel:<id> opens a panel;
 		# fstate prints the friend list.
@@ -18122,8 +18123,18 @@ func _qa_job_step() -> void:
 				gb.set_count(int(what.substr(6)))
 				gb._on_ok()
 		elif what == "xbtn":
-			_hud_panels._exchange().press_button()
-			print("QA SOCIAL: tick %d exchange button" % _qa_tick)
+			# A real click on the window's button, so a disabled button
+			# refuses it as it would a player's.
+			var xw: HudWindow = _hud_panels._windows.get(ExchangeController.WINDOW)
+			var xbt := xw.node("GDR_EXCHANGE_BUTTON_EXCHANGE") as BaseButton if xw != null and xw.visible else null
+			if xbt == null:
+				print("QA SOCIAL: tick %d exchange button: no window" % _qa_tick)
+			else:
+				var xat := xbt.get_global_rect().get_center()
+				var cap := xbt.get_node_or_null("ButtonLabel") as Label
+				print("QA SOCIAL: tick %d exchange button '%s' disabled %s clicked at %s" % [_qa_tick,
+					cap.text if cap != null else "", str(xbt.disabled), str(xat)])
+				_qa_push_click(xat, MOUSE_BUTTON_LEFT)
 		elif what == "xcancel":
 			_hud_panels._exchange().press_cancel()
 			print("QA SOCIAL: tick %d exchange cancel" % _qa_tick)

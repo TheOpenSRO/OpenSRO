@@ -7483,6 +7483,46 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-fifth round: the exchange's blue grid at the start and the second side's Confirm
+
+The user tried v0.1.594's exchange with another player: "It shows blue at the beginning when it
+shouldn't. Then won't [let] the other player confirm their trade." Both were real, and both were
+departures from the original that round 834's tests missed.
+
+**1. The opponent's grid was blue from the start (READ).** `CIFExchange::Create` fetches
+GDR_EXCHANGE_USER_NAME (ID 153, a CIFStatic at the opponent grid's rect, 21,72,212,68, with
+`effect\icon\icon_effect1.ddj`) into `+0x33e0` and hides it at once (c:0x7b29c0..0x7b29dd,
+vslot `+0x5c` with 0, the same call the academy's picture uses at 0x6e9848) -- the only control
+Create hides. exchange.md listed it "hidden at Create", but HudPanels never hid it, so its dark
+art covered the opponent's grid whenever the window opened. MEASURED on the live run: the top
+grid's cells read (0, 7, 41) from the first frame the window showed, the bottom's (0, 0, 0).
+Fix: `HIDDEN_AT_CREATE["exchange"]`. `0x7b2210` shows it again only while `0x81a620` holds for
+control 14 (`+0x7c4`); what sets that state is still OPEN, so it stays hidden.
+
+**2. The side that had not confirmed could not confirm (READ).** `0x3086` runs `0x7b2670(1)`:
+`+0x7be` = 1, the opponent's gold grey and grid blue, and **if** `+0x7bd` (`0x7b2310`) the button
+is enabled (`0x655ec0(1)`); otherwise the button is not touched. ExchangeController set it to
+`enabled = mine_confirmed`, so whoever confirmed second found "Confirm" disabled and the exchange
+stuck. Round 834's live runs missed it because the QA step `xbtn` called `press_button()`
+directly, which a disabled button does not stop.
+
+**Built.**
+- `ExchangeController.on_partner_confirmed` enables the button when this side confirmed and
+  leaves it alone otherwise (`HudPanels.exchange_button_enabled`, the state without the caption).
+- `xbtn` is now a real mouse click at the button's centre and logs its caption and state.
+- partybot `-exchange-confirm first|second|never` (second: after the partner's 0x3086) and
+  `-exchange-hold`, so QA can play either order.
+- exchange.md: the 0x3086 row and OPEN 8 corrected.
+
+**Tests and live runs.**
+- `exchange834_test`: USER_NAME hidden at Create; a new exchange starts with neither grid blue;
+  the opponent confirming first leaves "Confirm" enabled, and our Confirm and Approve then go out.
+- Live, client + partybot, real clicks, both orders: the bot confirms first and the client then
+  confirms and approves; and the client confirms first and the bot second. Both reached 0x3087.
+  Frames: both grids dark at the start, each turning blue at its own side's confirm (cells
+  (35, 42, 63) / (38, 44, 64)), as the user's screenshots show.
+- No perf gate: UI only.
+
 ## Eight-hundred-and-thirty-fourth round: friends, the exchange, and an always-on target menu
 
 The user asked for full friend support in the game and its windows, the right-click target menu as
