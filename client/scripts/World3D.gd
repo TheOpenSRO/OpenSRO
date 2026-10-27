@@ -25819,6 +25819,21 @@ func _qa_mall(what: String) -> String:
 				return "no icon"
 			return "icon visible %s in tree %s rect %s texture %s parent %s" % [str(ic.visible), str(ic.is_visible_in_tree()),
 				str(ic.get_global_rect()), str((ic as TextureButton).texture_normal), str(ic.get_parent().name)]
+		"mall_barclick":
+			# A real click on the bottom bar's item mall button (control 9).
+			var b := _hud_underbar.control([9]) if _hud_underbar != null else null
+			if b == null:
+				return "no button"
+			_qa_push_click(b.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+			return "clicked at %s" % str(b.get_global_rect().get_center())
+		"mall_enterok":
+			# A real click on the entry box's OK.
+			var box := get_tree().root.find_child("MallEnterBox", true, false) as Control
+			var ok := box.find_child("GDR_MBIN_BTN_OK", true, false) as Control if box != null else null
+			if ok == null:
+				return "no entry box"
+			_qa_push_click(ok.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+			return "OK clicked"
 		"mall_buyworn":
 			m.press_buy_worn()
 			return "buy worn box"

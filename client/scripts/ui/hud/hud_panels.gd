@@ -1310,6 +1310,10 @@ func menu_action(panel_id: String) -> void:
 	if panel_id == ALCHEMY_ID:
 		open_alchemy()
 		return
+	# Round 837: the bottom bar's item mall button (9) -> the entry box.
+	if panel_id == HudUnderbar.MALL_ENTRY_ACTION:
+		open_item_mall_entry()
+		return
 	toggle(panel_id)
 
 ## Moves a window this client placed itself. The main popup keeps a wanted

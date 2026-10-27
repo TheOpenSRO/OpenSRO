@@ -178,7 +178,8 @@ func _initialize() -> void:
 	# the bar has an entry that can never open anything.
 	var bad_items := 0
 	for id in menu_actions:
-		if not panels.has(menu_actions[id]):
+		# Round 837: the item mall button opens its entry box, not a panel.
+		if not panels.has(menu_actions[id]) and menu_actions[id] != "itemmall_entry":
 			_check(false, "underbar item %s opens %s, which is not a known panel" % [id, menu_actions[id]])
 			bad_items += 1
 	if not menu_actions.is_empty() and bad_items == 0:

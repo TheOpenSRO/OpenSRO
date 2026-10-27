@@ -116,12 +116,15 @@ const MENU_CAPTION := 200
 ## `0x79c170(1)`, 96 `0x5b4980` (the guild view), 99 L `0x79b0b0`, 105 A
 ## `0x79d5b0`, 108 `0x5b49c0` (the community view), 111 Q `0x7990e0`, 114 Y
 ## `0x798e20(1)`, 123 `0x79c750(1)`, 126 the system window (GetChild 0x62).
-## Items with no window in this client emit nothing: 9 the item mall
-## (`0x6ec5d0`), 102 academy matching (`0x79c420(1)`), 104 the collection
+## 9, the item mall button, puts up the "Enter Item Mall" box (READ
+## `0x60ce04`: push 0x1e, `0x6ec5d0`, the box F10 opens; round 837).
+## Items with no window in this client emit nothing: 102 academy matching (`0x79c420(1)`), 104 the collection
 ## book (window 0xd2), 117 open a stall (`0x793b00(100, 0x3f1)`), 120 the
 ## stall network (hidden).
+## Round 837: button 9's action, the item mall's entry box (not a panel).
+const MALL_ENTRY_ACTION := "itemmall_entry"
 const MENU_ACTIONS := {
-	6: "character", 7: "inventory", 8: "skill",
+	6: "character", 7: "inventory", 8: "skill", 9: MALL_ENTRY_ACTION,
 	83: "party", 93: "partymatch", 96: "guild", 99: "academy", 105: "action",
 	108: "community", 111: "quest", 114: "alchemy", 123: "autopotion", 126: "system",
 }
