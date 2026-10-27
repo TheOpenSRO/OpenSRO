@@ -15,49 +15,66 @@ func TestMaxFriendsMatchesTheEngine(t *testing.T) {
 	}
 }
 
-// TestFriendListFillsToTheCap walks a character to MaxFriends and checks the
-// refusal lands exactly there, on both the accepting and the requesting side.
-func TestFriendListFillsToTheCap(t *testing.T) {
+// storeContract is what every Store does: a mutual add, each side listing
+// the other's name, the refusals, and a mutual remove.
+func storeContract(t *testing.T, store Store) {
+	t.Helper()
 	ctx := context.Background()
-	m := NewMemStore()
-
-	// Fill character 1's list to the cap.
-	for i := int64(2); i <= MaxFriends+1; i++ {
-		if err := m.SendRequest(ctx, i, "R", 1); err != nil {
-			t.Fatalf("request from %d: %v", i, err)
-		}
-		if err := m.AcceptRequest(ctx, 1, "Host", i); err != nil {
-			t.Fatalf("accept %d of %d: %v", i-1, MaxFriends, err)
-		}
+	if err := store.AddFriendship(ctx, 1, "One", 1, "One"); !errors.Is(err, ErrCannotFriendSelf) {
+		t.Fatalf("befriending yourself: got %v, want ErrCannotFriendSelf", err)
 	}
-
-	// One more request may still be sent by a character with room...
-	const extra = int64(9000)
-	if err := m.SendRequest(ctx, extra, "Late", 1); err != nil {
-		t.Fatalf("SendRequest from a character with room: %v", err)
+	if err := store.AddFriendship(ctx, 1, "One", 2, "Two"); err != nil {
+		t.Fatalf("AddFriendship: %v", err)
 	}
-	// ...but accepting it would push character 1 past the cap.
-	if err := m.AcceptRequest(ctx, 1, "Host", extra); !errors.Is(err, ErrListFull) {
-		t.Errorf("accepting past the cap: got %v, want ErrListFull", err)
+	one, _ := store.ListFriends(ctx, 1)
+	two, _ := store.ListFriends(ctx, 2)
+	if len(one) != 1 || one[0].CharacterID != 2 || one[0].Name != "Two" {
+		t.Fatalf("1's friends = %+v", one)
 	}
-	// And the request must survive the refusal rather than being consumed.
-	pending, err := m.ListPendingRequests(ctx, 1)
-	if err != nil {
-		t.Fatalf("ListPendingRequests: %v", err)
+	if len(two) != 1 || two[0].CharacterID != 1 || two[0].Name != "One" {
+		t.Fatalf("2's friends = %+v", two)
 	}
-	found := false
-	for _, r := range pending {
-		if r.RequesterID == extra {
-			found = true
+	for _, pair := range [][2]int64{{1, 2}, {2, 1}} {
+		if err := store.AddFriendship(ctx, pair[0], "x", pair[1], "y"); !errors.Is(err, ErrAlreadyFriends) {
+			t.Fatalf("adding %v again: got %v, want ErrAlreadyFriends", pair, err)
 		}
 	}
-	if !found {
-		t.Error("a refused acceptance must leave the pending request intact")
+	if err := store.RemoveFriend(ctx, 1, 3); !errors.Is(err, ErrNotFriends) {
+		t.Fatalf("removing a non-friend: got %v, want ErrNotFriends", err)
 	}
-
-	// A full character cannot send a request either -- the engine refuses at
-	// request time, not only at acceptance.
-	if err := m.SendRequest(ctx, 1, "Host", 9001); !errors.Is(err, ErrListFull) {
-		t.Errorf("SendRequest from a full list: got %v, want ErrListFull", err)
+	// Removal is mutual and either side may do it.
+	if err := store.RemoveFriend(ctx, 2, 1); err != nil {
+		t.Fatalf("RemoveFriend: %v", err)
+	}
+	if f, _ := store.ListFriends(ctx, 1); len(f) != 0 {
+		t.Fatalf("1 still has %+v", f)
+	}
+	if f, _ := store.ListFriends(ctx, 2); len(f) != 0 {
+		t.Fatalf("2 still has %+v", f)
 	}
 }
+
+// capContract fills a list to MaxFriends and checks the refusal lands there,
+// whichever side of the add is full.
+func capContract(t *testing.T, store Store) {
+	t.Helper()
+	ctx := context.Background()
+	for i := int64(2); i <= MaxFriends+1; i++ {
+		if err := store.AddFriendship(ctx, i, "R", 1, "Host"); err != nil {
+			t.Fatalf("add %d of %d: %v", i-1, MaxFriends, err)
+		}
+	}
+	if err := store.AddFriendship(ctx, 9000, "Late", 1, "Host"); !errors.Is(err, ErrListFull) {
+		t.Errorf("adding to a full list: got %v, want ErrListFull", err)
+	}
+	if err := store.AddFriendship(ctx, 1, "Host", 9001, "Late"); !errors.Is(err, ErrListFull) {
+		t.Errorf("a full list adding: got %v, want ErrListFull", err)
+	}
+	if f, _ := store.ListFriends(ctx, 9000); len(f) != 0 {
+		t.Errorf("a refused add left %+v on the other side", f)
+	}
+}
+
+func TestMemStoreContract(t *testing.T) { storeContract(t, NewMemStore()) }
+
+func TestMemStoreFillsToTheCap(t *testing.T) { capContract(t, NewMemStore()) }

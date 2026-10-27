@@ -2,7 +2,9 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/binary"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -396,23 +398,28 @@ func TestRound749ReviewStrictTradeRange(t *testing.T) {
 	strictPositions(t)
 	f := setupTradeTest(t)
 	advance := fakeHubClock(t, f.hub)
-	aria, bram := f.aria(), f.bram()
-	if err := proto.Write(bram.conn, &proto.Packet{Opcode: proto.OpMovementRequest, Data: clickTo(400, 0, 0)}, nil, nil); err != nil {
-		t.Fatal(err)
+	write := func(c net.Conn, op uint16, data []byte) {
+		if err := proto.Write(c, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
-	readPacket(t, bram, proto.OpMovementResponse)
-	readPacket(t, aria, proto.OpMovementResponse)
+	ask := func() []byte {
+		write(f.connA, OpExchangeRequest, binary.LittleEndian.AppendUint32(nil, uint32(f.bramID)))
+		return f.next(t, "A", OpExchangeRequestResult)
+	}
+	write(f.connB, proto.OpMovementRequest, clickTo(400, 0, 0))
+	f.next(t, "B", proto.OpMovementResponse)
+	f.next(t, "A", proto.OpMovementResponse)
 	advance(9 * time.Second)
-	if rr := requestResult(t, aria, "Bram"); rr.OK || rr.Reason != tradeTooFarReason {
-		t.Fatalf("Bram 400 away by his walk: %+v, want too far", rr)
+	// Round 834: the retail request, 0x7081 -> 0xB081 {2, 4}.
+	if got := ask(); !bytes.Equal(got, exchangeResult(ExchangeErrTooFar)) {
+		t.Fatalf("Bram 400 away by his walk: % x, want {2, 4}", got)
 	}
 	// A stop beside Aria that he did not walk: corrected; still too far.
-	if err := proto.Write(bram.conn, &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: 5, Stopped: true}).Encode()}, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	readPacket(t, bram, OpMovementStop)
-	readPacket(t, aria, OpMovementStop)
-	if rr := requestResult(t, aria, "Bram"); rr.OK {
-		t.Fatalf("after a refused claim: %+v, want too far", rr)
+	write(f.connB, OpMove, (&MoveRequest{X: 5, Stopped: true}).Encode())
+	f.next(t, "B", OpMovementStop)
+	f.next(t, "A", OpMovementStop)
+	if got := ask(); !bytes.Equal(got, exchangeResult(ExchangeErrTooFar)) {
+		t.Fatalf("after a refused claim: % x, want too far", got)
 	}
 }

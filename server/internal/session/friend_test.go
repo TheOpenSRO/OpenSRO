@@ -1,263 +1,246 @@
 package session
 
 import (
-	"bufio"
+	"bytes"
 	"context"
+	"encoding/binary"
 	"net"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/friend"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
-func friendTestDSN() string {
-	if v := os.Getenv("OPENSRO_TEST_POSTGRES_DSN"); v != "" {
-		return v
+// Round 834: friends on the retail wire (friend.go, docs/protocol/friends.md).
+
+func TestFriendWireLayouts(t *testing.T) {
+	check := func(what string, got, want []byte) {
+		t.Helper()
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: % x, want % x", what, got, want)
+		}
 	}
-	return "postgres://postgres:postgres@localhost:5432/opensro_test?sslmode=disable"
+	check("0xB302 {2, 0x6408}", EncodeFriendAskFailed(FriendCodeFullList, 0, ""), []byte{2, 0x08, 0x64})
+	check("0xB302 {2, 0x640b, reason, name}", EncodeFriendAskFailed(FriendCodeRefused, 2, "Bo"),
+		[]byte{2, 0x0b, 0x64, 2, 2, 0, 'B', 'o'})
+	check("0x7302 to the target", EncodeFriendRequest(7, 9, "Al"), []byte{7, 0, 0, 0, 9, 0, 0, 0, 2, 0, 'A', 'l'})
+	check("0x3305", EncodeFriendList([]FriendEntry{{CharacterID: 5, Name: "Al", RefObjID: 1907, State: FriendOffline}}),
+		[]byte{1, 5, 0, 0, 0, 2, 0, 'A', 'l', 0x73, 0x07, 0, 0, 1})
+	check("0x3B07 kind 2", EncodeFriendAdded(5, "Al", 1907), []byte{2, 5, 0, 0, 0, 2, 0, 'A', 'l', 0x73, 0x07, 0, 0})
+	check("0x3B07 kind 3", EncodeFriendRemoved(5), []byte{3, 5, 0, 0, 0})
+	check("0x3B07 kind 4", EncodeFriendState(5, FriendOnline), []byte{4, 5, 0, 0, 0, 0})
+	check("0xB304 ok", EncodeFriendDeleteResult(5, 0), []byte{1, 5, 0, 0, 0})
+	check("0xB304 refused", EncodeFriendDeleteResult(0, 3), []byte{2, 3, 0})
 }
 
-func openTestFriendStore(t *testing.T) *friend.SQLStore {
+// friendFixture is Aria and Bram in the world with the friend handler. The
+// runtime is put in place after both have entered, so the fixture's own
+// spawn reads see no friend list, and taken away after the test (it is the
+// package's one global, and other tests' entries must not send lists).
+func friendFixture(t *testing.T, store friend.Store) (*deadWorldFixture, *friendRuntime) {
 	t.Helper()
-	s, err := friend.OpenSQLStore(friendTestDSN())
-	if err != nil {
-		t.Fatalf("friend.OpenSQLStore: %v (is postgres running?)", err)
-	}
-	if err := s.TruncateForTest(context.Background()); err != nil {
-		t.Fatalf("truncating friend tables: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return s
+	var rt *friendRuntime
+	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
+		h := FriendHandler(chars, store, hub)
+		rt = friendRT.Swap(nil)
+		return h
+	})
+	friendRT.Store(rt)
+	t.Cleanup(func() { friendRT.Store(nil) })
+	return f, rt
 }
 
-func TestFriendRequestRequestRoundTrip(t *testing.T) {
-	want := &FriendRequestRequest{CharacterName: "Aria", TargetName: "Bram"}
-	got, err := DecodeFriendRequestRequest(want.Encode())
-	if err != nil {
-		t.Fatalf("DecodeFriendRequestRequest: %v", err)
-	}
-	if *got != *want {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
+func askFriend(f *deadWorldFixture, t *testing.T, conn net.Conn, name string) {
+	t.Helper()
+	f.send(t, conn, OpFriendAsk, appendFriendStr(nil, name))
 }
 
-func TestFriendAcceptRequestRoundTrip(t *testing.T) {
-	want := &FriendAcceptRequest{CharacterName: "Bram", RequesterID: 1}
-	got, err := DecodeFriendAcceptRequest(want.Encode())
-	if err != nil {
-		t.Fatalf("DecodeFriendAcceptRequest: %v", err)
-	}
-	if *got != *want {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
+func answerFriend(f *deadWorldFixture, t *testing.T, conn net.Conn, request []byte, answer byte) {
+	t.Helper()
+	f.send(t, conn, OpFriendAnswer, append(append([]byte{}, request[:8]...), answer))
 }
 
-func TestFriendListResultRoundTrip(t *testing.T) {
-	want := &FriendListResult{
-		Friends: []FriendSnapshot{{CharacterID: 2, Name: "Bram", Online: true}},
+// Aria asks Bram; he gets the request box's message and accepts; both get
+// the kind-2 push with the other's id, name and model.
+func TestFriendAskAndAccept(t *testing.T) {
+	f, _ := friendFixture(t, friend.NewMemStore())
+	askFriend(f, t, f.connA, "Bram")
+	req := nextOp(t, f.connB, f.rB, OpFriendAsk).Data
+	if binary.LittleEndian.Uint32(req[4:]) != uint32(f.aria) || !bytes.Equal(req[8:], appendFriendStr(nil, "Aria")) {
+		t.Fatalf("the request % x: want Aria's id and name", req)
 	}
-	got, err := DecodeFriendListResult(want.Encode())
-	if err != nil {
-		t.Fatalf("DecodeFriendListResult: %v", err)
+	answerFriend(f, t, f.connB, req, 1)
+	a := nextOp(t, f.connA, f.rA, OpMessengerPush).Data
+	b := nextOp(t, f.connB, f.rB, OpMessengerPush).Data
+	if a[0] != MessengerAdded || binary.LittleEndian.Uint32(a[1:]) != uint32(f.bram) || !bytes.Equal(a[5:11], appendFriendStr(nil, "Bram")) {
+		t.Errorf("Aria's push % x: want kind 2 Bram", a)
 	}
-	if len(got.Friends) != 1 || got.Friends[0] != want.Friends[0] {
-		t.Fatalf("got %+v, want %+v", got, want)
+	if b[0] != MessengerAdded || binary.LittleEndian.Uint32(b[1:]) != uint32(f.aria) || !bytes.Equal(b[5:11], appendFriendStr(nil, "Aria")) {
+		t.Errorf("Bram's push % x: want kind 2 Aria", b)
 	}
-}
-
-func TestFriendPendingListResultRoundTrip(t *testing.T) {
-	want := &FriendPendingListResult{
-		Requests: []PendingRequestSnapshot{{RequesterID: 1, RequesterName: "Aria"}},
+	if len(a) != 15 || binary.LittleEndian.Uint32(a[11:]) == 0 {
+		t.Errorf("the push carries no model id: % x", a)
 	}
-	got, err := DecodeFriendPendingListResult(want.Encode())
-	if err != nil {
-		t.Fatalf("DecodeFriendPendingListResult: %v", err)
+	// Asked again: on the list already (the asker's check, 0x6409).
+	askFriend(f, t, f.connA, "Bram")
+	if got := nextOp(t, f.connA, f.rA, OpFriendAskFailed).Data; !bytes.Equal(got, EncodeFriendAskFailed(FriendCodeAlreadyFriend, 0, "")) {
+		t.Errorf("asking a friend: % x, want 0x6409", got)
 	}
-	if len(got.Requests) != 1 || got.Requests[0] != want.Requests[0] {
-		t.Fatalf("got %+v, want %+v", got, want)
+	// From the other side the target's check answers the same.
+	askFriend(f, t, f.connB, "Aria")
+	if got := nextOp(t, f.connB, f.rB, OpFriendAskFailed).Data; !bytes.Equal(got, EncodeFriendAskFailed(FriendCodeAlreadyFriend, 0, "")) {
+		t.Errorf("asking back: % x, want 0x6409", got)
 	}
 }
 
-// TestFriendFullFlow logs two accounts in on separate connections, has
-// both enter the world (so OpFriendRequest can find its target), sends a
-// request from Aria to Bram, confirms Bram gets a live
-// OpFriendRequestReceived, has Bram list pending requests and accept by
-// ID, confirms Aria gets a live OpFriendAccepted, confirms both sides'
-// friends lists show each other as online, then has Aria remove Bram and
-// confirms both lists are empty again.
-func TestFriendFullFlow(t *testing.T) {
+// The asker's checks in their order, and the target's.
+func TestFriendAskRefusals(t *testing.T) {
+	store := friend.NewMemStore()
+	f, _ := friendFixture(t, store)
+	for _, c := range []struct {
+		name string
+		code uint16
+	}{
+		{"", friendCodeFail},
+		{"Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", friendCodeFail}, // 33
+		{"Aria", friendCodeBadName},
+		{"Br'am", friendCodeBadName},
+		{"Nobody", FriendCodeUnknownUser},
+		{"bram", FriendCodeUnknownUser}, // names are case-sensitive here
+	} {
+		askFriend(f, t, f.connA, c.name)
+		if got := nextOp(t, f.connA, f.rA, OpFriendAskFailed).Data; !bytes.Equal(got, EncodeFriendAskFailed(c.code, 0, "")) {
+			t.Errorf("asking %q: % x, want code %#x", c.name, got, c.code)
+		}
+	}
 	ctx := context.Background()
-	accounts := account.NewMemStore()
-	accounts.Add("alice", "hunter2")
-	accounts.Add("bob", "hunter3")
-	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
-	chars.Create(ctx, 2, "Bram")
-
-	friends := openTestFriendStore(t)
-	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), FriendHandler(chars, friends, hub))
-
-	addr, cleanup := startTestServer(t, handle)
-	defer cleanup()
-
-	connA := dialTestServer(t, addr)
-	defer connA.Close()
-	rA := bufio.NewReader(connA)
-	connB := dialTestServer(t, addr)
-	defer connB.Close()
-	rB := bufio.NewReader(connB)
-
-	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
-			t.Fatalf("Write: %v", err)
+	for i := int64(100); i < 100+friend.MaxFriends; i++ {
+		if err := store.AddFriendship(ctx, f.bram, "Bram", i, "X"); err != nil {
+			t.Fatal(err)
 		}
-		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
 	}
-
-	resp := doSend(connA, rA, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
-	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
-		t.Fatalf("alice login failed: err=%v result=%+v", err, lr)
+	askFriend(f, t, f.connA, "Bram")
+	if got := nextOp(t, f.connA, f.rA, OpFriendAskFailed).Data; !bytes.Equal(got, EncodeFriendAskFailed(FriendCodeTargetFull, 0, "")) {
+		t.Errorf("the target's list full: % x, want 0x640f", got)
 	}
-	resp = doSend(connB, rB, OpLogin, (&LoginRequest{Username: "bob", Password: "hunter3"}).Encode())
-	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
-		t.Fatalf("bob login failed: err=%v result=%+v", err, lr)
-	}
-	resp = doSend(connA, rA, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
-	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
-		t.Fatalf("aria enter world failed: err=%v result=%+v", err, ewr)
-	}
-	resp = doSend(connB, rB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode())
-	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
-		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
-	}
-	// Aria was already in the zone; drain her EntityEntered broadcast for Bram.
-	// Round 737: Aria hears Bram arrive as a 0x3015, and Bram is spawned
-	// Aria as a group after his result.
-	drainPlayerSpawn(t, connA, rA)
-	drainPlayerSpawn(t, connB, rB)
-
-	resp = doSend(connA, rA, OpFriendRequest, (&FriendRequestRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
-	if rr, err := DecodeFriendRequestResult(resp.Data); err != nil || !rr.OK {
-		t.Fatalf("friend request failed: err=%v result=%+v", err, rr)
-	}
-
-	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	receivedPkt, err := proto.Read(rB, nil, nil)
-	if err != nil || receivedPkt.Opcode != OpFriendRequestReceived {
-		t.Fatalf("reading OpFriendRequestReceived: opcode=%v err=%v", receivedPkt, err)
-	}
-	if rr, err := DecodeFriendRequestReceived(receivedPkt.Data); err != nil || rr.RequesterName != "Aria" {
-		t.Fatalf("unexpected FriendRequestReceived: %+v (err=%v)", rr, err)
-	}
-
-	resp = doSend(connB, rB, OpFriendPendingList, (&CharacterNameRequest{Name: "Bram"}).Encode())
-	pending, err := DecodeFriendPendingListResult(resp.Data)
-	if err != nil || pending.Error != "" || len(pending.Requests) != 1 || pending.Requests[0].RequesterName != "Aria" {
-		t.Fatalf("unexpected pending list: err=%v result=%+v", err, pending)
-	}
-	requesterID := pending.Requests[0].RequesterID
-
-	resp = doSend(connB, rB, OpFriendAccept, (&FriendAcceptRequest{CharacterName: "Bram", RequesterID: requesterID}).Encode())
-	if ar, err := DecodeFriendAcceptResult(resp.Data); err != nil || !ar.OK {
-		t.Fatalf("accept failed: err=%v result=%+v", err, ar)
-	}
-
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	acceptedPkt, err := proto.Read(rA, nil, nil)
-	if err != nil || acceptedPkt.Opcode != OpFriendAccepted {
-		t.Fatalf("reading OpFriendAccepted: opcode=%v err=%v", acceptedPkt, err)
-	}
-	if fa, err := DecodeFriendAccepted(acceptedPkt.Data); err != nil || fa.AccepterName != "Bram" {
-		t.Fatalf("unexpected FriendAccepted: %+v (err=%v)", fa, err)
-	}
-
-	resp = doSend(connA, rA, OpFriendList, (&CharacterNameRequest{Name: "Aria"}).Encode())
-	listA, err := DecodeFriendListResult(resp.Data)
-	if err != nil || listA.Error != "" || len(listA.Friends) != 1 || listA.Friends[0].Name != "Bram" || !listA.Friends[0].Online {
-		t.Fatalf("unexpected friend list for Aria: err=%v result=%+v", err, listA)
-	}
-	bramID := listA.Friends[0].CharacterID
-
-	resp = doSend(connB, rB, OpFriendList, (&CharacterNameRequest{Name: "Bram"}).Encode())
-	listB, err := DecodeFriendListResult(resp.Data)
-	if err != nil || listB.Error != "" || len(listB.Friends) != 1 || listB.Friends[0].Name != "Aria" || !listB.Friends[0].Online {
-		t.Fatalf("unexpected friend list for Bram: err=%v result=%+v", err, listB)
-	}
-
-	resp = doSend(connA, rA, OpFriendRemove, (&FriendRemoveRequest{CharacterName: "Aria", FriendID: bramID}).Encode())
-	if rr, err := DecodeFriendRemoveResult(resp.Data); err != nil || !rr.OK {
-		t.Fatalf("remove failed: err=%v result=%+v", err, rr)
-	}
-
-	resp = doSend(connA, rA, OpFriendList, (&CharacterNameRequest{Name: "Aria"}).Encode())
-	listA, err = DecodeFriendListResult(resp.Data)
-	if err != nil || len(listA.Friends) != 0 {
-		t.Fatalf("expected empty friend list after remove: err=%v result=%+v", err, listA)
-	}
-	resp = doSend(connB, rB, OpFriendList, (&CharacterNameRequest{Name: "Bram"}).Encode())
-	listB, err = DecodeFriendListResult(resp.Data)
-	if err != nil || len(listB.Friends) != 0 {
-		t.Fatalf("expected empty friend list after remove (Bram's side): err=%v result=%+v", err, listB)
+	askFriend(f, t, f.connB, "Aria")
+	if got := nextOp(t, f.connB, f.rB, OpFriendAskFailed).Data; !bytes.Equal(got, EncodeFriendAskFailed(FriendCodeFullList, 0, "")) {
+		t.Errorf("the asker's list full: % x, want 0x6408", got)
 	}
 }
 
-// TestFriendRequestOfflineTarget confirms sending a request to a name
-// that isn't currently in the world fails cleanly, per FriendHandler's
-// documented online-target requirement.
-func TestFriendRequestOfflineTarget(t *testing.T) {
+// Refuse: both get 0xB302 {2, 0x640b, 0, name}; the request's job is gone.
+func TestFriendRefuse(t *testing.T) {
+	f, _ := friendFixture(t, friend.NewMemStore())
+	askFriend(f, t, f.connA, "Bram")
+	req := nextOp(t, f.connB, f.rB, OpFriendAsk).Data
+	answerFriend(f, t, f.connB, req, 0)
+	want := EncodeFriendAskFailed(FriendCodeRefused, FriendReasonRefused, "Bram")
+	if got := nextOp(t, f.connA, f.rA, OpFriendAskFailed).Data; !bytes.Equal(got, want) {
+		t.Errorf("the asker: % x, want % x", got, want)
+	}
+	if got := nextOp(t, f.connB, f.rB, OpFriendAskFailed).Data; !bytes.Equal(got, want) {
+		t.Errorf("the refuser (retail's quirk): % x, want % x", got, want)
+	}
+	// A second answer to the same request does nothing.
+	answerFriend(f, t, f.connB, req, 1)
+	noOp(t, f.connA, f.rA, OpMessengerPush)
+}
+
+// Nobody answers: after the wait both get reason 2.
+func TestFriendRequestTimesOut(t *testing.T) {
+	saved := FriendRequestWait
+	FriendRequestWait = 150 * time.Millisecond
+	t.Cleanup(func() { FriendRequestWait = saved })
+	f, _ := friendFixture(t, friend.NewMemStore())
+	askFriend(f, t, f.connA, "Bram")
+	nextOp(t, f.connB, f.rB, OpFriendAsk)
+	want := EncodeFriendAskFailed(FriendCodeRefused, FriendReasonTimeout, "Bram")
+	if got := nextOp(t, f.connA, f.rA, OpFriendAskFailed).Data; !bytes.Equal(got, want) {
+		t.Errorf("the asker: % x, want % x", got, want)
+	}
+	if got := nextOp(t, f.connB, f.rB, OpFriendAskFailed).Data; !bytes.Equal(got, want) {
+		t.Errorf("the target: % x, want % x", got, want)
+	}
+}
+
+// An answer naming another asker, or from someone the request did not go
+// to, is no answer.
+func TestFriendAnswerMustMatch(t *testing.T) {
+	f, _ := friendFixture(t, friend.NewMemStore())
+	askFriend(f, t, f.connA, "Bram")
+	req := nextOp(t, f.connB, f.rB, OpFriendAsk).Data
+	bad := append([]byte{}, req[:8]...)
+	binary.LittleEndian.PutUint32(bad[4:], uint32(f.bram))
+	f.send(t, f.connB, OpFriendAnswer, append(bad, 1))
+	answerFriend(f, t, f.connA, req, 1) // Aria answering her own request
+	noOp(t, f.connA, f.rA, OpMessengerPush)
+	answerFriend(f, t, f.connB, req, 1)
+	if got := nextOp(t, f.connA, f.rA, OpMessengerPush).Data; got[0] != MessengerAdded {
+		t.Errorf("the real answer: % x", got)
+	}
+}
+
+// Delete: the deleter gets kind 3 then 0xB304 {1, id}; the other side kind
+// 3; a name not on the list is refused 3.
+func TestFriendDelete(t *testing.T) {
+	store := friend.NewMemStore()
+	f, _ := friendFixture(t, store)
+	if err := store.AddFriendship(context.Background(), f.aria, "Aria", f.bram, "Bram"); err != nil {
+		t.Fatal(err)
+	}
+	f.send(t, f.connA, OpFriendDelete, binary.LittleEndian.AppendUint32(nil, uint32(f.bram)))
+	if got := nextOp(t, f.connA, f.rA, OpMessengerPush).Data; !bytes.Equal(got, EncodeFriendRemoved(uint32(f.bram))) {
+		t.Errorf("the deleter's push % x", got)
+	}
+	if got := nextOp(t, f.connA, f.rA, OpFriendDeleteResult).Data; !bytes.Equal(got, EncodeFriendDeleteResult(uint32(f.bram), 0)) {
+		t.Errorf("0xB304 % x", got)
+	}
+	if got := nextOp(t, f.connB, f.rB, OpMessengerPush).Data; !bytes.Equal(got, EncodeFriendRemoved(uint32(f.aria))) {
+		t.Errorf("the other side's push % x", got)
+	}
+	if l, _ := store.ListFriends(context.Background(), f.bram); len(l) != 0 {
+		t.Errorf("Bram still lists %+v", l)
+	}
+	f.send(t, f.connA, OpFriendDelete, binary.LittleEndian.AppendUint32(nil, uint32(f.bram)))
+	if got := nextOp(t, f.connA, f.rA, OpFriendDeleteResult).Data; !bytes.Equal(got, EncodeFriendDeleteResult(0, 3)) {
+		t.Errorf("deleting a non-friend: % x, want {2, 3}", got)
+	}
+}
+
+// The world entry's list (state 0 for a friend in the game) and the log on
+// and off pushes.
+func TestFriendListAndLogOnOff(t *testing.T) {
+	store := friend.NewMemStore()
+	f, _ := friendFixture(t, store)
 	ctx := context.Background()
-	accounts := account.NewMemStore()
-	accounts.Add("alice", "hunter2")
-	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
-
-	friends := openTestFriendStore(t)
-	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), FriendHandler(chars, friends, hub))
-
-	addr, cleanup := startTestServer(t, handle)
-	defer cleanup()
-
-	conn := dialTestServer(t, addr)
-	defer conn.Close()
-	r := bufio.NewReader(conn)
-
-	send := func(opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+	if err := store.AddFriendship(ctx, f.aria, "Aria", f.bram, "Bram"); err != nil {
+		t.Fatal(err)
 	}
-
-	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
-	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
-		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	if err := store.AddFriendship(ctx, f.aria, "Aria", 999, "Away"); err != nil {
+		t.Fatal(err)
 	}
-	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
-	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
-		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	ea, _ := f.hub.EntityByCharacterID(f.aria)
+	aria, _ := f.chars.GetByID(ctx, f.aria)
+	friendAfterEnter(ctx, ea.Session, aria)
+	list := nextOp(t, f.connA, f.rA, OpFriendList).Data
+	bramChar, _ := f.chars.GetByID(ctx, f.bram)
+	bramRef, _ := modelOf(bramChar)
+	want := EncodeFriendList([]FriendEntry{
+		{CharacterID: 999, Name: "Away", State: FriendOffline},
+		{CharacterID: uint32(f.bram), Name: "Bram", RefObjID: bramRef, State: FriendOnline},
+	})
+	if !bytes.Equal(list, want) {
+		t.Errorf("0x3305 % x, want % x", list, want)
 	}
-
-	resp = send(OpFriendRequest, (&FriendRequestRequest{CharacterName: "Aria", TargetName: "Ghost"}).Encode())
-	rr, err := DecodeFriendRequestResult(resp.Data)
-	if err != nil || rr.OK || rr.Reason != "player not found" {
-		t.Fatalf("request to offline target: err=%v result=%+v", err, rr)
+	if got := nextOp(t, f.connB, f.rB, OpMessengerPush).Data; !bytes.Equal(got, EncodeFriendState(uint32(f.aria), FriendOnline)) {
+		t.Errorf("Bram hears % x, want Aria logged on", got)
+	}
+	FriendDisconnectHandler(f.hub)(ea.Session)
+	if got := nextOp(t, f.connB, f.rB, OpMessengerPush).Data; !bytes.Equal(got, EncodeFriendState(uint32(f.aria), FriendOffline)) {
+		t.Errorf("Bram hears % x, want Aria logged off", got)
 	}
 }

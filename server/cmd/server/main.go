@@ -2616,7 +2616,10 @@ func main() {
 		// the reward, the give-up and the window's reward button.
 		session.QuestHandler(),
 		session.DuelHandler(chars, eq, refItems, hub, duels),
-		session.TradeHandler(chars, inv, refItems, hub, trades),
+		// The exchange (round 834, exchange.go): retail's 0x7081..0x7084; its
+		// answer rides the party handler's 0x3080 chain and its moves the item
+		// operation's 0x7034 types 4, 5 and 0xd.
+		session.ExchangeHandler(session.ExchangeDeps{Chars: chars, Inv: inv, Items: refItems, Hub: hub, Trades: trades, Parties: parties}),
 		session.FriendHandler(chars, friends, hub),
 		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
@@ -2653,8 +2656,9 @@ func main() {
 	partyDisconnect := session.PartyDisconnectHandler(partyDeps)
 	partyMatchDisconnect := session.PartyMatchDisconnectHandler(partyMatchDeps)
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
-	tradeDisconnect := session.TradeDisconnectHandler(hub, trades)
+	tradeDisconnect := session.ExchangeDisconnectHandler(hub)
 	guildPointsDisconnect := session.GuildPointsDisconnectHandler(hub, gpSkills)
+	friendDisconnect := session.FriendDisconnectHandler(hub)
 
 	var tlsConfig *tls.Config
 	if *tlsCert != "" || *tlsKey != "" {
@@ -2706,6 +2710,7 @@ func main() {
 			step("npc", func() { session.ForgetNPCInteraction(sess.ID()) })
 			step("quest", func() { session.ForgetQuestSession(sess.ID()) })
 			step("guild points", func() { guildPointsDisconnect(sess) })
+			step("friend", func() { friendDisconnect(sess) })
 			step("berserk", func() { berserkDisconnect(sess) })
 			// The party removal first, then the match entry, as the
 			// ShardManager's logout does (SM 0x4296f0: 0x44f580 moves a

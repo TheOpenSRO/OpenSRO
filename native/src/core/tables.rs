@@ -725,6 +725,8 @@ const ITEM_COL_SELL_PRICE: usize = 31;
 /// KeepingFee, the warehouse deposit fee a unit (round 728; the column is INFERRED from the
 /// schema name, docs/rounds/r728.md).
 const ITEM_COL_KEEPING_FEE: usize = 30;
+/// Round 834: CanTrade, a permission (0 forbids; docs/protocol/item_capability_flags.md).
+const ITEM_COL_CAN_TRADE: usize = 16;
 const ITEM_COL_MAX_STACK: usize = 57;
 const ITEM_COL_TYPE_ID1: usize = 9;
 /// CashItem and Bionic, the type word's bits 0 and 1 (characterdata.md, cols 7-12).
@@ -804,6 +806,7 @@ pub struct Items {
     pub max_stacks: Vec<i64>,
     pub sell_prices: Vec<i64>,
     pub keeping_fees: Vec<i64>,
+    pub can_trades: Vec<i64>,
     pub countries: Vec<i64>,
     pub req_genders: Vec<i64>,
     pub durabilities: Vec<i64>,
@@ -940,6 +943,7 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.max_stacks.push(if stack > 0 { stack } else { 1 });
         o.sell_prices.push(int_at(cols, ITEM_COL_SELL_PRICE));
         o.keeping_fees.push(int_at(cols, ITEM_COL_KEEPING_FEE));
+        o.can_trades.push(if cols.len() > ITEM_COL_CAN_TRADE { int_at(cols, ITEM_COL_CAN_TRADE) } else { 1 });
         o.type_ids.extend((ITEM_COL_TYPE_ID1..=ITEM_COL_TYPE_ID4).map(|c| int_at(cols, c)));
         o.cash_items.push(int_at(cols, ITEM_COL_CASH_ITEM));
         o.bionics.push(int_at(cols, ITEM_COL_BIONIC));
@@ -1392,6 +1396,7 @@ mod tests {
         assert_eq!(it.max_stacks, vec![1, 1]);
         assert_eq!(it.sell_prices, vec![427, 0]);
         assert_eq!(it.keeping_fees, vec![3, 0]);
+        assert_eq!(it.can_trades.len(), 2);
         assert_eq!(&it.type_ids[..4], &[1, 0, 0, 3]);
         assert_eq!(it.cash_items, vec![1, 0]);
         assert_eq!(it.param5s, vec![-1, 0]);

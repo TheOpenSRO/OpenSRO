@@ -458,8 +458,13 @@ func _find_close_button() -> BaseButton:
 			return child as BaseButton
 	return null
 
+## Round 834: false for a window whose close button asks first and hides
+## only on the answer (the exchange's X sends 0x7084, CIFExchange 0x7b24d0).
+var close_hides := true
+
 func _on_close_pressed() -> void:
-	hide()
+	if close_hides:
+		hide()
 	closed.emit()
 
 ## Round 818: a window takes the mouse over everything it draws, not only

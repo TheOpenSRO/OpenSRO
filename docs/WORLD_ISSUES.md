@@ -7483,6 +7483,78 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-fourth round: friends, the exchange, and an always-on target menu
+
+The user asked for full friend support in the game and its windows, the right-click target menu as
+part of the game rather than an option ("able to be expanded on like 'view items'"), and an exchange
+that fully works, with five screenshots of a private server's exchange flow. Both systems were read
+by one agent each and every claim re-read by a second (`friends.md` + `friends_verify.md`,
+`exchange.md` + `exchange_verify.md`, the boxes in `exchange_boxes.md`); the reviews found 2 and 10
+wrong claims, corrected at the top of each spec before anything was built.
+
+**Read, the parts that decide behaviour.**
+- **Friends** are the messenger's: `0x7302` asks by name, the target's box (kind 0x23) answers on
+  `0x3303`, 20 friends a side checked on both, mutual add and delete, `0x3305` once at world entry,
+  `0x3B07` kinds 2 / 3 / 4 for added, removed, logged on / off. The request box shows **Accept and
+  No**: the client puts `UIIT_STT_REFUSE` on the hidden CERTIFY button (c:0x64859f), a retail quirk
+  the review caught.
+- **The exchange** is `0x7081` -> `0x3080` kind 1 -> `0xB081` / `0x3085`; offers by `0x7034` types
+  4 / 5 / 0xd seen by the partner only at the offerer's Confirm (`0x308C` + `0x3089` + `0x3086`);
+  Confirm and Approve test only the session's state; the deal runs on the second Approve, incoming
+  items to the receiver's first empty slots in bay order; `0x3087` done, `0x3088 {code}` closed
+  (cancel, refusal, the 30 s timeout, death, a warp, logout). Retail 1.188's layout parks the
+  portraits and the log box at x 9999: the window is the compact 254 x 361.
+- **The target menu** needed only its option gate removed (retail opens it on option +0x1a).
+
+**Built.**
+- Server: `session/friend.go` (retail wire; `friend.Store` keeps friendships only, the request is a
+  live 30 s job), `session/exchange.go` + `trade/trade.go` (the session model, the close list, the
+  deal as one transaction with the round-743 ledger claim), the item operation's `0x1834` guard
+  for every other op during an exchange (pet bag and avatar moves included), the bag-move lock,
+  death / warp / logout closes. The old OURS opcodes 0x00D0-0x00ED are gone.
+- Client: `FriendNet`, `FriendMsgBox` (0x22, 0x23, the exchange's kind-7 box), the Add box
+  (purpose 4, read this round at 0x64274d), the delete question, the friend pane's selection,
+  race icons, sort, scroll bar (`VScroll2dt`) and buttons, `/friend` and `/invite`;
+  `ExchangeNet`, `ExchangeController` over the GDR_EXCHANGE window (headers on the subframes'
+  captions, blue grids, greyed gold, Confirm -> Approve, the X / Escape cancel), the item box
+  (MsgBoxStore, purpose 7) and gold box (purpose 8, opens at "1"), offered bag slots dimmed and
+  locked, drop / Alt+click to offer, drag back / Alt+click to take back; the item table reads
+  CanTrade (column 16, native and GDScript); the exchange's five text keys keep the first row
+  (the later copies are a private "CHECK THE NAME!" overlay; the screenshots show the first);
+  the target menu always on with `TargetMenu.EXTRA_ENTRIES` for entries of our own.
+- QA: partybot `-gm-lines`, `-friend-ask/-answer`, `-exchange-with/-answer/-slots/-gold`,
+  `-social-delay`; the client's `xreq/xans/xoffer/xgold/xbtn/xcancel/fask/fans/panel` QA steps.
+
+**Departures, disclosed (OURS).**
+- `0x1811` (a failed deal) closes with `0x3088 {0x1811}` instead of retail's disconnecting both:
+  our deal commits or rolls back as one transaction, so there is no divergence to repair.
+- At `0x3087` the client asks for its bag list instead of moving its own copy (same placement).
+- The trust check has no unions to test; the request's restriction-slot and quest checks are not
+  made; a pending party or guild invitation counts as busy (one answer channel, `0x3080`).
+- The friend list is sent sorted by name.
+
+**Not built (TODO, round 834):** letters, the whisper block list, the private server's portraits
+and log layout (offered as an Extra Settings add-on), unions.
+
+**Tests and live runs.**
+- Server: friend and exchange wire bytes; ask / accept / refuse / timeout / mismatched answers /
+  delete / the login list and log on-off; the exchange's full flow (offers hidden until the
+  confirm, Approve before both confirmed closes 0x181f, the deal's slots and gold, a resent
+  Approve finds nothing), the request ladder, the timeout, the move rules (0x183a, 0x1809, 0x182d,
+  0x1829, 0x180f, 0x1824, 0x1834, a move after the confirm closing first), Confirm twice, the
+  logout close, a failed deal losing nothing, a lost commit completing. `go test ./...` passes.
+- Client: `friend_test`, `friend834_test`, `exchange_net_test`, `exchange834_test` (the window and
+  boxes on the real Media.pk2 and its text table), `trace832_test` (the menu with extra entries);
+  369 suites, 0 failing.
+- Live, client + partybot on an in-memory server (`/var/tmp/r834q/qa834.sh`), 2 s between the bot's
+  steps: the client asks, the bot accepts, both offer (a sword; 20 potions and gold), confirm and
+  approve -> 0x3087 on both, the bag shows the potions in its first free slot and the gold moved;
+  the bot asks, the client's box accepts in 3 s, the same deal; a cancel mid-exchange (0x3088
+  {0x182c} both); the 30 s timeout (0x1826) when the box goes unanswered; a request from 320+ away
+  refused {2, 4}; a friend request accepted (the 0x22 box, the Community row with its lamp, race
+  icon and ": 1 / 20"). Frames matched the user's screenshots in the retail compact layout.
+- No perf gate: no world, map or drawing change (UI, net and server only).
+
 ## Eight-hundred-and-thirty-third round: the Option window's Key Map tab
 
 The user asked for key mapping in the settings, from a picture of the Option window's Key Map tab

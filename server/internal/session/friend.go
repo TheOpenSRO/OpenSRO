@@ -1,10 +1,50 @@
 package session
 
+// Friends (round 834): the messenger's friend list on the retail wire and
+// rules. docs/protocol/friends.md has the whole reading; the addresses below
+// are its, c: the client, gs: SR_GameServer.exe, sm: SR_ShardManager.exe.
+//
+// The original splits this between two processes: the GameServer checks the
+// asker and keeps each player's copy, the ShardManager checks the target,
+// holds the 30-second request and writes `_Friend`. OpenSRO is one process
+// and plays both; the messages between the two (0x7C00, 0xBC00, 0x7B06,
+// 0x3B07 on the server side) have no counterpart here.
+//
+// The client's messages (READ, sizes from the asm):
+//
+//	C->S 0x7302 {str name}                         ask (c:0x824c30; gs:0x5d7620)
+//	S->C 0xB302 {2, u16 code}                      the ask failed; 0x640b adds {u8 reason, str name}
+//	S->C 0x7302 {u32 job, u32 askerJID, str name}  the request, to the target (c:0x886000)
+//	C->S 0x3303 {u32 job, u32 askerJID, u8 answer} 1 accepts, anything else refuses (c:0x820b20)
+//	C->S 0x7304 {u32 charID}                       delete (c:0x820a60; gs:0x5d77d0)
+//	S->C 0xB304 {1, u32 charID} | {2, u16 code}    (gs:0x5d8330)
+//	S->C 0x3305 {u8 n, n x {u32 charID, str name, u32 RefObjID, u8 state}}  at world entry only
+//	S->C 0x3B07 {u8 kind, ...}                     the pushes: 2 added {u32 id, str name, u32 ref},
+//	                                               3 removed {u32 id}, 4 state {u32 id, u8 state}
+//
+// State 0 is in the game, 1 is not (sm:0x446490). Strings are a u16 length
+// and single-byte characters.
+//
+// OURS, disclosed:
+//
+//   - The JID in the request is the asker's character id; retail's is its
+//     world id, opaque to the client, which only echoes it.
+//   - The answer is matched to its job by id and asker (sm:0x421ec0) and,
+//     here, also to the player the request went to.
+//   - The asker's string check (gs:0x7312f0, the abuse filter) is the quote
+//     test only.
+//   - The list is sent sorted by name (the stores'); retail's is `_Friend`'s
+//     row order (friends.md OPEN 10).
+
 import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/friend"
@@ -13,523 +53,435 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
-// Friend opcodes, our own protocol. All require a prior OpLogin.
-//
-// OpFriendRequest resolves its target by name via world.Hub.FindByName --
-// same as chat/duel/trade, the target must be online to be friended. This
-// is a real limitation for a *persistent* social feature (you can't send
-// a request to someone who's logged off), but there's no character-name
-// lookup that isn't either account-scoped (resolveCharacterID) or
-// online-scoped (world.Hub) yet; adding an unscoped one is future work.
-//
-// OpFriendAccept/OpFriendDecline/OpFriendRemove deliberately take a
-// character ID, not a name: the client already has the ID from a prior
-// OpFriendPendingListResult/OpFriendListResult, and resolving it that way
-// means accepting/declining/removing works regardless of whether the
-// other character is currently online -- unlike sending a request, which
-// does require it.
 const (
-	OpFriendRequest           uint16 = 0x00E0 // client -> server
-	OpFriendRequestResult     uint16 = 0x00E1 // server -> client, ack to the sender
-	OpFriendRequestReceived   uint16 = 0x00E2 // server -> client, direct to the target (if online)
-	OpFriendAccept            uint16 = 0x00E3 // client -> server
-	OpFriendAcceptResult      uint16 = 0x00E4 // server -> client, ack to the accepter
-	OpFriendAccepted          uint16 = 0x00E5 // server -> client, direct to the original requester (if online)
-	OpFriendDecline           uint16 = 0x00E6 // client -> server
-	OpFriendDeclineResult     uint16 = 0x00E7 // server -> client, ack
-	OpFriendList              uint16 = 0x00E8 // client -> server
-	OpFriendListResult        uint16 = 0x00E9 // server -> client
-	OpFriendRemove            uint16 = 0x00EA // client -> server
-	OpFriendRemoveResult      uint16 = 0x00EB // server -> client, ack
-	OpFriendPendingList       uint16 = 0x00EC // client -> server
-	OpFriendPendingListResult uint16 = 0x00ED // server -> client
+	OpFriendAsk          uint16 = 0x7302 // C->S the ask; S->C the request to the target
+	OpFriendAskFailed    uint16 = 0xB302 // S->C
+	OpFriendAnswer       uint16 = 0x3303 // C->S
+	OpFriendDelete       uint16 = 0x7304 // C->S
+	OpFriendDeleteResult uint16 = 0xB304 // S->C
+	OpFriendList         uint16 = 0x3305 // S->C, once at world entry
+	OpMessengerPush      uint16 = 0x3B07 // S->C
 )
 
-// FriendRequestRequest is the OpFriendRequest payload.
-type FriendRequestRequest struct {
-	CharacterName string
-	TargetName    string
+// The pushes' kinds the client handles (c:0x886310, jump table c:0x886778).
+const (
+	MessengerAdded   byte = 2
+	MessengerRemoved byte = 3
+	MessengerState   byte = 4
+)
+
+// Friend state bytes (sm:0x446490, c:0x5a7990).
+const (
+	FriendOnline  byte = 0
+	FriendOffline byte = 1
+)
+
+// The friend codes this server sends (docs/protocol/error_codes.md; the
+// client's category 0x13, c:0x7baad7). 2 and 3 show nothing.
+const (
+	friendCodeFail          uint16 = 2
+	friendCodeBadName       uint16 = 3
+	FriendCodeFullList      uint16 = 0x6408 // FRIENDERR_FULLLIST
+	FriendCodeAlreadyFriend uint16 = 0x6409 // FRIENDERR_ALREADYFRIEND
+	FriendCodeRefused       uint16 = 0x640b // FRIENDERR_REFUSAL, with the reason
+	FriendCodeUnknownUser   uint16 = 0x640d // FRIENDERR_UNKNOWNUSER
+	FriendCodeTargetFull    uint16 = 0x640f // FRIENDERR_TARGETLISTFULL
+)
+
+// The 0x640b reasons: the target's answer byte (0 for Refuse), or 2 for the
+// request timing out (sm:0x420a00).
+const (
+	FriendReasonRefused byte = 0
+	FriendReasonTimeout byte = 2
+)
+
+// FriendRequestWait is how long a request waits for its answer: float 30.0
+// at sm:0x79b01c, the overlapped job's timeout (sm:0x447792). A var so tests
+// can shorten it.
+var FriendRequestWait = 30 * time.Second
+
+// friendNameMax is the ask's longest name (gs:0x5d7662..0x5d7670).
+const friendNameMax = 32
+
+type friendJob struct {
+	id                uint32
+	askerID, targetID int64
+	askerName         string
+	targetName        string
+	timer             *time.Timer
 }
 
-func (r *FriendRequestRequest) Encode() []byte { return encodeStrings(r.CharacterName, r.TargetName) }
+type friendRuntime struct {
+	chars   character.Store
+	friends friend.Store
+	hub     *world.Hub
 
-func DecodeFriendRequestRequest(data []byte) (*FriendRequestRequest, error) {
-	fields, err := decodeStrings(data, 2)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendRequestRequest: %w", err)
-	}
-	return &FriendRequestRequest{CharacterName: fields[0], TargetName: fields[1]}, nil
+	mu   sync.Mutex
+	next uint32
+	jobs map[uint32]*friendJob
 }
 
-// FriendRequestResult is the OpFriendRequestResult payload.
-type FriendRequestResult struct {
-	OK     bool
-	Reason string
-}
+var friendRT atomic.Pointer[friendRuntime]
 
-func (r *FriendRequestResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
-
-func DecodeFriendRequestResult(data []byte) (*FriendRequestResult, error) {
-	ok, reason, err := decodeOKReason(data)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendRequestResult: %w", err)
-	}
-	return &FriendRequestResult{OK: ok, Reason: reason}, nil
-}
-
-// FriendRequestReceived is the OpFriendRequestReceived payload.
-type FriendRequestReceived struct {
-	RequesterName string
-}
-
-func (r *FriendRequestReceived) Encode() []byte { return encodeStrings(r.RequesterName) }
-
-func DecodeFriendRequestReceived(data []byte) (*FriendRequestReceived, error) {
-	fields, err := decodeStrings(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendRequestReceived: %w", err)
-	}
-	return &FriendRequestReceived{RequesterName: fields[0]}, nil
-}
-
-// FriendAcceptRequest is the OpFriendAccept payload.
-type FriendAcceptRequest struct {
-	CharacterName string
-	RequesterID   int64
-}
-
-func (r *FriendAcceptRequest) Encode() []byte {
-	return append(encodeStrings(r.CharacterName), encodeInt64(r.RequesterID)...)
-}
-
-func DecodeFriendAcceptRequest(data []byte) (*FriendAcceptRequest, error) {
-	fields, rest, err := decodeStringsPrefix(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendAcceptRequest: %w", err)
-	}
-	requesterID, _, err := decodeInt64(rest)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendAcceptRequest: requester id: %w", err)
-	}
-	return &FriendAcceptRequest{CharacterName: fields[0], RequesterID: requesterID}, nil
-}
-
-// FriendAcceptResult is the OpFriendAcceptResult payload.
-type FriendAcceptResult struct {
-	OK     bool
-	Reason string
-}
-
-func (r *FriendAcceptResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
-
-func DecodeFriendAcceptResult(data []byte) (*FriendAcceptResult, error) {
-	ok, reason, err := decodeOKReason(data)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendAcceptResult: %w", err)
-	}
-	return &FriendAcceptResult{OK: ok, Reason: reason}, nil
-}
-
-// FriendAccepted is the OpFriendAccepted payload.
-type FriendAccepted struct {
-	AccepterName string
-}
-
-func (r *FriendAccepted) Encode() []byte { return encodeStrings(r.AccepterName) }
-
-func DecodeFriendAccepted(data []byte) (*FriendAccepted, error) {
-	fields, err := decodeStrings(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendAccepted: %w", err)
-	}
-	return &FriendAccepted{AccepterName: fields[0]}, nil
-}
-
-// FriendDeclineRequest is the OpFriendDecline payload.
-type FriendDeclineRequest struct {
-	CharacterName string
-	RequesterID   int64
-}
-
-func (r *FriendDeclineRequest) Encode() []byte {
-	return append(encodeStrings(r.CharacterName), encodeInt64(r.RequesterID)...)
-}
-
-func DecodeFriendDeclineRequest(data []byte) (*FriendDeclineRequest, error) {
-	fields, rest, err := decodeStringsPrefix(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendDeclineRequest: %w", err)
-	}
-	requesterID, _, err := decodeInt64(rest)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendDeclineRequest: requester id: %w", err)
-	}
-	return &FriendDeclineRequest{CharacterName: fields[0], RequesterID: requesterID}, nil
-}
-
-// FriendDeclineResult is the OpFriendDeclineResult payload.
-type FriendDeclineResult struct {
-	OK     bool
-	Reason string
-}
-
-func (r *FriendDeclineResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
-
-func DecodeFriendDeclineResult(data []byte) (*FriendDeclineResult, error) {
-	ok, reason, err := decodeOKReason(data)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendDeclineResult: %w", err)
-	}
-	return &FriendDeclineResult{OK: ok, Reason: reason}, nil
-}
-
-// FriendSnapshot is one friends-list entry, as sent over the wire.
-type FriendSnapshot struct {
-	CharacterID int64
-	Name        string
-	Online      bool
-}
-
-func (f *FriendSnapshot) Encode() []byte {
-	out := append(encodeInt64(f.CharacterID), encodeStrings(f.Name)...)
-	if f.Online {
-		return append(out, 1)
-	}
-	return append(out, 0)
-}
-
-func decodeFriendSnapshot(data []byte) (*FriendSnapshot, []byte, error) {
-	id, rest, err := decodeInt64(data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("character id: %w", err)
-	}
-	names, rest, err := decodeStringsPrefix(rest, 1)
-	if err != nil {
-		return nil, nil, fmt.Errorf("name: %w", err)
-	}
-	if len(rest) < 1 {
-		return nil, nil, errors.New("truncated online flag")
-	}
-	return &FriendSnapshot{CharacterID: id, Name: names[0], Online: rest[0] != 0}, rest[1:], nil
-}
-
-// FriendListResult is the OpFriendListResult payload.
-type FriendListResult struct {
-	Error   string
-	Friends []FriendSnapshot
-}
-
-func (r *FriendListResult) Encode() []byte {
-	out := encodeStrings(r.Error)
-	if r.Error != "" {
-		return out
-	}
-	countBuf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Friends)))
-	out = append(out, countBuf...)
-	for _, f := range r.Friends {
-		out = append(out, f.Encode()...)
-	}
-	return out
-}
-
-func DecodeFriendListResult(data []byte) (*FriendListResult, error) {
-	fields, rest, err := decodeStringsPrefix(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendListResult: %w", err)
-	}
-	r := &FriendListResult{Error: fields[0]}
-	if r.Error != "" {
-		return r, nil
-	}
-
-	if len(rest) < 2 {
-		return nil, errors.New("session: decoding FriendListResult: truncated friend count")
-	}
-	count := int(binary.LittleEndian.Uint16(rest))
-	rest = rest[2:]
-	for i := 0; i < count; i++ {
-		var snap *FriendSnapshot
-		snap, rest, err = decodeFriendSnapshot(rest)
-		if err != nil {
-			return nil, fmt.Errorf("session: decoding FriendListResult: friend %d: %w", i, err)
-		}
-		r.Friends = append(r.Friends, *snap)
-	}
-	return r, nil
-}
-
-// FriendRemoveRequest is the OpFriendRemove payload.
-type FriendRemoveRequest struct {
-	CharacterName string
-	FriendID      int64
-}
-
-func (r *FriendRemoveRequest) Encode() []byte {
-	return append(encodeStrings(r.CharacterName), encodeInt64(r.FriendID)...)
-}
-
-func DecodeFriendRemoveRequest(data []byte) (*FriendRemoveRequest, error) {
-	fields, rest, err := decodeStringsPrefix(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendRemoveRequest: %w", err)
-	}
-	friendID, _, err := decodeInt64(rest)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendRemoveRequest: friend id: %w", err)
-	}
-	return &FriendRemoveRequest{CharacterName: fields[0], FriendID: friendID}, nil
-}
-
-// FriendRemoveResult is the OpFriendRemoveResult payload.
-type FriendRemoveResult struct {
-	OK     bool
-	Reason string
-}
-
-func (r *FriendRemoveResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
-
-func DecodeFriendRemoveResult(data []byte) (*FriendRemoveResult, error) {
-	ok, reason, err := decodeOKReason(data)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendRemoveResult: %w", err)
-	}
-	return &FriendRemoveResult{OK: ok, Reason: reason}, nil
-}
-
-// PendingRequestSnapshot is one incoming friend request, as sent over the
-// wire.
-type PendingRequestSnapshot struct {
-	RequesterID   int64
-	RequesterName string
-}
-
-func (r *PendingRequestSnapshot) Encode() []byte {
-	return append(encodeInt64(r.RequesterID), encodeStrings(r.RequesterName)...)
-}
-
-func decodePendingRequestSnapshot(data []byte) (*PendingRequestSnapshot, []byte, error) {
-	id, rest, err := decodeInt64(data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("requester id: %w", err)
-	}
-	names, rest, err := decodeStringsPrefix(rest, 1)
-	if err != nil {
-		return nil, nil, fmt.Errorf("requester name: %w", err)
-	}
-	return &PendingRequestSnapshot{RequesterID: id, RequesterName: names[0]}, rest, nil
-}
-
-// FriendPendingListResult is the OpFriendPendingListResult payload.
-type FriendPendingListResult struct {
-	Error    string
-	Requests []PendingRequestSnapshot
-}
-
-func (r *FriendPendingListResult) Encode() []byte {
-	out := encodeStrings(r.Error)
-	if r.Error != "" {
-		return out
-	}
-	countBuf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Requests)))
-	out = append(out, countBuf...)
-	for _, req := range r.Requests {
-		out = append(out, req.Encode()...)
-	}
-	return out
-}
-
-func DecodeFriendPendingListResult(data []byte) (*FriendPendingListResult, error) {
-	fields, rest, err := decodeStringsPrefix(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding FriendPendingListResult: %w", err)
-	}
-	r := &FriendPendingListResult{Error: fields[0]}
-	if r.Error != "" {
-		return r, nil
-	}
-
-	if len(rest) < 2 {
-		return nil, errors.New("session: decoding FriendPendingListResult: truncated request count")
-	}
-	count := int(binary.LittleEndian.Uint16(rest))
-	rest = rest[2:]
-	for i := 0; i < count; i++ {
-		var snap *PendingRequestSnapshot
-		snap, rest, err = decodePendingRequestSnapshot(rest)
-		if err != nil {
-			return nil, fmt.Errorf("session: decoding FriendPendingListResult: request %d: %w", i, err)
-		}
-		r.Requests = append(r.Requests, *snap)
-	}
-	return r, nil
-}
-
-// FriendHandler returns a gateway.Handler implementing the client->server
-// friend opcodes.
+// FriendHandler serves the friend messages. It also installs the runtime the
+// world entry (friendAfterEnter) and the logout (FriendDisconnectHandler)
+// use.
 func FriendHandler(chars character.Store, friends friend.Store, hub *world.Hub) gateway.Handler {
+	rt := &friendRuntime{chars: chars, friends: friends, hub: hub, jobs: map[uint32]*friendJob{}}
+	friendRT.Store(rt)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
-		case OpFriendRequest:
-			return handleFriendRequest(ctx, sess, p, chars, friends, hub)
-		case OpFriendAccept:
-			return handleFriendAccept(ctx, sess, p, chars, friends, hub)
-		case OpFriendDecline:
-			return handleFriendDecline(ctx, sess, p, chars, friends)
-		case OpFriendList:
-			return handleFriendList(ctx, sess, p, chars, friends, hub)
-		case OpFriendRemove:
-			return handleFriendRemove(ctx, sess, p, chars, friends)
-		case OpFriendPendingList:
-			return handleFriendPendingList(ctx, sess, p, chars, friends)
-		default:
-			return nil
+		case OpFriendAsk:
+			rt.ask(ctx, sess, p.Data)
+		case OpFriendAnswer:
+			rt.answer(ctx, sess, p.Data)
+		case OpFriendDelete:
+			rt.remove(ctx, sess, p.Data)
+		}
+		return nil
+	}
+}
+
+// --- encoding ---------------------------------------------------------------
+
+func appendFriendStr(b []byte, s string) []byte {
+	b = binary.LittleEndian.AppendUint16(b, uint16(len(s)))
+	return append(b, s...)
+}
+
+func readFriendStr(b []byte) (string, []byte, bool) {
+	if len(b) < 2 {
+		return "", nil, false
+	}
+	n := int(binary.LittleEndian.Uint16(b))
+	if len(b) < 2+n {
+		return "", nil, false
+	}
+	return string(b[2 : 2+n]), b[2+n:], true
+}
+
+// EncodeFriendAskFailed is 0xB302 {2, code}; FriendCodeRefused carries the
+// reason and a name after it (gs:0x5d7f35, c:0x885e50).
+func EncodeFriendAskFailed(code uint16, reason byte, name string) []byte {
+	out := binary.LittleEndian.AppendUint16([]byte{2}, code)
+	if code == FriendCodeRefused {
+		out = appendFriendStr(append(out, reason), name)
+	}
+	return out
+}
+
+// EncodeFriendRequest is the request the target receives, 0x7302.
+func EncodeFriendRequest(job, askerJID uint32, askerName string) []byte {
+	out := binary.LittleEndian.AppendUint32(nil, job)
+	out = binary.LittleEndian.AppendUint32(out, askerJID)
+	return appendFriendStr(out, askerName)
+}
+
+// FriendEntry is one row of 0x3305.
+type FriendEntry struct {
+	CharacterID uint32
+	Name        string
+	RefObjID    uint32
+	State       byte
+}
+
+// EncodeFriendList is 0x3305.
+func EncodeFriendList(list []FriendEntry) []byte {
+	out := []byte{byte(len(list))}
+	for _, f := range list {
+		out = binary.LittleEndian.AppendUint32(out, f.CharacterID)
+		out = appendFriendStr(out, f.Name)
+		out = binary.LittleEndian.AppendUint32(out, f.RefObjID)
+		out = append(out, f.State)
+	}
+	return out
+}
+
+// EncodeFriendAdded is 0x3B07 kind 2 (gs:0x5d6650).
+func EncodeFriendAdded(id uint32, name string, ref uint32) []byte {
+	out := binary.LittleEndian.AppendUint32([]byte{MessengerAdded}, id)
+	out = appendFriendStr(out, name)
+	return binary.LittleEndian.AppendUint32(out, ref)
+}
+
+// EncodeFriendRemoved is 0x3B07 kind 3 (gs:0x5d6a30).
+func EncodeFriendRemoved(id uint32) []byte {
+	return binary.LittleEndian.AppendUint32([]byte{MessengerRemoved}, id)
+}
+
+// EncodeFriendState is 0x3B07 kind 4 (gs:0x5d69b0).
+func EncodeFriendState(id uint32, state byte) []byte {
+	return append(binary.LittleEndian.AppendUint32([]byte{MessengerState}, id), state)
+}
+
+// EncodeFriendDeleteResult is 0xB304: {1, id} or {2, code}.
+func EncodeFriendDeleteResult(id uint32, code uint16) []byte {
+	if code == 0 {
+		return binary.LittleEndian.AppendUint32([]byte{1}, id)
+	}
+	return binary.LittleEndian.AppendUint16([]byte{2}, code)
+}
+
+func sendTo(sess *gateway.Session, op uint16, data []byte) {
+	if sess != nil {
+		sendToPeer(sess, &proto.Packet{Opcode: op, Data: data})
+	}
+}
+
+// --- the ask ----------------------------------------------------------------
+
+// ask is 0x7302 from the asker: the GameServer's checks on the asker
+// (gs:0x5d7620), then the ShardManager's on the target (sm:0x447650), each in
+// its order, the first failure answered 0xB302 {2, code}; then the job and
+// the request to the target. There is no success reply: an accept shows as
+// the kind-2 push (gs:0x518000 answers failures only).
+func (rt *friendRuntime) ask(ctx context.Context, sess *gateway.Session, data []byte) {
+	me, ok := rt.hub.EntityBySession(sess.ID())
+	if !ok {
+		return
+	}
+	name, _, ok := readFriendStr(data)
+	if !ok {
+		return
+	}
+	fail := func(code uint16) { sendTo(sess, OpFriendAskFailed, EncodeFriendAskFailed(code, 0, "")) }
+	switch {
+	case len(name) == 0 || len(name) > friendNameMax:
+		fail(friendCodeFail)
+		return
+	case name == me.Name: // CompareStringA with flags 0, case-sensitive (gs:0x426f30)
+		fail(friendCodeBadName)
+		return
+	case strings.ContainsAny(name, `'"`):
+		fail(friendCodeBadName)
+		return
+	}
+	mine, err := rt.friends.ListFriends(ctx, me.CharacterID)
+	if err != nil {
+		fail(friendCodeFail)
+		return
+	}
+	for _, f := range mine {
+		if f.Name == name {
+			fail(FriendCodeAlreadyFriend)
+			return
+		}
+	}
+	if len(mine) >= friend.MaxFriends {
+		fail(FriendCodeFullList)
+		return
+	}
+	target, ok := rt.hub.FindByName(name)
+	if !ok {
+		fail(FriendCodeUnknownUser)
+		return
+	}
+	theirs, err := rt.friends.ListFriends(ctx, target.CharacterID)
+	if err != nil {
+		fail(friendCodeFail)
+		return
+	}
+	if len(theirs) >= friend.MaxFriends {
+		fail(FriendCodeTargetFull)
+		return
+	}
+	for _, f := range theirs {
+		if f.CharacterID == me.CharacterID {
+			fail(FriendCodeAlreadyFriend)
+			return
+		}
+	}
+	job := rt.open(me, target)
+	sendTo(target.Session, OpFriendAsk, EncodeFriendRequest(job.id, uint32(me.CharacterID), me.Name))
+}
+
+func (rt *friendRuntime) open(asker, target world.Entity) *friendJob {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.next++
+	if rt.next == 0 {
+		rt.next = 1
+	}
+	job := &friendJob{id: rt.next, askerID: asker.CharacterID, targetID: target.CharacterID,
+		askerName: asker.Name, targetName: target.Name}
+	rt.jobs[job.id] = job
+	job.timer = time.AfterFunc(FriendRequestWait, func() {
+		if rt.take(job.id) != nil {
+			rt.ended(job, FriendReasonTimeout)
+		}
+	})
+	return job
+}
+
+// take removes a job once; nil when it is already answered or timed out.
+func (rt *friendRuntime) take(id uint32) *friendJob {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	job := rt.jobs[id]
+	if job != nil {
+		delete(rt.jobs, id)
+		job.timer.Stop()
+	}
+	return job
+}
+
+// answer is 0x3303 from the target (sm:0x421ec0 -> sm:0x447850).
+func (rt *friendRuntime) answer(ctx context.Context, sess *gateway.Session, data []byte) {
+	me, ok := rt.hub.EntityBySession(sess.ID())
+	if !ok || len(data) < 9 {
+		return
+	}
+	id := binary.LittleEndian.Uint32(data)
+	asker := binary.LittleEndian.Uint32(data[4:])
+	answer := data[8]
+	rt.mu.Lock()
+	job := rt.jobs[id]
+	match := job != nil && uint32(job.askerID) == asker && job.targetID == me.CharacterID
+	rt.mu.Unlock()
+	if !match || rt.take(id) == nil {
+		return
+	}
+	if answer != 1 {
+		rt.ended(job, answer)
+		return
+	}
+	rt.accept(ctx, job)
+}
+
+// accept is sm:0x447320: both players must be in the game, neither may list
+// the other and both lists must have room; then `_Friend_Add` and the
+// kind-2 push to both. A failed check sends nothing (READ).
+func (rt *friendRuntime) accept(ctx context.Context, job *friendJob) {
+	a, aok := rt.hub.EntityByCharacterID(job.askerID)
+	b, bok := rt.hub.EntityByCharacterID(job.targetID)
+	if !aok || !bok {
+		return
+	}
+	if err := rt.friends.AddFriendship(ctx, a.CharacterID, a.Name, b.CharacterID, b.Name); err != nil {
+		if !errors.Is(err, friend.ErrAlreadyFriends) && !errors.Is(err, friend.ErrListFull) {
+			slog.Warn("friend: adding failed", "asker", a.CharacterID, "target", b.CharacterID, "err", err)
+		}
+		return
+	}
+	sendTo(a.Session, OpMessengerPush, EncodeFriendAdded(uint32(b.CharacterID), b.Name, rt.refOf(ctx, b.CharacterID)))
+	sendTo(b.Session, OpMessengerPush, EncodeFriendAdded(uint32(a.CharacterID), a.Name, rt.refOf(ctx, a.CharacterID)))
+}
+
+// ended is a refusal or the timeout: kind 5 to both players' GameServers,
+// each turning it into 0xB302 {2, 0x640b, reason, name} (gs:0x5d7f35). The
+// refuser gets it too (READ quirk, c:0x885e50 prints the refusal line
+// without testing who it is).
+func (rt *friendRuntime) ended(job *friendJob, reason byte) {
+	msg := EncodeFriendAskFailed(FriendCodeRefused, reason, job.targetName)
+	for _, id := range [2]int64{job.askerID, job.targetID} {
+		if e, ok := rt.hub.EntityByCharacterID(id); ok {
+			sendTo(e.Session, OpFriendAskFailed, msg)
 		}
 	}
 }
 
-func handleFriendRequest(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store, hub *world.Hub) error {
-	req, err := DecodeFriendRequestRequest(p.Data)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendRequestResult, Data: (&FriendRequestResult{Reason: "malformed request"}).Encode()})
+func (rt *friendRuntime) refOf(ctx context.Context, characterID int64) uint32 {
+	c, err := rt.chars.GetByID(ctx, characterID)
+	if err != nil || c == nil {
+		return 0
 	}
-	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
-	if errStr != "" {
-		return sess.Send(&proto.Packet{Opcode: OpFriendRequestResult, Data: (&FriendRequestResult{Reason: errStr}).Encode()})
-	}
-	targetEntity, ok := hub.FindByName(req.TargetName)
-	if !ok {
-		return sess.Send(&proto.Packet{Opcode: OpFriendRequestResult, Data: (&FriendRequestResult{Reason: "player not found"}).Encode()})
-	}
-
-	if err := friends.SendRequest(ctx, characterID, req.CharacterName, targetEntity.CharacterID); err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendRequestResult, Data: (&FriendRequestResult{Reason: friendErrorMessage(err)}).Encode()})
-	}
-	if err := sess.Send(&proto.Packet{Opcode: OpFriendRequestResult, Data: (&FriendRequestResult{OK: true}).Encode()}); err != nil {
-		return err
-	}
-
-	received := &FriendRequestReceived{RequesterName: req.CharacterName}
-	sendToPeer(targetEntity.Session, &proto.Packet{Opcode: OpFriendRequestReceived, Data: received.Encode()})
-	return nil
+	ref, _ := modelOf(c)
+	return ref
 }
 
-func handleFriendAccept(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store, hub *world.Hub) error {
-	req, err := DecodeFriendAcceptRequest(p.Data)
+// --- delete -----------------------------------------------------------------
+
+// remove is 0x7304 (gs:0x5d77d0): 3 when the id is not on the list; then
+// `_Friend_Remove`, both ways (sm:0x446930). The deleter gets the kind-3 push
+// and then 0xB304 {1, id} (gs:0x5d8330); the other side, in the game, the
+// kind-3 push.
+func (rt *friendRuntime) remove(ctx context.Context, sess *gateway.Session, data []byte) {
+	me, ok := rt.hub.EntityBySession(sess.ID())
+	if !ok || len(data) < 4 {
+		return
+	}
+	id := binary.LittleEndian.Uint32(data)
+	mine, err := rt.friends.ListFriends(ctx, me.CharacterID)
 	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendAcceptResult, Data: (&FriendAcceptResult{Reason: "malformed request"}).Encode()})
+		sendTo(sess, OpFriendDeleteResult, EncodeFriendDeleteResult(0, friendCodeFail))
+		return
 	}
-	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
-	if errStr != "" {
-		return sess.Send(&proto.Packet{Opcode: OpFriendAcceptResult, Data: (&FriendAcceptResult{Reason: errStr}).Encode()})
+	listed := false
+	for _, f := range mine {
+		listed = listed || f.CharacterID == int64(id)
 	}
-
-	if err := friends.AcceptRequest(ctx, characterID, req.CharacterName, req.RequesterID); err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendAcceptResult, Data: (&FriendAcceptResult{Reason: friendErrorMessage(err)}).Encode()})
+	if !listed {
+		sendTo(sess, OpFriendDeleteResult, EncodeFriendDeleteResult(0, friendCodeBadName))
+		return
 	}
-	if err := sess.Send(&proto.Packet{Opcode: OpFriendAcceptResult, Data: (&FriendAcceptResult{OK: true}).Encode()}); err != nil {
-		return err
+	if err := rt.friends.RemoveFriend(ctx, me.CharacterID, int64(id)); err != nil {
+		sendTo(sess, OpFriendDeleteResult, EncodeFriendDeleteResult(0, friendCodeFail))
+		return
 	}
-
-	if requesterEntity, online := hub.EntityByCharacterID(req.RequesterID); online {
-		accepted := &FriendAccepted{AccepterName: req.CharacterName}
-		sendToPeer(requesterEntity.Session, &proto.Packet{Opcode: OpFriendAccepted, Data: accepted.Encode()})
-		return nil
+	sendTo(sess, OpMessengerPush, EncodeFriendRemoved(id))
+	sendTo(sess, OpFriendDeleteResult, EncodeFriendDeleteResult(id, 0))
+	if other, ok := rt.hub.EntityByCharacterID(int64(id)); ok {
+		sendTo(other.Session, OpMessengerPush, EncodeFriendRemoved(uint32(me.CharacterID)))
 	}
-	return nil
 }
 
-func handleFriendDecline(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store) error {
-	req, err := DecodeFriendDeclineRequest(p.Data)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendDeclineResult, Data: (&FriendDeclineResult{Reason: "malformed request"}).Encode()})
-	}
-	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
-	if errStr != "" {
-		return sess.Send(&proto.Packet{Opcode: OpFriendDeclineResult, Data: (&FriendDeclineResult{Reason: errStr}).Encode()})
-	}
+// --- log on and off ---------------------------------------------------------
 
-	if err := friends.DeclineRequest(ctx, characterID, req.RequesterID); err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendDeclineResult, Data: (&FriendDeclineResult{Reason: friendErrorMessage(err)}).Encode()})
+// friendAfterEnter sends the arriving character its list, 0x3305, the only
+// time it is sent (gs:0x5d6550 -> 0x5d6b10), each friend in the game with
+// state 0; then tells those friends it logged on, kind 4 state 0
+// (sm:0x447560(..., 0)).
+func friendAfterEnter(ctx context.Context, sess *gateway.Session, owned *character.Character) {
+	rt := friendRT.Load()
+	if rt == nil || owned == nil {
+		return
 	}
-	return sess.Send(&proto.Packet{Opcode: OpFriendDeclineResult, Data: (&FriendDeclineResult{OK: true}).Encode()})
+	list, err := rt.friends.ListFriends(ctx, owned.ID)
+	if err != nil {
+		slog.Warn("friend: loading the list failed", "character", owned.ID, "err", err)
+		return
+	}
+	if len(list) > friend.MaxFriends {
+		list = list[:friend.MaxFriends] // gs:0x5d6b23 sends at most 20
+	}
+	entries := make([]FriendEntry, 0, len(list))
+	var online []world.Entity
+	for _, f := range list {
+		state := FriendOffline
+		if e, ok := rt.hub.EntityByCharacterID(f.CharacterID); ok {
+			state = FriendOnline
+			online = append(online, e)
+		}
+		entries = append(entries, FriendEntry{CharacterID: uint32(f.CharacterID), Name: f.Name,
+			RefObjID: rt.refOf(ctx, f.CharacterID), State: state})
+	}
+	sendTo(sess, OpFriendList, EncodeFriendList(entries))
+	for _, e := range online {
+		sendTo(e.Session, OpMessengerPush, EncodeFriendState(uint32(owned.ID), FriendOnline))
+	}
 }
 
-func handleFriendList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store, hub *world.Hub) error {
-	req, err := DecodeCharacterNameRequest(p.Data)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendListResult, Data: (&FriendListResult{Error: "malformed request"}).Encode()})
-	}
-	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.Name)
-	if errStr != "" {
-		return sess.Send(&proto.Packet{Opcode: OpFriendListResult, Data: (&FriendListResult{Error: errStr}).Encode()})
-	}
-
-	list, err := friends.ListFriends(ctx, characterID)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendListResult, Data: (&FriendListResult{Error: "failed to load friends"}).Encode()})
-	}
-
-	snapshots := make([]FriendSnapshot, len(list))
-	for i, f := range list {
-		_, online := hub.EntityByCharacterID(f.CharacterID)
-		snapshots[i] = FriendSnapshot{CharacterID: f.CharacterID, Name: f.Name, Online: online}
-	}
-	return sess.Send(&proto.Packet{Opcode: OpFriendListResult, Data: (&FriendListResult{Friends: snapshots}).Encode()})
-}
-
-func handleFriendRemove(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store) error {
-	req, err := DecodeFriendRemoveRequest(p.Data)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendRemoveResult, Data: (&FriendRemoveResult{Reason: "malformed request"}).Encode()})
-	}
-	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
-	if errStr != "" {
-		return sess.Send(&proto.Packet{Opcode: OpFriendRemoveResult, Data: (&FriendRemoveResult{Reason: errStr}).Encode()})
-	}
-
-	if err := friends.RemoveFriend(ctx, characterID, req.FriendID); err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendRemoveResult, Data: (&FriendRemoveResult{Reason: friendErrorMessage(err)}).Encode()})
-	}
-	return sess.Send(&proto.Packet{Opcode: OpFriendRemoveResult, Data: (&FriendRemoveResult{OK: true}).Encode()})
-}
-
-func handleFriendPendingList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store) error {
-	req, err := DecodeCharacterNameRequest(p.Data)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendPendingListResult, Data: (&FriendPendingListResult{Error: "malformed request"}).Encode()})
-	}
-	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.Name)
-	if errStr != "" {
-		return sess.Send(&proto.Packet{Opcode: OpFriendPendingListResult, Data: (&FriendPendingListResult{Error: errStr}).Encode()})
-	}
-
-	list, err := friends.ListPendingRequests(ctx, characterID)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpFriendPendingListResult, Data: (&FriendPendingListResult{Error: "failed to load requests"}).Encode()})
-	}
-
-	snapshots := make([]PendingRequestSnapshot, len(list))
-	for i, r := range list {
-		snapshots[i] = PendingRequestSnapshot{RequesterID: r.RequesterID, RequesterName: r.RequesterName}
-	}
-	return sess.Send(&proto.Packet{Opcode: OpFriendPendingListResult, Data: (&FriendPendingListResult{Requests: snapshots}).Encode()})
-}
-
-func friendErrorMessage(err error) string {
-	switch {
-	case errors.Is(err, friend.ErrCannotFriendSelf):
-		return "cannot friend yourself"
-	case errors.Is(err, friend.ErrAlreadyFriends):
-		return "already friends"
-	case errors.Is(err, friend.ErrRequestAlreadySent):
-		return "request already sent"
-	case errors.Is(err, friend.ErrNoSuchRequest):
-		return "no such request"
-	case errors.Is(err, friend.ErrNotFriends):
-		return "not friends"
-	default:
-		return "operation failed"
+// FriendDisconnectHandler tells a leaving character's friends in the game it
+// logged off, kind 4 state 1 (sm:0x447210 -> 0x447560(..., 1)). It must run
+// before WorldDisconnectHandler, while the hub still knows the session.
+func FriendDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
+	return func(sess *gateway.Session) {
+		rt := friendRT.Load()
+		if rt == nil {
+			return
+		}
+		me, ok := hub.EntityBySession(sess.ID())
+		if !ok {
+			return
+		}
+		list, err := rt.friends.ListFriends(context.Background(), me.CharacterID)
+		if err != nil {
+			return
+		}
+		for _, f := range list {
+			if e, ok := hub.EntityByCharacterID(f.CharacterID); ok && e.Session != sess {
+				sendTo(e.Session, OpMessengerPush, EncodeFriendState(uint32(me.CharacterID), FriendOffline))
+			}
+		}
 	}
 }

@@ -1325,6 +1325,22 @@ static func _spin_refresh(ctrl: Control) -> void:
 const SUBFRAME_CAPTION := "Caption"
 
 func _add_subframe_caption(frame: Control, def: UiLayoutParser.ControlDef) -> void:
+	_make_subframe_caption(frame, float(def.rect.size.x), _resolve_text(def.text))
+
+## SetText on a subframe whose layout gave it none (round 834: the exchange's
+## two headers, CIFExchange 0x7b2d00 -> the frames' vslot 45): its caption
+## static, made as Create makes it (above) at the frame's width.
+func set_subframe_text(frame: Control, text: String) -> Label:
+	if frame == null:
+		return null
+	var label := subframe_caption(frame)
+	if label == null:
+		var r: Rect2 = frame.get_meta(AUTHORED_RECT_META, Rect2(frame.position, frame.size))
+		label = _make_subframe_caption(frame, r.size.x, text)
+	label.text = text
+	return label
+
+func _make_subframe_caption(frame: Control, width: float, text: String) -> Label:
 	var label := Label.new()
 	label.name = SUBFRAME_CAPTION
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1338,12 +1354,13 @@ func _add_subframe_caption(frame: Control, def: UiLayoutParser.ControlDef) -> vo
 		label.add_theme_font_override("font", font)
 	label.add_theme_font_size_override("font_size", FONT_SIZES[0] if FONT_SIZES.size() > 0 else FONT_SIZE_FALLBACK)
 	crisp_text(label)
-	label.text = _resolve_text(def.text)
-	var rect := Rect2(10, 7, maxf(0.0, float(def.rect.size.x) - 20.0), 12)
+	label.text = text
+	var rect := Rect2(10, 7, maxf(0.0, width - 20.0), 12)
 	label.set_meta(AUTHORED_RECT_META, rect)
 	place_label(label, rect)
 	_relay(label)
 	frame.add_child(label)
+	return label
 
 ## The caption label of a subframe built by build_control, or null.
 static func subframe_caption(frame: Node) -> Label:

@@ -1410,6 +1410,9 @@ func _guild_window() -> GuildWindow:
 	# data as U and the community button do.
 	window.view_changed.connect(func(view: String) -> void: _populate(view))
 	window.grant_name_submitted.connect(func(nick: String) -> void: guild_grant_name_requested.emit(nick))
+	window.friend_whisper_requested.connect(_friend_whisper)
+	window.friend_add_requested.connect(open_friend_add)
+	window.friend_delete_requested.connect(open_friend_delete)
 	# Round 822: Invite and the ban question's Yes.
 	window.own_name = NetClient.current_character_name
 	window.invite_requested.connect(func() -> void: guild_invite_requested.emit())
@@ -3747,6 +3750,311 @@ func set_exchange_money(mine: int, other: int) -> void:
 	if other >= 0:
 		_set_money_text(window, "GDR_EXCHANGE_STATIC_OTHERMONEY", other)
 
+# --- The exchange (round 834; ExchangeController, docs/protocol/exchange.md) -----
+
+## A banner on GDR_WARNING_WND (0x77b580), then the same text as a system
+## line of `line_type` (World3D's _show_banner / _log_system).
+signal exchange_banner(text: String)
+signal exchange_system_line(text: String, line_type: int)
+
+var exchange: ExchangeController
+
+func _exchange() -> ExchangeController:
+	if exchange == null:
+		exchange = ExchangeController.new(self)
+	return exchange
+
+## GI+0x508.
+func exchange_mode() -> bool:
+	return exchange != null and exchange.active
+
+func open_exchange(partner: Dictionary, own: Dictionary) -> void:
+	_exchange().open(partner, own)
+
+func exchange_closed(code: int) -> void:
+	if exchange != null:
+		exchange.closed(code)
+	else:
+		exchange_code_message(code)
+
+## The window shown (built at its first use), the main popup on its
+## inventory tab beside it (c:0x7b2530(1), 0x79df10(1): 0x6a1f70(0x46)).
+func open_exchange_window() -> void:
+	var window := open(ExchangeController.WINDOW)
+	if window == null:
+		return
+	_wire_exchange(window)
+	open("inventory")
+	window.move_to_front()
+
+func close_exchange_window() -> void:
+	var window: HudWindow = _windows.get(ExchangeController.WINDOW)
+	if window != null:
+		window.hide()
+
+func _wire_exchange(window: HudWindow) -> void:
+	if window.has_meta("exchange_wired"):
+		return
+	window.set_meta("exchange_wired", true)
+	window.close_hides = false
+	window.closed.connect(func() -> void: _exchange().press_cancel())
+	var wiring := {"GDR_EXCHANGE_BUTTON_EXCHANGE": func() -> void: _exchange().press_button(),
+		"GDR_EXCHANGE_BUTTON_CANCEL": func() -> void: _exchange().press_cancel(),
+		"GDR_EXCHANGE_BUTTON_MONEYBTN": func() -> void: _exchange().press_gold()}
+	for n in wiring:
+		var b := window.node(n) as BaseButton
+		if b != null:
+			b.pressed.connect(wiring[n])
+	# The grids' cells take the clicks (as the warehouse's, _lattice_takes_clicks).
+	_lattice_takes_clicks(window, ExchangeController.MY_PREFIX)
+	_lattice_takes_clicks(window, ExchangeController.OTHER_PREFIX)
+	for own_side in [true, false]:
+		var grid := window.node("GDR_EXCHANGE_LAT_MY" if own_side else "GDR_EXCHANGE_LAT_OTHER") as Control
+		if grid == null:
+			continue
+		var tint_tex: Texture2D = _builder.load_texture(ExchangeController.BLUE) if _builder != null else null
+		for i in grid.get_child_count():
+			var cell := grid.get_child(i) as Control
+			var tint := TextureRect.new()
+			tint.name = "ExchangeTint"
+			tint.texture = tint_tex
+			tint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			tint.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			tint.visible = false
+			cell.add_child(tint)
+			var bg := cell.get_node_or_null("SlotBg")
+			cell.move_child(tint, bg.get_index() + 1 if bg != null else 0)
+			var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+			if icon != null and own_side:
+				var index: int = i
+				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_exchange_cell_input(ev, icon, index))
+
+## A grid's 12 cells drawn from the side's items, blue when that side's
+## confirm was accepted (CIFSlotWithHelp +0x595 -> +0x61c, c:0x67cfcc).
+func exchange_draw_grid(own_side: bool, items: Dictionary, blue: bool) -> void:
+	var window: HudWindow = _windows.get(ExchangeController.WINDOW)
+	var grid := window.node("GDR_EXCHANGE_LAT_MY" if own_side else "GDR_EXCHANGE_LAT_OTHER") as Control if window != null else null
+	if grid == null:
+		return
+	_load_items()
+	var where := "exchange_my" if own_side else "exchange_other"
+	for i in grid.get_child_count():
+		var cell := grid.get_child(i) as Control
+		var tint := cell.get_node_or_null("ExchangeTint") as Control
+		if tint != null:
+			tint.visible = blue
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		var count := cell.get_node_or_null("CountLabel") as Label
+		if icon == null:
+			continue
+		var o = items.get(i)
+		if o == null:
+			icon.texture = null
+			_set_item_tip(icon, -1)
+			_set_item_seal_edge(icon, -1)
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if count != null:
+				count.text = ""
+			continue
+		var it: ItemInstance = (o as ExchangeNet.Offered).item
+		icon.texture = _item_icon(it.ref_item_id)
+		_set_item_tip(icon, it.ref_item_id, where, i)
+		_set_item_seal_edge(icon, it.ref_item_id)
+		icon.mouse_filter = Control.MOUSE_FILTER_STOP
+		if count != null:
+			count.text = str(it.count) if not it.is_equipment and _shows_count(it.ref_item_id, it.count) else ""
+
+## An own cell: picked up (until this side confirms) to be put back on the
+## bag, or Alt+clicked out while neither side confirmed (c:0x681de8).
+func _on_exchange_cell_input(event: InputEvent, icon: TextureRect, index: int) -> void:
+	if exchange == null or not exchange.active:
+		return
+	if _is_alt_click_on(event, icon) and (held_icon == null or not held_icon.is_holding()):
+		exchange.remove_index(index, true)
+		return
+	if _is_pick_click_on(event, icon) and not exchange.mine_confirmed and exchange.my_items.has(index):
+		var it: ItemInstance = (exchange.my_items[index] as ExchangeNet.Offered).item
+		pick_up_icon({"kind": "exchange", "index": index, "item_id": it.ref_item_id, "icon": icon.texture},
+			icon.texture, icon, (event as InputEventMouseButton).global_position)
+
+func exchange_header(own_side: bool, text: String) -> void:
+	var window: HudWindow = _windows.get(ExchangeController.WINDOW)
+	if window == null:
+		return
+	if _builder != null:
+		_builder.set_subframe_text(window.node("GDR_EXCHANGE_MY_SUBFRAME" if own_side else "GDR_EXCHANGE_OTHER_SUBFRAME") as Control, text)
+
+## The button's caption and state (0x7b2700 / 0x7b2670 / 0x7b22f0).
+func exchange_button(key: String, enabled: bool) -> void:
+	var window: HudWindow = _windows.get(ExchangeController.WINDOW)
+	var b := window.node("GDR_EXCHANGE_BUTTON_EXCHANGE") as BaseButton if window != null else null
+	if b == null:
+		return
+	if _builder != null:
+		_builder.set_button_text(b, _resolve_ui(key, key))
+	b.disabled = not enabled
+
+## The gold amounts greyed once their side confirmed (+0x36c).
+func exchange_gold_greyed(mine: bool, other: bool) -> void:
+	var window: HudWindow = _windows.get(ExchangeController.WINDOW)
+	if window == null:
+		return
+	for pair in [["GDR_EXCHANGE_STATIC_MYMONEY", mine], ["GDR_EXCHANGE_STATIC_OTHERMONEY", other]]:
+		var n := window.node(pair[0]) as Control
+		if n != null:
+			n.modulate = EXCHANGE_GREYED if bool(pair[1]) else Color.WHITE
+
+## A category-1 code's message (ExchangeNet.CODE_TEXTS): the banner first for
+## the codes that have one, then the system line, type 5.
+func exchange_code_message(code: int) -> void:
+	var key := String(ExchangeNet.CODE_TEXTS.get(code, ""))
+	if key == "":
+		print("HudPanels: exchange code 0x%x -- the client shows nothing for it" % code)
+		return
+	var text := _resolve_ui(key, "")
+	if text == "":
+		return
+	if code in ExchangeNet.CODE_BANNER:
+		exchange_banner.emit(text)
+	exchange_system_line.emit(text, HudSystemMessage.TYPE_GAME)
+
+func refresh_bag_after_exchange() -> void:
+	if NetClient.current_character_name != "" and NetClient.is_connected_to_server():
+		NetClient.list_inventory(NetClient.current_character_name)
+
+func redraw_bag() -> void:
+	if is_open("inventory"):
+		_draw_bag_page()
+
+## The dim quad over a bag cell, above the icon and below the count.
+func _exchange_dim(cell: Node, on: bool) -> void:
+	var dim := cell.get_node_or_null("ExchangeDim") as ColorRect
+	if dim == null and on:
+		dim = ColorRect.new()
+		dim.name = "ExchangeDim"
+		dim.color = EXCHANGE_DIM
+		dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		cell.add_child(dim)
+		var icon := cell.get_node_or_null("ItemIcon")
+		cell.move_child(dim, icon.get_index() + 1 if icon != null else cell.get_child_count() - 1)
+	if dim != null:
+		dim.visible = on
+
+## Whether a bag slot is offered (disabled while it is, 0x6b3f00).
+func exchange_offered(slot: int) -> bool:
+	return exchange != null and exchange.active and exchange.offered_slots.has(slot)
+
+## The client's own refusal before the box (SOItem::FUN_008baf10): the
+## item's CanTrade (ref +0xa4) 0x183a; 0 to go on. The devil's spirit's
+## awakened period (0x18fa) is not tested here: the bag's period word is the
+## server's, which refuses it (exchange.go).
+func exchange_item_refusal(_slot: int, item_id: int) -> int:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item != null and not item.can_trade:
+		return 0x183a
+	return 0
+
+## The offered bag slot's dim (0x6b3f00 -> slot+0x574 = 0): CIFSlotWithHelp
+## draws an untextured 0x80000000 quad over the slot after the icon
+## (c:0x67cfb0 -> 0x654d10), black at half alpha, so the slot reads at about
+## half brightness; the count is drawn after it, undimmed
+## (exchange_boxes.md Q1). The gold static's +0x36c is the same quad over
+## its rect (c:0x64d940, Q2): white text becomes about (127, 127, 127).
+const EXCHANGE_DIM := Color(0, 0, 0, 128.0 / 255.0)
+const EXCHANGE_GREYED := Color(127.0 / 255.0, 127.0 / 255.0, 127.0 / 255.0)
+
+## A message's display (exchange_boxes.md Q3, READ): the warning banner
+## (0x77b580) and / or a system line of type 0 (0x7781b0(0, ...)); the
+## window's own log (control 304) is parked at x 9999 by retail's layout and
+## never seen, so a log-only line shows nothing.
+func exchange_line(key: String, args: Array, _log_colour: Color, _also_log: bool = true) -> void:
+	var text := _exchange_text(key, args)
+	if text != "" and key != "UIIT_MSG_EXCHANGE_AGREEMENT_WAIT":
+		exchange_system_line.emit(text, HudSystemMessage.TYPE_ALWAYS)
+
+func exchange_warning(key: String, _log_colour: Color) -> void:
+	var text := _exchange_text(key, [])
+	if text == "":
+		return
+	exchange_banner.emit(text)
+	exchange_system_line.emit(text, HudSystemMessage.TYPE_ALWAYS)
+
+## 0x3087's notice: UIIT_MSG_STGRERR_ITEM_EXCHANGE_SUCCEED on the banner
+## only (c:0x88bb50).
+func exchange_done_notice() -> void:
+	var text := _exchange_text("UIIT_MSG_STGRERR_ITEM_EXCHANGE_SUCCEED", [])
+	if text != "":
+		exchange_banner.emit(text)
+
+func _exchange_text(key: String, args: Array) -> String:
+	var fmt := _resolve_ui(key, "")
+	if fmt == "":
+		return ""
+	for a in args:
+		fmt = fmt.replace("%s", String(a)) if fmt.contains("%s") else fmt
+	return fmt
+
+## 0x3088 removes HUD requests of kinds 8, 6 and 7 (c:0x880840): the
+## exchange's request box and the party's invitation boxes.
+func close_request_boxes_6_7_8() -> void:
+	close_party_invitation()
+	close_exchange_request()
+
+var _exchange_request_box: FriendMsgBox
+
+## 0x3080 kind 1's box (HUD request kind 7, c:0x644c90 case 7;
+## exchange_boxes.md A): MsgBoxINIF at 308 x 148; Accept answers 1, Refuse 0.
+func show_exchange_request(asker_id: int, asker_name: String) -> FriendMsgBox:
+	close_exchange_request()
+	if _builder == null:
+		return null
+	var box := FriendMsgBox.new()
+	if not box.build_exchange_request(_builder, asker_name):
+		box.queue_free()
+		return null
+	box.set_meta("asker_id", asker_id)
+	box.accepted.connect(func(_t: String) -> void: NetClient.exchange_answer(true))
+	box.cancelled.connect(func() -> void: NetClient.exchange_answer(false))
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	add_child(box)
+	_exchange_request_box = box
+	return box
+
+func close_exchange_request() -> void:
+	if is_instance_valid(_exchange_request_box):
+		_exchange_request_box.close()
+	_exchange_request_box = null
+
+func exchange_request_box() -> FriendMsgBox:
+	return _exchange_request_box if is_instance_valid(_exchange_request_box) else null
+
+## The item box (purpose 7, StoreMessageBox.Kind.EXCHANGE_ITEM); its OK
+## offers the slot (0x7034 {4, slot}) when the count is above 0.
+func open_exchange_item_box(slot: int, item_id: int, qty: int) -> StoreMessageBox:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	var stacks := item != null and is_stack_item(item)
+	return _open_store_box("inventory", "ExchangeItem", StoreMessageBox.Kind.EXCHANGE_ITEM, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
+		"stack": maxi(1, qty) if stacks else 0,
+	}, func(n: int) -> void:
+		if n > 0 and exchange_mode():
+			NetClient.exchange_add(slot))
+
+## The gold box (purpose 8, Kind.EXCHANGE_GOLD): it opens at "1" (c:0x6b2ce5),
+## no minimum, at most min(the gold carried, 1,000,000,000); OK sends a
+## positive amount (c:0x6b4b3c -> 0x825f50(0x46, 0x1a, amount)).
+func open_exchange_gold_box() -> StoreMessageBox:
+	var carried: int = _stats.gold if _stats != null else _storage_carried
+	return _open_store_box("inventory", "ExchangeGold", StoreMessageBox.Kind.EXCHANGE_GOLD,
+		{"count": 1, "min": 0, "max": mini(maxi(0, carried), StoreMessageBox.GOLD_CAP)},
+		func(n: int) -> void:
+			if n > 0 and exchange_mode():
+				NetClient.exchange_gold(n))
+
 ## The warehouse gold boxes: CIFMessageBox mode 3, MsgBoxStoreMoney (round
 ## 726), one move per box -- OK sends it and the box closes (round 631).
 ## Deposit (purpose 3) from the bag's gold button while the warehouse is
@@ -4308,6 +4616,11 @@ func _escape_close() -> bool:
 	for panel_id in ["storage", "npctalk", "exchange"]:
 		var window: HudWindow = _windows.get(panel_id)
 		if window != null and window.visible:
+			if panel_id == "exchange" and exchange_mode():
+				# Round 834: vslot_043 is the X, 0x7b24d0: the cancel, the
+				# window kept until the answer.
+				exchange.press_cancel()
+				return true
 			window.hide()
 			if panel_id != "exchange":
 				UiSounds.window_toggled(false, _interface_shown(), "Escape: %s (vslot_043)" % panel_id)
@@ -4417,7 +4730,8 @@ func _close_confirm_box(box: Control) -> void:
 ## The confirm boxes a store or warehouse window can carry, by node name.
 const CONFIRM_BOXES := ["BuyConfirm", "SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog", "BuybackConfirm", "SplitConfirm"]
 ## The boxes that are the inventory's one message box (+0x390) in the original.
-const INVENTORY_BOXES := ["SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog", "BuybackConfirm", "SplitConfirm"]
+const INVENTORY_BOXES := ["SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog", "BuybackConfirm", "SplitConfirm",
+	"ExchangeItem", "ExchangeGold"]
 
 ## Closes every confirm box on `window`. A box holds what it was opened on --
 ## the sell box a bag SLOT, not the item -- so one left behind a closed
@@ -5049,6 +5363,9 @@ func _item_instance(where: String, slot: int) -> Object:
 		if _shop_selected < 0 or _shop_selected >= _shop_tabs.size():
 			return null
 		return (_shop_tabs[_shop_selected] as ShopReader.Tab).instance_at(slot)
+	# Round 834: the exchange's grids (ExchangeController).
+	if where == "exchange_my" or where == "exchange_other":
+		return exchange.instance_at(where == "exchange_my", slot) if exchange != null else null
 	if slot < 0 or not _INSTANCE_LISTS.has(where):
 		return null
 	var list = NetClient.get(_INSTANCE_LISTS[where])
@@ -5351,6 +5668,7 @@ func _draw_bag_page() -> void:
 			icon.modulate = Color.WHITE
 			DurabilityMark.apply(icon, DurabilityMark.State.NONE, null, null)
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_exchange_dim(cell, false)
 			for m in ["inv_slot", "inv_item_id", "inv_qty"]:
 				if icon.has_meta(m):
 					icon.remove_meta(m)
@@ -5394,6 +5712,9 @@ func _draw_bag_page() -> void:
 				_set_item_tip(icon, int(item_id), "bag", index)
 				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
+			# Round 834: an item offered to the exchange is drawn dimmed
+			# (0x6b3f00(slot, 0), EXCHANGE_DIM).
+			_exchange_dim(cell, exchange_offered(index))
 			# The slot's identity, so a click can sell it while a shop is open.
 			icon.set_meta("inv_slot", index)
 			icon.set_meta("inv_item_id", int(item_id))
@@ -5506,6 +5827,14 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	# Round 728: Shift+click splits a stack (_open_split).
 	if _is_shift_click_on(event, icon) and (held_icon == null or not held_icon.is_holding()):
 		_open_split(slot, item_id, qty)
+		return
+	# Round 834: an offered item's slot is disabled (0x6b3f00): no clicks.
+	if exchange_offered(slot):
+		return
+	# Round 834: Alt+click offers it to the exchange (c:0x681b7a -> the
+	# window's vslot 0x70).
+	if _is_alt_click_on(event, icon) and exchange_mode() and (held_icon == null or not held_icon.is_holding()):
+		exchange.offer_from_bag(slot, item_id, qty)
 		return
 	# Round 768: Alt+click puts the item in the alchemy window while it is
 	# open (CIFSlotWithHelp::vslot_029 0x680fa0: GetKeyState(VK_MENU) at
@@ -5718,8 +6047,15 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 				_confirm_sell(from, item_id, qty)       # 0x46 -> 0x0f: type 9, sell
 			elif _over_window("storage", at):
 				_confirm_deposit(from, item_id, qty)    # 0x46 -> 0x13: type 2
+			elif _over_window("exchange", at) and exchange_mode():
+				_exchange().offer_from_bag(from, item_id, qty)   # 0x46 -> 0x1a: type 4
 			elif not _over_any_window(at):
 				held_dropped_outside.emit(what, at)     # a quick slot, or the ground (OPEN)
+		"exchange":
+			# Round 834: an own exchange slot put down on the bag (0x1a ->
+			# 0x46, CIFInventory::vslot_028 c:0x6b5b80): type 5.
+			if on_bag and exchange_mode():
+				exchange.remove_index(int(what.get("index", -1)), false)
 		"worn":
 			if on_bag:
 				_drop_worn_item(from, at)
@@ -7322,10 +7658,15 @@ func connect_net() -> void:
 			quest_hud.detail.hide())
 	NetClient.quest.claim_result.connect(func(ok: bool, id: int, error: int) -> void:
 		print("HudPanels: claim quest %d: %s" % [id, "ok" if ok else "refused %d" % error]))
-	# The friend list fills the community view's friend rows (GuildWindow.
-	# fill_friends, the client's own row fill), as it filled the old
-	# window's list overlay.
-	NetClient.friend_list_result.connect(_on_friend_list_result)
+	# Round 834: the friend list (0x3305 and the 0x3B07 pushes) fills the
+	# community view's friend rows (GuildWindow.fill_friends).
+	NetClient.friend_list_changed.connect(_on_friend_list_changed)
+	# Round 834: the exchange's messages (ExchangeController).
+	NetClient.exchange_offer.connect(func(d: Dictionary) -> void: _exchange().on_offer(d))
+	NetClient.exchange_moved.connect(func(r: Dictionary) -> void: _exchange().on_moved(r))
+	NetClient.exchange_partner_gold.connect(func(g: int) -> void: _exchange().on_partner_gold(g))
+	NetClient.exchange_partner_confirmed.connect(func() -> void: _exchange().on_partner_confirmed())
+	NetClient.exchange_result.connect(func(op: int, code: int) -> void: _exchange().on_result(op, code))
 	# Every reply that says which guild the player is in: info, create and
 	# join carry it, a successful leave means none.
 	NetClient.guild_info_result.connect(_on_guild_info_result)
@@ -7338,7 +7679,7 @@ func connect_net() -> void:
 	if NetClient.last_guild_result != null:
 		_on_guild_info_result(NetClient.last_guild_result)
 	if NetClient.has_friend_list:
-		_on_friend_list_result(NetClient.last_friend_list, "")
+		_on_friend_list_changed(NetClient.last_friend_list)
 	if NetClient.quest.has_log:
 		_on_quest_log_changed()
 	# The race the skill tables are read for, from the body the server put
@@ -7368,16 +7709,123 @@ func connect_net() -> void:
 	NetClient.storage_withdraw_result.connect(_on_storage_withdraw_result)
 	NetClient.storage_gold_result.connect(_on_storage_gold_result)
 
-## A friend list from the server: kept, and drawn on the guild window's
-## friend rows if the window exists (it is drawn from the kept list when it
-## is built later). A refused list changes nothing.
-func _on_friend_list_result(friends: Array, error: String) -> void:
-	if error != "":
-		return
+## The friend list changed (round 834): kept, and drawn on the guild
+## window's friend rows if the window exists (it is drawn from the kept list
+## when it is built later).
+func _on_friend_list_changed(friends: Array) -> void:
 	_friends = friends.duplicate()
 	var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
 	if guild != null:
 		guild.fill_friends(_friends)
+
+# --- Friends' boxes (round 834; FriendMsgBox, docs/protocol/friends.md) --------
+
+## The Add box's OK: ask this name (World3D.friend_ask).
+signal friend_ask_requested(target_name: String)
+## The request box's answer (World3D.friend_answer).
+signal friend_answer_requested(request: FriendNet.Request, accept: bool)
+## The name the Add box starts with: the selected player's (0x5a7160's
+## argument), or "" -- World3D sets it.
+var selected_player_name := func() -> String: return ""
+
+## The player's own name (World3D sets it at world entry).
+var own_name_for_friends := ""
+var _friend_request_box: FriendMsgBox
+var _friend_request_queue: Array = []
+
+## Box 0x23 for an incoming request. CMessageBoxManager shows one box at a
+## time and queues the rest (0x77f0a0); a request that comes while one is
+## up waits for it.
+func show_friend_request(request: FriendNet.Request) -> void:
+	if is_instance_valid(_friend_request_box):
+		_friend_request_queue.append(request)
+		return
+	_open_friend_request(request)
+
+func _open_friend_request(request: FriendNet.Request) -> void:
+	if _builder == null or request == null:
+		return
+	var box := FriendMsgBox.new()
+	if not box.build_request(_builder, request):
+		box.queue_free()
+		return
+	box.accepted.connect(func(_t: String) -> void: friend_answer_requested.emit(request, true))
+	box.cancelled.connect(func() -> void: friend_answer_requested.emit(request, false))
+	box.tree_exited.connect(_next_friend_request)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	add_child(box)
+	box.arm_request_timer()
+	_friend_request_box = box
+
+func _next_friend_request() -> void:
+	_friend_request_box = null
+	if not _friend_request_queue.is_empty() and is_inside_tree():
+		_open_friend_request(_friend_request_queue.pop_front())
+
+## 0xB302 reason 2 with the flag at 2: box 0x23 closed (c:0x778b90(0x23)).
+func close_friend_request() -> void:
+	if is_instance_valid(_friend_request_box):
+		_friend_request_box.close()
+
+func friend_request_box() -> FriendMsgBox:
+	return _friend_request_box if is_instance_valid(_friend_request_box) else null
+
+## Box 0x22: the proposal was accepted.
+func show_friend_added(friend_name: String, own_name: String) -> FriendMsgBox:
+	if _builder == null:
+		return null
+	var box := FriendMsgBox.new()
+	if not box.build_added(_builder, friend_name, own_name):
+		box.queue_free()
+		return null
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	add_child(box)
+	return box
+
+var _friend_add_box: HudCosBox
+
+## The friend pane's Add friend (0x5a7160): the input box, holding the
+## selected player's name.
+func open_friend_add() -> HudCosBox:
+	if is_instance_valid(_friend_add_box):
+		_friend_add_box.close()
+	if _builder == null:
+		return null
+	var box := HudCosBox.new()
+	if not box.build_friend_add_input(_builder, str(selected_player_name.call())):
+		box.queue_free()
+		return null
+	box.accepted.connect(func(who: String) -> void: friend_ask_requested.emit(who))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_friend_add_box = box
+	return box
+
+## The friend pane's Delete friend (0x5a76c0): GInterface 0x788270, style 1
+## (Yes / No), UIIT_STT_CONFIRM_BOX with UIIT_MSG_FRIEND_IDDELET about the
+## name; Yes sends 0x7304 (0x5a87c0).
+func open_friend_delete(character_id: int, friend_name: String) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var fmt := _builder.resolve_text("UIIT_MSG_FRIEND_IDDELET")
+	if fmt == "":
+		fmt = "UIIT_MSG_FRIEND_IDDELET"
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, fmt.replace("%s", friend_name) if fmt.count("%s") == 1 else fmt):
+		box.free()
+		return null
+	box.name = "FriendDeleteConfirm"
+	box.confirmed.connect(func() -> void: NetClient.friend_delete(character_id))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
+## The friend pane's Whisper (0x5a6350): "$name " on the chat line, not for
+## the player's own name.
+func _friend_whisper(friend_name: String) -> void:
+	if friend_name == "" or friend_name == own_name_for_friends:
+		return
+	_party_match_whisper(friend_name)
 
 ## A guild reply (info, create or join): whether the player is in a guild
 ## (guild id not 0), its name and its master, which the guild window's
@@ -7738,7 +8186,9 @@ func _populate(panel_id: String) -> void:
 		"skill":
 			NetClient.skill_state(who)
 		"community":
-			NetClient.friend_list(who)
+			# Round 834: the list came at world entry (0x3305) and the pushes
+			# keep it; opening the window asks for nothing.
+			pass
 		# "party": nothing to ask. The window draws the client's own party
 		# state (NetClient.party), which the party messages keep current
 		# (round 711; the retail window sends no request either).

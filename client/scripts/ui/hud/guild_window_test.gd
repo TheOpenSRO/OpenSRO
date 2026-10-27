@@ -281,10 +281,10 @@ func _run() -> void:
 	# A friend list that arrives before the window is built is kept and drawn
 	# when it is (the client fills its window from the data it holds).
 	var early := _Entry.new("Early", false)
-	if panels.has_method("_on_friend_list_result"):
-		panels.call("_on_friend_list_result", [early], "")
+	if panels.has_method("_on_friend_list_changed"):
+		panels.call("_on_friend_list_changed", [early])
 	else:
-		print("(this tree has no _on_friend_list_result)")
+		print("(this tree has no _on_friend_list_changed)")
 
 	# U: the retail key opens the guild view.
 	_press(panels, KEY_U)

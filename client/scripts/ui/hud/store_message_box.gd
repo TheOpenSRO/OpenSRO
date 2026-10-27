@@ -76,7 +76,7 @@ class_name StoreMessageBox
 ## OURS (not read): that a box is not modal; an item count typed below 1 is
 ## held to 1.
 
-enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW, DIVIDE }
+enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW, DIVIDE, EXCHANGE_ITEM, EXCHANGE_GOLD }
 
 const MSGBOX_LAYOUT := "resinfo\\ifmessagebox.txt"
 const CONFIRM_BUY_LAYOUT := "resinfo\\ifitemmallconfirmbuy.txt"
@@ -147,6 +147,10 @@ func build(builder: UiBuilder, box_kind: int, opts: Dictionary = {}) -> bool:
 	min_count = int(opts.get("min", 1))
 	max_count = maxi(min_count, int(opts.get("max", 1)))
 	count = clampi(int(opts.get("count", 1)), min_count, max_count)
+	# Round 834: the exchange's gold box writes "1" whatever its maximum
+	# (c:0x6b2ce5); OK holds the amount to the maximum (_on_ok).
+	if box_kind == Kind.EXCHANGE_GOLD:
+		count = int(opts.get("count", 1))
 	tax_rate = float(opts.get("tax_rate", 0.0))
 	unit_price = int(opts.get("unit_price", -1))
 	fixed_price = int(opts.get("fixed_price", -1))
@@ -157,8 +161,10 @@ func build(builder: UiBuilder, box_kind: int, opts: Dictionary = {}) -> bool:
 			ok = _build_confirm_buy(opts)
 		Kind.SELL, Kind.BUY_BACK, Kind.DEPOSIT, Kind.WITHDRAW:
 			ok = _build_store_confirm(opts)
-		Kind.GOLD_DEPOSIT, Kind.GOLD_WITHDRAW:
+		Kind.GOLD_DEPOSIT, Kind.GOLD_WITHDRAW, Kind.EXCHANGE_GOLD:
 			ok = _build_store_money(opts)
+		Kind.EXCHANGE_ITEM:
+			ok = _build_exchange_item(opts)
 		Kind.DIVIDE:
 			ok = _build_divide(opts)
 	_refresh_price()
@@ -285,13 +291,21 @@ func _build_store_money(opts: Dictionary) -> bool:
 		return false
 	add_child(_root)
 	var deposit := kind == Kind.GOLD_DEPOSIT
+	var exchange := kind == Kind.EXCHANGE_GOLD
 	var icon_tex: Texture2D = _builder.load_texture(GOLD_ICON) if _builder != null else null
 	_icon(_root.get_node_or_null("GDR_MBS_STATIC_ICON"), icon_tex)
-	_static_text(_root.get_node_or_null("GDR_MBS_STATIC_NAME1"),
-		_text("UIIT_STT_DEPOSITMONEY", "Deposit") if deposit else _text("UIIT_STT_WITHDRAWMONEY", "Taken"))
+	var name1 := _text("UIIT_STT_DEPOSITMONEY", "Deposit") if deposit else _text("UIIT_STT_WITHDRAWMONEY", "Taken")
+	if exchange:
+		name1 = _text("UIIT_STT_AMOUNT_MONEY", "Amount")
+	_static_text(_root.get_node_or_null("GDR_MBS_STATIC_NAME1"), name1)
 	# 8, 9 and 2 by the purpose; 4, "Unit" (+0x88c), by both openers right
-	# after 0x63bc80(2) (0x6b28a8..0x6b28b3, READ round 726 review).
-	for hidden in ["GDR_MBS_STATIC_PRICET1", "GDR_MBS_STATIC_NAME2", "GDR_MBS_STATIC_PRICE", "GDR_MBS_STATIC_AMOUNT"]:
+	# after 0x63bc80(2) (0x6b28a8..0x6b28b3, READ round 726 review). Round
+	# 834, purpose 8 (exchange_boxes.md C): 8 and 9 by the purpose, 11 (the
+	# price edit) by the shared prologue, 4 by the opener; 2 stays, empty.
+	var hide_list := ["GDR_MBS_STATIC_PRICET1", "GDR_MBS_STATIC_NAME2", "GDR_MBS_STATIC_PRICE", "GDR_MBS_STATIC_AMOUNT"]
+	if exchange:
+		hide_list = ["GDR_MBS_STATIC_PRICET1", "GDR_MBS_STATIC_NAME2", "GDR_MBS_EDIT_PRICE", "GDR_MBS_STATIC_AMOUNT"]
+	for hidden in hide_list:
 		var n := _root.get_node_or_null(hidden) as CanvasItem
 		if n != null:
 			n.visible = false
@@ -314,8 +328,61 @@ func _build_store_money(opts: Dictionary) -> bool:
 	_wire_count(_count_edit)
 	# Both openers focus the amount (0x635030(1), 0x6b2afa).
 	_focus_later(_count_edit)
-	_wire_ok(_root.get_node_or_null("GDR_MBS_BTN_OK"), Vector2(-1, -1),
-		_text("UIIT_STT_DEPOSIT", "Deposit") if deposit else _text("UIIT_STT_WITHDRAW", "Take"))
+	var ok_caption := _text("UIIT_STT_DEPOSIT", "Deposit") if deposit else _text("UIIT_STT_WITHDRAW", "Take")
+	if exchange:
+		ok_caption = _text("UIIT_CTL_CONFIRM", "Confirm")
+	_wire_ok(_root.get_node_or_null("GDR_MBS_BTN_OK"), Vector2(-1, -1), ok_caption)
+	_wire_cancel(_root.get_node_or_null("GDR_MBS_BTN_CANCEL"), Vector2(-1, -1), _text("UIIT_CTL_CANCEL", "Cancel"))
+	UiBuilder.settle_authored_rects(_root)
+	return true
+
+# --- CIFMessageBox mode 2, MsgBoxStore: the exchange's item (round 834) -------
+## The item a bag slot offers to the exchange (c:0x6b1980, purpose 7;
+## docs/protocol/exchange_boxes.md B, READ): mode 2 MsgBoxStore at 308x148,
+## the title UIIT_STT_CONFIRM_BOX; the RENEWAL mileage controls (50, 51, 52)
+## hidden by the mode's binder; purpose 7: OK UIIT_CTL_CONFIRM, Cancel
+## UIIT_CTL_CANCEL, NAME2 hidden, nothing moved; the icon and the name
+## (NAME1); the price field empty between "Price" and "Gold" (vslot 12 writes
+## "" for purpose 7, c:0x63d69a). The count: a stacking item opens at its
+## stack, held to it, "Unit" shown and focused; anything else at 1, no
+## maximum, not focused (INFERRED: "Unit" hidden then). OK sends only a
+## count above 0; the count gates and is not sent (c:0x6b504e -> 0x7034
+## {4, slot}). `opts`: "icon", "name", "stack" (0 when it does not stack).
+func _build_exchange_item(opts: Dictionary) -> bool:
+	_set_box_size(STORE_MONEY_SIZE)
+	_add_frame(STORE_MONEY_SIZE)
+	var layout := _message_box_base(STORE_MONEY_SIZE)
+	if layout == null:
+		return false
+	_root = _builder.build_section(layout, "MsgBoxStore")
+	if _root == null:
+		return false
+	add_child(_root)
+	_icon(_root.get_node_or_null("GDR_MBS_STATIC_ICON"), opts.get("icon"))
+	_static_text(_root.get_node_or_null("GDR_MBS_STATIC_NAME1"), String(opts.get("name", "")))
+	_static_text(_root.get_node_or_null("GDR_MBS_STATIC_PRICE"), "")
+	var stack := int(opts.get("stack", 0))
+	var hide_list := ["GDR_MBS_BTN_MILEAGEINPUT", "GDR_MBS_EDIT_MILEAGE", "GDR_MBS_STATIC_MILEAGE", "GDR_MBS_STATIC_NAME2"]
+	if stack <= 0:
+		hide_list.append("GDR_MBS_STATIC_AMOUNT")
+	for hidden in hide_list:
+		var n := _root.get_node_or_null(hidden) as CanvasItem
+		if n != null:
+			n.visible = false
+	_count_edit = _root.get_node_or_null("GDR_MBS_EDIT_AMOUNT") as LineEdit
+	min_count = 0
+	if stack > 0:
+		max_count = stack
+		count = stack
+	else:
+		max_count = 0x7fffffff
+		count = 1
+	if _count_edit != null:
+		_count_edit.text = str(count)
+	_wire_count(_count_edit)
+	if stack > 0:
+		_focus_later(_count_edit)
+	_wire_ok(_root.get_node_or_null("GDR_MBS_BTN_OK"), Vector2(-1, -1), _text("UIIT_CTL_CONFIRM", "Confirm"))
 	_wire_cancel(_root.get_node_or_null("GDR_MBS_BTN_CANCEL"), Vector2(-1, -1), _text("UIIT_CTL_CANCEL", "Cancel"))
 	UiBuilder.settle_authored_rects(_root)
 	return true

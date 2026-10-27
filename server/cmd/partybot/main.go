@@ -166,6 +166,7 @@ func (b *bot) readSync(op uint16) (*proto.Packet, error) {
 // note learns names and ids from the world messages.
 func (b *bot) note(p *proto.Packet) {
 	b.noteGuild(p)
+	b.noteSocial(p.Opcode, p.Data)
 	switch p.Opcode {
 	case session.OpSelfID:
 		if s, err := session.DecodeSelfID(p.Data); err == nil {
@@ -186,6 +187,10 @@ func (b *bot) note(p *proto.Packet) {
 				b.seen[o.Name] = o.CharacterID
 			}
 			b.mu.Unlock()
+			// Round 834: a player already in the world counts as seen.
+			for _, o := range r.Others {
+				b.socialSteps(o.Name, o.CharacterID)
+			}
 			// Round 786: a bot loads nothing, so its loading is done at
 			// once: the server holds it out of the world until this 0x3012
 			// (session/arrival.go).
@@ -252,6 +257,7 @@ func (b *bot) saw(rec pcspawn.Record) {
 	b.mu.Lock()
 	b.seen[rec.Name] = int64(rec.UID)
 	b.mu.Unlock()
+	b.socialSteps(rec.Name, int64(rec.UID))
 	if watchViews {
 		fmt.Printf("%s [%s] WATCH spawn %s uid %d body mode %d\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.BodyMode)
 	}
@@ -883,6 +889,14 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		return err
 	}
 	fmt.Printf("[%s] in the world, character %d, JID %d\n", name, b.id, b.jid())
+	// Round 834 (QA aid): GM lines run once in the world (-gm-lines), e.g.
+	// "/give 2 3;/gold 100000" for the exchange's offers.
+	for _, line := range strings.Split(botGMLines, ";") {
+		if line = strings.TrimSpace(line); line != "" {
+			b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: line}).Encode())
+			fmt.Printf("[%s] GM %s\n", name, line)
+		}
+	}
 	// -tp / -tp2 (round 715, OURS, a QA aid): the GM teleport, so a live run
 	// can stand bots at chosen distances from the rendered client.
 	// The GM /tp only tells a client where to stand; the client then sends
@@ -977,7 +991,9 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 					expelC = time.After(botGuild.expelAfter)
 				}
 			}
-			if p.Opcode == party.OpInvitation && len(p.Data) > 0 && p.Data[0] != guild.RequestGuildInvite {
+			// Round 834: kind 1 is the exchange's, answered by -exchange-answer
+			// (social.go).
+			if p.Opcode == party.OpInvitation && len(p.Data) > 0 && p.Data[0] != guild.RequestGuildInvite && p.Data[0] != 1 {
 				k, _, _, _ := party.DecodeInvitation(p.Data)
 				if accept {
 					b.send(party.OpInvitation, party.EncodeAnswerYes())
@@ -1066,6 +1082,15 @@ func main() {
 	flag.StringVar(&botGuild.invite, "guild-invite", "", "bot (round 822): invite this character into its guild (0x70F3) once it is in view")
 	flag.DurationVar(&botGuild.inviteAfter, "guild-invite-after", 0, "bot (round 822): wait this long after first seeing the -guild-invite character before inviting it")
 	flag.DurationVar(&botGuild.expelAfter, "guild-expel-after", 0, "bot (round 822): expel the -guild-invite character (0x70F4) this long after it joins")
+	flag.StringVar(&botGMLines, "gm-lines", "", "bot (round 834): GM lines run once in the world, \";\"-separated (a GM account)")
+	flag.StringVar(&botSocial.friendAsk, "friend-ask", "", "bot (round 834): ask this character to be friends (0x7302) once it is in view")
+	flag.StringVar(&botSocial.friendAnswer, "friend-answer", "", "bot (round 834): answer friend requests: accept, refuse, or nothing")
+	flag.StringVar(&botSocial.exchangeWith, "exchange-with", "", "bot (round 834): ask this character to exchange (0x7081) once it is in view")
+	flag.StringVar(&botSocial.exchangeAnswer, "exchange-answer", "", "bot (round 834): answer exchange requests: accept, refuse, or nothing")
+	flag.StringVar(&botSocial.exchangeSlots, "exchange-slots", "", "bot (round 834): the bag indexes it offers, \"0,1\"; it then confirms and approves")
+	flag.Int64Var(&botSocial.exchangeGold, "exchange-gold", 0, "bot (round 834): the gold it offers")
+	flag.DurationVar(&botSocial.askAfter, "exchange-ask-after", 0, "bot (round 834): wait this long more before -exchange-with's request (to walk into reach first)")
+	flag.DurationVar(&botSocial.delay, "social-delay", 2*time.Second, "bot (round 834): the wait before each friend or exchange step")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")

@@ -205,7 +205,6 @@ var baseline = map[string]string{
 	"NewRollingByte":      "internal/proto/security.go",
 	"NewTestSession":      "internal/gateway/gateway.go",
 	"ReplyOpcode":         "internal/proto/opcodes.go",
-	"SessionOf":           "internal/trade/trade.go",
 	"SetBlocked":          "internal/account/memstore.go",
 	"SetSecurity":         "internal/gateway/gateway.go",
 	"SetsWorn":            "internal/equipment/itemset.go",

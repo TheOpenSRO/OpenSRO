@@ -67,10 +67,10 @@ here is **READ** unless it is marked otherwise.
   | 4 / 0x13 (19) | "Take" | icon `moneyicon.ddj`; NAME1 captioned `UIIT_STT_WITHDRAWMONEY` "Taken" |
   | 7 | "Confirm" | |
   | 8 | `UIIT_CTL_CONFIRM` | icon `interface\minipopup\mini_gold_icon.ddj`, `UIIT_STT_AMOUNT_MONEY` "Amount" on +0x818, Cancel `UIIT_CTL_CANCEL` |
-  | 9 | as 8 | as 8, without the Cancel label |
+  | 9 | as 8 | jumps into purpose 3's path: the Cancel caption, IDs 8, 9 and 2 hidden (round 834, exchange_boxes.md) |
 
-  - **Purpose 8 is exchange gold: INFERRED.** It is called from 0x6b2c30, which is reached by a
-    jmp at 0x7b251d right after `CIFExchange::FUN_007b24d0`.
+  - **Purpose 8 is exchange gold: READ (round 834, exchange_boxes.md C).** 0x6b2c30, the exchange
+    window's gold button (c:0x7b2500), opens it at "1"; OK sends `0x825f50(0x46, 0x1a, amount)`.
   - **Purpose 9 is drop gold: INFERRED.** It is called from 0x6b2620, reached from the inventory
     at 0x6b2e74 when the checks `0x799300` and `0x799320` are both false. Otherwise that path
     opens deposit money (0x6b2800).

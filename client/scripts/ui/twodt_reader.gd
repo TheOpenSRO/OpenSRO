@@ -150,6 +150,17 @@ class Record:
 	func type_name() -> String:
 		return TYPE_NAMES[type] if type >= 0 and type < TYPE_NAMES.size() else "type%d" % type
 
+	## A field-for-field copy (its arrays copied too), for a caller that
+	## lays out an edited file (OURS, round 834: the target menu's own
+	## entries) without touching the parsed one UiBuilder caches.
+	func copy() -> Record:
+		var c := Record.new()
+		for p in get_property_list():
+			if p["usage"] & PROPERTY_USAGE_SCRIPT_VARIABLE:
+				var v = get(p["name"])
+				c.set(p["name"], v.duplicate() if v is Array or v is PackedByteArray or v is PackedFloat32Array else v)
+		return c
+
 class TwoDtFile:
 	var records: Array[Record] = []
 	## Non-root records whose (parent, grandparent) pair matched no earlier

@@ -64,11 +64,25 @@ Find all the effects this applies to and what exact times they trigger."
       night lighting (no night-lit layer reaches it), the far crowd's GPU twins (no worn item
       carries the bit).
 
+## Round 834 follow-ups (friends, the exchange, the target menu; docs/protocol/friends.md, exchange.md)
+
+- [ ] **Letters (the Community window's third tab)**: `0x730B` / `0x7308` / `0x7309` / `0x730A` /
+      `0x730C`, kind 8 and 9 pushes, the letter pane, frame 800, the 900 list and the alarm icon --
+      all READ in friends.md 3.5 and 7.6; not built this round.
+- [ ] **The whisper block list (the second tab)**: `0x730D` / `0xB30D`, the list inside `0x3013`
+      (where is OPEN), whispers dropped from a blocked name, and the PC-side chat block list.
+- [ ] **The private server's exchange layout** (portraits and the log box un-parked, ~363 x 495),
+      offered as an Extra Settings add-on: the portraits are live 3-D busts on "Bip01 Head"
+      (c:0x7b2a20); the rects are measured from the user's screenshots only.
+- [ ] **Unions**: the exchange's trust check reads the allied guilds (c:0x996d60); OpenSRO has none.
+- [ ] **The Game tab**: "Exchange Request" (option byte +2, auto-refuse, INFERRED) and "Activate
+      action short cut" (gone: the target menu is always on, the user's call).
+- [ ] OPEN (exchange.md): what sets the client's +0x7bc (`0x1834` at the request); DealIt's COS check;
+      window 0xb2 / 0xaf at completion.
+
 ## Round 832 follow-ups (trace, the target menu, the Extra tab; docs/protocol/trace.md)
 
-- [ ] **The Game tab**: build it (`optionwnd.2dt` pane 149, its four sub-tabs and the
-      CNIFGameOptionSlot rows) and move "Activate action short cut" there from the Extra tab; which
-      row holds it (the checkbox array's entry 0xD, label set at 0x600560) is READ, its sub-tab not.
+- [x] **The Game tab's "Activate action short cut"** -- round 834: the target menu is always on.
 - [ ] **What ends a trace that OpenSRO has no system for** (READ, docs/protocol/trace.md): knockdown
       and knockback on players, `stns` / `pao` / `hide`, stalls, arena and flag worlds, the PK
       relation list, and the walker's refusal under a `stns` stun.

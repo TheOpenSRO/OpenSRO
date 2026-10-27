@@ -76,6 +76,13 @@ func InventoryMoveHandler(chars character.Store, inv inventory.Store, items Item
 		if inv == nil {
 			return fail("no inventory")
 		}
+		// Round 834: no bag move during an accepted exchange -- retail's
+		// StorageOperation refuses op 0 at INTERACTMODE 2 with 0x1834
+		// (s:0x50f7cd); the offered items name their bag slots. This
+		// result carries a text, so the wording is OpenSRO's own.
+		if exchangeEstablished(characterID) {
+			return fail("you cannot move items during an exchange")
+		}
 
 		if err := inv.MoveItem(ctx, characterID, int(req.From), int(req.To)); err != nil {
 			switch {

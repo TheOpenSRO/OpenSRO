@@ -178,6 +178,7 @@ impl SrNativeTables {
                 d.set("max_stacks", &ints(o.max_stacks));
                 d.set("sell_prices", &ints(o.sell_prices));
                 d.set("keeping_fees", &ints(o.keeping_fees));
+        d.set("can_trades", &ints(o.can_trades));
                 d.set("countries", &ints(o.countries));
                 d.set("req_genders", &ints(o.req_genders));
                 d.set("durabilities", &ints(o.durabilities));

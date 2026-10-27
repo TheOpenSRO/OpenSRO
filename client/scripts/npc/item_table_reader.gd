@@ -196,6 +196,10 @@ const COL_SELL_PRICE := 31
 ## review); the client's deposit box reads its reference's +0xcc (0x6b1002),
 ## not separately mapped.
 const COL_KEEPING_FEE := 30
+## Round 834: CanTrade, a permission -- 0 forbids (docs/protocol/
+## item_capability_flags.md; the client's SOItem::FUN_008baf10 reads ref
+## +0xa4 before an exchange offer).
+const COL_CAN_TRADE := 16
 ## MaxStack (column 57): 1 for equipment, the real per-item cap for stackables
 ## (a potion 5000, arrows 2500) -- so the shop can offer buying a stack.
 const COL_MAX_STACK := 57
@@ -440,6 +444,8 @@ class Item:
 	var sell_price: int = 0
 	## KeepingFee (column 30, READ): the warehouse deposit fee a unit.
 	var keeping_fee: int = 0
+	## Round 834: column 16 (COL_CAN_TRADE); true when the table has none.
+	var can_trade := true
 	## Archive path of the inventory icon, ICON_PREFIX already applied.
 	var icon_path: String
 	## The `.bsr` the item is worn as, as the table writes it (no `res\`
@@ -658,6 +664,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 			item.max_stack = stack
 		item.sell_price = _int_at(cols, COL_SELL_PRICE)
 		item.keeping_fee = _int_at(cols, COL_KEEPING_FEE)
+		if cols.size() > COL_CAN_TRADE:
+			item.can_trade = _int_at(cols, COL_CAN_TRADE) != 0
 		var icon := _find_icon_path(cols)
 		if icon != "":
 			item.icon_path = ICON_PREFIX + icon
@@ -751,6 +759,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var sell_prices: PackedInt64Array = rows["sell_prices"]
 	# Round 728: a library from before this column has none (fee 0).
 	var keeping_fees: PackedInt64Array = rows.get("keeping_fees", PackedInt64Array())
+	# Round 834: a library from before this column has none (all tradeable;
+	# the server still refuses).
+	var can_trades: PackedInt64Array = rows.get("can_trades", PackedInt64Array())
 	var countries: PackedInt64Array = rows["countries"]
 	var req_genders: PackedInt64Array = rows["req_genders"]
 	var durabilities: PackedInt64Array = rows["durabilities"]
@@ -797,6 +808,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.sell_price = sell_prices[i]
 		if i < keeping_fees.size():
 			item.keeping_fee = keeping_fees[i]
+		if i < can_trades.size():
+			item.can_trade = can_trades[i] != 0
 		item.icon_path = icon_paths[i]
 		var count: int = model_counts[i]
 		item.model_paths = models.slice(m, m + count)

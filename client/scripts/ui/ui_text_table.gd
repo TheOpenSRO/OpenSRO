@@ -202,7 +202,21 @@ const FIRST_ROW_PREFIX := "UIIT_STT_MASTERY_"
 
 ## Whether a key keeps its first row in a joined table (FIRST_ROW_PREFIX).
 static func keeps_first_row(token: String) -> bool:
-	return token.begins_with(FIRST_ROW_PREFIX) or LOGIN_FIRST_ROW_KEYS.has(token)
+	return token.begins_with(FIRST_ROW_PREFIX) or LOGIN_FIRST_ROW_KEYS.has(token) or EXCHANGE_FIRST_ROW_KEYS.has(token)
+
+## **Round 834: the exchange's keys keep the client's first row too**
+## (docs/protocol/exchange_verify.md W8). The later table's copies of these
+## five read "...CHECK THE NAME!", "Exchange request! HAVE YOU CHECKED THE
+## NAME?", "***READ***READ*** OPPONENT USER IS NOT LISTED...", "You are
+## exchanging with [%s] READ BELOW." and "[%s]'s goods" (MEASURED in the
+## box's textuisystem.txt, column 9 of its 19-column rows); the user's
+## screenshots of the exchange show the first rows' wording, which is also
+## what TextStringManager keeps (READ 0x8ca120).
+const EXCHANGE_FIRST_ROW_KEYS := {
+	"UIIT_STT_PARTY_SOMEUSER": true, "UIIT_MSG_DEAL_ASK": true,
+	"UIIT_MSG_EXCHANGE_DECEPTION_COMPARE": true, "UIIT_MSG_EXCHANGE_START": true,
+	"UIIT_STT_SOMEONESITEM": true,
+}
 
 ## **Round 788: the title's login messages keep the client's own first row
 ## too.** MEASURED: the real sro_client.exe under Wine against OpenSRO's

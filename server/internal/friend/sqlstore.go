@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
+// friend_requests held OpenSRO's own stored requests (rounds before 834). It
+// is no longer written; it stays so a database that has rows in it keeps
+// its shape for the swarm cleanup (cmd/swarm) and TruncateForTest.
 const schema = `
 CREATE TABLE IF NOT EXISTS friend_requests (
 	requester_id   BIGINT NOT NULL,
@@ -79,69 +81,38 @@ func (s *SQLStore) TruncateForTest(ctx context.Context) error {
 	return err
 }
 
-// SendRequest implements Store.
-func (s *SQLStore) SendRequest(ctx context.Context, fromID int64, fromName string, toID int64) error {
-	if fromID == toID {
+// AddFriendship implements Store: both rows in one transaction, after
+// both counts and the existing-row test (retail's `_Friend_Add` writes both
+// sides, sm:0x447320).
+func (s *SQLStore) AddFriendship(ctx context.Context, aID int64, aName string, bID int64, bName string) error {
+	if aID == bID {
 		return ErrCannotFriendSelf
 	}
-
-	var alreadyFriends bool
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM friendships WHERE character_id = $1 AND friend_id = $2)`,
-		fromID, toID).Scan(&alreadyFriends); err != nil {
-		return fmt.Errorf("friend: checking existing friendship: %w", err)
-	}
-	if alreadyFriends {
-		return ErrAlreadyFriends
-	}
-
-	// The engine refuses the request itself when the sender's list is full
-	// (FUN_005d7620) rather than letting it sit and fail on acceptance.
-	var mine int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM friendships WHERE character_id = $1`, fromID).Scan(&mine); err != nil {
-		return fmt.Errorf("friend: counting friendships: %w", err)
-	}
-	if mine >= MaxFriends {
-		return ErrListFull
-	}
-
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO friend_requests (requester_id, requester_name, target_id) VALUES ($1, $2, $3)`,
-		fromID, fromName, toID)
-	if err != nil {
-		if isUniqueConstraintErr(err) {
-			return ErrRequestAlreadySent
-		}
-		return fmt.Errorf("friend: inserting request: %w", err)
-	}
-	return nil
-}
-
-// AcceptRequest implements Store.
-func (s *SQLStore) AcceptRequest(ctx context.Context, characterID int64, characterName string, requesterID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("friend: beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	var requesterName string
-	err = tx.QueryRowContext(ctx,
-		`DELETE FROM friend_requests WHERE requester_id = $1 AND target_id = $2 RETURNING requester_name`,
-		requesterID, characterID).Scan(&requesterName)
-	if err == sql.ErrNoRows {
-		return ErrNoSuchRequest
+	// Lock both characters' rows in a fixed order so two crossing adds
+	// cannot both pass the counts.
+	lo, hi := aID, bID
+	if lo > hi {
+		lo, hi = hi, lo
 	}
-	if err != nil {
-		return fmt.Errorf("friend: consuming request: %w", err)
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1), pg_advisory_xact_lock($2)`, lockKey(lo), lockKey(hi)); err != nil {
+		return fmt.Errorf("friend: locking: %w", err)
 	}
-
-	// A friendship is mutual, so both lists grow and both must have room
-	// (friend.MaxFriends). Counted inside this transaction, after the request
-	// has been consumed: returning here rolls the DELETE back, so a refusal
-	// leaves the pending request intact rather than silently eating it.
-	for _, id := range [2]int64{characterID, requesterID} {
+	var already bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM friendships WHERE (character_id = $1 AND friend_id = $2) OR (character_id = $2 AND friend_id = $1))`,
+		aID, bID).Scan(&already); err != nil {
+		return fmt.Errorf("friend: checking existing friendship: %w", err)
+	}
+	if already {
+		return ErrAlreadyFriends
+	}
+	for _, id := range [2]int64{aID, bID} {
 		var n int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM friendships WHERE character_id = $1`, id).Scan(&n); err != nil {
@@ -151,36 +122,12 @@ func (s *SQLStore) AcceptRequest(ctx context.Context, characterID int64, charact
 			return ErrListFull
 		}
 	}
-
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO friendships (character_id, friend_id, friend_name) VALUES ($1, $2, $3)
-		 ON CONFLICT DO NOTHING`, characterID, requesterID, requesterName); err != nil {
+		`INSERT INTO friendships (character_id, friend_id, friend_name) VALUES ($1, $2, $3), ($2, $1, $4)`,
+		aID, bID, bName, aName); err != nil {
 		return fmt.Errorf("friend: inserting friendship: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO friendships (character_id, friend_id, friend_name) VALUES ($1, $2, $3)
-		 ON CONFLICT DO NOTHING`, requesterID, characterID, characterName); err != nil {
-		return fmt.Errorf("friend: inserting reciprocal friendship: %w", err)
-	}
-
 	return tx.Commit()
-}
-
-// DeclineRequest implements Store.
-func (s *SQLStore) DeclineRequest(ctx context.Context, characterID, requesterID int64) error {
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM friend_requests WHERE requester_id = $1 AND target_id = $2`, requesterID, characterID)
-	if err != nil {
-		return fmt.Errorf("friend: declining request: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("friend: checking delete result: %w", err)
-	}
-	if n == 0 {
-		return ErrNoSuchRequest
-	}
-	return nil
 }
 
 // ListFriends implements Store.
@@ -203,27 +150,6 @@ func (s *SQLStore) ListFriends(ctx context.Context, characterID int64) ([]Friend
 	return out, rows.Err()
 }
 
-// ListPendingRequests implements Store.
-func (s *SQLStore) ListPendingRequests(ctx context.Context, characterID int64) ([]Request, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT requester_id, requester_name FROM friend_requests WHERE target_id = $1 ORDER BY requester_name`,
-		characterID)
-	if err != nil {
-		return nil, fmt.Errorf("friend: listing pending requests: %w", err)
-	}
-	defer rows.Close()
-
-	var out []Request
-	for rows.Next() {
-		var r Request
-		if err := rows.Scan(&r.RequesterID, &r.RequesterName); err != nil {
-			return nil, fmt.Errorf("friend: scanning row: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 // RemoveFriend implements Store.
 func (s *SQLStore) RemoveFriend(ctx context.Context, characterID, friendID int64) error {
 	res, err := s.db.ExecContext(ctx,
@@ -242,6 +168,6 @@ func (s *SQLStore) RemoveFriend(ctx context.Context, characterID, friendID int64
 	return nil
 }
 
-func isUniqueConstraintErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint")
-}
+// lockKey is a character's advisory lock for friendship writes, in its own
+// key space ("frnd") apart from the lobby's ("lobb", character/lobby.go).
+func lockKey(characterID int64) int64 { return 0x66726e64<<32 | (characterID & 0xffffffff) }

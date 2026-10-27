@@ -482,25 +482,39 @@ signal duel_attack_result(result: DuelNet.AttackResult)
 signal duel_opponent_damaged(damaged: DuelNet.OpponentDamaged)
 signal duel_ended(ended: DuelNet.Ended)
 
-signal trade_request_result(ok: bool, reason: String)
-signal trade_invite(invite: TradeNet.Invite)
-signal trade_respond_result(ok: bool, reason: String)
-signal trade_started(started: TradeNet.Started)
-signal trade_declined(declined: TradeNet.Declined)
-signal trade_offer_result(ok: bool, reason: String)
-signal trade_offer_updated(updated: TradeNet.OfferUpdated)
-signal trade_confirm_result(ok: bool, reason: String)
-signal trade_completed(completed: TradeNet.Completed)
-signal trade_cancelled(cancelled: TradeNet.Cancelled)
+## Round 834: the exchange on the retail wire (ExchangeNet). The request
+## box (0x3080 kind 1) with the asker's id.
+signal exchange_requested(asker_id: int)
+## 0xB081: ok with the partner's id, or the refusal's code.
+signal exchange_request_result(ok: bool, value: int)
+## 0x3085: the target's side of the start, with the asker's id.
+signal exchange_started(asker_id: int)
+## 0x308C: ExchangeNet.decode_offer's dictionary.
+signal exchange_offer(offer: Dictionary)
+## 0x3089 kind 2: the partner's gold at their confirm.
+signal exchange_partner_gold(gold: int)
+## 0x3086: the partner confirmed.
+signal exchange_partner_confirmed
+## 0xB082 / 0xB083 / 0xB084: the request's opcode and 1 or the code.
+signal exchange_result(op: int, code: int)
+## 0xB034 for an exchange move: decode_move_result's dictionary, or
+## {"code"} for a refusal.
+signal exchange_moved(result: Dictionary)
+## 0x3087 / 0x3088 (1 for done, else the code).
+signal exchange_closed(code: int)
 
-signal friend_request_result(ok: bool, reason: String)
-signal friend_request_received(received: FriendNet.RequestReceived)
-signal friend_accept_result(ok: bool, reason: String)
-signal friend_accepted(accepted: FriendNet.Accepted)
-signal friend_decline_result(ok: bool, reason: String)
-signal friend_list_result(friends: Array, error: String)
-signal friend_remove_result(ok: bool, reason: String)
-signal friend_pending_list_result(requests: Array, error: String)
+## Round 834: friends on the retail wire (FriendNet). The list (0x3305 and
+## every 0x3B07 applied to it), kept in last_friend_list.
+signal friend_list_changed(friends: Array)
+## A 0x3B07 push, after the list took it (the log on/off line, the
+## accepted box).
+signal friend_pushed(push: FriendNet.Push)
+## Someone asks to be our friend (0x7302 from the server).
+signal friend_requested(request: FriendNet.Request)
+## 0xB302 {2, code}.
+signal friend_failed(failure: FriendNet.Failure)
+## 0xB304: ok with the id, or the code.
+signal friend_delete_result(ok: bool, value: int)
 ## Using a consumable: what it restored, and how many are left.
 signal use_item_result(result: UseItemNet.Result)
 ## The Auto potion window's saved settings (round 786, AutoPotionNet): the
@@ -832,9 +846,11 @@ func _passes_group(p: Packet) -> bool:
 				GuildNet.OP_LEAVE_RESULT, GuildNet.OP_INFO_RESULT, GuildNet.OP_POINTS_RESULT, GuildNet.OP_LEVEL_RESULT, \
 				UniqueNoticeNet.OP_UNIQUE_NOTICE, ChatNet.OP_UPDATE, ChatNet.OP_RESULT, QuestNet.OP_UPDATE, QuestNet.OP_LOG, \
 				QuestNet.OP_TALK_PAGE, QuestNet.OP_REWARD_WINDOW, QuestNet.OP_TAKE_REWARD_RESULT, QuestNet.OP_ABANDON_RESULT, \
-				QuestNet.OP_CLAIM_RESULT, QuestNet.OP_UNMARK, FriendNet.OP_REQUEST_RESULT, FriendNet.OP_REQUEST_RECEIVED, \
-				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
-				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
+				QuestNet.OP_CLAIM_RESULT, QuestNet.OP_UNMARK, FriendNet.OP_ASK, FriendNet.OP_ASK_FAILED, ExchangeNet.OP_REQUEST_RESULT, \
+				ExchangeNet.OP_STARTED, ExchangeNet.OP_OFFER, ExchangeNet.OP_UPDATE, ExchangeNet.OP_CONFIRMED, \
+				ExchangeNet.OP_CONFIRM_RESULT, ExchangeNet.OP_APPROVE_RESULT, ExchangeNet.OP_CANCEL_RESULT, \
+				ExchangeNet.OP_DONE, ExchangeNet.OP_CLOSED, \
+				FriendNet.OP_DELETE_RESULT, FriendNet.OP_LIST, FriendNet.OP_PUSH, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
 				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE, \
 				CosNet.OP_DATA, CosNet.OP_UPDATE, CosNet.OP_ITEM_STATE, CosNet.OP_COMMAND_ACK, CosNet.OP_SETTING_ACK, \
@@ -1885,38 +1901,47 @@ func report_ready_to_play() -> void:
 	_send(WorldNet.OP_READY_TO_PLAY)
 	print("NetClient: ready to play sent (0x3012)")
 
-func trade_request(char_name: String, target_name: String) -> void:
-	_send(TradeNet.OP_REQUEST, TradeNet.encode_request(char_name, target_name))
+## Round 834: the exchange's requests (ExchangeNet).
+func exchange_request(target_id: int) -> void:
+	_send(ExchangeNet.OP_REQUEST, ExchangeNet.encode_request(target_id))
 
-func trade_respond(char_name: String, requester_name: String, accept: bool) -> void:
-	_send(TradeNet.OP_RESPOND, TradeNet.encode_respond(char_name, requester_name, accept))
+func exchange_answer(accept: bool) -> void:
+	_send(PartyNet.OP_REQUEST, ExchangeNet.encode_answer(accept))
 
-func trade_set_offer(char_name: String, gold: int, item_slot: int, quantity: int) -> void:
-	_send(TradeNet.OP_SET_OFFER, TradeNet.encode_set_offer(char_name, gold, item_slot, quantity))
+## The bag index (0-based) offered: 0x7034 type 4.
+func exchange_add(bag_index: int) -> void:
+	_send(ExchangeNet.OP_ITEM_MOVE, ExchangeNet.encode_add(bag_index))
+	_item_op_kinds.append("exchange")
 
-func trade_confirm(char_name: String) -> void:
-	_send(TradeNet.OP_CONFIRM, TradeNet.encode_confirm(char_name))
+func exchange_remove(index: int) -> void:
+	_send(ExchangeNet.OP_ITEM_MOVE, ExchangeNet.encode_remove(index))
+	_item_op_kinds.append("exchange")
 
-func trade_cancel(char_name: String) -> void:
-	_send(TradeNet.OP_CANCEL, TradeNet.encode_cancel(char_name))
+func exchange_gold(gold: int) -> void:
+	_send(ExchangeNet.OP_ITEM_MOVE, ExchangeNet.encode_gold(gold))
+	_item_op_kinds.append("exchange")
 
-func friend_request(char_name: String, target_name: String) -> void:
-	_send(FriendNet.OP_REQUEST, FriendNet.encode_request(char_name, target_name))
+func exchange_confirm() -> void:
+	_send(ExchangeNet.OP_CONFIRM)
 
-func friend_accept(char_name: String, requester_id: int) -> void:
-	_send(FriendNet.OP_ACCEPT, FriendNet.encode_accept(char_name, requester_id))
+func exchange_approve() -> void:
+	_send(ExchangeNet.OP_APPROVE)
 
-func friend_decline(char_name: String, requester_id: int) -> void:
-	_send(FriendNet.OP_DECLINE, FriendNet.encode_decline(char_name, requester_id))
+func exchange_cancel() -> void:
+	_send(ExchangeNet.OP_CANCEL)
 
-func friend_list(char_name: String) -> void:
-	_send(FriendNet.OP_LIST, FriendNet.encode_name_request(char_name))
+## Round 834: ask a player by name (0x7302; the Add box, the target menu,
+## /friend and /invite).
+func friend_ask(target_name: String) -> void:
+	_send(FriendNet.OP_ASK, FriendNet.encode_ask(target_name))
 
-func friend_remove(char_name: String, friend_id: int) -> void:
-	_send(FriendNet.OP_REMOVE, FriendNet.encode_remove(char_name, friend_id))
+## The request box's answer (0x3303).
+func friend_answer(job: int, asker_jid: int, accept: bool) -> void:
+	_send(FriendNet.OP_ANSWER, FriendNet.encode_answer(job, asker_jid, accept))
 
-func friend_pending_list(char_name: String) -> void:
-	_send(FriendNet.OP_PENDING_LIST, FriendNet.encode_name_request(char_name))
+## Delete a friend (0x7304).
+func friend_delete(character_id: int) -> void:
+	_send(FriendNet.OP_DELETE, FriendNet.encode_delete(character_id))
 
 ## When on (the /wire console command), every received packet's opcode and
 ## size is printed to stdout, which the file logger also captures -- for
@@ -2592,6 +2617,15 @@ func _dispatch(p: Packet) -> void:
 		CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK:
 			cos_reply.emit(p.opcode, CosNet.decode_reply(p.data))
 		ItemOpNet.OP_MOVE_RESULT:
+			# Round 834: the exchange's moves (types 4, 5, 0xd), and a refusal
+			# while one is the oldest move out.
+			var em := ExchangeNet.decode_move_result(p.data)
+			if not em.is_empty() or (p.data.size() >= 3 and p.data[0] == 2 and not _item_op_kinds.is_empty()
+					and _item_op_kinds[0] == "exchange"):
+				if not _item_op_kinds.is_empty() and _item_op_kinds[0] == "exchange":
+					_item_op_kinds.pop_front()
+				exchange_moved.emit(em if not em.is_empty() else {"code": ExchangeNet.decode_result(p.data)})
+				return
 			# Round 801: the transport's buy and sale, and a refusal while one
 			# is the oldest move out.
 			if p.data.size() >= 2 and p.data[0] == 1 and p.data[1] in [SpecialtyNet.TYPE_BUY, SpecialtyNet.TYPE_SELL]:
@@ -2854,6 +2888,10 @@ func _dispatch(p: Packet) -> void:
 		PartyNet.OP_CREATE_ACK, PartyNet.OP_INVITE_ACK, PartyNet.OP_JOIN_ACK, \
 				PartyNet.OP_PARTY_INFO, PartyNet.OP_REQUEST, PartyNet.OP_EVENT, \
 				PartyNet.OP_ITEM_NOTICE:
+			# Round 834: 0x3080 kind 1 is the exchange's (c:0x88aa60 case 1).
+			if p.opcode == PartyNet.OP_REQUEST and p.data.size() >= 5 and p.data[0] == ExchangeNet.REQUEST_KIND:
+				exchange_requested.emit(p.data.decode_u32(1))
+				return
 			# Round 822: 0x3080 kind 5 is the guild's (c:0x88aeb7).
 			if p.opcode != PartyNet.OP_REQUEST or not guild_ops.handle(p.opcode, p.data):
 				party.handle(p.opcode, p.data)
@@ -2936,55 +2974,56 @@ func _dispatch(p: Packet) -> void:
 			duel_opponent_damaged.emit(DuelNet.decode_opponent_damaged(p.data))
 		DuelNet.OP_ENDED:
 			duel_ended.emit(DuelNet.decode_ended(p.data))
-		TradeNet.OP_REQUEST_RESULT:
-			var r := Auth.decode_result(p.data)
-			trade_request_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		TradeNet.OP_INVITE:
-			trade_invite.emit(TradeNet.decode_invite(p.data))
-		TradeNet.OP_RESPOND_RESULT:
-			var r := Auth.decode_result(p.data)
-			trade_respond_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		TradeNet.OP_STARTED:
-			trade_started.emit(TradeNet.decode_started(p.data))
-		TradeNet.OP_DECLINED:
-			trade_declined.emit(TradeNet.decode_declined(p.data))
-		TradeNet.OP_OFFER_RESULT:
-			var r := Auth.decode_result(p.data)
-			trade_offer_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		TradeNet.OP_OFFER_UPDATED:
-			trade_offer_updated.emit(TradeNet.decode_offer_updated(p.data))
-		TradeNet.OP_CONFIRM_RESULT:
-			var r := Auth.decode_result(p.data)
-			trade_confirm_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		TradeNet.OP_COMPLETED:
-			trade_completed.emit(TradeNet.decode_completed(p.data))
-		TradeNet.OP_CANCELLED:
-			trade_cancelled.emit(TradeNet.decode_cancelled(p.data))
-		FriendNet.OP_REQUEST_RESULT:
-			var r := Auth.decode_result(p.data)
-			friend_request_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		FriendNet.OP_REQUEST_RECEIVED:
-			friend_request_received.emit(FriendNet.decode_request_received(p.data))
-		FriendNet.OP_ACCEPT_RESULT:
-			var r := Auth.decode_result(p.data)
-			friend_accept_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		FriendNet.OP_ACCEPTED:
-			friend_accepted.emit(FriendNet.decode_accepted(p.data))
-		FriendNet.OP_DECLINE_RESULT:
-			var r := Auth.decode_result(p.data)
-			friend_decline_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		FriendNet.OP_LIST_RESULT:
-			var r := FriendNet.decode_list_result(p.data)
-			if r.error == "":
-				last_friend_list = r.friends.duplicate()
-				has_friend_list = true
-			friend_list_result.emit(r.friends, r.error)
-		FriendNet.OP_REMOVE_RESULT:
-			var r := Auth.decode_result(p.data)
-			friend_remove_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		FriendNet.OP_PENDING_LIST_RESULT:
-			var r := FriendNet.decode_pending_list_result(p.data)
-			friend_pending_list_result.emit(r.requests, r.error)
+		ExchangeNet.OP_REQUEST_RESULT:
+			var er := ExchangeNet.decode_request_result(p.data)
+			if not er.is_empty():
+				exchange_request_result.emit(bool(er[0]), int(er[1]))
+		ExchangeNet.OP_STARTED:
+			if p.data.size() >= 4:
+				exchange_started.emit(p.data.decode_u32(0))
+		ExchangeNet.OP_OFFER:
+			var eo := ExchangeNet.decode_offer(p.data, own_character_id)
+			if eo.is_empty():
+				push_warning("NetClient: 0x308C did not parse (%d bytes)" % p.data.size())
+			else:
+				exchange_offer.emit(eo)
+		ExchangeNet.OP_UPDATE:
+			var eg := ExchangeNet.decode_gold_update(p.data)
+			if eg >= 0:
+				exchange_partner_gold.emit(eg)
+		ExchangeNet.OP_CONFIRMED:
+			exchange_partner_confirmed.emit()
+		ExchangeNet.OP_CONFIRM_RESULT, ExchangeNet.OP_APPROVE_RESULT, ExchangeNet.OP_CANCEL_RESULT:
+			exchange_result.emit(p.opcode - 0x8000, ExchangeNet.decode_result(p.data))
+		ExchangeNet.OP_DONE:
+			exchange_closed.emit(1)
+		ExchangeNet.OP_CLOSED:
+			if p.data.size() >= 2:
+				exchange_closed.emit(p.data.decode_u16(0))
+		FriendNet.OP_LIST:
+			last_friend_list = FriendNet.decode_list(p.data)
+			has_friend_list = true
+			friend_list_changed.emit(last_friend_list)
+		FriendNet.OP_PUSH:
+			var fp := FriendNet.decode_push(p.data)
+			if fp == null:
+				push_warning("NetClient: 0x3B07 kind %d not handled (%d bytes)" % [p.data[0] if p.data.size() > 0 else -1, p.data.size()])
+			else:
+				FriendNet.apply_push(last_friend_list, fp)
+				friend_list_changed.emit(last_friend_list)
+				friend_pushed.emit(fp)
+		FriendNet.OP_ASK:
+			var fr := FriendNet.decode_request(p.data)
+			if fr != null:
+				friend_requested.emit(fr)
+		FriendNet.OP_ASK_FAILED:
+			var ff := FriendNet.decode_failure(p.data)
+			if ff != null:
+				friend_failed.emit(ff)
+		FriendNet.OP_DELETE_RESULT:
+			var fd := FriendNet.decode_delete_result(p.data)
+			if not fd.is_empty():
+				friend_delete_result.emit(bool(fd[0]), int(fd[1]))
 		GmNet.OP_COMMAND_RESULT:
 			var r := GmNet.decode_result(p.data)
 			if r != null:

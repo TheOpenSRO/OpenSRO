@@ -325,6 +325,10 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 	// answer is the offer's.
 	inv, ok := d.Parties.TakeInvite(me.CharacterID)
 	if !ok {
+		// Round 834: an exchange request's answer (kind 1, exchange.go).
+		if exchangeAnswer(sess, me, data) {
+			return
+		}
 		// Round 822: a guild invitation's answer (kind 5, guildops.go), then
 		// the resurrection offer.
 		if guildInviteAnswer(ctx, sess, me, data) {

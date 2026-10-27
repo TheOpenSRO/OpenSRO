@@ -201,6 +201,21 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 	fail := func(code uint16) error {
 		return sess.Send(&proto.Packet{Opcode: OpItemMoveResult, Data: EncodeItemFail(code)})
 	}
+	// Round 834: the exchange's own ops (exchange.go), the only ones
+	// StorageOperation lets through at INTERACTMODE 2; every other op then
+	// answers 0x1834 (s:0x50f7cd..0x50f7e3) -- the pet bag's and the
+	// avatar's included. A pending request keeps the NPC-service refusal
+	// below (tradebusy.go).
+	if len(data) > 0 && isExchangeMove(data[0]) {
+		if x := exchangeRT.Load(); x != nil {
+			exchangeMove(ctx, sess, data, x)
+			return nil
+		}
+		return fail(ItemErrDB)
+	}
+	if cid, ok := d.character(sess); ok && d.Trades.Established(cid) {
+		return fail(ExchangeErrBlocked)
+	}
 	// The avatar moves (round 789) have StorageOperation's own framing:
 	// dead 2 and INTERACTMODE 0x1834 before the type's rules (avatar.go).
 	if len(data) > 0 && (data[0] == ItemMoveAvatarToBag || data[0] == ItemMoveBagToAvatar) {

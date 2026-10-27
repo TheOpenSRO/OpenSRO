@@ -1,5 +1,9 @@
 extends SceneTree
 
+## Round 834: FriendNet on the retail wire -- the same bytes as the server's
+## TestFriendWireLayouts (server/internal/session/friend_test.go).
+##   godot4 --headless --path client --script res://scripts/net/friend_test.gd
+
 var _failures := 0
 
 func _check(cond: bool, msg: String) -> void:
@@ -9,139 +13,32 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
-func _test_encode_request() -> void:
-	var encoded := FriendNet.encode_request("Aria", "Bram")
-	_check(encoded.decode_u16(0) == 4, "character name length prefix is 4")
-	_check(encoded.decode_u16(6) == 4, "target name length prefix is 4")
-
-func _test_encode_accept() -> void:
-	var encoded := FriendNet.encode_accept("Bram", 1)
-	_check(encoded.decode_u16(0) == 4, "name length prefix is 4")
-	_check(encoded.decode_s64(6) == 1, "requester id round-trips")
-
-func _test_encode_remove() -> void:
-	var encoded := FriendNet.encode_remove("Aria", 2)
-	_check(encoded.decode_s64(6) == 2, "friend id round-trips")
-
-func _build_named(name: String) -> PackedByteArray:
-	var bytes := name.to_utf8_buffer()
-	var out := PackedByteArray()
-	out.resize(2)
-	out.encode_u16(0, bytes.size())
-	out.append_array(bytes)
-	return out
-
-func _test_decode_request_received() -> void:
-	var r := FriendNet.decode_request_received(_build_named("Aria"))
-	_check(r != null, "decodes successfully")
-	if r != null:
-		_check(r.requester_name == "Aria", "requester name round-trips")
-
-func _test_decode_accepted() -> void:
-	var a := FriendNet.decode_accepted(_build_named("Bram"))
-	_check(a != null, "decodes successfully")
-	if a != null:
-		_check(a.accepter_name == "Bram", "accepter name round-trips")
-
-func _build_friend_entry(id: int, name: String, online: bool) -> PackedByteArray:
-	var out := PackedByteArray()
-	out.resize(8)
-	out.encode_s64(0, id)
-	var name_bytes := name.to_utf8_buffer()
-	var len_buf := PackedByteArray()
-	len_buf.resize(2)
-	len_buf.encode_u16(0, name_bytes.size())
-	out.append_array(len_buf)
-	out.append_array(name_bytes)
-	out.append(1 if online else 0)
-	return out
-
-func _build_list_result(error: String, entries: Array) -> PackedByteArray:
-	var out := PackedByteArray()
-	var len_buf := PackedByteArray()
-	len_buf.resize(2)
-	var error_bytes := error.to_utf8_buffer()
-	len_buf.encode_u16(0, error_bytes.size())
-	out.append_array(len_buf)
-	out.append_array(error_bytes)
-	if error != "":
-		return out
-	var count_buf := PackedByteArray()
-	count_buf.resize(2)
-	count_buf.encode_u16(0, entries.size())
-	out.append_array(count_buf)
-	for e in entries:
-		out.append_array(_build_friend_entry(e["id"], e["name"], e["online"]))
-	return out
-
-func _test_decode_list_result() -> void:
-	var payload := _build_list_result("", [{"id": 2, "name": "Bram", "online": true}])
-	var result := FriendNet.decode_list_result(payload)
-	_check(result.error == "", "no decode error")
-	_check(result.friends.size() == 1, "one friend decoded")
-	if result.friends.size() == 1:
-		_check(result.friends[0].character_id == 2, "character id round-trips")
-		_check(result.friends[0].friend_name == "Bram", "friend name round-trips")
-		_check(result.friends[0].online, "online round-trips")
-
-func _test_decode_list_result_error() -> void:
-	var payload := _build_list_result("failed to load friends", [])
-	var result := FriendNet.decode_list_result(payload)
-	_check(result.error == "failed to load friends", "error round-trips")
-	_check(result.friends.size() == 0, "no friends alongside an error")
-
-func _build_pending_request(id: int, name: String) -> PackedByteArray:
-	var out := PackedByteArray()
-	out.resize(8)
-	out.encode_s64(0, id)
-	var name_bytes := name.to_utf8_buffer()
-	var len_buf := PackedByteArray()
-	len_buf.resize(2)
-	len_buf.encode_u16(0, name_bytes.size())
-	out.append_array(len_buf)
-	out.append_array(name_bytes)
-	return out
-
-func _build_pending_list_result(error: String, requests: Array) -> PackedByteArray:
-	var out := PackedByteArray()
-	var len_buf := PackedByteArray()
-	len_buf.resize(2)
-	var error_bytes := error.to_utf8_buffer()
-	len_buf.encode_u16(0, error_bytes.size())
-	out.append_array(len_buf)
-	out.append_array(error_bytes)
-	if error != "":
-		return out
-	var count_buf := PackedByteArray()
-	count_buf.resize(2)
-	count_buf.encode_u16(0, requests.size())
-	out.append_array(count_buf)
-	for r in requests:
-		out.append_array(_build_pending_request(r["id"], r["name"]))
-	return out
-
-func _test_decode_pending_list_result() -> void:
-	var payload := _build_pending_list_result("", [{"id": 1, "name": "Aria"}])
-	var result := FriendNet.decode_pending_list_result(payload)
-	_check(result.error == "", "no decode error")
-	_check(result.requests.size() == 1, "one request decoded")
-	if result.requests.size() == 1:
-		_check(result.requests[0].requester_id == 1, "requester id round-trips")
-		_check(result.requests[0].requester_name == "Aria", "requester name round-trips")
-
-func _init() -> void:
-	_test_encode_request()
-	_test_encode_accept()
-	_test_encode_remove()
-	_test_decode_request_received()
-	_test_decode_accepted()
-	_test_decode_list_result()
-	_test_decode_list_result_error()
-	_test_decode_pending_list_result()
-
-	if _failures == 0:
-		print("ALL PASS")
-		quit(0)
-	else:
-		print("%d FAILURES" % _failures)
-		quit(1)
+func _initialize() -> void:
+	_check(FriendNet.encode_ask("Bo") == PackedByteArray([2, 0, 0x42, 0x6f]), "0x7302 {str name}")
+	_check(FriendNet.encode_answer(7, 9, true) == PackedByteArray([7, 0, 0, 0, 9, 0, 0, 0, 1]), "0x3303 accept: {job, jid, 1}")
+	_check(FriendNet.encode_answer(7, 9, false)[8] == 0, "a refusal answers 0")
+	_check(FriendNet.encode_delete(5) == PackedByteArray([5, 0, 0, 0]), "0x7304 {u32 id}")
+	var req := FriendNet.decode_request(PackedByteArray([7, 0, 0, 0, 9, 0, 0, 0, 2, 0, 0x41, 0x6c]))
+	_check(req != null and req.job == 7 and req.asker_jid == 9 and req.asker_name == "Al", "0x7302 from the server")
+	var f := FriendNet.decode_failure(PackedByteArray([2, 0x08, 0x64]))
+	_check(f != null and f.code == 0x6408 and f.reason == -1, "0xB302 {2, 0x6408}")
+	f = FriendNet.decode_failure(PackedByteArray([2, 0x0b, 0x64, 2, 2, 0, 0x42, 0x6f]))
+	_check(f != null and f.code == FriendNet.CODE_REFUSED and f.reason == 2 and f.name == "Bo", "0xB302 {2, 0x640b, reason, name}")
+	_check(FriendNet.decode_failure(PackedByteArray([1])) == null, "result 1 is nothing (c:0x885e98)")
+	var list := FriendNet.decode_list(PackedByteArray([1, 5, 0, 0, 0, 2, 0, 0x41, 0x6c, 0x73, 0x07, 0, 0, 1]))
+	_check(list.size() == 1 and list[0].character_id == 5 and list[0].friend_name == "Al" and list[0].ref_obj_id == 1907
+		and list[0].state == 1 and not list[0].online, "0x3305: one offline friend")
+	var added := FriendNet.decode_push(PackedByteArray([2, 6, 0, 0, 0, 2, 0, 0x42, 0x6f, 0x74, 0x07, 0, 0]))
+	_check(added != null and added.kind == 2 and added.character_id == 6 and added.friend_name == "Bo" and added.ref_obj_id == 1908,
+		"0x3B07 kind 2")
+	FriendNet.apply_push(list, added)
+	_check(list.size() == 2 and list[1].online, "kind 2 adds the friend online (c:0x8863da pushes 0)")
+	FriendNet.apply_push(list, FriendNet.decode_push(PackedByteArray([4, 5, 0, 0, 0, 0])))
+	_check(list[0].online, "kind 4 state 0: in the game")
+	FriendNet.apply_push(list, FriendNet.decode_push(PackedByteArray([3, 5, 0, 0, 0])))
+	_check(list.size() == 1 and list[0].friend_name == "Bo", "kind 3 removes")
+	_check(FriendNet.decode_push(PackedByteArray([5, 0, 0, 0, 0])) == null, "kinds 5-7 have no client case")
+	_check(FriendNet.decode_delete_result(PackedByteArray([1, 5, 0, 0, 0])) == [true, 5]
+		and FriendNet.decode_delete_result(PackedByteArray([2, 3, 0])) == [false, 3], "0xB304 both ways")
+	print("FAILURES: %d" % _failures if _failures > 0 else "ALL PASS")
+	quit(1 if _failures > 0 else 0)

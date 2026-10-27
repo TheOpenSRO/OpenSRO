@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.593** plus what is merged on `dev`; updated 2026-10-26.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.594** plus what is merged on `dev`; updated 2026-10-27.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -15,8 +15,8 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
-| [Economy](#economy) | 2 | 1 |  | 5 | 8 |
-| [Social](#social) | 11 | 5 |  | 4 | 20 |
+| [Economy](#economy) | 3 |  |  | 5 | 8 |
+| [Social](#social) | 12 | 4 |  | 4 | 20 |
 | [Job / trade](#job--trade) | 6 |  |  |  | 6 |
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
@@ -27,7 +27,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **161** | **32** | **1** | **35** | **229** |
+| **All** | **163** | **30** | **1** | **35** | **229** |
 
 ## Biggest gaps
 
@@ -35,8 +35,8 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
 - Guilds: no ranks, notice, storage, unions or wars yet
-- Exchange window not yet retail; players cannot drop items
-- No key rebinding
+- Players cannot drop items
+- Friends: letters and the block list not done
 
 ## Notes
 
@@ -216,7 +216,7 @@ Gold, NPC trade and storage work; player markets are not built yet.
 |---|---|---|
 | Buy and sell at NPCs | ✅ Supported | Retail prices, buyback and quick-sell |
 | Storage gold | ✅ Supported | Deposit and withdraw gold in the warehouse |
-| Exchange (player trade) | 🟡 Partial | Server works; one item stack plus gold; retail exchange window not opened |
+| Exchange (player trade) | ✅ Supported | The original's exchange: request from the right-click menu, the action window or a selected player, its Accept / Refuse box; the window with up to 12 items and gold a side (drop an item on it, Alt+click, or its gold button); the other side's offer appears when they Confirm, then both Approve; offered items greyed in your bag, the "not in your Guild/Union/Friend" warning; ends on cancel, death, a warp or logging off |
 | Player stalls | ❌ Not yet | No stall system yet |
 | Stall network | ❌ Not yet | Search and buy from other players' stalls remotely; needs player stalls first |
 | Consignment | ❌ Not yet | No consignment trading yet |
@@ -244,7 +244,7 @@ Chat, full party system, party matching and basic guilds.
 | Guild points and levels | 🟡 Partial | Points earned, guild levels up; spending points not done |
 | Guild emblems | 🟡 Partial | Register and delete a guild's emblem with the emblem scrolls (guildmark.bmp, 16 x 16 24-bit, beside Media.pk2; guild level 4, the master); shown beside the guild name over every member; union emblems wait for unions |
 | Union | ❌ Not yet | No guild alliances yet |
-| Friends list | 🟡 Partial | Server complete; adding friends only from a developer tab |
+| Friends list | ✅ Supported | The original's friends: ask by name (the Community window's Add friend, the right-click menu, /friend or /invite), its Agreement box with Accept / No and a 30 s wait, 20 friends a side; online lamps, race icons and the count in the Community window, Whisper and Delete friend (both sides); "Friend [name] has logged on / off" lines |
 | Mail / letters | ❌ Not yet | Letter pane drawn, no backend |
 | Block list | ❌ Not yet | Block pane drawn, no backend |
 | Academy | ❌ Not yet | Not yet |
@@ -309,7 +309,7 @@ Retail windows rebuilt from the game's own layout files.
 | Quest window | 🟡 Partial | Quest list and objectives; counts and timers partly missing |
 | System message window and banners | ✅ Supported | System messages, notice banners and area names |
 | Action window | ✅ Supported | Sit, walk/run, emotes, auto attack, trace, exchange, party, auto grab |
-| Right-click player menu | ✅ Supported | Whisper, Exchange, Add friend, Invite party and Trace, as the original; switched on by "Activate action short cut" (Option > Extra Settings for now) |
+| Right-click player menu | ✅ Supported | Whisper, Exchange, Add friend, Invite party and Trace, as the original; always on (the original's option is gone), and ready for entries of our own below Trace (such as View items) |
 | NPC talk and message boxes | 🟡 Partial | Retail talk box; some dialogs not yet retail layouts |
 | Option window: Video | ✅ Supported | Retail rows, presets, brightness, sight range |
 | Option window: Audio | ✅ Supported | Volume sliders |

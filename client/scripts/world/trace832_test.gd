@@ -96,7 +96,6 @@ func _archive() -> void:
 	var builder := UiBuilder.new(pk2, null)
 	# The Extra tab.
 	var saved_ping = ClientSettings.get_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_PING_FPS, null)
-	var saved_short = ClientSettings.get_value(ClientSettings.SECTION_GAME, ClientSettings.KEY_ACTION_SHORTCUT, null)
 	var win := OptionWindow.new(builder)
 	root.add_child(win)
 	_check(win.build_option(), "the Option window builds from optionwnd.2dt")
@@ -118,7 +117,7 @@ func _archive() -> void:
 		(game as BaseButton).pressed.emit()
 		_check(not pane.visible, "another tab hides it again")
 	var box := win.extra_box("ping_fps")
-	_check(box != null and win.extra_box("action_short_cut") != null, "two check-box rows")
+	_check(box != null and win.extra_box("action_short_cut") == null, "one check-box row (round 834: the action short cut is always on)")
 	if box != null:
 		box.button_pressed = true
 		_check(win.extra_value("ping_fps"), "ticking the box edits the value")
@@ -128,11 +127,10 @@ func _archive() -> void:
 		_check(bool(got.get("ping_fps", false)) and ClientSettings.ping_fps_shown(), "Apply stores it and hands it on")
 		(extra as BaseButton).pressed.emit()
 		win.press_default()
-		_check(not win.extra_value("ping_fps") and not box.button_pressed and not win.extra_value("action_short_cut"),
+		_check(not win.extra_value("ping_fps") and not box.button_pressed,
 			"Default on the Extra tab clears every row")
 	win.queue_free()
 	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_PING_FPS, saved_ping if saved_ping != null else false)
-	ClientSettings.set_value(ClientSettings.SECTION_GAME, ClientSettings.KEY_ACTION_SHORTCUT, saved_short if saved_short != null else false)
 	# The target menu.
 	var menu := TargetMenu.new()
 	root.add_child(menu)
@@ -149,3 +147,24 @@ func _archive() -> void:
 	menu.button(TargetMenu.ID_TRACE).pressed.emit()
 	_check(chosen == [TargetMenu.ID_TRACE] and not menu.visible, "a button hides it and reports itself")
 	menu.queue_free()
+	# Round 834: entries of OpenSRO's own after Trace.
+	var more := TargetMenu.new()
+	root.add_child(more)
+	_check(more.build(builder, [["view_items", "View items"], ["second", "Second"]]), "a menu with two extra entries builds")
+	var v := more.extra_button("view_items")
+	var s2 := more.extra_button("second")
+	var tr := more.button(TargetMenu.ID_TRACE)
+	_check(more.size == Vector2(102, 142 + 39), "the frame grows by the two rows, 20 and 19 (got %s)" % str(more.size))
+	_check(v != null and s2 != null and tr != null and v.position.y - tr.position.y == 20 and s2.position.y - v.position.y == 19
+		and v.position.x == tr.position.x and v.size == tr.size, "each a Trace button one row lower")
+	_check(TwoDtBuilder.text_of(v) == "View items", "labelled from its entry")
+	var keys: Array[String] = []
+	more.chosen_extra.connect(func(k: String) -> void: keys.append(k))
+	more.open_at(Vector2(10, 10), "Bram")
+	v.pressed.emit()
+	_check(keys == ["view_items"] and not more.visible, "an extra entry hides the menu and reports its key")
+	var again := TargetMenu.new()
+	root.add_child(again)
+	_check(again.build(builder) and again.size == Vector2(102, 142), "the cached file is left as it was: the plain menu is 102 x 142 again")
+	more.queue_free()
+	again.queue_free()

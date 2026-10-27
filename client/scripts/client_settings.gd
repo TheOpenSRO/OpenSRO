@@ -64,16 +64,10 @@ const SECTION_EXTRA := "extra"
 ## The draggable Ping / FPS box, and where it was left (a Vector2, top-left).
 const KEY_PING_FPS := "ping_fps_counter"
 const KEY_PING_FPS_POS := "ping_fps_position"
-## Round 832: retail's "Activate action short cut" (UIIT_CTL_ACTION_LIST_ACTIVE,
-## the option byte +0x1a), which opens the right-click target menu. Its
-## Default is off (READ, 0x5fce10); shown on the Extra tab until the Game tab
-## is built.
-const SECTION_GAME := "game"
 ## Round 833: the Key Map tab's keys (KeyMap.set_keys): 33 Godot keycodes in
 ## slot order.
 const SECTION_KEYMAP := "keymap"
 const KEY_KEYMAP_SLOTS := "slots"
-const KEY_ACTION_SHORTCUT := "action_short_cut"
 
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:
 	var file := ConfigFile.new()
@@ -99,9 +93,6 @@ const KEY_MOUSE_MODE := "mouse_mode"
 
 static func mouse_mode() -> int:
 	return clampi(int(get_value(SECTION_UI, KEY_MOUSE_MODE, 0)), 0, 1)
-
-static func action_shortcut() -> bool:
-	return bool(get_value(SECTION_GAME, KEY_ACTION_SHORTCUT, false))
 
 static func server_address() -> String:
 	return str(get_value(SECTION_SERVER, KEY_ADDRESS, ""))

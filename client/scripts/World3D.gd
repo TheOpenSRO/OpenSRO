@@ -1363,29 +1363,7 @@ const ARMOR_SLOT_LABELS := {
 @onready var duel_attack_button: Button = $UI/Control/ActionTabs/Duel/AttackButton
 @onready var duel_status_label: Label = $UI/Control/ActionTabs/Duel/DuelStatusLabel
 
-@onready var trade_target_input: LineEdit = $UI/Control/ActionTabs/Trade/RequestRow/TargetInput
-@onready var trade_request_button: Button = $UI/Control/ActionTabs/Trade/RequestRow/RequestButton
-@onready var trade_invite_label: Label = $UI/Control/ActionTabs/Trade/InviteRow/InviteLabel
-@onready var trade_accept_button: Button = $UI/Control/ActionTabs/Trade/InviteRow/AcceptButton
-@onready var trade_decline_button: Button = $UI/Control/ActionTabs/Trade/InviteRow/DeclineButton
-@onready var trade_gold_input: LineEdit = $UI/Control/ActionTabs/Trade/OfferRow/GoldInput
-@onready var trade_item_slot_input: LineEdit = $UI/Control/ActionTabs/Trade/OfferRow/ItemSlotInput
-@onready var trade_quantity_input: LineEdit = $UI/Control/ActionTabs/Trade/OfferRow/QuantityInput
-@onready var trade_set_offer_button: Button = $UI/Control/ActionTabs/Trade/OfferRow/SetOfferButton
-@onready var trade_their_offer_label: Label = $UI/Control/ActionTabs/Trade/TheirOfferLabel
-@onready var trade_confirm_button: Button = $UI/Control/ActionTabs/Trade/TradeButtonRow/ConfirmButton
-@onready var trade_cancel_button: Button = $UI/Control/ActionTabs/Trade/TradeButtonRow/CancelButton
-@onready var trade_status_label: Label = $UI/Control/ActionTabs/Trade/TradeStatusLabel
 
-@onready var friend_list: ItemList = $UI/Control/ActionTabs/Friends/FriendList
-@onready var friend_remove_button: Button = $UI/Control/ActionTabs/Friends/RemoveButton
-@onready var friend_pending_list: ItemList = $UI/Control/ActionTabs/Friends/PendingList
-@onready var friend_accept_button: Button = $UI/Control/ActionTabs/Friends/PendingButtonRow/AcceptButton
-@onready var friend_decline_button: Button = $UI/Control/ActionTabs/Friends/PendingButtonRow/DeclineButton
-@onready var friend_target_input: LineEdit = $UI/Control/ActionTabs/Friends/RequestRow/TargetInput
-@onready var friend_request_button: Button = $UI/Control/ActionTabs/Friends/RequestRow/RequestButton
-@onready var friend_refresh_button: Button = $UI/Control/ActionTabs/Friends/RefreshButton
-@onready var friend_status_label: Label = $UI/Control/ActionTabs/Friends/FriendStatusLabel
 
 # Parallel to monster_list/inventory_list's items -- ItemList doesn't carry
 # structured data per row on its own, so track what each row actually is.
@@ -1397,10 +1375,7 @@ var _shop_entries: Array[ShopNet.CatalogEntry] = []
 # Name of whoever last challenged/requested-trade-with us, so Accept/
 # Decline know who to respond to (the server needs it explicitly).
 var _pending_duel_challenger := ""
-var _pending_trade_requester := ""
 
-var _friends: Array[FriendNet.FriendEntry] = []
-var _pending_friend_requests: Array[FriendNet.PendingRequest] = []
 
 # equipment_result fires for OpEquipmentList *and* equip/unequip acks (see
 # NetClient.equipment_result's doc comment: a successful equip/unequip ack
@@ -2360,25 +2335,17 @@ func _ready() -> void:
 	NetClient.duel_opponent_damaged.connect(_on_duel_opponent_damaged)
 	NetClient.duel_ended.connect(_on_duel_ended)
 
-	NetClient.trade_request_result.connect(_on_trade_request_result)
-	NetClient.trade_invite.connect(_on_trade_invite)
-	NetClient.trade_respond_result.connect(_on_trade_respond_result)
-	NetClient.trade_started.connect(_on_trade_started)
-	NetClient.trade_declined.connect(_on_trade_declined)
-	NetClient.trade_offer_result.connect(_on_trade_offer_result)
-	NetClient.trade_offer_updated.connect(_on_trade_offer_updated)
-	NetClient.trade_confirm_result.connect(_on_trade_confirm_result)
-	NetClient.trade_completed.connect(_on_trade_completed)
-	NetClient.trade_cancelled.connect(_on_trade_cancelled)
+	# Round 834: the exchange on the retail wire (the exchange section).
+	NetClient.exchange_requested.connect(_on_exchange_requested)
+	NetClient.exchange_request_result.connect(_on_exchange_request_result)
+	NetClient.exchange_started.connect(_on_exchange_started)
+	NetClient.exchange_closed.connect(_on_exchange_closed)
 
-	NetClient.friend_request_result.connect(_on_friend_request_result)
-	NetClient.friend_request_received.connect(_on_friend_request_received)
-	NetClient.friend_accept_result.connect(_on_friend_accept_result)
-	NetClient.friend_accepted.connect(_on_friend_accepted)
-	NetClient.friend_decline_result.connect(_on_friend_decline_result)
-	NetClient.friend_list_result.connect(_on_friend_list_result)
-	NetClient.friend_remove_result.connect(_on_friend_remove_result)
-	NetClient.friend_pending_list_result.connect(_on_friend_pending_list_result)
+	# Round 834: friends on the retail wire (the friend section below).
+	NetClient.friend_requested.connect(_on_friend_requested)
+	NetClient.friend_failed.connect(_on_friend_failed)
+	NetClient.friend_pushed.connect(_on_friend_pushed)
+	NetClient.friend_delete_result.connect(_on_friend_delete_result)
 
 	monster_refresh_button.pressed.connect(func(): NetClient.list_monsters())
 	attack_button.pressed.connect(_on_attack_pressed)
@@ -2411,18 +2378,7 @@ func _ready() -> void:
 	duel_decline_button.pressed.connect(func(): _on_duel_respond_pressed(false))
 	duel_attack_button.pressed.connect(func(): NetClient.duel_attack(NetClient.current_character_name))
 
-	trade_request_button.pressed.connect(_on_trade_request_pressed)
-	trade_accept_button.pressed.connect(func(): _on_trade_respond_pressed(true))
-	trade_decline_button.pressed.connect(func(): _on_trade_respond_pressed(false))
-	trade_set_offer_button.pressed.connect(_on_trade_set_offer_pressed)
-	trade_confirm_button.pressed.connect(func(): NetClient.trade_confirm(NetClient.current_character_name))
-	trade_cancel_button.pressed.connect(func(): NetClient.trade_cancel(NetClient.current_character_name))
 
-	friend_request_button.pressed.connect(_on_friend_request_pressed)
-	friend_accept_button.pressed.connect(_on_friend_accept_pressed)
-	friend_decline_button.pressed.connect(_on_friend_decline_pressed)
-	friend_remove_button.pressed.connect(_on_friend_remove_pressed)
-	friend_refresh_button.pressed.connect(_refresh_friends)
 
 	# Guarded, unlike 2D World.gd's equivalent block: this scene doubles as a
 	# standalone dev/asset-preview tool loaded with no live server connection
@@ -2436,7 +2392,6 @@ func _ready() -> void:
 		NetClient.list_skills(NetClient.current_character_name)
 		NetClient.list_shop()
 		NetClient.guild_info(NetClient.current_character_name)
-		_refresh_friends()
 
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
@@ -2895,6 +2850,16 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	# Round 814: the guild window's grant name (0x7256, own name only).
 	_hud_panels.guild_grant_name_requested.connect(func(nick: String) -> void: NetClient.send_guild_grant_name(nick))
+	# Round 834: the exchange's banners and system lines.
+	_hud_panels.exchange_banner.connect(func(t: String) -> void: _show_banner("exchange", t))
+	_hud_panels.exchange_system_line.connect(func(t: String, ty: int) -> void: _log_system(t, ty))
+	# Round 834: friends' boxes.
+	_hud_panels.friend_ask_requested.connect(friend_ask)
+	_hud_panels.friend_answer_requested.connect(friend_answer)
+	_hud_panels.own_name_for_friends = NetClient.current_character_name
+	_hud_panels.selected_player_name = func() -> String:
+		var b = _other_bodies.get(_selected_character)
+		return String((b as Node).get_meta("character_name", "")) if b != null and is_instance_valid(b) else ""
 	# Round 822: the membership boxes and buttons.
 	_hud_panels.guild_invite_requested.connect(_on_guild_invite_requested)
 	_hud_panels.guild_expel_requested.connect(func(who: String) -> void: NetClient.guild_expel(who))
@@ -18038,16 +18003,12 @@ func _qa_job_step() -> void:
 				_move_target = Vector3(float(xz[0]), player.position.y, float(xz[1]))
 				_has_move_target = true
 				print("QA JOB: tick %d walk to (%s, %s) from (%.0f, %.0f)" % [_qa_tick, xz[0], xz[1], player.position.x, player.position.z])
-		# Round 832 (QA only): the trace and the target menu. shortcut:<0|1>
-		# sets the action short cut option; select:<name> selects that player
+		# Round 832 (QA only): the trace and the target menu. select:<name> selects that player
 		# as a click does; rclick:<name> right-clicks his drawn body (press
 		# and release at its screen point); menu:<id> presses a target menu
 		# button; click_walk:<dx>,<dz> is a ground click that far from the
 		# player (its cancel
 		# included); trace_state logs the trace; ping_fps:<0|1> the counter.
-		elif what.begins_with("shortcut:"):
-			ClientSettings.set_value(ClientSettings.SECTION_GAME, ClientSettings.KEY_ACTION_SHORTCUT, what.substr(9) == "1")
-			print("QA TRACE: tick %d action short cut %s" % [_qa_tick, what.substr(9)])
 		elif what.begins_with("select:") or what.begins_with("rclick:"):
 			var who := what.substr(what.find(":") + 1)
 			var found := -1
@@ -18096,6 +18057,89 @@ func _qa_job_step() -> void:
 			if kow != null and kow.keymap_page != null:
 				kow.keymap_page.select_row(kow.keymap_page.row_at_slot(int(what.substr(8))))
 			print("QA TRACE: tick %d key row %s" % [_qa_tick, what.substr(8)])
+		# Round 834 (QA only): the exchange and friends. xreq:<name> asks that
+		# player to exchange; xans:<0|1> answers the request box; xoffer:<bag
+		# index> offers it through the item box's OK; xgold:<n> through the
+		# gold box's; xbtn presses Confirm / Approve; xcancel the Cancel;
+		# xstate prints the exchange; fask:<name> asks to be friends;
+		# fans:<0|1> answers the friend box; panel:<id> opens a panel;
+		# fstate prints the friend list.
+		elif what.begins_with("xreq:") or what.begins_with("fask:"):
+			var who := what.substr(5)
+			var found := -1
+			for oid in _other_bodies:
+				var ob = _other_bodies[oid]
+				if ob != null and is_instance_valid(ob) and String((ob as Node).get_meta("character_name", "")) == who:
+					found = int(oid)
+			if what.begins_with("xreq:"):
+				print("QA SOCIAL: tick %d exchange request to %s (%d) -> %s" % [_qa_tick, who, found, exchange_request(found)])
+			else:
+				friend_ask(who)
+				print("QA SOCIAL: tick %d friend ask %s" % [_qa_tick, who])
+		elif what.begins_with("xans:"):
+			var xb = _hud_panels.exchange_request_box()
+			print("QA SOCIAL: tick %d exchange box %s answered %s" % [_qa_tick, str(xb), what.substr(5)])
+			if xb != null:
+				if what.substr(5) == "1":
+					xb.press_ok()
+				else:
+					xb.press_cancel()
+		elif what.begins_with("fans:"):
+			var fb = _hud_panels.friend_request_box()
+			print("QA SOCIAL: tick %d friend box %s answered %s" % [_qa_tick, str(fb), what.substr(5)])
+			if fb != null:
+				if what.substr(5) == "1":
+					fb.press_ok()
+				else:
+					fb.press_cancel()
+		elif what.begins_with("xoffer:"):
+			var arg := what.substr(7)
+			var by_item := arg.begins_with("i")
+			var slot := -1 if by_item else int(arg)
+			var item := -1
+			var qty := 1
+			for e in _hud_panels._bag_slots:
+				var es = _hud_panels._first_field(e, ["slot", "slot_index", "index"])
+				var ei = _hud_panels._first_field(e, ["item_id", "id"])
+				if by_item and ei != null and int(ei) == int(arg.substr(1)) and es != null:
+					slot = int(es)
+				if es != null and int(es) == slot:
+					item = int(_hud_panels._first_field(e, ["item_id", "id"]))
+					var q = _hud_panels._first_field(e, HudPanels.COUNT_FIELDS)
+					qty = int(q) if q != null else 1
+			_hud_panels._exchange().offer_from_bag(slot, item, qty)
+			var inv: HudWindow = _hud_panels._windows.get("inventory")
+			var ib := inv.get_node_or_null("ExchangeItem") as StoreMessageBox if inv != null else null
+			print("QA SOCIAL: tick %d offer bag slot %d item %d x%d box %s" % [_qa_tick, slot, item, qty, str(ib)])
+			if ib != null:
+				ib._on_ok()
+		elif what.begins_with("xgold:"):
+			_hud_panels._exchange().press_gold()
+			var inv2: HudWindow = _hud_panels._windows.get("inventory")
+			var gb := inv2.get_node_or_null("ExchangeGold") as StoreMessageBox if inv2 != null else null
+			print("QA SOCIAL: tick %d gold box %s" % [_qa_tick, str(gb)])
+			if gb != null:
+				gb.set_count(int(what.substr(6)))
+				gb._on_ok()
+		elif what == "xbtn":
+			_hud_panels._exchange().press_button()
+			print("QA SOCIAL: tick %d exchange button" % _qa_tick)
+		elif what == "xcancel":
+			_hud_panels._exchange().press_cancel()
+			print("QA SOCIAL: tick %d exchange cancel" % _qa_tick)
+		elif what == "xstate":
+			var x := _hud_panels._exchange()
+			print("QA SOCIAL: tick %d exchange active %s mine %s other %s busy %s my %s other %s gold %d/%d offered %s" % [_qa_tick,
+				str(x.active), str(x.mine_confirmed), str(x.other_confirmed), str(x.busy), str(x.my_items.keys()),
+				str(x.other_items.keys()), x.my_gold, x.other_gold, str(x.offered_slots.keys())])
+		elif what.begins_with("panel:"):
+			_hud_panels.toggle(what.substr(6))
+			print("QA SOCIAL: tick %d panel %s" % [_qa_tick, what.substr(6)])
+		elif what == "fstate":
+			var names := []
+			for f in NetClient.last_friend_list:
+				names.append("%s(%d,%s)" % [f.friend_name, f.character_id, "on" if f.online else "off"])
+			print("QA SOCIAL: tick %d friends %s flag %d" % [_qa_tick, str(names), _friend_flag])
 		elif what.begins_with("ping_fps:"):
 			_apply_ping_fps_counter(what.substr(9) == "1")
 			print("QA TRACE: tick %d ping/fps box %s" % [_qa_tick, what.substr(9)])
@@ -25257,6 +25301,7 @@ func _console_host() -> Dictionary:
 		"unstuck": func() -> void: _unstuck_player(),
 		# Round 814: /grantname -- the own grant name (0x7256).
 		"grant_name": func(nick: String) -> void: NetClient.send_guild_grant_name(nick),
+		"friend_ask": func(who: String) -> void: friend_ask(who),
 		"ground_probe": Callable(self, "_run_ground_probe"),
 		"forward_gm": func(line: String) -> void: NetClient.gm_command(NetClient.current_character_name, line, _last_attack_target if _last_attack_target > 0 else 0),
 	}
@@ -31672,9 +31717,9 @@ func _reset_walk_for_entry() -> void:
 		_action_motion_shown(WorldNet.MOTION_STAND)
 
 ## Round 832: the right-click target menu (TargetMenu, CNIFTargetMenu). READ,
-## CGInterface::vslot_017 (0x77c260), all only while the option byte +0x1a
-## ("Activate action short cut") is set -- with it off a right click is the
-## camera's alone and selects nothing:
+## CGInterface::vslot_017 (0x77c260), in retail only while the option byte
+## +0x1a ("Activate action short cut") is set; OpenSRO has it always on
+## (OURS, round 834, the user's call), so the option is gone:
 ##   - WM_RBUTTONDOWN destroys the menu and arms GI+0x82c;
 ##   - a right drag of more than 5 pixels disarms it;
 ##   - WM_RBUTTONUP, armed, over a CICUser (FUN_0077b5e0): the player is
@@ -31689,8 +31734,6 @@ var _target_menu_armed := false
 var _target_menu_press := Vector2.ZERO
 
 func _target_menu_right_button(pressed: bool, at: Vector2) -> void:
-	if not ClientSettings.action_shortcut():
-		return
 	if pressed:
 		_close_target_menu()
 		_target_menu_armed = true
@@ -31738,6 +31781,7 @@ func _open_target_menu(at: Vector2, target_name: String) -> void:
 			return
 		ui_control.add_child(_target_menu)
 		_target_menu.chosen.connect(_on_target_menu_chosen)
+		_target_menu.chosen_extra.connect(_on_target_menu_extra)
 	_target_menu.open_at(at, target_name)
 	print("TARGET MENU: open at %s for '%s'" % [str(at), target_name])
 
@@ -31765,21 +31809,24 @@ func _on_target_menu_chosen(id: int) -> void:
 			if who != "" and who != NetClient.current_character_name and _hud_chat != null:
 				_hud_chat.open_with("$%s " % who)
 		TargetMenu.ID_EXCHANGE:
-			# 0x60a280 -> SendTradeMsg_081: the alchemy window up refuses it
-			# with 0x5419 (category 0x12), then the asking line and 0x7081.
-			if _hud_panels != null and _hud_panels.alchemy_window() != null and _hud_panels.alchemy_window().visible:
-				_log_system(_resolve_any_text("UIIT_MSG_REINFORCERR_CANNOT_TRADE", "Cannot open the alchemy window while trading."))
-			else:
-				print("TARGET MENU: exchange -> %s" % _action_exchange())
+			# 0x60a280 -> SendTradeMsg_081 (exchange_request).
+			print("TARGET MENU: exchange -> %s" % exchange_request(target))
 		TargetMenu.ID_FRIEND:
 			# 0x60a2d0 -> SendMessengerMsg_302: the name, no line.
 			if who != "":
-				NetClient.friend_request(NetClient.current_character_name, who)
+				friend_ask(who)
 		TargetMenu.ID_PARTY:
 			# 0x60a330: create out of a party, invite as leader or with
 			# anyone-invite, else nothing (HudPartyPane.press_invite).
 			if _hud_panels != null and _hud_panels.party_pane != null:
 				_hud_panels.party_pane.press_invite()
+
+## Round 834 (OURS): an entry of TargetMenu.EXTRA_ENTRIES, by key. Each new
+## entry is a branch here; the selection is the player the menu opened on.
+func _on_target_menu_extra(key: String) -> void:
+	match key:
+		_:
+			print("TARGET MENU: extra entry '%s' has no action" % key)
 
 ## Round 832: Trace. The request, its answers and its end are retail's
 ## (ActionNet, server/internal/session/trace.go); the walk is the server's
@@ -32063,21 +32110,10 @@ func _action_auto_select() -> String:
 	_ring_on_monster(pick)
 	return "selected monster %d (%.1f away)" % [pick, player.global_position.distance_to(candidates[pick])]
 
-## Exchange (SendTradeMsg_081(0), READ): with another player selected, the
-## system line UIIT_MSG_DEAL_ASKING ("Applying for a trade to [%s].") and the
-## request; nothing without one. OpenSRO's trade request names the player.
+## Exchange (SendTradeMsg_081(0), READ): exchange_request for the
+## selection.
 func _action_exchange() -> String:
-	if _selected_character < 0 or _selected_character == _own_id() or not _other_bodies.has(_selected_character):
-		return "no player selected"
-	var body = _other_bodies[_selected_character]
-	var who := String((body as Node).get_meta("character_name", "")) if body != null and is_instance_valid(body) else ""
-	if who == "":
-		return "the selected player has no name yet"
-	var fmt := _ui_text_table.get_text("UIIT_MSG_DEAL_ASKING", "") if _ui_text_table != null else ""
-	if fmt != "":
-		_log_system(fmt.replace("%s", who), HudSystemMessage.TYPE_GAME)
-	NetClient.trade_request(NetClient.current_character_name, who)
-	return "trade requested with %s" % who
+	return exchange_request(_selected_character)
 
 ## Party (0x793b00 case 0x3ef, READ): the main popup's party tab, then the
 ## party window's Invite (0x6d5970) -- create-and-invite out of a party,
@@ -35327,207 +35363,167 @@ func _on_duel_ended(ended: DuelNet.Ended) -> void:
 		return
 	duel_status_label.text = "Duel over -- %s won." % ended.winner_name
 
-# --- Trade tab ---------------------------------------------------------
+# --- The exchange (round 834) --------------------------------------------------
+#
+# Retail's exchange (ExchangeNet; docs/protocol/exchange.md and its review
+# exchange_verify.md). The window, its boxes and the inventory's part are
+# HudPanels' (ExchangeController); this keeps the state the world needs.
 
-func _on_trade_request_pressed() -> void:
-	var target := trade_target_input.text.strip_edges()
-	if target.is_empty():
-		trade_status_label.text = "Enter a target name first."
-		return
-	NetClient.trade_request(NetClient.current_character_name, target)
-
-func _on_trade_request_result(ok: bool, reason: String) -> void:
-	trade_status_label.text = "Trade request sent." if ok else "Request failed: %s" % reason
-
-func _on_trade_invite(invite: TradeNet.Invite) -> void:
-	if invite == null:
-		return
-	_pending_trade_requester = invite.requester_name
-	trade_invite_label.text = "%s wants to trade with you!" % invite.requester_name
-
-func _on_trade_respond_pressed(accept: bool) -> void:
-	if _pending_trade_requester.is_empty():
-		trade_status_label.text = "No pending request to respond to."
-		return
-	NetClient.trade_respond(NetClient.current_character_name, _pending_trade_requester, accept)
-	_pending_trade_requester = ""
-	trade_invite_label.text = "(no pending request)"
-
-func _on_trade_respond_result(ok: bool, reason: String) -> void:
-	if not ok:
-		trade_status_label.text = "Respond failed: %s" % reason
-
-func _on_trade_started(started: TradeNet.Started) -> void:
-	if started == null:
-		return
-	_trade_established = true
-	trade_status_label.text = "Trading with %s. Set your offer below." % started.partner_name
-	trade_their_offer_label.text = "Their offer: (none yet)"
-	# The exchange window's gold boxes start at 0 (CIFExchange's clear path,
-	# 0x7b370f / 0x7b3718), in the gold colours (HudPanels.set_exchange_money).
-	_trade_my_gold = 0
-	if _hud_panels != null:
-		_hud_panels.set_exchange_money(0, 0)
-
-func _on_trade_declined(declined: TradeNet.Declined) -> void:
-	if declined == null:
-		return
-	trade_status_label.text = "%s declined your trade request." % declined.target_name
-
-func _on_trade_set_offer_pressed() -> void:
-	var gold_text := trade_gold_input.text.strip_edges()
-	var slot_text := trade_item_slot_input.text.strip_edges()
-	var qty_text := trade_quantity_input.text.strip_edges()
-	var gold := int(gold_text) if gold_text.is_valid_int() else 0
-	var item_slot := int(slot_text) if slot_text.is_valid_int() else TradeNet.ITEM_SLOT_NONE
-	var quantity := int(qty_text) if qty_text.is_valid_int() else 0
-	_trade_pending_gold = gold
-	NetClient.trade_set_offer(NetClient.current_character_name, gold, item_slot, quantity)
-
-## A trade is established (OpTradeStarted until it completes or is
-## cancelled): the server refuses a move meanwhile (round 749's verification;
-## trade.Hub.Established, INTERACTMODE 2), so the client sends none.
+## An exchange is established (0xB081 {1} / 0x3085 until 0x3087 / 0x3088):
+## the server refuses a move meanwhile (round 749's verification; trade.Hub.
+## Established, INTERACTMODE 2), so the client sends none.
 var _trade_established := false
 
-## The gold this side last offered, and the amount of the offer in flight,
-## for the exchange window's GDR_EXCHANGE_STATIC_MYMONEY.
-var _trade_my_gold := 0
-var _trade_pending_gold := 0
+## SendTradeMsg_081 (c:0x81d790), in its order: the alchemy window up
+## refuses it (category 0x12, 0x5419); the selection is the target; the
+## exchange already up or an NPC talk open (GI+0x508 / +0x7b4) sends nothing;
+## no player, or this one, sends nothing; then the request-pending flag, the
+## system line UIIT_MSG_DEAL_ASKING (type 5) and 0x7081. The +0x7bc refusal
+## (0x1834) is not made: what sets that byte is OPEN (exchange.md OPEN 1).
+func exchange_request(target_id: int) -> String:
+	if _hud_panels != null and _hud_panels.alchemy_window() != null and _hud_panels.alchemy_window().visible:
+		_log_system(_resolve_any_text("UIIT_MSG_REINFORCERR_CANNOT_TRADE", ""), HudSystemMessage.TYPE_GAME)
+		return "refused: the alchemy window is open"
+	if _trade_established or (_hud_panels != null and (_hud_panels.exchange_mode() or _hud_panels.is_open("npctalk"))):
+		return "busy"
+	if target_id < 0 or target_id == _own_id() or not _other_bodies.has(target_id):
+		return "no player selected"
+	var body = _other_bodies[target_id]
+	var who := String((body as Node).get_meta("character_name", "")) if body != null and is_instance_valid(body) else ""
+	var fmt := _resolve_any_text("UIIT_MSG_DEAL_ASKING", "")
+	if fmt != "":
+		_log_system(fmt.replace("%s", who), HudSystemMessage.TYPE_GAME)
+	NetClient.exchange_request(target_id)
+	return "exchange requested with %s" % who
 
-func _on_trade_offer_result(ok: bool, reason: String) -> void:
+## 0x3080 kind 1 (c:0x88aa60 case 1): dropped unless the asker is a player
+## spawned here; otherwise the box (HUD request kind 7).
+func _on_exchange_requested(asker_id: int) -> void:
+	if not _other_bodies.has(asker_id):
+		print("EXCHANGE: request from %d, not spawned here -- dropped (c:0x88aa60)" % asker_id)
+		return
+	var body = _other_bodies[asker_id]
+	var who := String((body as Node).get_meta("character_name", "")) if body != null and is_instance_valid(body) else ""
+	if _hud_panels != null:
+		_hud_panels.show_exchange_request(asker_id, who)
+
+func _on_exchange_request_result(ok: bool, value: int) -> void:
+	if ok:
+		_open_exchange(value)
+	elif _hud_panels != null:
+		_hud_panels.exchange_code_message(value)
+
+func _on_exchange_started(asker_id: int) -> void:
+	_open_exchange(asker_id)
+
+## The window opens on both sides (CIFExchange::FUN_007b2530(1)).
+func _open_exchange(partner_id: int) -> void:
+	_trade_established = true
+	if _hud_panels == null:
+		return
+	# The headers (c:0x7b2d00): the name and guild of each side; a player
+	# out of the normal state (vslot 0xac != 4; the job suit, INFERRED) is
+	# written "*name" with no guild.
+	var body = _other_bodies.get(partner_id)
+	var uid := partner_id & 0xffffffff
+	var partner := {"id": partner_id, "name": "", "guild": String(NetClient.user_guilds.get(uid, {}).get("guild_name", "")),
+		"normal": int(NetClient.user_jobs.get(uid, {}).get("state", UserSpawnNet.JOB_STATE_NONE)) == UserSpawnNet.JOB_STATE_NONE}
+	if body != null and is_instance_valid(body):
+		partner["name"] = String((body as Node).get_meta("character_name", ""))
+	var own := {"id": _own_id(), "name": NetClient.current_character_name,
+		"guild": String(NetClient.own_guild_line.get("guild_name", "")), "normal": _own_job_state() == UserSpawnNet.JOB_STATE_NONE}
+	_hud_panels.open_exchange(partner, own)
+
+func _on_exchange_closed(code: int) -> void:
+	_trade_established = false
+	if _hud_panels != null:
+		_hud_panels.exchange_closed(code)
+
+# --- Friends (round 834) ------------------------------------------------------
+#
+# The messenger's friend list on the retail wire (FriendNet,
+# docs/protocol/friends.md). READ, sro_client.exe:
+#   - every ask (the Add box c:0x5a7920, the target menu's 17 c:0x60a2d0,
+#     /invite and /friend c:0x7af513) sends 0x7302 and sets the friend
+#     pane's flag +0x790 to 1; an incoming request (c:0x886000) sets it to 2
+#     and queues box 0x23; its answer sets it back to 0 (c:0x798a00);
+#   - 0xB302 (c:0x885e50): 0x640b reason 0 puts UIIT_MSG_FRIENDERR_REFUSAL on
+#     the warning banner whoever we are; reason 2 puts UIIT_MSG_FRIEND_
+#     SYSCANCEL there with the flag at 1, or closes box 0x23 with it at 2;
+#     any other code goes through 0x778190(0x13, code) -- the banner
+#     (0x7b9124 -> 0x77b580, GDR_WARNING_WND) for the codes the switch
+#     names (c:0x7baad7); the flag is then 0, whatever came;
+#   - 0x3B07 kind 4: UIIT_MSG_FRIEND_CONNECT / _DISCONNECT with the friend's
+#     name, not for our own name (c:0x592e00); kind 2 opens box 0x22.
+
+## The friend pane's +0x790: 1 after our ask, 2 while a request box is up.
+var _friend_flag := 0
+
+## Asks `target_name` to be friends (0x7302), from every place the client
+## sends it. An empty name or our own sends nothing (the Add box's test,
+## c:0x5a7840).
+func friend_ask(target_name: String) -> void:
+	var who := target_name.strip_edges()
+	if who == "" or who == NetClient.current_character_name:
+		return
+	NetClient.friend_ask(who)
+	_friend_flag = 1
+
+func _on_friend_requested(request: FriendNet.Request) -> void:
+	_friend_flag = 2
+	if _hud_panels != null:
+		_hud_panels.show_friend_request(request)
+
+## The request box's answer (HudPanels): 0x3303, and the flag back to 0.
+func friend_answer(request: FriendNet.Request, accept: bool) -> void:
+	if request == null:
+		return
+	NetClient.friend_answer(request.job, request.asker_jid, accept)
+	_friend_flag = 0
+
+func _on_friend_failed(failure: FriendNet.Failure) -> void:
+	print("FRIEND failed code 0x%x reason %d '%s' (flag %d)" % [failure.code, failure.reason, failure.name, _friend_flag])
+	if failure.code == FriendNet.CODE_REFUSED:
+		if failure.reason == FriendNet.REASON_REFUSED:
+			_friend_banner("UIIT_MSG_FRIENDERR_REFUSAL")
+		elif failure.reason == FriendNet.REASON_TIMEOUT:
+			if _friend_flag == 1:
+				_friend_banner("UIIT_MSG_FRIEND_SYSCANCEL")
+			elif _friend_flag == 2 and _hud_panels != null:
+				_hud_panels.close_friend_request()
+	else:
+		_friend_banner(String(FriendNet.CODE_TEXTS.get(failure.code, "")))
+	_friend_flag = 0
+
+func _on_friend_delete_result(ok: bool, value: int) -> void:
+	print("FRIEND delete %s %d" % ["ok" if ok else "refused", value])
 	if not ok:
-		trade_status_label.text = "Offer failed: %s" % reason
+		_friend_banner(String(FriendNet.CODE_TEXTS.get(value, "")))
+
+func _on_friend_pushed(push: FriendNet.Push) -> void:
+	match push.kind:
+		FriendNet.PUSH_ADDED:
+			if _hud_panels != null:
+				_hud_panels.show_friend_added(push.friend_name, NetClient.current_character_name)
+		FriendNet.PUSH_STATE:
+			var who := FriendNet.name_of(NetClient.last_friend_list, push.character_id)
+			if who == "" or who == NetClient.current_character_name:
+				return
+			var key := "UIIT_MSG_FRIEND_CONNECT" if push.state == FriendNet.STATE_ONLINE else "UIIT_MSG_FRIEND_DISCONNECT"
+			var fmt := _resolve_any_text(key, "")
+			if fmt != "":
+				_log_system(fmt.replace("%s", who) if fmt.contains("%s") else fmt, HudSystemMessage.TYPE_ALWAYS)
+
+## A friend message on the warning banner (0x77b580), or nothing for a key
+## the client has none for.
+func _friend_banner(key: String) -> void:
+	if key == "":
 		return
-	_trade_my_gold = _trade_pending_gold
-	if _hud_panels != null:
-		_hud_panels.set_exchange_money(_trade_my_gold, -1)
-
-func _on_trade_confirm_result(ok: bool, reason: String) -> void:
-	trade_status_label.text = "Confirmed. Waiting on the other side." if ok else "Confirm failed: %s" % reason
-
-func _on_trade_offer_updated(updated: TradeNet.OfferUpdated) -> void:
-	if updated == null:
+	var t := _resolve_any_text(key, "")
+	if t == "":
+		print("World3D: friend message %s is not in the text table" % key)
 		return
-	var item_desc := "no item" if updated.offer.item_slot < 0 else "slot %d x%d" % [updated.offer.item_slot, updated.offer.quantity]
-	trade_their_offer_label.text = "Their offer: %dg, %s" % [updated.offer.gold, item_desc]
-	if _hud_panels != null:
-		_hud_panels.set_exchange_money(-1, updated.offer.gold)
-
-func _on_trade_completed(completed: TradeNet.Completed) -> void:
-	if completed == null:
-		return
-	_trade_established = false
-	var received := ""
-	if completed.received_item_id != 0:
-		var label := _item_label_for_line(completed.received_item_id)
-		received = (" and %dx %s" % [completed.received_quantity, label]) if label != "" else (" and %dx" % completed.received_quantity)
-	_log_system("Trade complete! Received %dg%s" % [completed.received_gold, received])
-	NetClient.list_inventory(NetClient.current_character_name)
-
-func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:
-	if cancelled == null:
-		return
-	_trade_established = false
-	var by_whom := cancelled.cancelled_by_name if cancelled.cancelled_by_name != "" else "the system"
-	trade_status_label.text = "Trade cancelled by %s." % by_whom
-	trade_their_offer_label.text = "Their offer: (none yet)"
-	_trade_my_gold = 0
-	if _hud_panels != null:
-		_hud_panels.set_exchange_money(0, 0)
-	# Forget the invite, or Accept would answer "no pending request". The
-	# server holds each character in at most one trade or request (round 500,
-	# after the engine's GObjPC_HandleTradeMsg_081), so this packet always ends
-	# the invite we are showing. That covers four cases: the sender withdrew
-	# it (round 499), the sender asked someone else, we cancelled it or sent
-	# a request of our own, or it timed out after 30 s ("the system"). The
-	# old test (the canceller is the invite's sender) caught only the first
-	# two.
-	_pending_trade_requester = ""
-	trade_invite_label.text = "(no pending request)"
-
-# --- Friends tab -----------------------------------------------------------
-
-func _refresh_friends() -> void:
-	NetClient.friend_list(NetClient.current_character_name)
-	NetClient.friend_pending_list(NetClient.current_character_name)
-
-func _on_friend_request_pressed() -> void:
-	var target := friend_target_input.text.strip_edges()
-	if target.is_empty():
-		friend_status_label.text = "Enter a target name first."
-		return
-	NetClient.friend_request(NetClient.current_character_name, target)
-
-func _on_friend_request_result(ok: bool, reason: String) -> void:
-	friend_status_label.text = "Request sent." if ok else "Request failed: %s" % reason
-
-func _on_friend_request_received(received: FriendNet.RequestReceived) -> void:
-	if received == null:
-		return
-	_log_system("%s sent you a friend request." % received.requester_name)
-	_refresh_friends()
-
-func _on_friend_accept_pressed() -> void:
-	var selected := friend_pending_list.get_selected_items()
-	if selected.is_empty():
-		friend_status_label.text = "Select a pending request first."
-		return
-	var chosen: FriendNet.PendingRequest = _pending_friend_requests[selected[0]]
-	NetClient.friend_accept(NetClient.current_character_name, chosen.requester_id)
-
-func _on_friend_accept_result(ok: bool, reason: String) -> void:
-	friend_status_label.text = "Friend added." if ok else "Accept failed: %s" % reason
-	if ok:
-		_refresh_friends()
-
-func _on_friend_accepted(accepted: FriendNet.Accepted) -> void:
-	if accepted == null:
-		return
-	_log_system("%s accepted your friend request." % accepted.accepter_name)
-	_refresh_friends()
-
-func _on_friend_decline_pressed() -> void:
-	var selected := friend_pending_list.get_selected_items()
-	if selected.is_empty():
-		friend_status_label.text = "Select a pending request first."
-		return
-	var chosen: FriendNet.PendingRequest = _pending_friend_requests[selected[0]]
-	NetClient.friend_decline(NetClient.current_character_name, chosen.requester_id)
-
-func _on_friend_decline_result(ok: bool, reason: String) -> void:
-	friend_status_label.text = "Declined." if ok else "Decline failed: %s" % reason
-	if ok:
-		_refresh_friends()
-
-func _on_friend_list_result(friends: Array, error: String) -> void:
-	if error != "":
-		friend_status_label.text = "Error: %s" % error
-		return
-	_friends.assign(friends)
-	friend_list.clear()
-	for f in _friends:
-		friend_list.add_item("%s [%s]" % [f.friend_name, "online" if f.online else "offline"])
-
-func _on_friend_remove_pressed() -> void:
-	var selected := friend_list.get_selected_items()
-	if selected.is_empty():
-		friend_status_label.text = "Select a friend first."
-		return
-	var chosen: FriendNet.FriendEntry = _friends[selected[0]]
-	NetClient.friend_remove(NetClient.current_character_name, chosen.character_id)
-
-func _on_friend_remove_result(ok: bool, reason: String) -> void:
-	friend_status_label.text = "Removed." if ok else "Remove failed: %s" % reason
-	if ok:
-		_refresh_friends()
-
-func _on_friend_pending_list_result(requests: Array, error: String) -> void:
-	if error != "":
-		return
-	_pending_friend_requests.assign(requests)
-	friend_pending_list.clear()
-	for r in _pending_friend_requests:
-		friend_pending_list.add_item(r.requester_name)
+	_show_banner("friend", t)
 
 ## Applies a consumable's effect to the HUD. The restored amounts are the
 ## game's own (the item table's Param block), so the message reports what the

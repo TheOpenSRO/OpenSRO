@@ -31,7 +31,7 @@ import (
 func TestNPCServicesRefusedWhileTrading(t *testing.T) {
 	ctx := context.Background()
 	var eq *equipment.MemStore
-	f := setupTradeTestWith(t, nil, func(d tradeFixtureDeps) []gateway.Handler {
+	f := setupTradeTestWith(t, func(d tradeFixtureDeps) []gateway.Handler {
 		shopItems := stubShopItems{100: {ID: 100}, 200: {ID: 200}} // 100 costs shop.basePrice (100 gold)
 		eq = equipment.NewMemStore(d.inv)
 		warehouse := inventory.NewMemStore(shopItems)
@@ -100,8 +100,8 @@ func TestNPCServicesRefusedWhileTrading(t *testing.T) {
 		t.Helper()
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		pkt, err := proto.Read(r, nil, nil)
-		if err != nil || pkt.Opcode != OpTradeCancelled {
-			t.Fatalf("%s: want OpTradeCancelled, got packet=%v err=%v", who, pkt, err)
+		if err != nil || pkt.Opcode != OpExchangeClosed {
+			t.Fatalf("%s: want 0x3088, got packet=%v err=%v", who, pkt, err)
 		}
 	}
 
@@ -186,10 +186,10 @@ func TestNPCServicesRefusedWhileTrading(t *testing.T) {
 	}
 
 	// ---- 3. CANCELLED: everything is free again. ----
-	resp = doSend(t, f.connA, f.rA, OpTradeCancel, (&TradeCancelRequest{CharacterName: "Aria"}).Encode())
-	if resp.Opcode != OpTradeCancelled {
-		t.Fatalf("cancel: Aria got opcode 0x%x, want OpTradeCancelled", resp.Opcode)
-	}
+	// 0x7084: 0x3088 {0x182c} to both, then 0xB084 {1} (exchange.go).
+	f.send(t, "A", OpExchangeCancel, nil)
+	readCancelled("Aria", f.connA, f.rA)
+	f.next(t, "A", OpExchangeCancelResult)
 	readCancelled("Bram", f.connB, f.rB)
 
 	if res := buy(); !res.OK {
@@ -217,13 +217,9 @@ func TestNPCServicesRefusedWhileTrading(t *testing.T) {
 	// NEGATIVE: before round 499 handleTradeCancel only ended an OPEN trade,
 	// so this cancel answered nothing and left both parties busy.
 	requestTrade(t, f)
-	resp = doSend(t, f.connA, f.rA, OpTradeCancel, (&TradeCancelRequest{CharacterName: "Aria"}).Encode())
-	if resp.Opcode != OpTradeCancelled {
-		t.Fatalf("withdraw: Aria got opcode 0x%x, want OpTradeCancelled", resp.Opcode)
-	}
-	if c, err := DecodeTradeCancelled(resp.Data); err != nil || c.CancelledByName != "Aria" {
-		t.Fatalf("withdraw: Aria's OpTradeCancelled = %+v (err %v), want by Aria", c, err)
-	}
+	f.send(t, "A", OpExchangeCancel, nil)
+	readCancelled("Aria", f.connA, f.rA)
+	f.next(t, "A", OpExchangeCancelResult)
 	readCancelled("Bram", f.connB, f.rB)
 	if f.trades.Busy(f.ariaID) || f.trades.Busy(f.bramID) {
 		t.Fatal("withdraw: a party is still busy")
@@ -231,8 +227,7 @@ func TestNPCServicesRefusedWhileTrading(t *testing.T) {
 	if res := buy(); !res.OK {
 		t.Fatalf("after withdraw: Aria's buy = %+v, want OK", res)
 	}
-	resp = doSend(t, f.connB, f.rB, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
-	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || rr.OK {
-		t.Fatalf("after withdraw: Bram accepted a withdrawn request: %+v (err %v)", rr, err)
-	}
+	// Bram's answer to the withdrawn request opens nothing.
+	f.send(t, "B", OpRequestBox, []byte{1, 1})
+	f.none(t, "A", OpExchangeRequestResult)
 }

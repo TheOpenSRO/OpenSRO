@@ -64,6 +64,18 @@ const GRANT_EDIT_RECT := Rect2(58, 82, 243, 20)
 const GRANT_OK_AT := Vector2(95, 124)
 const GRANT_CANCEL_AT := Vector2(183, 124)
 
+## Round 834: the friend pane's Add friend box -- the same MsgBoxInsertMsg
+## box (CNIFFriendWnd 0x5a7160: id 0x51, 0x132 x 0x97, 0x643c20(4)), purpose
+## 4 of UI_SILKMALL 0x641f40 (asm 0x64274d..0x64290f, READ): the static
+## +0x8f4 at (1, 49), 305x12, centred, colour 0xffefdaa4, text
+## UIIT_MSG_FRIEND_IDINPUT; control 11 at (12, 71) 281x25; control 12 at
+## (16, 75) 273x17; the edit +0x8f8 emptied, at (19, 73) 266x20, style 2,
+## focused, with no length set (the server takes 1..32); OK +0x800 at
+## (72, 114), Cancel +0x804 at (160, 114). 0x5a7160 then puts its string
+## argument in the edit (0x63c8a0): the selected player's name.
+const FRIEND_TITLE_RECT := Rect2(1, 49, 305, 12)
+const FRIEND_EDIT_RECT := Rect2(19, 73, 266, 20)
+
 const CLEAN_SIZE := Vector2(388, 144)
 const CLEAN_SHIFT := 40.0
 
@@ -93,6 +105,33 @@ func build_name_input(builder: UiBuilder) -> bool:
 		_place(edit, NAME_EDIT_RECT)
 		edit.max_length = NAME_MAX
 		edit.text = ""
+		edit.text_submitted.connect(func(_t: String) -> void: press_ok())
+		edit.call_deferred("grab_focus")
+	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), NAME_OK_AT, press_ok)
+	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), NAME_CANCEL_AT, press_cancel)
+	return true
+
+## Builds the Add friend box, its edit holding `prefill`. False without the
+## layout.
+func build_friend_add_input(builder: UiBuilder, prefill: String) -> bool:
+	name = "FriendAddInput"
+	if not build_shell(builder, NAME_SIZE, "UIIT_STT_INPUT_BOX", "UIIT_STT_INPUT_BOX", LAYOUT, "MsgBoxInsertMsg"):
+		return false
+	_add_background(builder, NAME_SIZE)
+	var title := node("GDR_MB_INSERT_MSG_TITLE")
+	if title != null:
+		_place(title, FRIEND_TITLE_RECT)
+		var l := builder.set_static_text(title, text("UIIT_MSG_FRIEND_IDINPUT", "UIIT_MSG_FRIEND_IDINPUT"))
+		if l != null:
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			l.add_theme_color_override("font_color", NAME_TITLE_COLOUR)
+	_rebuild(builder, "MsgBoxInsertMsg", "GDR_MB_INSERT_MSG_EDIT_FRAME", NAME_FRAME_RECT)
+	_place(node("GDR_MB_INSERT_MSG_EDIT_BG"), NAME_BG_RECT)
+	edit = node("GDR_MB_INSERT_MSG_EDIT") as LineEdit
+	if edit != null:
+		_place(edit, FRIEND_EDIT_RECT)
+		edit.max_length = 0
+		edit.text = prefill
 		edit.text_submitted.connect(func(_t: String) -> void: press_ok())
 		edit.call_deferred("grab_focus")
 	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), NAME_OK_AT, press_ok)

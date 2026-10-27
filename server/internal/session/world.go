@@ -1752,6 +1752,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// Its quest log and the quest NPCs' marks (round 785, quest.go): the
 	// section retail carries in its character data.
 	questAfterEnter(ctx, sess, owned)
+	// The friend list and the log-on push (round 834, friend.go): retail's
+	// 0x3305 follows the character data.
+	friendAfterEnter(ctx, sess, owned)
 	return nil
 }
 
@@ -1847,6 +1850,8 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 		return true, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data})
 	}
 	cancelActions(old.CharacterID)
+	// Round 834: a warp closes the exchange 0x182b (s:FUN_004def00).
+	exchangeEnd(old.CharacterID, ExchangeErrCancel)
 	// A quest talk opened before the warp answers nothing after it (round
 	// 785 review).
 	forgetQuestTalk(sess.ID(), false)

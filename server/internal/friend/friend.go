@@ -1,8 +1,8 @@
-// Package friend implements this project's own friends list: persistent
-// (unlike party/duel/trade -- a friendship should survive a relog or
-// server restart) mutual relationships formed via request/accept, plus
-// pending incoming requests. The request/accept SHAPE is own design; the list's
-// size limit is not -- see MaxFriends.
+// Package friend keeps the friends list: persistent (unlike
+// party/duel/trade -- a friendship survives a relog or a server restart)
+// mutual friendships. Round 834 put the request on retail's wire and rules
+// (session/friend.go, docs/protocol/friends.md); before it the request
+// was OpenSRO's own, stored until answered.
 //
 // CORRECTED 2026-09-16: this said "Entirely own design; no real friends-list
 // data to RE." The second half was an unchecked claim. The server has a friend
@@ -27,33 +27,24 @@ import (
 // ties `[esi+0x14]` to the friend list rather than to some other count: the
 // comparison sits between an ALREADYFRIEND check and a FULLLIST refusal.
 //
-// A FRIENDSHIP IS MUTUAL, so accepting grows BOTH lists and both are checked
-// here. The engine has a separate `0x640f FRIENDERR_TARGETLISTFULL` for the
-// other side, but **the server never returns it** -- `0x640f` appears nowhere in
-// its .text -- so where the engine enforces the target's limit is not
-// established. OpenSRO checks both because it adds to both; that is the
-// conservative reading rather than a claim about where the engine checks.
+// A FRIENDSHIP IS MUTUAL, so accepting grows BOTH lists and both are checked.
+// CORRECTED in round 834: this said the server never returns `0x640f
+// FRIENDERR_TARGETLISTFULL`. True of the GameServer alone; the ShardManager
+// returns it for the target's full list (sm:0x447770), and checks both lists
+// again at the accept (sm:0x447320). docs/protocol/friends.md, 2 and 3.2.
 const MaxFriends = 20
 
 // ErrListFull is returned when a friendship would push either character past
 // MaxFriends. The engine's own refusal is UIIT_MSG_FRIENDERR_FULLLIST.
 var ErrListFull = errors.New("friend: friend list is full")
 
-// ErrCannotFriendSelf is returned by Store.SendRequest when fromID and
-// toID are the same character.
+// ErrCannotFriendSelf is returned by Store.AddFriendship when both ids are
+// the same character.
 var ErrCannotFriendSelf = errors.New("friend: cannot friend yourself")
 
-// ErrAlreadyFriends is returned by Store.SendRequest when the two
+// ErrAlreadyFriends is returned by Store.AddFriendship when the two
 // characters are already friends.
 var ErrAlreadyFriends = errors.New("friend: already friends")
-
-// ErrRequestAlreadySent is returned by Store.SendRequest when fromID
-// already has a pending request to toID.
-var ErrRequestAlreadySent = errors.New("friend: request already sent")
-
-// ErrNoSuchRequest is returned by Store.AcceptRequest/DeclineRequest when
-// there's no matching pending request.
-var ErrNoSuchRequest = errors.New("friend: no such request")
 
 // ErrNotFriends is returned by Store.RemoveFriend when the two characters
 // aren't friends.
@@ -65,36 +56,19 @@ type Friend struct {
 	Name        string
 }
 
-// Request is one pending incoming friend request.
-type Request struct {
-	RequesterID   int64
-	RequesterName string
-}
-
-// Store persists friend requests and friendships.
+// Store persists friendships. Round 834: the request is retail's, a live
+// 30-second wait the session holds (session/friend.go,
+// docs/protocol/friends.md 3.2), not a stored row, so the store keeps only
+// the friendships -- retail's `_Friend` table, written by `_Friend_Add` /
+// `_Friend_Remove` for both sides at once.
 type Store interface {
-	// SendRequest records that fromID (named fromName) wants to befriend
-	// toID. Returns ErrCannotFriendSelf, ErrAlreadyFriends, or
-	// ErrRequestAlreadySent as appropriate.
-	SendRequest(ctx context.Context, fromID int64, fromName string, toID int64) error
-
-	// AcceptRequest accepts the pending request from requesterID addressed
-	// to characterID (named characterName, needed to store the reciprocal
-	// friendship entry on the requester's side), forming a mutual
-	// friendship. Returns ErrNoSuchRequest if there's nothing pending.
-	AcceptRequest(ctx context.Context, characterID int64, characterName string, requesterID int64) error
-
-	// DeclineRequest removes the pending request from requesterID
-	// addressed to characterID without forming a friendship. Returns
-	// ErrNoSuchRequest if there's nothing pending.
-	DeclineRequest(ctx context.Context, characterID, requesterID int64) error
+	// AddFriendship makes a and b friends, both ways, in one step:
+	// ErrCannotFriendSelf, ErrAlreadyFriends when either already lists the
+	// other, ErrListFull when either list holds MaxFriends.
+	AddFriendship(ctx context.Context, aID int64, aName string, bID int64, bName string) error
 
 	// ListFriends returns characterID's full friends list.
 	ListFriends(ctx context.Context, characterID int64) ([]Friend, error)
-
-	// ListPendingRequests returns every incoming request addressed to
-	// characterID that hasn't been accepted or declined yet.
-	ListPendingRequests(ctx context.Context, characterID int64) ([]Request, error)
 
 	// RemoveFriend ends the friendship between characterID and friendID
 	// (both directions). Returns ErrNotFriends if they weren't friends.

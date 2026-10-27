@@ -383,6 +383,9 @@ func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 		deps.potions.drop(characterID)
 	}
 	cancelActions(characterID)
+	// Round 834: a death closes the exchange 0x182b (CGObjPC::vslot_306 /
+	// 307, s:0x529ce0 / 0x52cf41).
+	exchangeEnd(characterID, ExchangeErrCancel)
 	// A death ends every buff (round 616). OURS, disclosed: the retail
 	// death path was not traced to a book clear -- GObjPC_OnDeath (0x4e6980)
 	// holds none, and CGObjChar::SetLifeState (0x4a9c80) on state 2 calls an

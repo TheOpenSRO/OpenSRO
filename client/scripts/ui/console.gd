@@ -15,7 +15,7 @@ class_name Console
 ## from the original client, which had no slash console.
 
 ## Client-side commands the console runs itself.
-const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe", "layer", "grantname"]
+const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe", "layer", "grantname", "friend", "invite"]
 
 ## GM commands the console forwards to the server, which gates and runs them.
 ## Listed so a typo gets the help line while a real GM word reaches the
@@ -122,6 +122,15 @@ func submit(line: String) -> bool:
 				_log("Usage: /grantname <name> (at most %d letters; nothing clears it)" % GuildPlateNet.MAX_NICKNAME_BYTES)
 			else:
 				_call("grant_name", [nick])
+		"friend", "invite":
+			# Round 834: retail's own chat commands (UIIT_STT_CHAT_COMMAND_
+			# FRIEND_INVITE1 / 2, c:0x7af513): ask the named player to be
+			# friends (0x7302).
+			var who := " ".join(args).strip_edges()
+			if who == "":
+				_log("Usage: /friend <name> (asks that player to be your friend)")
+			else:
+				_call("friend_ask", [who])
 		_:
 			if GM_COMMANDS.has(cmd):
 				_call("forward_gm", [body])

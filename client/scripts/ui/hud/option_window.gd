@@ -82,12 +82,11 @@ const GAME_SLOT_CLASS := "CNIFGameOptionSlot"
 const TAB_STEP := 125.0
 const EXTRA_TAB_TEXT := "Extra Settings"
 ## The Extra rows, in slot order (left column first): [settings key, label
-## text or text id]. The ping counter is OURS; the action short cut is
-## retail's Game-tab option (ClientSettings.KEY_ACTION_SHORTCUT), here until
-## that tab is built.
+## text or text id]. The ping counter is OURS. (Retail's "Activate action
+## short cut" sat here in round 832; from round 834 the target menu is always
+## on and the option is gone.)
 const EXTRA_ROWS := [
 	["ping_fps", "Show the Ping / FPS counter"],
-	["action_short_cut", "UIIT_CTL_ACTION_LIST_ACTIVE"],
 ]
 const ID_PANE_AUDIO := 269
 const ID_FRAME_BGM := 250
@@ -390,8 +389,6 @@ static func extra_saved(key: String) -> bool:
 	match key:
 		"ping_fps":
 			return ClientSettings.ping_fps_shown()
-		"action_short_cut":
-			return ClientSettings.action_shortcut()
 	return false
 
 ## Sets an Extra row's check box (and its edit value).
@@ -412,7 +409,6 @@ func store_extra() -> void:
 	if _extra_edit.is_empty():
 		return
 	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_PING_FPS, extra_value("ping_fps"))
-	ClientSettings.set_value(ClientSettings.SECTION_GAME, ClientSettings.KEY_ACTION_SHORTCUT, extra_value("action_short_cut"))
 	extra_applied.emit(_extra_edit.duplicate())
 
 # --- the buttons ------------------------------------------------------------------

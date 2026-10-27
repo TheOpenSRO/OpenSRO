@@ -343,6 +343,7 @@ func _apply_create_state() -> void:
 		# CNIFFriendWnd 0x5a9a00: +0x78c = 18, +0x798 = the scroll, then
 		# 0x5a97b0 -> 0x5a94f0 -> the rows' refresh 0x5a85c0 (0x5a9777):
 		# with no list, every row cleared, and the count printed.
+		_wire_friend_pane()
 		refresh_friends()
 		# CNIFCommunityWnd 0x58ec70: cumunity_cut, whose queue ends with
 		# CNIFBlockWnd 0x587a50 -- sub-tab 395 checked (0x587aad; no pane),
@@ -911,52 +912,158 @@ func friend_rows() -> Array[Control]:
 	return out
 
 ## Keeps the friend list and redraws the rows from it (refresh_friends).
-## Each entry is an object with `friend_name` and `online`
-## (FriendNet.FriendEntry).
+## Each entry is a FriendNet.FriendEntry (character_id, friend_name,
+## ref_obj_id, state; `online` is state 0).
 func fill_friends(friends: Array) -> void:
 	_friends = friends.duplicate()
+	if _friend_sorted:
+		_sort_friends()
+	if selected_friend != 0 and FriendNet.name_of(_friends, selected_friend) == "":
+		selected_friend = 0
 	refresh_friends()
 
 ## The friend pane's refresh (0x5a85c0, reached from 0x5a97b0 -> 0x5a94f0):
-## row i shows entry (scroll offset + i), and a row past the list is
-## cleared. The scroll bar is not built, so the offset is 0 and a longer
-## list shows its first rows. The rows are in file order: each row's
-## OnCreate pushes it to the front of the pane's list (0x5a92b0), and the
-## OnCreates run last row first, so the list ends in file order.
+## row i shows entry (scroll line + i), and a row past the list is cleared.
+## The rows are in file order: each row's OnCreate pushes it to the front of
+## the pane's list (0x5a92b0), and the OnCreates run last row first, so the
+## list ends in file order.
 ##
-## A filled row (0x5a7990): the lamp set on or off, the race icon set from
-## the friend's character record, the name set, and all three shown. Our
-## friend list carries no character record, so the race icon is set to
-## nothing -- what the client sets when its lookup fails (0x5a7abe). A
-## cleared row hides all three (0x5a79d3..0x5a79fb).
+## A filled row (0x5a7990): the lamp on (state 0) or off (state 1), the race
+## icon from the friend's character record (the RefObjID's +0x9c: 0 china,
+## 1 europe; nothing when the lookup fails, 0x5a7abe), the name, and all
+## three shown. A cleared row hides all three (0x5a79d3..0x5a79fb).
 ##
 ## 0x5a97b0 then prints the count on 646 -> 18: FRIEND_COUNT_FORMAT with the
 ## list's size and 20 (0x5a997a..0x5a9991).
 func refresh_friends() -> void:
 	var rows := friend_rows()
+	if _friend_scroll != null:
+		_friend_scroll.set_max_line(_friends.size() - rows.size())
+	var first := _friend_scroll.line if _friend_scroll != null else 0
 	for i in rows.size():
 		var row := rows[i]
 		var lamp := TwoDtBuilder.child(row, FRIEND_LAMP)
 		var name_node := TwoDtBuilder.child(row, FRIEND_NAME)
 		var race := TwoDtBuilder.child(row, FRIEND_RACE)
-		if i >= _friends.size():
+		var k := first + i
+		if k >= _friends.size():
 			for part in [lamp, name_node, race]:
 				if part != null:
 					part.visible = false
+			row.set_meta("friend_id", 0)
+			_mark_row(row, false)
 			continue
-		var entry: Variant = _friends[i]
+		var entry: Variant = _friends[k]
 		var online := bool(entry.get("online")) if entry is Object and "online" in entry else false
 		var who := str(entry.get("friend_name")) if entry is Object and "friend_name" in entry else str(entry)
+		var ref := int(entry.get("ref_obj_id")) if entry is Object and "ref_obj_id" in entry else 0
+		var id := int(entry.get("character_id")) if entry is Object and "character_id" in entry else 0
 		_set_texture(lamp, FRIEND_LAMP_ON if online else FRIEND_LAMP_OFF)
-		_set_texture(race, "")
+		_set_texture(race, _race_art(ref))
 		if name_node != null:
 			_twodt.set_text(name_node, who)
 		for part in [lamp, name_node, race]:
 			if part != null:
 				part.visible = true
+		row.set_meta("friend_id", id)
+		_mark_row(row, id != 0 and id == selected_friend)
 	var count := TwoDtBuilder.find_path(community_root, [ID_FRIEND, FRIEND_COUNT]) if community_root != null else null
 	if count != null:
 		_twodt.set_text(count, FRIEND_COUNT_FORMAT % [_friends.size(), FRIEND_COUNT_MAX])
+
+# --- the friend pane's controls (round 834) ----------------------------------------
+#
+# READ (docs/protocol/friends.md 7.3): a left press on a filled row selects
+# it (CNIFFriendSlot vslot_017, 0x5a8880); there is no double-click and no
+# right-click menu. 39 Whisper puts "$name " on the chat line (0x5a6350, the
+# friend need not be in the game); 40 Add friend opens the input box
+# (0x5a7160); 41 Delete friend asks UIIT_MSG_FRIEND_IDDELET about the
+# selected row, whose Yes sends 0x7304 (0x5a87c0). The header 62 sorts the
+# list by name (0x5a99f0; ascending is INFERRED).
+
+const FRIEND_WHISPER := 39
+const FRIEND_ADD := 40
+const FRIEND_DELETE := 41
+const FRIEND_SORT := 62
+const FRIEND_SCROLL := 338
+
+## Whisper pressed with a friend selected: their name.
+signal friend_whisper_requested(friend_name: String)
+## Add friend pressed.
+signal friend_add_requested
+## Delete friend pressed with a friend selected.
+signal friend_delete_requested(character_id: int, friend_name: String)
+
+## The selected friend's character id, 0 for none.
+var selected_friend := 0
+var _friend_scroll: VScroll2dt
+var _friend_sorted := false
+
+func _wire_friend_pane() -> void:
+	var pane := TwoDtBuilder.child(community_root, ID_FRIEND) if community_root != null else null
+	if pane == null:
+		return
+	for row in friend_rows():
+		var r := row
+		r.mouse_filter = Control.MOUSE_FILTER_STOP
+		r.gui_input.connect(func(e: InputEvent) -> void: _on_friend_row_input(e, r))
+	var wiring := {FRIEND_WHISPER: press_friend_whisper, FRIEND_ADD: press_friend_add,
+		FRIEND_DELETE: press_friend_delete, FRIEND_SORT: press_friend_sort}
+	for id in wiring:
+		var b := TwoDtBuilder.child(pane, id) as BaseButton
+		if b != null:
+			b.pressed.connect(wiring[id])
+	_friend_scroll = VScroll2dt.build_on(TwoDtBuilder.child(pane, FRIEND_SCROLL), _builder, pane)
+	if _friend_scroll != null:
+		_friend_scroll.changed.connect(func(_l: int) -> void: refresh_friends())
+
+func _on_friend_row_input(event: InputEvent, row: Control) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed:
+		return
+	if mb.button_index == MOUSE_BUTTON_LEFT:
+		var id := int(row.get_meta("friend_id", 0))
+		if id != 0:
+			select_friend(id)
+	elif _friend_scroll != null:
+		_friend_scroll._wheel(event)
+
+func select_friend(id: int) -> void:
+	selected_friend = id
+	for row in friend_rows():
+		_mark_row(row, id != 0 and int(row.get_meta("friend_id", 0)) == id)
+
+func _selected_friend_name() -> String:
+	return FriendNet.name_of(_friends, selected_friend) if selected_friend != 0 else ""
+
+func press_friend_whisper() -> void:
+	var who := _selected_friend_name()
+	if who != "":
+		friend_whisper_requested.emit(who)
+
+func press_friend_add() -> void:
+	friend_add_requested.emit()
+
+func press_friend_delete() -> void:
+	var who := _selected_friend_name()
+	if who != "":
+		friend_delete_requested.emit(selected_friend, who)
+
+func press_friend_sort() -> void:
+	_friend_sorted = true
+	_sort_friends()
+	refresh_friends()
+
+func _sort_friends() -> void:
+	_friends.sort_custom(func(a, b) -> bool: return str(a.friend_name) < str(b.friend_name))
+
+## The friend rows' scroll line (0 without the bar).
+func friend_scroll_line() -> int:
+	return _friend_scroll.line if _friend_scroll != null else 0
+
+func friend_scroll_to(to: int) -> void:
+	if _friend_scroll != null:
+		_friend_scroll.scroll_to(to)
 
 ## CNIFMainFrame's chrome (0x479a50): caption (10, 12, W-21, 12), drag area
 ## (10, 0, W-21, 34), close button (W-26, 10, 16, 16) on com_windowclose.ddj.
