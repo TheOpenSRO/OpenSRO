@@ -71,9 +71,10 @@ Find all the effects this applies to and what exact times they trigger."
       all READ in friends.md 3.5 and 7.6; not built this round.
 - [ ] **The whisper block list (the second tab)**: `0x730D` / `0xB30D`, the list inside `0x3013`
       (where is OPEN), whispers dropped from a blocked name, and the PC-side chat block list.
-- [ ] **The private server's exchange layout** (portraits and the log box un-parked, ~363 x 495),
-      offered as an Extra Settings add-on: the portraits are live 3-D busts on "Bip01 Head"
-      (c:0x7b2a20); the rects are measured from the user's screenshots only.
+- [x] **The private server's exchange layout** -- built in round 836 (v0.1.596), on by default
+      under Extra Settings. Left OPEN: the portrait camera's own field of view (`+0x33e8`, framed
+      to the screenshots instead), what shows USER_NAME (153) on hover (0x81a620's state), and
+      the log strips' x (INFERRED, centred).
 - [ ] **Unions**: the exchange's trust check reads the allied guilds (c:0x996d60); OpenSRO has none.
 - [ ] **The Game tab**: "Exchange Request" (option byte +2, auto-refuse, INFERRED) and "Activate
       action short cut" (gone: the target menu is always on, the user's call).

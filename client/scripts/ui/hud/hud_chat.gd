@@ -1175,6 +1175,14 @@ class ChatList extends Control:
 	var hover_enabled := true
 	## Lines kept (+0x3a0): 100 in both the chat and the system window.
 	var max_lines := HudChat.MAX_LINES
+	## +0x3a8, lines stacked from the bottom (0x638b50(1)); the chat and the
+	## system window set it. The exchange's log does not (round 836, READ:
+	## its Create calls only 0x638c20(0xe) and 0x638d30(1), c:0x7b29ed..),
+	## so its lines start at the top.
+	var stack_from_bottom := true
+	## The hanging indent of a continuation line (0x64e380(1)); off for the
+	## exchange's log, which does not set it.
+	var hanging_indent := true
 	var _laid_width := -1.0
 
 	# Text and the untextured hover bar only: glyphs drawn unfiltered, as
@@ -1206,7 +1214,7 @@ class ChatList extends Control:
 	## 0x7abeee).
 	func top_offset() -> float:
 		var n := lines.size()
-		return line_height() * float(rows - n) if n < rows else 0.0
+		return line_height() * float(rows - n) if n < rows and stack_from_bottom else 0.0
 
 	## The line under local y, or -1 (0x63ad10's row: (y - top) / pitch,
 	## shifted for the bottom stacking, plus the scroll position).
@@ -1229,6 +1237,14 @@ class ChatList extends Control:
 
 	func scroll_to_bottom() -> void:
 		first = max_first()
+		queue_redraw()
+		changed.emit()
+
+	## Every line gone (round 836: the exchange's log at each new exchange).
+	func clear() -> void:
+		messages.clear()
+		lines.clear()
+		first = 0
 		queue_redraw()
 		changed.emit()
 
@@ -1265,7 +1281,7 @@ class ChatList extends Control:
 		_laid_width = size.x
 		lines.clear()
 		for m in messages:
-			for l in HudChat.wrap(String(m["text"]), font, font_size, size.x):
+			for l in HudChat.wrap(String(m["text"]), font, font_size, size.x, hanging_indent):
 				lines.append({"text": l, "color": m["color"]})
 
 	func _draw() -> void:
@@ -1294,14 +1310,14 @@ class ChatList extends Control:
 ## screenshot: every wrapped line there breaks between words); a
 ## continuation line starts with floor(20 / space width) spaces (at least
 ## one) and has that much less room.
-static func wrap(text: String, font: Font, font_size: int, width: float) -> PackedStringArray:
+static func wrap(text: String, font: Font, font_size: int, width: float, indent_lines: bool = true) -> PackedStringArray:
 	var out := PackedStringArray()
 	if font == null or width <= 0.0:
 		out.append(text)
 		return out
 	var space_w := font.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	var indent_n := maxi(1, int(WRAP_INDENT_PX / space_w)) if space_w > 0.0 else 1
-	var indent := " ".repeat(indent_n)
+	var indent := " ".repeat(indent_n) if indent_lines else ""
 	var rest := text
 	var first_line := true
 	while true:

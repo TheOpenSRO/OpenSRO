@@ -82,11 +82,14 @@ const GAME_SLOT_CLASS := "CNIFGameOptionSlot"
 const TAB_STEP := 125.0
 const EXTRA_TAB_TEXT := "Extra Settings"
 ## The Extra rows, in slot order (left column first): [settings key, label
-## text or text id]. The ping counter is OURS. (Retail's "Activate action
+## text or text id]. The ping counter and the exchange's portraits are OURS. (Retail's "Activate action
 ## short cut" sat here in round 832; from round 834 the target menu is always
 ## on and the option is gone.)
+## The rows' defaults where not off (Default on the Extra tab).
+const EXTRA_DEFAULTS := {"exchange_portraits": true}
 const EXTRA_ROWS := [
 	["ping_fps", "Show the Ping / FPS counter"],
+	["exchange_portraits", "Show portraits and a log in the exchange window"],
 ]
 const ID_PANE_AUDIO := 269
 const ID_FRAME_BGM := 250
@@ -389,6 +392,8 @@ static func extra_saved(key: String) -> bool:
 	match key:
 		"ping_fps":
 			return ClientSettings.ping_fps_shown()
+		"exchange_portraits":
+			return ClientSettings.exchange_portraits_shown()
 	return false
 
 ## Sets an Extra row's check box (and its edit value).
@@ -409,6 +414,7 @@ func store_extra() -> void:
 	if _extra_edit.is_empty():
 		return
 	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_PING_FPS, extra_value("ping_fps"))
+	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, extra_value("exchange_portraits"))
 	extra_applied.emit(_extra_edit.duplicate())
 
 # --- the buttons ------------------------------------------------------------------
@@ -439,10 +445,10 @@ func press_default() -> void:
 		mouse_mode_changed.emit(0)
 		return
 	if current_tab() == ID_TAB_EXTRA:
-		# OURS: every add-on off; the action short cut's Default is off too
-		# (READ, 0x5fce10).
+		# OURS: every add-on back to its own default -- off, but for the
+		# exchange's portraits and log, which are on (round 836).
 		for key in _extra_edit:
-			set_extra(key, false)
+			set_extra(key, bool(EXTRA_DEFAULTS.get(key, false)))
 		return
 	if current_tab() == ID_TAB_VIDEO and video != null:
 		video.press_default()

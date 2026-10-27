@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.595** plus what is merged on `dev`; updated 2026-10-27.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.596** plus what is merged on `dev`; updated 2026-10-27.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -216,7 +216,7 @@ Gold, NPC trade and storage work; player markets are not built yet.
 |---|---|---|
 | Buy and sell at NPCs | ✅ Supported | Retail prices, buyback and quick-sell |
 | Storage gold | ✅ Supported | Deposit and withdraw gold in the warehouse |
-| Exchange (player trade) | ✅ Supported | The original's exchange: request from the right-click menu, the action window or a selected player, its Accept / Refuse box; the window with up to 12 items and gold a side (drop an item on it, Alt+click, or its gold button); the other side's offer appears when they Confirm, then both Approve; offered items greyed in your bag, the "not in your Guild/Union/Friend" warning; ends on cancel, death, a warp or logging off |
+| Exchange (player trade) | ✅ Supported | The original's exchange: request from the right-click menu, the action window or a selected player, its Accept / Refuse box; the window with up to 12 items and gold a side (drop an item on it, Alt+click, or its gold button); the other side's offer appears when they Confirm, then both Approve; offered items greyed in your bag, the "not in your Guild/Union/Friend" warning; ends on cancel, death, a warp or logging off. On by default (Extra Settings): the larger window private servers show, with both players' portraits, a pulsing red warning behind someone not in your friends or guild, and the exchange's message log -- the original's own controls, which its layout keeps off screen; the compact window when the screen is too small at your UI scale |
 | Player stalls | ❌ Not yet | No stall system yet |
 | Stall network | ❌ Not yet | Search and buy from other players' stalls remotely; needs player stalls first |
 | Consignment | ❌ Not yet | No consignment trading yet |
@@ -315,7 +315,7 @@ Retail windows rebuilt from the game's own layout files.
 | Option window: Audio | ✅ Supported | Volume sliders |
 | Option window: Key Map | ✅ Supported | The original's tab: click a row and press a key to rebind it (a key already in use is taken from its old row, as the original does), the two mouse layouts (shortcut on the wheel or on the right button), Default and Apply |
 | Option window: Setting (Game) tab | ❌ Not yet | Drawn but not wired |
-| Option window: Extra Settings | ✅ Supported | OpenSRO add-ons, switched by a check mark: a Ping / FPS box you can drag anywhere (a private-server feature); also holds the original's "Activate action short cut" until the Game tab is built |
+| Option window: Extra Settings | ✅ Supported | OpenSRO add-ons, switched by a check mark: a Ping / FPS box you can drag anywhere (a private-server feature), and the exchange window's portraits and log (on by default) |
 | Keybinds | ✅ Supported | The original's 33 rebindable keys, saved per PC; the rest of the retail key table (F1-F4 pages, digits, Space/Ctrl chords) is fixed, as in the original |
 | Escape menu and Help window | ✅ Supported | Option, Help, Restart, Exit; in-client help |
 | Game cursors | ✅ Supported | Retail cursors read from your own sro_client.exe |

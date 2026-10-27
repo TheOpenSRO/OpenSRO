@@ -405,14 +405,29 @@ window**: two subframes, two grids, two gold rows and the buttons at y 328. The 
 log box are retail code with no visible place.
 
 **The screenshots** come from a private server whose layout un-parks them.
-INFERRED from measuring the screenshots at 2.0 scale:
+MEASURED in round 836 (each screenshot is exactly 2× nearest-neighbour; the window's origin was
+found by matching our render's top-left corner, score ≥ 0.955 in all four, and every control by
+matching our own render of it, or by its edges):
 
-- the window is 363 wide (the `#else` width) and about 495 tall;
-- the portraits sit at about x 246, y 65 / 208, 100×104 (the layout's size);
-- the log box sits at about 9,335, ~345×95;
-- the buttons sit at about (96 / 193, 447), which are the `#else` x values, moved below the log.
+- the window is **365 × 500** (±1 from the 2× phase);
+- the subframes are **346** wide (9..355), header and grid as retail;
+- the portraits (150 / 250, with 151 / 251 under them) sit at **x 247**, y 70 / 214, 100×104 —
+  the file's y and size; the divider lines (152 / 252) at **x 238**, y 61 / 205;
+- the log frame (302) at **10,339** 345×95, its background (303) and text box (304) at
+  **14,342** 337×87 — the file's y and sizes;
+- the buttons at **(96, 450)** and **(194, 450)**, 76×24;
+- the red effect (155) fills only the portrait: `ch_red.ddj` (MEASURED from Media.pk2) is a 4×4
+  sheet of 128×128 cells whose 9 used frames are red only in their top-left 100×104 — empty,
+  empty, then alpha 51, 85, 119, 153, 119, 85, 51 (a pulse at Speed 100, 100 ms a frame). Its
+  empty frames are why some screenshots show a stranger's portrait on black.
 
-That placement is an addon; the content is retail.
+That placement is an add-on; the content is retail. **Round 836 builds it** as the Extra Settings
+option "Show portraits and a log in the exchange window" (on by default, OURS): the layout above
+applied as rect overrides to ifexchange.txt's own controls (`HudWindow.with_rects`), the log
+strips 300 / 301 placed at x 28 (INFERRED, centred) to fill the body the frame leaves open, the
+log as CIFTextBox 304 is set (READ: pitch 14 `0x638c20(0xe)`, lines from the top, no hanging
+indent), the trust check showing 155 and giving 156 the warning (READ `c:0x7b399f..0x7b39d4`),
+and the busts as below. A screen too small for the window at its UI scale gets the compact one.
 
 **Header** (`c:0x7b2d00`, READ):
 
@@ -464,6 +479,14 @@ That placement is an addon; the content is retail.
 - the camera is aimed at the bone **"Bip01 Head"** (a head-and-shoulders bust);
 - it is drawn into controls 250 (own) and 150 (opponent), inset by 2,2,4,4;
 - the background is `com_blacksquare_` over `com_bg_tile_e`.
+- READ in round 836 (`c:0x7b2a20`): the clone plays animation **0** (ANI_STAND1, `vt+0xc(0, 0,
+  0, 0, 1.0, 1.0)`), reads the head bone's matrix and moves the model by (0, −h²/34, −425/h) for
+  the head's height h (the doubles 17.0 at `0xda3750`, 0.5 at `0xe1b7d0`, 25.0 at `0xe1b8a0`),
+  then renders through the camera object at `+0x33e8`, whose field of view was **not** read. The
+  client frames the bust to the screenshots instead (OURS, MEASURED: the head mid-height, about
+  39 of 104 pixels from hat to chin): `PlayerPortrait.set_framing` at distance 15, 30°, the
+  target 1.0 over the head bone (the player block's READ lift), no yaw; a transparent clear so
+  the red effect shows behind the model.
 
 **Slots and the inventory:**
 

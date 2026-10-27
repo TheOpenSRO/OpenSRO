@@ -7483,6 +7483,77 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-sixth round: the exchange window's portraits and log, as the screenshots show
+
+The user asked whether the original has the portraits and warnings of their screenshots, then:
+"Replicate my screenshots entirely if possible. It's worth having even not exactly like the
+original. It helps reduce scams." -- and, mid-round, "Make sure it works well with DPI scaling".
+
+**What the original has (READ).** Every piece is retail CIFExchange's own: both portraits (150 /
+250 over tiles 151 / 251, divider lines 152 / 252), the red warning effect behind a stranger's
+portrait (155, `ch_red.ddj`), its tooltip (156) and the message log (CIFTextBox 304 in its frame
+and strips 300-303). Its code fills all of them -- the trust check shows 155 and gives 156 the
+warning (`c:0x7b399f..0x7b39d4`), the log gets the start, warning, reaffirm and wait lines in
+their colours, the busts are rendered every frame -- and its layout parks all of them at x 9999.
+The private server only moved them. So the add-on is the original's content in another place.
+
+**Measured (from the screenshots).** Each is exactly 2x nearest-neighbour; halved, the window's
+origin was found by matching our render's corner (score >= 0.955 in all four) and each control
+by matching our own render of it (1.0 for the lattices, the money button, the line strips) or by
+its edges and column profiles. Window 365 x 500; subframes 346 wide; portraits at x 247 (the
+file's y 70 / 214 and 100 x 104); divider lines at x 238 (first placed at 233 by eye, moved after
+the column profiles put its bright-0-24 edge 5 px left of the screenshot's); log frame 10,339,
+text box 14,342 (the file's sizes); buttons (96, 450) / (194, 450). Every y and size equals
+ifexchange.txt's own. `ch_red.ddj` (MEASURED from Media.pk2): 4 x 4 cells of 128, 9 frames, red
+only in each cell's top-left 100 x 104, alpha 0, 0, 51, 85, 119, 153, 119, 85, 51 -- a pulse,
+which is why some screenshots show the stranger's portrait on black. The log's background strips
+300 / 301 fill the body the frame leaves open (the first live frame showed the world through two
+holes exactly at their y); their x is INFERRED (centred).
+
+**The busts.** READ `c:0x7b2a20`: the clone plays animation 0 (ANI_STAND1), reads "Bip01 Head"
+and moves the model by (0, -h^2/34, -425/h) (17.0, 0.5, 25.0), then renders through a camera
+object (`+0x33e8`) whose field of view was not read. So the framing is OURS, fitted to the
+screenshots: distance 15, 30 degrees, the target 1.0 over the head bone (the player block's READ
+lift), no yaw -- the head mid-height and about the screenshots' size (face about 25 px wide
+against their 26). Transparent background, so the red pulse shows behind the model.
+
+**Built.**
+- `HudWindow.build`: registry `rects` / `size` overrides applied to a copy of the cached layout
+  (`with_rects`); the controls are built and settled from their defs as any other.
+- `HudPanels`: `EXCHANGE_FULL_RECTS` / `_SIZE`; `_install_exchange_extras` (the log as a
+  `HudChat.ChatList` -- pitch 14, lines from the top and no hanging indent, both READ from the
+  log's Create; the red pulse's 9 frames at 100 ms; the tooltip; the two `PlayerPortrait`
+  busts); `set_exchange_portrait`, `exchange_trust_effect`, `exchange_log_*`; the log fed by
+  `exchange_line` / `exchange_warning`. The Extra Settings row (on by default; Default restores
+  on) rebuilds the window, at once or when the exchange in progress ends.
+- `PlayerPortrait.set_framing` / `set_transparent` (the player block's values unchanged);
+  `ChatList.stack_from_bottom` / `hanging_indent` / `clear`; `HudChat.wrap` without the indent.
+- World3D `_exchange_portraits`: both bodies as the world draws them, copied (cloth and
+  particles cleaned as the player block's copy) and posed in their stand clip; a partner not yet
+  dressed is dressed from its spawn.
+
+**DPI.** Everything is built in UI units from the layout, so it scales with the UI scale like
+every window; the busts render at the picture's physical size (ViewportPixels), the text with
+the UI's own fonts. A canvas without room for 365 x 500 (plus 8 a side) -- a high UI scale on a
+small screen -- gets retail's compact window instead, decided at each opening.
+
+**Tests and live runs.**
+- `exchange834_test`: retail's compact window unchanged with the option off; with it on, 365 x
+  500, the buttons, log box and inset portrait rects, the log's lines and colours (the reaffirm
+  wrapping at the screenshot's own word, "information / about equipment", no indent), the red
+  pulse and tooltip for a stranger and neither for a friend, the log cleared per exchange, the
+  compact window on a 480-tall canvas and the full one again with room. `trace832_test`: the
+  new Extra row and its Default (on).
+- Live (client + partybot, real clicks): UI scale 1.0 -- the whole exchange, frames compared
+  with the screenshots side by side and by difference image (the remaining differences are the
+  screenshot's own 2x phase shift in its lower half, the characters and the text); 1.5 at 1920 x
+  1080 -- the window, busts and log scaled sharply. The compact fallback is covered by the unit
+  test only: the live 2.0 run on a 1280 x 720 screen (a 640 x 360 canvas) opened the exchange,
+  but the inventory, as large as the screen there, covered its window in every frame. QA's click
+  step now pushes in UI units (`_qa_push_click(.., local)`): at 1.5 it had
+  landed in window pixels.
+- No perf gate: UI only (the busts are two 96 x 100 renders, once per exchange).
+
 ## Eight-hundred-and-thirty-fifth round: the exchange's blue grid at the start and the second side's Confirm
 
 The user tried v0.1.594's exchange with another player: "It shows blue at the beginning when it

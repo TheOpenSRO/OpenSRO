@@ -171,6 +171,15 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	var layout := builder.load_layout(layout_path, defines, honor_ifdef)
 	if layout == null:
 		return false
+	# Round 836 (OURS): a layout of our own over the authored one -- some
+	# controls at other rects (registry "rects", name -> Rect2i) and the
+	# window at another size (registry "size") -- for an add-on that un-parks
+	# controls the file keeps off screen (the exchange's portraits and log).
+	# The controls are still built and settled from their defs, so they scale
+	# with the UI as every authored control does.
+	var rects: Dictionary = registry.get("rects", {})
+	if not rects.is_empty():
+		layout = with_rects(layout, rects)
 	var sec := layout.get_section("Create")
 	if sec == null or sec.controls.is_empty():
 		return false
@@ -179,6 +188,8 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	var window_size := UiBuilder.section_size(sec, builder)
 	if reg_def != null:
 		window_size = Vector2(reg_def.rect.size)
+	if registry.has("size"):
+		window_size = Vector2(registry["size"])
 	if window_size == Vector2.ZERO:
 		return false
 	custom_minimum_size = window_size
@@ -230,6 +241,25 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	_add_title_bar(caption)
 	_settle()
 	return true
+
+## A copy of `layout` with the named controls at other rects. The parsed
+## layout is shared through UiBuilder's cache, so its sections and the moved
+## defs are copied (ControlDef.with_rect) rather than changed.
+static func with_rects(layout: UiLayoutParser.LayoutDef, rects: Dictionary) -> UiLayoutParser.LayoutDef:
+	var out := UiLayoutParser.LayoutDef.new()
+	for sec_name in layout.sections:
+		var src: UiLayoutParser.SectionDef = layout.sections[sec_name]
+		var sec := UiLayoutParser.SectionDef.new()
+		sec.name = src.name
+		sec.rect = src.rect
+		sec.base_type = src.base_type
+		for d in src.controls:
+			var def: UiLayoutParser.ControlDef = d.with_rect(rects[d.name]) if rects.has(d.name) else d
+			sec.controls.append(def)
+			sec.control_by_name[def.name] = def
+			sec.control_by_id[def.id] = def
+		out.sections[sec_name] = sec
+	return out
 
 ## The registry entry `registry` names (see build), or null when there is
 ## none to frame the window with.

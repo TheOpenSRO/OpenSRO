@@ -100,11 +100,20 @@ func open(partner_info: Dictionary, own_info: Dictionary) -> void:
 	active = true
 	panels.open_exchange_window()
 	reset()
+	# Round 836 (the portraits and log, OURS layout): each exchange's log
+	# starts empty (INFERRED: the screenshots' logs begin with its start line).
+	panels.exchange_log_clear()
 	_headers()
 	panels.exchange_line("UIIT_MSG_EXCHANGE_START", [_display_name(partner)], ORANGE)
 	if not _trusted():
 		var key := "UIIT_MSG_EXCHANGE_DECEPTION_COMPARE" if bool(partner.get("normal", true)) else "UIIT_MSG_EXCHANGE_NAME_WARNING"
 		panels.exchange_warning(key, RED)
+		# c:0x7b399f..0x7b39d4: the red effect (155) shown and the tooltip
+		# (156) given the warning.
+		panels.exchange_trust_effect(true, String(panels._exchange_text(key, [])))
+	else:
+		# c:0x7b38f2..0x7b3914: trusted, both hidden.
+		panels.exchange_trust_effect(false, "")
 
 ## 0x7b36b0: both golds 0, the flags cleared, the button "Confirm" and
 ## enabled, the slots un-tinted, the grids empty.

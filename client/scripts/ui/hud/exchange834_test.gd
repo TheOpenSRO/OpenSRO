@@ -10,6 +10,9 @@ const PANELS_PATH := "res://scripts/ui/hud/hud_panels.gd"
 
 var _failures := 0
 
+class FakeFriend extends RefCounted:
+	var friend_name := ""
+
 class FakeNet extends RefCounted:
 	var sent: Array = []
 	var last_friend_list: Array = []
@@ -55,6 +58,17 @@ func _run() -> void:
 	if not FileAccess.file_exists(MEDIA):
 		print("SKIP (no %s)" % MEDIA)
 		return
+	# Retail's compact layout first; the portraits and log (round 836) at the end.
+	var saved_full = ClientSettings.get_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, null)
+	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, false)
+	await _run_both()
+	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, saved_full if saved_full != null else true)
+
+func _rect_of(c: Control) -> Rect2:
+	var r = c.get_meta(UiBuilder.AUTHORED_RECT_META, null) if c != null else null
+	return r if r is Rect2 else (Rect2(c.position, c.size) if c != null else Rect2())
+
+func _run_both() -> void:
 	var pk2 := Pk2Reader.open(MEDIA)
 	_check(pk2 != null, "Media.pk2 opens")
 	if pk2 == null:
@@ -171,4 +185,70 @@ func _run() -> void:
 	_check(item_box != null and item_box.size == Vector2(308, 148), "the item box: 308 x 148 (MsgBoxStore)")
 	var gold_box = panels.call("open_exchange_gold_box")
 	_check(gold_box != null and gold_box.count == 1, "the gold box opens at 1 (c:0x6b2ce5)")
+	# Round 836: the portraits and log (OURS layout, MEASURED from the user's
+	# screenshots), built when the option is on.
+	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, true)
+	panels.set("exchange_canvas", Vector2(1280, 720))
+	panels.call("_on_exchange_layout_option", {"exchange_portraits": true})
+	_check(panels.get("_windows").get("exchange") == null, "the option drops the compact window to rebuild it")
+	lines.clear()
+	banners.clear()
+	panels.call("open_exchange", {"id": 5, "name": "Pain", "guild": "Verizon", "normal": true},
+		{"id": 1, "name": "Sarada", "guild": "", "normal": true})
+	await process_frame
+	await process_frame
+	var f: HudWindow = panels.get("_windows").get("exchange")
+	_check(f != null and f.size == Vector2(365, 500) and panels.call("exchange_window_full"), "the full window: 365 x 500 (got %s)" % str(f.size if f != null else null))
+	if f != null:
+		_check(_rect_of(f.node("GDR_EXCHANGE_BUTTON_EXCHANGE") as Control).position == Vector2(96, 450)
+			and _rect_of(f.node("GDR_EXCHANGE_BUTTON_CANCEL") as Control).position == Vector2(194, 450), "the buttons below the log")
+		_check(_rect_of(f.node("GDR_EXCHANGE_TEXT_BOX") as Control) == Rect2(14, 342, 337, 87), "the log box at 14,342 337 x 87")
+		var ov: TextureRect = panels.call("exchange_portrait_view", false)
+		var mv: TextureRect = panels.call("exchange_portrait_view", true)
+		_check(ov != null and mv != null and _rect_of(ov) == Rect2(249, 72, 96, 100) and _rect_of(mv) == Rect2(249, 216, 96, 100),
+			"the portraits inside their boxes, inset 2,2,4,4 (got %s / %s)" % [str(_rect_of(ov)) if ov != null else "-", str(_rect_of(mv)) if mv != null else "-"])
+		var logged: Array = panels.call("exchange_log_lines")
+		_check(logged.size() == 2 and String(logged[0]["text"]) == "You started to exchange with [Pain]."
+			and (logged[0]["color"] as Color).is_equal_approx(ExchangeController.ORANGE)
+			and String(logged[1]["text"]) == "Opponent user is not listed in your Guild/Union/Friend"
+			and (logged[1]["color"] as Color).is_equal_approx(ExchangeController.RED),
+			"the log: the start line orange, the warning red (got %s)" % str(logged))
+		var red := f.node("GDR_EXCHANGE_USER_VISUAL_EFFECT") as Control
+		var tip := f.node("GDR_EXCHANGE_USER_VISUAL_TOOLTIP") as Control
+		_check(red != null and red.visible and int(panels.call("exchange_red_frame")) >= 0, "a stranger: the red pulse behind their portrait")
+		_check(tip != null and tip.visible and String((panels.call("bubble_tip_lines", tip) as Array)[0]["text"]).begins_with("Opponent user"),
+			"and the warning as its tooltip")
+		var fbutton := f.node("GDR_EXCHANGE_BUTTON_EXCHANGE") as BaseButton
+		x.on_offer({"owner": 1, "own": true, "items": [_offered(0, 2, 200, 5)]})
+		fbutton.pressed.emit()
+		logged = panels.call("exchange_log_lines")
+		_check(logged.size() >= 3 and String(logged[2]["text"]).begins_with("Please check opponet user's ID"),
+			"Confirm's reaffirm goes to the log, wrapped with no indent (got %s)" % str(logged))
+		if logged.size() >= 4:
+			_check(not String(logged[3]["text"]).begins_with(" "), "the continuation line starts at the margin")
+		panels.call("exchange_closed", 0x182c)
+		# A friend: no red, no tooltip, the log starts again.
+		var fr := FakeFriend.new()
+		fr.friend_name = "Pain"
+		net.last_friend_list = [fr]
+		panels.call("open_exchange", {"id": 5, "name": "Pain", "guild": "", "normal": true}, {"id": 1, "name": "Sarada", "guild": "", "normal": true})
+		await process_frame
+		_check(not red.visible and not tip.visible and (panels.call("exchange_log_lines") as Array).size() == 1,
+			"a friend: no red, no tooltip, the log only the start line")
+		panels.call("exchange_closed", 0x182c)
+		net.last_friend_list = []
+		# A canvas too small for it (a high UI scale on a small screen): the
+		# compact window is built instead, and the full one again with room.
+		panels.set("exchange_canvas", Vector2(1280, 480))
+		panels.call("open_exchange", {"id": 5, "name": "Pain", "guild": "", "normal": true}, {"id": 1, "name": "Sarada", "guild": "", "normal": true})
+		await process_frame
+		var small: HudWindow = panels.get("_windows").get("exchange")
+		_check(small != null and small.size == Vector2(254, 361) and not panels.call("exchange_window_full"),
+			"a 480-tall canvas: the compact window (got %s)" % str(small.size if small != null else null))
+		panels.call("exchange_closed", 0x182c)
+		panels.set("exchange_canvas", Vector2(1280, 720))
+		panels.call("open_exchange", {"id": 5, "name": "Pain", "guild": "", "normal": true}, {"id": 1, "name": "Sarada", "guild": "", "normal": true})
+		await process_frame
+		_check(panels.call("exchange_window_full"), "room again: the full window")
+		panels.call("exchange_closed", 0x182c)
 	panels.queue_free()

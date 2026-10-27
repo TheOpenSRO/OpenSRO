@@ -18072,7 +18072,11 @@ func _qa_job_step() -> void:
 				var ob = _other_bodies[oid]
 				if ob != null and is_instance_valid(ob) and String((ob as Node).get_meta("character_name", "")) == who:
 					found = int(oid)
-			if what.begins_with("xreq:"):
+			if what.begins_with("xreq:") and _hud_panels != null and _hud_panels.exchange_mode():
+				print("QA SOCIAL: tick %d exchange request skipped: already exchanging" % _qa_tick)
+			elif what.begins_with("xreq:") and found < 0:
+				print("QA SOCIAL: tick %d exchange request skipped: %s not in view" % [_qa_tick, who])
+			elif what.begins_with("xreq:"):
 				print("QA SOCIAL: tick %d exchange request to %s (%d) -> %s" % [_qa_tick, who, found, exchange_request(found)])
 			else:
 				friend_ask(who)
@@ -18134,7 +18138,7 @@ func _qa_job_step() -> void:
 				var cap := xbt.get_node_or_null("ButtonLabel") as Label
 				print("QA SOCIAL: tick %d exchange button '%s' disabled %s clicked at %s" % [_qa_tick,
 					cap.text if cap != null else "", str(xbt.disabled), str(xat)])
-				_qa_push_click(xat, MOUSE_BUTTON_LEFT)
+				_qa_push_click(xat, MOUSE_BUTTON_LEFT, true)
 		elif what == "xcancel":
 			_hud_panels._exchange().press_cancel()
 			print("QA SOCIAL: tick %d exchange cancel" % _qa_tick)
@@ -18513,22 +18517,24 @@ func _qa_push_key(name: String, phases: Array = [true, false], echo: bool = fals
 		ev.echo = echo and pressed
 		get_viewport().push_input(ev)
 
-func _qa_push_mouse(at: Vector2, button: MouseButton, pressed: bool) -> void:
+func _qa_push_mouse(at: Vector2, button: MouseButton, pressed: bool, local: bool = false) -> void:
 	var motion := InputEventMouseMotion.new()
 	motion.position = at
 	motion.global_position = at
-	get_viewport().push_input(motion)
+	get_viewport().push_input(motion, local)
 	var ev := InputEventMouseButton.new()
 	ev.button_index = button
 	ev.pressed = pressed
 	ev.position = at
 	ev.global_position = at
 	ev.button_mask = (MOUSE_BUTTON_MASK_LEFT if button == MOUSE_BUTTON_LEFT else MOUSE_BUTTON_MASK_RIGHT) if pressed else 0
-	get_viewport().push_input(ev)
+	get_viewport().push_input(ev, local)
 
-func _qa_push_click(at: Vector2, button: MouseButton) -> void:
-	_qa_push_mouse(at, button, true)
-	_qa_push_mouse(at, button, false)
+## `local`: `at` is in the UI's own units (a control's global rect), which
+## differ from the window's pixels at a UI scale other than 1 (round 836).
+func _qa_push_click(at: Vector2, button: MouseButton, local: bool = false) -> void:
+	_qa_push_mouse(at, button, true, local)
+	_qa_push_mouse(at, button, false, local)
 
 func _qa_find_visible(root: Node, pattern: String) -> Control:
 	for node in root.find_children(pattern, "Control", true, false):
@@ -35444,6 +35450,50 @@ func _open_exchange(partner_id: int) -> void:
 	var own := {"id": _own_id(), "name": NetClient.current_character_name,
 		"guild": String(NetClient.own_guild_line.get("guild_name", "")), "normal": _own_job_state() == UserSpawnNet.JOB_STATE_NONE}
 	_hud_panels.open_exchange(partner, own)
+	_exchange_portraits(partner_id)
+
+## Round 836 (the portraits, OURS layout; HudPanels.set_exchange_portrait):
+## both bodies as the world draws them, copied and posed in their stand
+## clip -- retail clones each model with its equipment and plays animation
+## 0 (ANI_STAND1) on the clone (c:0x7b2a20: 0xa61c30, then vt+0xc(0, ...)).
+func _exchange_portraits(partner_id: int) -> void:
+	if _hud_panels == null or not _hud_panels.exchange_window_full():
+		return
+	var light: Array = _portrait_zone_light if _portrait_zone_light.size() == 2 else []
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		var group := _weapon_group_for(_with_player_avatars(_player_equipped_last), _player_body)
+		_hud_panels.set_exchange_portrait(true, _exchange_body_copy(_player_skeleton),
+			_body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_STAND, group), light)
+	var node = _other_bodies.get(partner_id)
+	if node == null or not is_instance_valid(node):
+		return
+	var found := (node as Node).find_children("*", "Skeleton3D", true, false)
+	var skel: Skeleton3D = found[0] as Skeleton3D if not found.is_empty() else null
+	var body := String((node as Node).get_meta("body", ""))
+	if skel != null:
+		body = String(skel.get_meta("body", body))
+		_hud_panels.set_exchange_portrait(false, _exchange_body_copy(skel),
+			_body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, String(skel.get_meta("weapon_group", "default"))), light)
+	elif _other_build_args.has(partner_id) and body != "":
+		# Not dressed yet (drawn as a ghost or queued): dressed here from what
+		# its spawn named.
+		var args: Dictionary = _other_build_args[partner_id]
+		var equipped: Dictionary = args.get("equipped", {})
+		var built := _build_assembled_character(equipped, body, int(args.get("scale", CharacterAppearance.DEFAULT_SCALE)))
+		if built != null:
+			_hud_panels.set_exchange_portrait(false, built,
+				_body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped, body)), light)
+
+## A copy of a dressed body for a picture, as the player block's portrait
+## takes one (_refresh_player_portrait): its cloth back on its own skin and
+## no particle effects (a still picture would hold one frame of them).
+func _exchange_body_copy(skel: Skeleton3D) -> Skeleton3D:
+	var copy := skel.duplicate() as Skeleton3D
+	if copy == null:
+		return null
+	ClothDriver.clean_copy(copy)
+	EquipGlow.strip_particles(copy)
+	return copy
 
 func _on_exchange_closed(code: int) -> void:
 	_trade_established = false

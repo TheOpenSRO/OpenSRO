@@ -887,6 +887,8 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ensure_held_icon()
+	# Round 836: the exchange's layout option rebuilds its window.
+	extra_options_applied.connect(_on_exchange_layout_option)
 	_qa_slots = OS.get_environment("OPENSRO_QA_SLOTS") != ""
 	if _qa_slots:
 		add_to_group(QA_SLOTS_GROUP)
@@ -1000,6 +1002,13 @@ func open(panel_id: String) -> HudWindow:
 			registry.erase("archive_defines")
 			if _builder != null:
 				registry["defines"] = Array(_builder.archive_defines())
+		# Round 836 (OURS): the exchange with its portraits and log on screen.
+		var exchange_full := panel_id == ExchangeController.WINDOW and exchange_full_layout()
+		if exchange_full:
+			registry = registry.duplicate()
+			registry["rects"] = EXCHANGE_FULL_RECTS
+			registry["size"] = EXCHANGE_FULL_SIZE
+		window.set_meta(EXCHANGE_FULL_META, exchange_full)
 		var built := window.build(_builder, spec[0], spec[1], extra, defines, honor_ifdef, registry)
 		if not built and PANEL_FALLBACKS.has(panel_id):
 			# The fallback is self-framed (no registry): a fresh window, since a
@@ -3779,6 +3788,8 @@ func exchange_mode() -> bool:
 	return exchange != null and exchange.active
 
 func open_exchange(partner: Dictionary, own: Dictionary) -> void:
+	if not exchange_mode():
+		_exchange_layout_check()
 	_exchange().open(partner, own)
 
 func exchange_closed(code: int) -> void:
@@ -3801,6 +3812,8 @@ func close_exchange_window() -> void:
 	var window: HudWindow = _windows.get(ExchangeController.WINDOW)
 	if window != null:
 		window.hide()
+	if _exchange_rebuild_pending:
+		_drop_exchange_window()
 
 func _wire_exchange(window: HudWindow) -> void:
 	if window.has_meta("exchange_wired"):
@@ -3839,6 +3852,8 @@ func _wire_exchange(window: HudWindow) -> void:
 			if icon != null and own_side:
 				var index: int = i
 				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_exchange_cell_input(ev, icon, index))
+	if bool(window.get_meta(EXCHANGE_FULL_META, false)):
+		_install_exchange_extras(window)
 
 ## A grid's 12 cells drawn from the side's items, blue when that side's
 ## confirm was accepted (CIFSlotWithHelp +0x595 -> +0x61c, c:0x67cfcc).
@@ -3911,6 +3926,309 @@ func exchange_button_enabled(enabled: bool) -> void:
 	var b := window.node("GDR_EXCHANGE_BUTTON_EXCHANGE") as BaseButton if window != null else null
 	if b != null:
 		b.disabled = not enabled
+
+# --- The exchange's portraits and log (round 836, OURS layout) -------------------
+#
+# Retail's CIFExchange has both players' portraits (live renders aimed at the
+# "Bip01 Head" bone, c:0x7b2a20), a red warning effect behind a stranger's
+# (control 155, c:0x7b399f), a hover tooltip with the warning (156) and a
+# message log (304) -- and its own layout parks all of them at x 9999, so
+# retail shows none (exchange.md 4.3). The user's private-server screenshots
+# show them on a 365 x 500 window. The rects below are MEASURED from those
+# screenshots (each exactly 2x: window origin found by matching the
+# window's corner, then every control by matching our own render of it; the
+# portraits, lines and log by their edges); the y positions and sizes all
+# equal ifexchange.txt's own, only the x positions, the subframes' width, the
+# window's size and the buttons' row are the private layout's. The content
+# is retail's: the controls, art, colours and messages are READ. Settings >
+# Extra Settings turns it off (ClientSettings.KEY_EXCHANGE_PORTRAITS).
+
+const EXCHANGE_FULL_META := &"exchange_full"
+const EXCHANGE_FULL_SIZE := Vector2i(365, 500)
+const EXCHANGE_FULL_RECTS := {
+	"GDR_EXCHANGE_OTHER_SUBFRAME": Rect2i(9, 38, 346, 141),
+	"GDR_EXCHANGE_MY_SUBFRAME": Rect2i(9, 182, 346, 141),
+	"GDR_EXCHANGE_USER_LINE": Rect2i(238, 61, 8, 116),
+	"GDR_EXCHANGE_PLAYER_LINE": Rect2i(238, 205, 8, 116),
+	"GDR_EXCHANGE_USER_NORMAL": Rect2i(247, 70, 100, 104),
+	"GDR_EXCHANGE_USER_VISUAL": Rect2i(247, 70, 100, 104),
+	"GDR_EXCHANGE_USER_VISUAL_EFFECT": Rect2i(247, 70, 128, 128),
+	"GDR_EXCHANGE_USER_VISUAL_TOOLTIP": Rect2i(247, 70, 100, 104),
+	"GDR_EXCHANGE_PLAYER_NORMAL": Rect2i(247, 214, 100, 104),
+	"GDR_EXCHANGE_PLAYER_VISUAL": Rect2i(247, 214, 100, 104),
+	"GDR_EXCHANGE_TEXT_BOX_FRAME": Rect2i(10, 339, 345, 95),
+	"GDR_EXCHANGE_TEXT_BOX_FRAME_BG": Rect2i(14, 342, 337, 87),
+	"GDR_EXCHANGE_TEXT_BOX": Rect2i(14, 342, 337, 87),
+	# The log's two background strips (com_bg_tile_a) fill the window's body
+	# above and below it, where the frame has no centre: their y and size
+	# are the file's; x centres them as the log frame is (INFERRED, the tile
+	# is too like the frame's to measure an edge in the screenshots).
+	"GDR_EXCHANGE_TEXT_BOX_BG_1": Rect2i(28, 315, 310, 29),
+	"GDR_EXCHANGE_TEXT_BOX_BG_2": Rect2i(28, 426, 310, 32),
+	"GDR_EXCHANGE_BUTTON_EXCHANGE": Rect2i(96, 450, 76, 24),
+	"GDR_EXCHANGE_BUTTON_CANCEL": Rect2i(194, 450, 76, 24),
+}
+## The portrait is drawn into its control inset by 2, 2 at the top left and
+## 4, 4 off the size (READ, exchange.md 4.3: c:0x7b21b0).
+const EXCHANGE_PORTRAIT_INSET := Rect2i(2, 2, 4, 4)
+## ch_red.ddj (MEASURED from Media.pk2): 512 x 512, a 4 x 4 sheet of 128 x
+## 128 cells, 9 frames used, each red only in the cell's top-left 100 x 104
+## (the portrait's rect); frames 0 and 1 are empty, then the alpha runs 51,
+## 85, 119, 153, 119, 85, 51 -- a pulse. The layout gives it Style 512,
+## Speed 100, loop (READ, ifexchange.txt): 100 ms a frame.
+const EXCHANGE_RED_CELL := 128
+const EXCHANGE_RED_COLUMNS := 4
+const EXCHANGE_RED_FRAMES := 9
+const EXCHANGE_RED_FRAME_MS := 100
+## The log's lines (READ: 0x638c20(0xe), the pitch 14) and how many it keeps
+## (OURS: the chat's 100).
+const EXCHANGE_LOG_PITCH := 14
+## The tooltip's wrap width (OURS).
+const EXCHANGE_TIP_WRAP := 220.0
+
+var _exchange_rebuild_pending := false
+var _exchange_log: HudChat.ChatList
+var _exchange_red: TextureRect
+var _exchange_red_frames: Array[Texture2D] = []
+var _exchange_red_ms := 0.0
+## [opponent, own] PlayerPortrait SubViewports and the rects that show them.
+var _exchange_portraits: Array = [null, null]
+var _exchange_portrait_views: Array = [null, null]
+
+## Whether the exchange window is built with its portraits and log: the
+## option on and the window fitting the UI's canvas (the screen in UI units:
+## at a high UI scale on a small screen the 500-pixel window would run off
+## it, and the compact one is built instead).
+func exchange_full_layout() -> bool:
+	return ClientSettings.exchange_portraits_shown() and exchange_full_fits()
+
+## The canvas size the fit is judged on; zero reads the viewport's (a
+## headless test's viewport is 64 x 64, so tests set it).
+var exchange_canvas := Vector2.ZERO
+
+## The canvas has room for the full window (OURS: its size plus 8 a side).
+func exchange_full_fits() -> bool:
+	var canvas := exchange_canvas
+	if canvas == Vector2.ZERO:
+		canvas = get_viewport_rect().size if is_inside_tree() else Vector2(1280, 720)
+	return canvas.x >= EXCHANGE_FULL_SIZE.x + 16 and canvas.y >= EXCHANGE_FULL_SIZE.y + 16
+
+## Before a window is shown for a new exchange: built again when the layout
+## it was built with is no longer the one to use (the option changed, or
+## the screen or UI scale did).
+func _exchange_layout_check() -> void:
+	var w: HudWindow = _windows.get(ExchangeController.WINDOW)
+	if w != null and bool(w.get_meta(EXCHANGE_FULL_META, false)) != exchange_full_layout():
+		_drop_exchange_window()
+
+## The window's layout as built.
+func exchange_window_full() -> bool:
+	var w: HudWindow = _windows.get(ExchangeController.WINDOW)
+	return w != null and bool(w.get_meta(EXCHANGE_FULL_META, false))
+
+## The Extra Settings row changed: the window is built again the next time
+## it opens -- now, or when the exchange in progress ends.
+func _on_exchange_layout_option(values: Dictionary) -> void:
+	if not values.has("exchange_portraits"):
+		return
+	var w: HudWindow = _windows.get(ExchangeController.WINDOW)
+	if w == null or bool(w.get_meta(EXCHANGE_FULL_META, false)) == exchange_full_layout():
+		return
+	if exchange_mode():
+		_exchange_rebuild_pending = true
+	else:
+		_drop_exchange_window()
+
+func _drop_exchange_window() -> void:
+	_exchange_rebuild_pending = false
+	var w: HudWindow = _windows.get(ExchangeController.WINDOW)
+	if w == null:
+		return
+	_windows.erase(ExchangeController.WINDOW)
+	_exchange_log = null
+	_exchange_red = null
+	for i in 2:
+		if _exchange_portraits[i] != null and is_instance_valid(_exchange_portraits[i]):
+			(_exchange_portraits[i] as Node).queue_free()
+		_exchange_portraits[i] = null
+		_exchange_portrait_views[i] = null
+	remove_child(w)
+	w.queue_free()
+
+func _install_exchange_extras(window: HudWindow) -> void:
+	# The log: CIFTextBox 304's lines, from the top, no hanging indent.
+	var box := window.node("GDR_EXCHANGE_TEXT_BOX") as Control
+	if box != null:
+		_exchange_log = HudChat.ChatList.new()
+		_exchange_log.name = "ExchangeLog"
+		_exchange_log.font = _builder.font_at(0) if _builder != null else ThemeDB.fallback_font
+		_exchange_log.font_size = UiBuilder.FONT_SIZES[0]
+		_exchange_log.hover_enabled = false
+		_exchange_log.stack_from_bottom = false
+		_exchange_log.hanging_indent = false
+		_exchange_log.rows = int(floor(float(box.size.y if box.size.y > 0.0 else 87.0) / EXCHANGE_LOG_PITCH))
+		_exchange_log.mouse_filter = Control.MOUSE_FILTER_PASS
+		_exchange_log.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_exchange_log.gui_input.connect(_on_exchange_log_input)
+		box.mouse_filter = Control.MOUSE_FILTER_PASS
+		box.add_child(_exchange_log)
+	# The red effect (155): its frames cut from the sheet, hidden until the
+	# trust check shows it.
+	var red := window.node("GDR_EXCHANGE_USER_VISUAL_EFFECT") as Control
+	if red != null:
+		var sheet: Texture2D = _builder.load_texture("interface\\exchange\\ch_red.ddj") if _builder != null else null
+		_exchange_red_frames.clear()
+		if sheet != null:
+			for f in EXCHANGE_RED_FRAMES:
+				var at := AtlasTexture.new()
+				at.atlas = sheet
+				at.region = Rect2((f % EXCHANGE_RED_COLUMNS) * EXCHANGE_RED_CELL, (f / EXCHANGE_RED_COLUMNS) * EXCHANGE_RED_CELL,
+					EXCHANGE_RED_CELL, EXCHANGE_RED_CELL)
+				_exchange_red_frames.append(at)
+		_exchange_red = TextureRect.new()
+		_exchange_red.name = "RedPulse"
+		_exchange_red.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_exchange_red.stretch_mode = TextureRect.STRETCH_SCALE
+		_exchange_red.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_exchange_red.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_exchange_red.texture = _exchange_red_frames[0] if not _exchange_red_frames.is_empty() else null
+		red.add_child(_exchange_red)
+		red.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		red.visible = false
+	var tip := window.node("GDR_EXCHANGE_USER_VISUAL_TOOLTIP") as Control
+	if tip != null:
+		tip.visible = false
+	# The portraits, over everything else in their boxes (drawn by the
+	# window after its controls, c:0x7b21b0), each a PlayerPortrait whose
+	# buffer follows its picture's physical size (ViewportPixels): sharp at
+	# any UI scale.
+	for k in 2:
+		var holder := window.node("GDR_EXCHANGE_USER_VISUAL" if k == 0 else "GDR_EXCHANGE_PLAYER_VISUAL") as Control
+		if holder == null:
+			continue
+		var view := TextureRect.new()
+		view.name = "ExchangePortrait%d" % k
+		view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		view.stretch_mode = TextureRect.STRETCH_SCALE
+		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var r := Rect2(Vector2(holder.position) + Vector2(EXCHANGE_PORTRAIT_INSET.position),
+			holder.size - Vector2(EXCHANGE_PORTRAIT_INSET.size))
+		var authored = holder.get_meta(UiBuilder.AUTHORED_RECT_META, null)
+		if authored is Rect2:
+			r = Rect2((authored as Rect2).position + Vector2(EXCHANGE_PORTRAIT_INSET.position),
+				(authored as Rect2).size - Vector2(EXCHANGE_PORTRAIT_INSET.size))
+		view.position = r.position
+		view.size = r.size
+		view.set_meta(UiBuilder.AUTHORED_RECT_META, r)
+		view.visible = false
+		holder.get_parent().add_child(view)
+		var portrait := PlayerPortrait.new()
+		portrait.name = "ExchangePortraitView%d" % k
+		portrait.size = Vector2i(r.size)
+		portrait.set_transparent(true)
+		portrait.set_framing(EXCHANGE_PORTRAIT_DISTANCE, EXCHANGE_PORTRAIT_FOV, 0.0, EXCHANGE_PORTRAIT_LIFT, 0.0)
+		view.add_child(portrait)
+		ViewportPixels.attach(view, portrait, exchange_portrait_buffer_for)
+		view.texture = portrait.get_texture()
+		_exchange_portraits[k] = portrait
+		_exchange_portrait_views[k] = view
+	# The tooltip (156) is the topmost: it takes the hover.
+	if tip != null:
+		tip.move_to_front()
+
+## The bust's framing (OURS, MEASURED against the screenshots: a
+## head-and-shoulders view with the head mid-height, about 39 of the 104
+## pixels from the hat's top to the chin; the target lifted 1.0 over the
+## head bone, as the player block's READ lift, centres the head as they do).
+## Retail moves the model by
+## (0, -h^2/34, -425/h) for a head at height h (c:0x7b2b2d..0x7b2b7b: 17.0,
+## 0.5, 25.0) and renders through a camera object (+0x33e8) whose field of
+## view was not read.
+const EXCHANGE_PORTRAIT_DISTANCE := 15.0
+const EXCHANGE_PORTRAIT_FOV := 30.0
+const EXCHANGE_PORTRAIT_LIFT := 1.0
+
+## The buffer for a portrait covering `physical` screen pixels: at least
+## its rect (96 x 100), larger with the UI scale.
+static func exchange_portrait_buffer_for(physical: Vector2i) -> Vector2i:
+	return Vector2i(maxi(physical.x, 96), maxi(physical.y, 100))
+
+## One side's portrait (`own_side`: the player's, below; else the
+## opponent's, on top): a dressed body copy this takes, posed, rendered once.
+func set_exchange_portrait(own_side: bool, skeleton: Skeleton3D, pose: BanReader.ParsedAnimation,
+		zone_light: Array = []) -> void:
+	var k := 1 if own_side else 0
+	var portrait: PlayerPortrait = _exchange_portraits[k]
+	var view: TextureRect = _exchange_portrait_views[k]
+	if portrait == null or view == null:
+		if skeleton != null and is_instance_valid(skeleton) and skeleton.get_parent() == null:
+			skeleton.queue_free()
+		return
+	if zone_light.size() == 2:
+		portrait.set_zone_light(zone_light[0], zone_light[1])
+	portrait.set_character(skeleton, pose)
+	view.visible = skeleton != null
+
+func exchange_portrait(own_side: bool) -> PlayerPortrait:
+	return _exchange_portraits[1 if own_side else 0]
+
+func exchange_portrait_view(own_side: bool) -> TextureRect:
+	return _exchange_portrait_views[1 if own_side else 0]
+
+## The trust check's display (c:0x7b38f2..0x7b39d4): a stranger's portrait
+## gets the red pulse behind it and the warning as its tooltip; a trusted
+## one neither.
+func exchange_trust_effect(untrusted: bool, text: String) -> void:
+	var w: HudWindow = _windows.get(ExchangeController.WINDOW)
+	if w == null or not bool(w.get_meta(EXCHANGE_FULL_META, false)):
+		return
+	var red := w.node("GDR_EXCHANGE_USER_VISUAL_EFFECT") as Control
+	if red != null:
+		red.visible = untrusted
+	_exchange_red_ms = 0.0
+	var tip := w.node("GDR_EXCHANGE_USER_VISUAL_TOOLTIP") as Control
+	if tip != null:
+		tip.visible = untrusted
+		set_bubble_tip(tip, text if untrusted else "", EXCHANGE_TIP_WRAP)
+
+## The red pulse's frame now (QA and tests), or -1 when it is not shown.
+func exchange_red_frame() -> int:
+	if _exchange_red == null or not _exchange_red.is_visible_in_tree():
+		return -1
+	return _exchange_red_frames.find(_exchange_red.texture)
+
+func _process_exchange_red(delta: float) -> void:
+	if _exchange_red == null or _exchange_red_frames.is_empty() or not _exchange_red.is_visible_in_tree():
+		return
+	_exchange_red_ms += delta * 1000.0
+	var f := int(_exchange_red_ms / EXCHANGE_RED_FRAME_MS) % EXCHANGE_RED_FRAMES
+	if _exchange_red.texture != _exchange_red_frames[f]:
+		_exchange_red.texture = _exchange_red_frames[f]
+
+func exchange_log_clear() -> void:
+	if _exchange_log != null:
+		_exchange_log.clear()
+
+func exchange_log_add(text: String, colour: Color) -> void:
+	if _exchange_log != null:
+		_exchange_log.add_line(text, colour)
+
+## The log's lines as drawn (tests and QA).
+func exchange_log_lines() -> Array:
+	return _exchange_log.lines if _exchange_log != null else []
+
+## The mouse wheel scrolls the log a line at a time (OURS: the log shows no
+## scroll bar in the screenshots).
+func _on_exchange_log_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or _exchange_log == null:
+		return
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		_exchange_log.set_first(_exchange_log.first - 1)
+		accept_event()
+	elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		_exchange_log.set_first(_exchange_log.first + 1)
+		accept_event()
 
 ## The gold amounts greyed once their side confirmed (+0x36c).
 func exchange_gold_greyed(mine: bool, other: bool) -> void:
@@ -3987,17 +4305,22 @@ const EXCHANGE_GREYED := Color(127.0 / 255.0, 127.0 / 255.0, 127.0 / 255.0)
 ## (0x77b580) and / or a system line of type 0 (0x7781b0(0, ...)); the
 ## window's own log (control 304) is parked at x 9999 by retail's layout and
 ## never seen, so a log-only line shows nothing.
-func exchange_line(key: String, args: Array, _log_colour: Color, _also_log: bool = true) -> void:
+## Round 836: with the portraits and log on (exchange_full_layout) the log's
+## lines are seen too, in the colours retail writes them.
+func exchange_line(key: String, args: Array, log_colour: Color, also_log: bool = true) -> void:
 	var text := _exchange_text(key, args)
 	if text != "" and key != "UIIT_MSG_EXCHANGE_AGREEMENT_WAIT":
 		exchange_system_line.emit(text, HudSystemMessage.TYPE_ALWAYS)
+	if text != "" and also_log:
+		exchange_log_add(text, log_colour)
 
-func exchange_warning(key: String, _log_colour: Color) -> void:
+func exchange_warning(key: String, log_colour: Color) -> void:
 	var text := _exchange_text(key, [])
 	if text == "":
 		return
 	exchange_banner.emit(text)
 	exchange_system_line.emit(text, HudSystemMessage.TYPE_ALWAYS)
+	exchange_log_add(text, log_colour)
 
 ## 0x3087's notice: UIIT_MSG_STGRERR_ITEM_EXCHANGE_SUCCEED on the banner
 ## only (c:0x88bb50).
@@ -4322,6 +4645,7 @@ func _doll_turn_tick(now_ms: int) -> void:
 
 func _process(_delta: float) -> void:
 	_doll_turn_tick(Time.get_ticks_msec())
+	_process_exchange_red(_delta)
 	if party_match != null:
 		# Whole milliseconds from an accumulated float (review M2: truncating
 		# each frame's delta ran the 2 s lock about 2.08 s at 60 fps).

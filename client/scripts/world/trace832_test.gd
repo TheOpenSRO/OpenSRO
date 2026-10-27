@@ -96,6 +96,7 @@ func _archive() -> void:
 	var builder := UiBuilder.new(pk2, null)
 	# The Extra tab.
 	var saved_ping = ClientSettings.get_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_PING_FPS, null)
+	var saved_xp = ClientSettings.get_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, null)
 	var win := OptionWindow.new(builder)
 	root.add_child(win)
 	_check(win.build_option(), "the Option window builds from optionwnd.2dt")
@@ -117,7 +118,9 @@ func _archive() -> void:
 		(game as BaseButton).pressed.emit()
 		_check(not pane.visible, "another tab hides it again")
 	var box := win.extra_box("ping_fps")
-	_check(box != null and win.extra_box("action_short_cut") == null, "one check-box row (round 834: the action short cut is always on)")
+	_check(box != null and win.extra_box("action_short_cut") == null, "the ping row; no action short cut (round 834: always on)")
+	var xbox := win.extra_box("exchange_portraits")
+	_check(xbox != null, "round 836: the exchange's portraits and log row")
 	if box != null:
 		box.button_pressed = true
 		_check(win.extra_value("ping_fps"), "ticking the box edits the value")
@@ -128,9 +131,12 @@ func _archive() -> void:
 		(extra as BaseButton).pressed.emit()
 		win.press_default()
 		_check(not win.extra_value("ping_fps") and not box.button_pressed,
-			"Default on the Extra tab clears every row")
+			"Default on the Extra tab clears the ping row")
+		_check(win.extra_value("exchange_portraits") and xbox != null and xbox.button_pressed,
+			"and sets the exchange's portraits row on, its default")
 	win.queue_free()
 	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_PING_FPS, saved_ping if saved_ping != null else false)
+	ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, saved_xp if saved_xp != null else true)
 	# The target menu.
 	var menu := TargetMenu.new()
 	root.add_child(menu)

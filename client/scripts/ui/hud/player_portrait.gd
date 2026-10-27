@@ -223,6 +223,14 @@ const MOD_OD0 := "srr_od0 = clamp(portrait_object_color * portrait_light_ambient
 
 var _root: Node3D
 var _mirror: Node3D
+var _environment: Environment
+## The framing this portrait uses: the player block's READ values unless a
+## user of the class sets its own (round 836, the exchange's busts,
+## set_framing).
+var camera_distance := CAMERA_DISTANCE
+var camera_yaw := CAMERA_YAW
+var target_lift := TARGET_LIFT
+var model_yaw := MODEL_YAW
 var _camera: Camera3D
 var _character: Skeleton3D
 var _shaders := {}
@@ -259,6 +267,7 @@ func _init() -> void:
 
 	var env := WorldEnvironment.new()
 	var environment := Environment.new()
+	_environment = environment
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = CLEAR_COLOR
 	# Nothing here is lit by Godot: the material does the client's own
@@ -313,11 +322,28 @@ func set_character(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> voi
 		Skeleton3DBuilder.refresh_global_poses(skeleton)
 	var head := head_position(skeleton) * height
 	# The avatar's own yaw (after the head is read, as FUN_007b7740 does).
-	skeleton.rotation.y = model_rotation_y()
-	_place_camera(head + Vector3(0.0, TARGET_LIFT, 0.0))
+	skeleton.rotation.y = -model_yaw
+	_place_camera(head + Vector3(0.0, target_lift, 0.0))
 	_apply_materials(skeleton)
 	last_build_usec = Time.get_ticks_usec() - t0
 	request_render()
+
+## Another framing than the player block's (round 836): the camera's
+## distance and vertical field of view, its yaw about the target, the lift
+## over the head and the body's own yaw. Applied at the next set_character.
+func set_framing(distance: float, fov_deg: float, yaw: float, lift: float, body_yaw: float) -> void:
+	camera_distance = distance
+	camera_yaw = yaw
+	target_lift = lift
+	model_yaw = body_yaw
+	_camera.fov = fov_deg
+
+## A transparent background instead of the black clear (round 836: the
+## exchange draws its busts over the window's own background and the red
+## warning effect).
+func set_transparent(on: bool) -> void:
+	transparent_bg = on
+	_environment.background_mode = Environment.BG_CLEAR_COLOR if on else Environment.BG_COLOR
 
 ## One render on the next frame, then the buffer holds it.
 func request_render() -> void:
@@ -347,10 +373,14 @@ static func head_position(skeleton: Skeleton3D) -> Vector3:
 ## target - (0, 0, distance) * RotZ(roll) * RotX(pitch) * RotY(yaw), the
 ## row-vector product FUN_00bae580 builds with D3DX's rotation matrices.
 static func camera_eye(target: Vector3) -> Vector3:
-	var v := Vector3(0.0, 0.0, CAMERA_DISTANCE)
+	return camera_eye_at(target, CAMERA_DISTANCE, CAMERA_YAW)
+
+## camera_eye at another distance and yaw (set_framing).
+static func camera_eye_at(target: Vector3, distance: float, yaw: float) -> Vector3:
+	var v := Vector3(0.0, 0.0, distance)
 	v = _d3d_rot_z(v, CAMERA_ROLL)
 	v = _d3d_rot_x(v, CAMERA_PITCH)
-	v = _d3d_rot_y(v, CAMERA_YAW)
+	v = _d3d_rot_y(v, yaw)
 	return target - v
 
 ## v * D3DXMatrixRotationY(a) (row vector): (x c + z s, y, -x s + z c).
@@ -432,7 +462,7 @@ func _push_light() -> void:
 		mat.set_shader_parameter("portrait_light_diffuse", _light["diffuse"])
 
 func _place_camera(target: Vector3) -> void:
-	var eye := to_godot(camera_eye(target))
+	var eye := to_godot(camera_eye_at(target, camera_distance, camera_yaw))
 	# The scene root sits at the origin, so the local transform is the global
 	# one -- set directly, which also works before the node is in a tree.
 	_camera.transform = Transform3D(Basis.looking_at(to_godot(target) - eye, Vector3.UP), eye)

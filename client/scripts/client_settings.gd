@@ -64,6 +64,11 @@ const SECTION_EXTRA := "extra"
 ## The draggable Ping / FPS box, and where it was left (a Vector2, top-left).
 const KEY_PING_FPS := "ping_fps_counter"
 const KEY_PING_FPS_POS := "ping_fps_position"
+## Round 836 (OURS): the exchange window with both players' portraits, the
+## red warning behind a stranger's and the message log -- the original's own
+## controls, which its layout parks off screen -- in the layout of the user's
+## private-server screenshots. On unless turned off.
+const KEY_EXCHANGE_PORTRAITS := "exchange_portraits"
 ## Round 833: the Key Map tab's keys (KeyMap.set_keys): 33 Godot keycodes in
 ## slot order.
 const SECTION_KEYMAP := "keymap"
@@ -86,6 +91,9 @@ static func set_value(section: String, key: String, value: Variant) -> bool:
 
 static func ping_fps_shown() -> bool:
 	return bool(get_value(SECTION_EXTRA, KEY_PING_FPS, false))
+
+static func exchange_portraits_shown() -> bool:
+	return bool(get_value(SECTION_EXTRA, KEY_EXCHANGE_PORTRAITS, true))
 
 ## Round 833: GI+0x4f9, the Key Map tab's mouse mode (0 or 1; READ, it starts
 ## at 0).
