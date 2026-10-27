@@ -2881,6 +2881,25 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.revive_requested.connect(_on_revive_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to the system window (round 639).
 	_hud_panels.system_notice.connect(_log_system)
+	# Round 837 (OURS): the server's big notice, across the screen.
+	var big := HudBigNotice.new()
+	big.setup(_ui_builder)
+	_hud_panels.add_child(big)
+	NetClient.big_notice.connect(func(t: String) -> void:
+		big.show_text(t)
+		_log_system(t, HudSystemMessage.TYPE_ALWAYS))
+	if NetClient.pending_big_notice != "":
+		big.show_text(NetClient.pending_big_notice)
+		_log_system(NetClient.pending_big_notice, HudSystemMessage.TYPE_ALWAYS)
+		NetClient.pending_big_notice = ""
+	# Round 837: the item mall's try-on preview, its models the world's own
+	# (MallModels).
+	_hud_panels.mall_preview_factory = func() -> MallPreview:
+		if _mall_models == null:
+			_mall_models = MallModels.new(self)
+		var mp := MallPreview.new()
+		mp.setup(_mall_models)
+		return mp
 	_hud_panels.worn_durability_changed.connect(_refresh_equip_state)
 	NetClient.durability_changed.connect(func(_s: int, _d: int, _w: int) -> void: _refresh_quickslot_counts())
 	# M: the world map's toggle, the same one the minimap's map button calls
@@ -3357,6 +3376,8 @@ var _env_light_ready := false
 ## The zone light the portrait is lit by: [channel 2, channel 3] of the
 ## current zone's environment record, or empty before one is applied.
 var _portrait_zone_light: Array = []
+## Round 837: the item mall preview's provider (MallModels).
+var _mall_models: MallModels = null
 ## The zone's channels 2 and 3 the objects are lit from (round 706,
 ## ObjectLight), [] before any zone.
 var _object_light_channels: Array = []
@@ -18150,6 +18171,13 @@ func _qa_job_step() -> void:
 		elif what.begins_with("panel:"):
 			_hud_panels.toggle(what.substr(6))
 			print("QA SOCIAL: tick %d panel %s" % [_qa_tick, what.substr(6)])
+		# Round 837 (QA only): the item mall. mall_open opens it (as F10's
+		# box OK); mall_row:<n> clicks menu row n; mall_sub:<n> sub-tab n of
+		# the open row; mall_main the MAIN PAGE; mall_hover:<i> hovers cell i;
+		# mall_wear:<i> / mall_buy:<i>:<count> act on cell i; mall_search:<t>;
+		# mall_original; mall_state prints the mall.
+		elif what.begins_with("mall"):
+			print("QA MALL: tick %d %s -> %s" % [_qa_tick, what, _qa_mall(what)])
 		elif what == "fstate":
 			var names := []
 			for f in NetClient.last_friend_list:
@@ -25698,9 +25726,110 @@ func _toggle_dev_ui() -> void:
 	_set_dev_ui_visible(not _dev_ui_visible)
 	_log_system("Developer tools %s" % ("shown" if _dev_ui_visible else "hidden"))
 
+func _qa_mall(what: String) -> String:
+	if _hud_panels == null:
+		return "no hud"
+	var parts := what.split(":")
+	var m: ItemMallController = _hud_panels._mall()
+	match parts[0]:
+		"mall_open":
+			return "opened" if _hud_panels.open_item_mall() != null else "failed"
+		"mall_entry":
+			_hud_panels.open_item_mall_entry()
+			return "entry box"
+		"mall_close":
+			return str(m.close())
+		"mall_main":
+			m.show_main_page()
+			return "main page"
+		"mall_row":
+			var i := int(parts[1])
+			if i >= m._rows.size():
+				return "no row %d" % i
+			m.click_row(m._rows[i])
+			return "row %s" % (m._rows[i]["row"] as MallData.MenuRow).text_key
+		"mall_sub":
+			for r in m._rows:
+				if r["open"] and int(parts[1]) < (r["subs"] as Array).size():
+					m.click_sub(r["subs"][int(parts[1])], r)
+					return "sub %s" % r["subs"][int(parts[1])]["title"]
+			return "no open row"
+		"mall_hover":
+			if int(parts[1]) < m._cells.size():
+				m._hover_cell(m._cells[int(parts[1])])
+				return "hover"
+			return "no cell"
+		"mall_wear":
+			if int(parts[1]) < m._cells.size():
+				var g: MallData.Good = (m._cells[int(parts[1])] as Control).get_meta("good")
+				return "wear %s -> %s" % [g.package.code, str(m.wear(g))]
+			return "no cell"
+		"mall_buy":
+			if int(parts[1]) < m._cells.size():
+				var g: MallData.Good = (m._cells[int(parts[1])] as Control).get_meta("good")
+				m.send_buy(g, int(parts[2]) if parts.size() > 2 else 1, 0)
+				return "buy %s" % g.package.code
+			return "no cell"
+		"mall_search":
+			m.search(what.substr(12))
+			return "search"
+		"mall_original":
+			m.press_original()
+			return "original"
+		"mall_drag":
+			# mall_drag:<dx>:<dy>:<left|right>: a press, a move and a release
+			# through the preview's own input handler.
+			var view := m._preview_view
+			if view == null or m.preview == null:
+				return "no preview"
+			var right := parts.size() > 3 and parts[3] == "right"
+			var btn := MOUSE_BUTTON_RIGHT if right else MOUSE_BUTTON_LEFT
+			var c := view.size * 0.5
+			var d := Vector2(float(parts[1]), float(parts[2]) if parts.size() > 2 else 0.0)
+			for step in [[true, c], [null, c + d], [false, c + d]]:
+				var ev: InputEvent
+				if step[0] == null:
+					var mm := InputEventMouseMotion.new()
+					mm.position = step[1]
+					mm.button_mask = MOUSE_BUTTON_MASK_RIGHT if right else MOUSE_BUTTON_MASK_LEFT
+					ev = mm
+				else:
+					var mb := InputEventMouseButton.new()
+					mb.button_index = btn
+					mb.pressed = step[0]
+					mb.position = step[1]
+					ev = mb
+				m.preview.handle_input(ev, view.size)
+			return "dragged %s %s" % [str(d), "right" if right else "left"]
+		"mall_wearitem":
+			# mall_wearitem:<item id>: the preview's own wear, for an avatar
+			# the archive sells outside the mall.
+			if m.preview == null:
+				return "no preview"
+			return str(m.preview.wear(int(parts[1])))
+		"mall_chest":
+			# The item chest (OURS), as its icon under the minimap opens it.
+			if _hud_panels.item_chest == null:
+				return "no chest"
+			_hud_panels.item_chest.toggle(_hud_panels)
+			return "chest %s" % ("open" if _hud_panels.item_chest.is_open() else "closed")
+		"mall_icon":
+			var ic: Control = _hud_panels.item_chest_icon
+			if ic == null:
+				return "no icon"
+			return "icon visible %s in tree %s rect %s texture %s parent %s" % [str(ic.visible), str(ic.is_visible_in_tree()),
+				str(ic.get_global_rect()), str((ic as TextureButton).texture_normal), str(ic.get_parent().name)]
+		"mall_buyworn":
+			m.press_buy_worn()
+			return "buy worn box"
+		"mall_state":
+			return "active %s busy %s dealing %d view %s cells %d buy list %d silk %s" % [str(m.active), str(m.busy), m.dealing,
+				String(m._view.get("kind", "")), m._cells.size(), m.buy_list.size(), str(NetClient.silk_balances)]
+	return "unknown"
+
 ## Toggles the whole hideable UI panel (character/zone labels, chat, action
-## tabs, etc.) -- see HideUIButton's own doc-free scene node and F10
-## (KeyMap's "hide_ui", ours: retail's F10 is the item mall). HideUIButton
+## tabs, etc.) -- see HideUIButton's own doc-free scene node and Shift+F10
+## (KeyMap's "hide_ui", ours; F10 until round 837, now retail's item mall). HideUIButton
 ## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
 ## a child of Control) specifically so it stays clickable to toggle the UI
 ## back on even while everything else is hidden.
@@ -32396,6 +32525,13 @@ func _run_key_action(action: String, arg: int) -> String:
 		"hide_ui":
 			_toggle_ui_visibility()
 			return "UI %s" % ("shown" if ui_control.visible else "hidden")
+		"item_mall":
+			# Round 837 (0x7807aa): the "Enter Item Mall" box when the mall
+			# is not open and no such box is up; F10 never closes it.
+			if _hud_panels == null or _hud_panels.item_mall_open():
+				return "item mall already open"
+			_hud_panels.open_item_mall_entry()
+			return "item mall entry box"
 		"screenshot":
 			return _save_screenshot()
 		"dev_tools":
@@ -33870,6 +34006,9 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if _hud_target != null:
 		_hud_target.set_player_level(stats.level)
 	_player_level = stats.level
+	if _hud_panels != null:
+		# Round 837: the item mall's info block shows it.
+		_hud_panels.player_level = stats.level
 	if _hud_player_info != null:
 		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
 		if take_hp:

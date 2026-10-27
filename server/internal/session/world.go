@@ -1755,6 +1755,11 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// The friend list and the log-on push (round 834, friend.go): retail's
 	// 0x3305 follows the character data.
 	friendAfterEnter(ctx, sess, owned)
+	// The silk balances (round 837, mall.go): retail's 0x3153 when the
+	// billing load completes after the placement.
+	mallAfterEnter(ctx, sess)
+	// Round 837 (OURS): an account's login notice (loginnotice.go).
+	loginNoticeAfterEnter(sess)
 	return nil
 }
 

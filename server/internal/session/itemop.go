@@ -8,6 +8,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npctalk"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/shop"
@@ -36,6 +37,8 @@ import (
 //	  type 0x22: u8 dst, u8 index, u16 count (the buy back's success)
 //	0xB034 failure: u8 2, u16 code
 //	0xB168 (buy back failure only): u8 2, u16 code
+//
+// Round 837: type 0x18 is the item mall's buy (mall.go, internal/mall).
 //
 // OpenSRO's other item moves (bag -> bag without a count, buy, withdraw, the
 // gold) stay on OpenSRO's own messages for now; any other 0x7034 type is
@@ -215,6 +218,12 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 	}
 	if cid, ok := d.character(sess); ok && d.Trades.Established(cid) {
 		return fail(ExchangeErrBlocked)
+	}
+	// Round 837: the item mall's buy (mall.go). StorageOperation lets op
+	// 0x18 through at INTERACTMODE 1 (a pending request), so it is routed
+	// before the busy test below.
+	if len(data) > 0 && data[0] == mall.BuyType {
+		return mallBuy(ctx, sess, data)
 	}
 	// The avatar moves (round 789) have StorageOperation's own framing:
 	// dead 2 and INTERACTMODE 0x1834 before the type's rules (avatar.go).

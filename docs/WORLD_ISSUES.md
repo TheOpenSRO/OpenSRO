@@ -7483,6 +7483,63 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-seventh round: the item mall, with the try-on, silk and an item chest
+
+The user: "let's get the item mall fully working", with screenshots of a private server's in-game
+mall (IBcFopf, u0s3YNP) and its item chest (LShp7DJ), then: the preview turns with the left and
+right buttons; "the item mall lets you try on avatars ... Make sure you fully implement that and
+check the original game code and make no mistakes"; F10 opens the mall as retail (the user's choice;
+Hide UI moved to Shift+F10). Mid-round: "when opensrogm logs in have a notice very large that says you
+lost the game".
+
+**Read first, then checked.** Three agents read the client window (`item_mall.md`), the wire and
+SR_GameServer's handling (`item_mall_wire.md`) and the tables (`item_mall_data.md`); three more
+re-read every READ claim (`*_verify.md`): 31 claims were wrong and are corrected at the top of each
+spec (the pets orbit with the drag and are two pet kinds, not a ride; the camera; the rent block;
+the check order; the exact `GROUP_MALL` compare; ...). One more was settled in the build: HOT shop
+and Reserved ARE created, because the menu parser turns `xxx` into an empty code (`c:0x97f920`,
+`0x7e522b`); the HOT shop's sub-entries use five hard-coded headings (`c:0x7e5e13..0x7e5e5b`).
+The player's archive is a private server's (every shop table ends "Copyright Pandora Online 2019";
+the client imports `vsroplus_lib.dll`): the engine is retail, the content is the archive's.
+
+**Built (retail where READ; OURS marked).**
+- Client: `MallData` (the catalogue from the archive: menu, hot lists, mall group by exact
+  `GROUP_MALL`, shop index in the mapping's order, tab index in the first tab group, SlotIndex,
+  packages, scraps, prices); `ItemMallController` over GDR_RENEWAL_ITEM_MALL (800x600, its MyInfo
+  block, menu rows and sub-tabs, the main page's sections, the HOT shop and Reserved rows, the
+  cells with their badges, "N Unit" and 64-px icons, the hover menu at +(132, 56), search, Buy
+  Silk / Coupon links, the event picture), its grid and scroll MEASURED from the 2x screenshots;
+  `MallPreview` + `MallModels` (the try-on: camera eye (0,13,-35) at (0,13,0), vertical 60 degrees;
+  left drag turns every model as a turntable, right drag pans, the wheel zooms toward the pointer;
+  hats, dresses, flags and the two pet kinds; gender, race, level, Str and Int refuse with "Cannot
+  equip the selected item"; one per type; Original; the zone light, as the render static's
+  D3DLIGHT9 is never read by the shader path); `MallConfirmBuy`, `MallMessageBox` (Buy Item Worn,
+  Buy All, Pre-select / Delete), `MallUsePoint`, `MallEnterBox` (F10's warning box);
+  `SilkHistoryWindow` (the Buying list, silksearch.2dt; the Obtained list stays disabled as retail);
+  `MallNet` and NetClient's mall signals.
+- Server: `internal/mall` (the catalogue, the buy's checks in retail's order with its codes, the silk
+  split gift-first, the stack rules, the 0x711a history with retail's packed date, the stores),
+  `session/mall.go` (0x7034 type 0x18, 0x3153 before 0xB034, 0x7121, world-entry balances),
+  `export-refdata -mode mall` and `-mall-csv`, silk on the account (OURS storage: retail asks a
+  billing web server) with `/silk` and `-starting-silk`, and the clientdata.go table names fixed.
+- OURS, the item chest (not retail: no code in sro_client.exe or SR_GameServer.exe; the screenshot's
+  is a DLL add-on): a purchase that does not fit the bag goes to the chest (0xB034 with n = 0 and
+  0x00D6), opcodes 0x00D0..0x00D6 (list, take, take all, the 7-day take log); the window MEASURED
+  from LShp7DJ and its icon under the minimap (the archive's vPlus art when present).
+- OURS, login notices: OPENSRO_LOGIN_NOTICES "account=text", sent as 0x00D8 at world entry and drawn
+  large across the screen (HudBigNotice).
+
+**Tests and live runs.** Server: `go test ./...` passes (catalogue, wire bytes of the spec's example,
+every refusal in order, silk split, chest, history, GM /silk, a full session on sockets). Client:
+`mall_net_test`, `item_mall837_test` (220 goods, rows, cells at the measured places, the request's
+coordinates), `mall837_boxes_test` (86 checks), `mall_preview_test` (148), `silk_history_test`,
+`item_chest_test`, `keymap_test`. Live: purchases took silk 5000 -> 4850 -> 4750 into bag slots 0
+and 1; a pick pet beside the body, the turntable drag and the pan; the Halloween dress and hat on
+the body, the Pirate dress replacing the dress, Original restoring; the mall, preview, chest and
+notice at UI scale 1.5. This archive's mall Avatar goods are its own 3/3/13/14 effect items (wings,
+trails), which retail's rule does not put on the preview; its real dresses are sold at an NPC store.
+No perf gate: UI, net and server only.
+
 ## Eight-hundred-and-thirty-sixth round: the exchange window's portraits and log, as the screenshots show
 
 The user asked whether the original has the portraits and warnings of their screenshots, then:

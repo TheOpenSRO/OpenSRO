@@ -108,8 +108,9 @@ func TestFilenamesAreBareStems(t *testing.T) {
 	}
 }
 
-// Spot-checks on the seven that could not be derived from the table name, since
-// those are the ones a regenerated map would most easily get wrong.
+// Spot-checks on the six that could not be derived from the table name, since
+// those are the ones a regenerated map would most easily get wrong, and on the
+// three shop tables round 837 moved off the legacy files the client never loads.
 func TestHandResolvedFilenames(t *testing.T) {
 	for tbl, want := range map[string]string{
 		"_REFTELELINK":             "teleportlink",
@@ -118,7 +119,9 @@ func TestHandResolvedFilenames(t *testing.T) {
 		"_REFMAGICOPT":             "magicoption",
 		"_REFMAGICOPTASSIGN":       "magicoptionassign",
 		"_REFSIEGEFORTRESSREWARDS": "siegefortressreward",
-		"_REFSHOP":                 "shopdata",
+		"_REFSHOP":                 "refshop",
+		"_REFSHOPGROUP":            "refshopgroup",
+		"_REFSHOPTAB":              "refshoptab",
 	} {
 		if got := ClientTextdata[tbl]; got != want {
 			t.Errorf("%s maps to %q, want %q", tbl, got, want)

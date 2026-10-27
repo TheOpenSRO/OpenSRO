@@ -95,7 +95,12 @@ Find all the effects this applies to and what exact times they trigger."
 
 ## Round 795 follow-ups (pets, rides and transports; docs/protocol/pets.md "Round 795")
 
-- [ ] **The item mall, next round (prep).** What the pets round leaves ready for it:
+- [x] **The item mall** -- built in round 837 (v0.1.597; item_mall*.md). Left OPEN: the gold
+      row's tax; the bundle contents box (no bundle in any archive seen); points in a lump buy; the
+      Obtained list (disabled in retail); the stock and period tables (empty everywhere); the
+      premium / gold-time tickets and the Magic POP card's effects when used; the world's pets drawn
+      at characterdata Scale (the preview applies it, the world does not).
+- [x] (was) **The item mall, next round (prep).** What the pets round leaves ready for it:
   - The mall's pets and rides already work once owned: the growth / fellow / ability pet items
     (3/2/1/1, 3/2/1/2, kept, the COS id in the item's Data word), the ride scrolls (3/3/3/2,
     Desc1 + the level bracket from Desc2), the pet consumables (HGP potion, revival, clock) and

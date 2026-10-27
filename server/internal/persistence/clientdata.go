@@ -18,12 +18,18 @@ package persistence
 // without the `_NNNN` shard suffix where a table is sharded (itemdata,
 // characterdata and skilldata are).
 //
-// Seven entries could not be derived from the table name and were resolved by
+// Six entries could not be derived from the table name and were resolved by
 // reading the archive's own file list: _REFTELELINK is `teleportlink`,
 // _REFOBJITEM is `itemdata`, _REFOBJCHAR is `characterdata`, _REFMAGICOPT is
-// `magicoption`, _REFMAGICOPTASSIGN is `magicoptionassign`,
-// _REFSIEGEFORTRESSREWARDS is `siegefortressreward` (singular), and _REFSHOP is
-// `shopdata`.
+// `magicoption`, _REFMAGICOPTASSIGN is `magicoptionassign`, and
+// _REFSIEGEFORTRESSREWARDS is `siegefortressreward` (singular).
+//
+// Round 837: _REFSHOP, _REFSHOPGROUP and _REFSHOPTAB were mapped to the legacy
+// `shopdata`, `shopgroupdata` and `shoptabdata`. The client never loads those
+// (no such string in sro_client.exe, and they are not in its load list); it
+// loads `refshop`, `refshopgroup` and `refshoptab`, whose rows are the shard's
+// Service-1 rows of the three tables (MEASURED: 93/93, 111/111, all 298 tab
+// rows; docs/protocol/item_mall_data.md §9 and item_mall_data_verify.md).
 var ClientTextdata = map[string]string{
 	"_REFABILITYBYITEMOPTLEVEL":         "refabilitybyitemoptleveldata",
 	"_REFACCESSPERMISSIONOFSHOP":        "refaccesspermissionofshop",
@@ -56,11 +62,11 @@ var ClientTextdata = map[string]string{
 	"_REFREWARDPOLICYTOSELLSCRAPITEM":   "refrewardpolicytosellscrapitem",
 	"_REFSCRAPOFPACKAGEITEM":            "refscrapofpackageitem",
 	"_REFSETITEMGROUP":                  "refsetitemgroup",
-	"_REFSHOP":                          "shopdata",
+	"_REFSHOP":                          "refshop",
 	"_REFSHOPGOODS":                     "refshopgoods",
-	"_REFSHOPGROUP":                     "shopgroupdata",
+	"_REFSHOPGROUP":                     "refshopgroup",
 	"_REFSHOPITEMSTOCKPERIOD":           "refshopitemstockperiod",
-	"_REFSHOPTAB":                       "shoptabdata",
+	"_REFSHOPTAB":                       "refshoptab",
 	"_REFSHOPTABGROUP":                  "refshoptabgroup",
 	"_REFSIEGEBLESSBUFF":                "refsiegeblessbuff",
 	"_REFSIEGEDUNGEON":                  "refsiegedungeon",

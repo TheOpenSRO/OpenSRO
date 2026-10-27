@@ -248,7 +248,9 @@ func _check_outside_keys() -> void:
 	var f9 := _what(KEY_F9)
 	_check(f9[0] == [["camera_cycle", 0]], "F9 cycles the camera view (ran %s)" % [f9[0]])
 	var f10 := _what(KEY_F10)
-	_check(f10[0] == [["hide_ui", 0]], "F10 hides the UI (ran %s)" % [f10[0]])
+	_check(f10[0] == [["item_mall", 0]], "F10 opens the item mall, as retail (round 837; ran %s)" % [f10[0]])
+	var sf10 := _what_mod(KEY_F10, ["shift"])
+	_check(sf10[0] == [["hide_ui", 0]], "Shift+F10 hides the UI (round 837; ran %s)" % [sf10[0]])
 	var before := _runs.size()
 	_down(KEY_PRINT)
 	_check(_runs.size() == before, "PrintScreen does nothing on its press")
@@ -372,7 +374,7 @@ func _check_typing() -> void:
 	# The keys a line never takes still run (round 608's review): after a
 	# line of chat the line keeps the focus, and Shift+F3 is the bug-report
 	# path.
-	var still := {KEY_F1: ["page", 1], KEY_F4: ["page", 4], KEY_F9: ["camera_cycle", 0], KEY_F10: ["hide_ui", 0]}
+	var still := {KEY_F1: ["page", 1], KEY_F4: ["page", 4], KEY_F9: ["camera_cycle", 0], KEY_F10: ["item_mall", 0]}
 	var dead: Array = []
 	for code in still:
 		var got := _what(code)

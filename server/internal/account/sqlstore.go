@@ -68,6 +68,8 @@ type SQLStore struct {
 	ownsDB bool
 	// Now is the clock Authenticate and SetBlocked read; nil is time.Now.
 	Now func() time.Time
+	// startingSilk is the own silk an account gets once (silk.go).
+	startingSilk int64
 }
 
 func (s *SQLStore) now() time.Time {
@@ -101,7 +103,7 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 // NewSQLStore is OpenSQLStore on a pool the caller owns and shares with the
 // other stores (round 743). Close does not close it.
 func NewSQLStore(db *sql.DB) (*SQLStore, error) {
-	if err := txn.Migrate(db, schema, punishmentSchema, blockedMigration); err != nil {
+	if err := txn.Migrate(db, schema, punishmentSchema, blockedMigration, silkSchema); err != nil {
 		return nil, fmt.Errorf("account: creating schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil

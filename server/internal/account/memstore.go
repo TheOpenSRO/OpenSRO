@@ -22,6 +22,8 @@ type MemStore struct {
 	// Now is the clock Authenticate and SetBlocked read; nil is time.Now.
 	// Tests set it.
 	Now func() time.Time
+	// startingSilk is the own silk an account gets once (silk.go).
+	startingSilk int64
 }
 
 func (m *MemStore) now() time.Time {

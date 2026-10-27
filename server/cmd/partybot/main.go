@@ -167,6 +167,7 @@ func (b *bot) readSync(op uint16) (*proto.Packet, error) {
 func (b *bot) note(p *proto.Packet) {
 	b.noteGuild(p)
 	b.noteSocial(p.Opcode, p.Data)
+	b.noteMall(p.Opcode, p.Data)
 	switch p.Opcode {
 	case session.OpSelfID:
 		if s, err := session.DecodeSelfID(p.Data); err == nil {
@@ -920,6 +921,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		gmTP(tp)
 	}
 	b.guildSteps(name)
+	b.mallSteps()
 	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
 	// can invite it beside the leader first and then move it away.
 	var tp2C <-chan time.Time
@@ -1092,6 +1094,12 @@ func main() {
 	flag.DurationVar(&botSocial.askAfter, "exchange-ask-after", 0, "bot (round 834): wait this long more before -exchange-with's request (to walk into reach first)")
 	flag.StringVar(&botSocial.confirmWhen, "exchange-confirm", "first", "bot (round 834): when it confirms -- first (right after offering), second (once the partner confirmed, 0x3086) or never")
 	flag.DurationVar(&botSocial.hold, "exchange-hold", 0, "bot (round 834): wait this long after the exchange opens before offering")
+	flag.StringVar(&botMall.buy, "mall-buy", "", "bot (round 837): buy a mall good once in the world: \"<group>,<shop>,<tab>,<slot>,<packageCode>,<qty>[,<points>]\" (0x7034 type 0x18)")
+	flag.IntVar(&botMall.repeat, "mall-buy-times", 1, "bot (round 837): send -mall-buy this many times")
+	flag.StringVar(&botMall.chest, "mall-chest", "", "bot (round 837): after the buy, list the item chest (\"list\"), take all (\"all\") or take one entry id")
+	flag.StringVar(&botMall.history, "mall-history", "", "bot (round 837): ask the silk history \"<kind>,<period>\" (0x711a), e.g. 1,4")
+	flag.IntVar(&botMall.open, "mall-open", 0, "bot (round 837): send 0x7121 with this shop group first")
+	flag.DurationVar(&botMall.delay, "mall-delay", 2*time.Second, "bot (round 837): the wait before each mall step")
 	flag.DurationVar(&botSocial.delay, "social-delay", 2*time.Second, "bot (round 834): the wait before each friend or exchange step")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")

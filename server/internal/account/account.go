@@ -63,6 +63,10 @@ type Account struct {
 	// a SQL account read 0 here even after an expansion). The warehouse
 	// itself reads the size through ChestSizeStore, not through this field.
 	ChestSize int
+	// silk and silkSeeded are the MemStore's silk balances and its starting
+	// grant's mark (round 837, silk.go); the SQL store keeps them in columns.
+	silk       Silk
+	silkSeeded bool
 }
 
 // HashPassword hashes a plaintext password for storage. Never store

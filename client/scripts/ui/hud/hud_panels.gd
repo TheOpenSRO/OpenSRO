@@ -96,6 +96,9 @@ const PANELS := {
 	# Round 789: the blacksmith's grant window (GrantMagicAttributeWindow),
 	# opened by the talk line kind 0x2f's 0xB046 {1, 0x20} (open_grant_window).
 	"grant": [GrantMagicAttributeWindow.LAYOUT, "GrantMagicAttribute"],
+	# Round 837: the item mall, CIFNewItemMall (GDR_RENEWAL_ITEM_MALL, ID
+	# 167, 800x600; ItemMallController). F10's warning box opens it.
+	"itemmall": [ItemMallController.LAYOUT, "Item Mall"],
 }
 
 ## M opens the world map, the retail binding (read): the default key table
@@ -144,7 +147,7 @@ const PANEL_DEFINES := {}
 ## other #ifdef windows keep their hand-picked defines (HudChat, "exchange"
 ## below), which the archive's table also defines (round 725's census,
 ## docs/rounds/r725.md).
-const ARCHIVE_DEFINE_PANELS := ["store"]
+const ARCHIVE_DEFINE_PANELS := ["store", "itemmall"]
 
 ## A panel to build instead when its own layout does not build (round 725):
 ## the NPC talk box alone, self-framed, as before GDR_NPCWINDOW.
@@ -210,6 +213,9 @@ const REGISTRY_FRAMES := {
 	# UIIT_STT_ALCHEMYBOX_ENCHANT_MAGIC_PARAM, under APPLY_AVATAR_SYSTEM, which
 	# config\define.txt defines (MEASURED).
 	"grant": {"name": GrantMagicAttributeWindow.REGISTRY, "archive_defines": true},
+	# Round 837: ginterface's NewItemMall section, under #ifdef NEW_ITEMMALL
+	# (config\define.txt defines it).
+	"itemmall": {"name": "GDR_RENEWAL_ITEM_MALL", "archive_defines": true},
 }
 
 ## Controls a window's own class hides when it creates the window, so they
@@ -873,6 +879,8 @@ const EXTRA_SECTIONS := {
 	"autopotion": ["AbnormalSlot", "PotionDelaySlot"],
 	# Round 789: the grant window's list (AVATAR_ALCHEMY_RESEARCH.md 1).
 	"grant": [GrantMagicAttributeWindow.SECTION_LIST],
+	# Round 837: the mall's info block (GDR_ITEM_MALL_MYINFO, section MyInfo).
+	"itemmall": ["MyInfo"],
 }
 
 var _builder: UiBuilder
@@ -893,6 +901,8 @@ func _ready() -> void:
 	if _qa_slots:
 		add_to_group(QA_SLOTS_GROUP)
 	_ensure_party_match()
+	# Round 837: the item chest and its icon under the minimap (OURS).
+	_build_item_chest()
 
 ## OPENSRO_QA_SLOTS is set (read once): F11 prints the slots, Shift+F11
 ## opens the warehouse. QA only.
@@ -3927,6 +3937,184 @@ func exchange_button_enabled(enabled: bool) -> void:
 	if b != null:
 		b.disabled = not enabled
 
+# --- The item mall (round 837; ItemMallController, docs/protocol/item_mall.md) ---
+
+var item_mall: ItemMallController
+## World3D's: a fresh MallPreview for the window (null: no preview).
+var mall_preview_factory: Callable = Callable()
+## The player's level, set by World3D with the player block's.
+var player_level := 0
+
+func _mall() -> ItemMallController:
+	if item_mall == null:
+		item_mall = ItemMallController.new(self)
+	return item_mall
+
+func open_item_mall() -> HudWindow:
+	return _mall().open()
+
+## F10 (0x7807aa): the "Enter Item Mall" warning box (kind 0x1e); its OK
+## opens the mall. With no 0x7121 stock rows -- this client keeps no stock
+## table, as the archive's is empty -- OK opens it at once (0x798771).
+func open_item_mall_entry() -> void:
+	if item_mall_open():
+		return
+	if MallEnterBox.open(_builder, self, func() -> void: open_item_mall()) == null and not item_mall_open():
+		# A box already up refuses a second (0x6ec400(0x1e)).
+		return
+
+
+## The cell's Buy: the confirm box (ID 1200).
+func open_mall_confirm_box(good: MallData.Good) -> MallConfirmBuy:
+	return MallConfirmBuy.open(self, _mall(), good)
+
+## Buy (worn) / Reserved's Buy All: the lump box (ID 122 / 306).
+func open_mall_lump_box(goods: Array, reserved: bool) -> MallMessageBox:
+	return MallMessageBox.open_lump(self, _mall(), goods, reserved)
+
+## Pre-select / Delete: the reserve box (ID 1202 / 1203).
+func open_mall_reserve_box(good: MallData.Good, add: bool) -> MallMessageBox:
+	return MallMessageBox.open_reserve(self, _mall(), good, add)
+
+func item_mall_open() -> bool:
+	return item_mall != null and item_mall.active
+
+## The window is built afresh at each open (0x79b580 loads and unloads its
+## ginterface section), so it is dropped on close.
+func drop_item_mall_window() -> void:
+	var w: HudWindow = _windows.get(ItemMallController.WINDOW)
+	if w == null:
+		return
+	_windows.erase(ItemMallController.WINDOW)
+	remove_child(w)
+	w.queue_free()
+
+func make_mall_preview():
+	return mall_preview_factory.call() if mall_preview_factory.is_valid() else null
+
+func mall_player_name() -> String:
+	return NetClient.current_character_name if NetClient != null else ""
+
+func mall_player_level() -> int:
+	return player_level
+
+## A package's NameStrID through the object text tables.
+func mall_text(strid: String) -> String:
+	_load_items()
+	if strid == "":
+		return ""
+	var t := _object_names.get_text(strid) if _object_names != null else ""
+	if t == "" or t == strid:
+		t = _resolve_ui(strid, strid)
+	return t
+
+func mall_item_id(code: String) -> int:
+	_load_items()
+	var item: ItemTableReader.Item = _items_by_code.get(code)
+	return item.id if item != null else 0
+
+## The 16-bit packed TID (the masks 0x1c, 0x60, 0x780, 0xf800 the try list
+## and the buy list compare, c:0x7d891a / 0x7d87bc): CashItem bit 0, Bionic
+## bit 1, TypeID1..4 above.
+func mall_item_tid(item_id: int) -> int:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null or item.type_ids.size() < 4:
+		return 0
+	return (item.cash_item & 1) | ((item.bionic & 1) << 1) | ((item.type_ids[0] & 7) << 2) \
+		| ((item.type_ids[1] & 3) << 5) | ((item.type_ids[2] & 0xf) << 7) | ((item.type_ids[3] & 0x1f) << 11)
+
+## Free bag slots (the confirm box's check and the chest's Inventory
+## Remaining).
+func mall_free_bag_slots() -> int:
+	return free_bag_slots()
+
+# --- Round 837: the Buying list and the item chest (OURS) ---
+var silk_history: SilkHistoryWindow = null
+var item_chest: ItemChestWindow = null
+var item_chest_icon: ItemChestIcon = null
+
+## The mall's Buying list button (131 -> 0x7d7130). The mall itself refuses it
+## while a mall box is up (+0x7c8) or purchases are outstanding (+0x7dc).
+func open_silk_history() -> SilkHistoryWindow:
+	if silk_history == null or not is_instance_valid(silk_history):
+		silk_history = SilkHistoryWindow.new(_builder)
+		silk_history.name = "Window_silk_history"
+	return silk_history if silk_history.open(self) else null
+
+## The mall is modal while this is true (+0x7c8).
+func silk_history_open() -> bool:
+	return silk_history != null and is_instance_valid(silk_history) and silk_history.is_open()
+
+## The mall's own close (CIFNewItemMall::vslot_043 0x7d7020): 0x711a {1,
+## 0xff} if an inquiry is pending; the list goes with the mall.
+func close_silk_history() -> void:
+	if silk_history != null and is_instance_valid(silk_history):
+		silk_history.mall_closing()
+		silk_history.close()
+
+func _build_item_chest() -> void:
+	if _builder == null or item_chest != null:
+		return
+	item_chest = ItemChestWindow.new(_builder)
+	item_chest.free_slots = free_bag_slots
+	item_chest.item_name = item_name
+	item_chest.message.connect(func(t: String) -> void: system_notice.emit(t))
+	item_chest.attach_net()
+	item_chest_icon = ItemChestIcon.new(_builder)
+	add_child(item_chest_icon)
+	item_chest_icon.bind(item_chest, self)
+	# Placed from the screen's size, not anchored: HudPanels itself can be
+	# zero-sized under its layer, which put an anchored icon off screen.
+	_place_chest_icon()
+	if is_inside_tree():
+		get_viewport().size_changed.connect(_place_chest_icon)
+
+func _place_chest_icon() -> void:
+	if item_chest_icon == null or not is_inside_tree():
+		return
+	item_chest_icon.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	item_chest_icon.size = ItemChestIcon.ICON_SIZE
+	item_chest_icon.position = ItemChestIcon.slot_position(get_viewport_rect().size) - get_global_transform().origin
+
+## Free bag slots, read the way first_empty_bag_slot reads the bag.
+func free_bag_slots() -> int:
+	var taken := {}
+	for entry in _bag_slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		if index != null:
+			taken[int(index)] = true
+	return maxi(_bag_size_shown() - taken.size(), 0)
+
+func mall_system_line(text: String) -> void:
+	exchange_system_line.emit(text, HudSystemMessage.TYPE_GAME)
+
+## A refusal's code (0x778190): the category-1 table's text, as the
+## exchange's; codes with no text show nothing (item_mall_wire_verify).
+func mall_code_message(code: int) -> void:
+	exchange_code_message(code)
+
+## A purchase's 0xB034 {1}: the bag re-read (OURS, as the exchange's: retail
+## builds the items from its own tables) -- or, n = 0, it went to the chest.
+func mall_after_buy(r: Dictionary) -> void:
+	refresh_bag_after_exchange()
+
+## 0x3154 (c:0x882e50): one system line by reason, the offset printed in.
+func _on_mall_silk_changed(c: Dictionary) -> void:
+	if c.is_empty():
+		return
+	var reason := int(c.get("reason", -1))
+	var key: String = "UIIT_MSG_STRGERR_TRADE_FAILURE" if reason == 0xff else \
+		(MallNet.SILK_REASON_KEYS[reason] if reason >= 0 and reason < MallNet.SILK_REASON_KEYS.size() else "")
+	if key == "":
+		return
+	var text := _resolve_ui(key, "")
+	if text == "":
+		return
+	if text.contains("%d"):
+		text = text.replace("%d", str(int(c.get("offset", 0))))
+	mall_system_line(text)
+
 # --- The exchange's portraits and log (round 836, OURS layout) -------------------
 #
 # Retail's CIFExchange has both players' portraits (live renders aimed at the
@@ -4646,6 +4834,8 @@ func _doll_turn_tick(now_ms: int) -> void:
 func _process(_delta: float) -> void:
 	_doll_turn_tick(Time.get_ticks_msec())
 	_process_exchange_red(_delta)
+	if item_mall != null and item_mall.active:
+		item_mall.tick()
 	if party_match != null:
 		# Whole milliseconds from an accumulated float (review M2: truncating
 		# each frame's delta ran the 2 s lock about 2.08 s at 60 fps).
@@ -5973,6 +6163,8 @@ func select_bag_page(page: int) -> void:
 ## cell, each with a named "ItemIcon" child.
 func _fill_inventory_grid(slots: Array) -> void:
 	_bag_slots = slots
+	if item_chest != null and item_chest.is_open():
+		item_chest.refresh_inventory()
 	# Round 768: the alchemy window's copies follow the bag.
 	if alchemy_window() != null:
 		_alchemy.bag_changed(alchemy_item)
@@ -8008,6 +8200,12 @@ func connect_net() -> void:
 	NetClient.exchange_partner_gold.connect(func(g: int) -> void: _exchange().on_partner_gold(g))
 	NetClient.exchange_partner_confirmed.connect(func() -> void: _exchange().on_partner_confirmed())
 	NetClient.exchange_result.connect(func(op: int, code: int) -> void: _exchange().on_result(op, code))
+	# Round 837: the item mall's replies (ItemMallController).
+	NetClient.mall_buy_result.connect(func(r: Dictionary) -> void: _mall().on_buy_result(r))
+	NetClient.mall_silk.connect(func(_a: int, _b: int, _c: int) -> void:
+		if item_mall != null and item_mall.active:
+			item_mall.refresh_info())
+	NetClient.mall_silk_changed.connect(_on_mall_silk_changed)
 	# Every reply that says which guild the player is in: info, create and
 	# join carry it, a successful leave means none.
 	NetClient.guild_info_result.connect(_on_guild_info_result)

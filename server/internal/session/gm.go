@@ -207,8 +207,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 			return sess.Send(&proto.Packet{Opcode: OpGMCommandResult, Data: (&GMCommandResult{IsGM: true, Refused: true, Text: errStr}).Encode()})
 		}
 
+		accountID, _ := AuthenticatedAccountID(sess)
 		actor := gm.Actor{
-			Account: username, CharacterID: characterID, Name: req.Name,
+			Account: username, AccountID: accountID, CharacterID: characterID, Name: req.Name,
 			TargetMonsterID: req.SelectedMonster,
 		}
 		if hub != nil {
@@ -317,6 +318,11 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 			}
 		}
 		err = sess.Send(&proto.Packet{Opcode: OpGMCommandResult, Data: result.Encode()})
+		// A /silk change (round 837): 0x3154 then 0x3153, as retail's
+		// outside-change path (mall.go).
+		if out.Silk != nil {
+			SilkChanged(sess, out.Silk.Reason, out.Silk.CashType, out.Silk.Offset, out.Silk.After)
+		}
 		// A GM /notice (round 634) reaches every character, the GM included,
 		// after the GM's own reply.
 		if out.Notice != "" {

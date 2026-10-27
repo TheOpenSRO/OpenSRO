@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.596** plus what is merged on `dev`; updated 2026-10-27.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.597** plus what is merged on `dev`; updated 2026-10-27.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -31,7 +31,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 
 ## Biggest gaps
 
-- No player stalls, consignment or item mall
+- No player stalls or consignment
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
 - Guilds: no ranks, notice, storage, unions or wars yet
@@ -220,7 +220,8 @@ Gold, NPC trade and storage work; player markets are not built yet.
 | Player stalls | ❌ Not yet | No stall system yet |
 | Stall network | ❌ Not yet | Search and buy from other players' stalls remotely; needs player stalls first |
 | Consignment | ❌ Not yet | No consignment trading yet |
-| Item mall (silk) | ❌ Not yet | No item mall or silk yet |
+| Item mall (silk) | ✅ Supported | The original's in-game Item Mall (F10, after its "Enter Item Mall" warning): categories and sub-tabs, the main page's New / Best / Recommend lists, the HOT shop and the Reserved list, search, badges, buying with Silk, Gift Silk and points, "Buy Item Worn" and Buy All, the Buying list. Try avatars on before buying: hats, dresses, flags and pets on a 3D preview you turn with the left mouse button and move with the right. Your Silk balances are kept by the server; GMs can grant them with /silk |
+| Item chest | ✅ Supported (OpenSRO add-on) | A chest icon under the minimap: mall purchases that do not fit your bag wait there; take one or all, and see the last 7 days in the Take Log |
 | Guild storage | ❌ Not yet | No guild warehouse yet |
 
 ## Social

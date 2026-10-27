@@ -87,7 +87,9 @@ func (g *Gate) Names() []string {
 
 // Actor is who is running a command and where they stand.
 type Actor struct {
-	Account     string
+	Account string
+	// AccountID is the account's id (round 837: /silk changes its balances).
+	AccountID   int64
 	CharacterID int64
 	Name        string
 	// Zone and the position come from world.Hub; Zone is "" when the
@@ -183,6 +185,16 @@ type Result struct {
 	// WornChanged are the equip slots whose worn item /item worn changed,
 	// for the session layer to show the zone (retail 0x3038, round 735).
 	WornChanged []int
+	// Silk is /silk's change (round 837), for the session layer to tell the
+	// client as retail's outside-change path does: 0x3154, then 0x3153.
+	Silk *SilkChange
+}
+
+// SilkChange is a balance change and the balances after it.
+type SilkChange struct {
+	Reason, CashType byte
+	Offset           int64
+	After            account.Silk
 }
 
 // LevelUp mirrors the combat path's level-up announcement.
@@ -252,6 +264,8 @@ type Deps struct {
 	// Guilds is what /guildlevel raises (round 814, a test tool); nil
 	// refuses it.
 	Guilds guild.Store
+	// Silk is what /silk changes (round 837, silk.go); nil refuses it.
+	Silk account.SilkStore
 }
 
 // ClockControl is /hour's hook into the game clock (round 786): retail's
@@ -299,7 +313,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /jobexp <n>, /jobweek, /guildlevel <1-5>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /jobexp <n>, /jobweek, /guildlevel <1-5>, /silk <n> [own|gift|point]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -372,6 +386,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.jobWeek(ctx)
 	case "guildlevel":
 		res = d.guildLevel(ctx, actor, args)
+	case "silk":
+		res = d.silk(ctx, actor, args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}

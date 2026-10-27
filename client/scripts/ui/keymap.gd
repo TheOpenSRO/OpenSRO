@@ -158,9 +158,12 @@ const OTHER_KEYS: Array = [
 	# 0x780590(-1): the next camera view, free -> third person -> quarter ->
 	# free, each announced by 0x780420's UIIT_STT_CHANGED_SIGHT_*_DESC line.
 	{"keys": "F9", "mods": "", "action": "camera_cycle", "source": "read 0x780590(-1) -> 0x780420"},
-	# Retail F10 is the item mall (0x7995e0; UIIT_STT_SILKMALL_SHORT_KEY
-	# "Item Mall(F10)"). This client has no item mall; F10 hides the UI.
-	{"keys": "F10", "mods": "", "action": "hide_ui", "source": "ours (retail: the item mall)"},
+	# Round 837: F10 is the item mall, as retail's (0x780610 -> 0x7807aa:
+	# the "Enter Item Mall" box, kind 0x1e, when the mall is not open and no
+	# such box is up; UIIT_STT_SILKMALL_SHORT_KEY "Item Mall(F10)"). The
+	# Hide UI F10 used to run moved to Shift+F10 (ours; the user's choice).
+	{"keys": "F10", "mods": "", "action": "item_mall", "source": "read 0x780610 -> 0x7807aa"},
+	{"keys": "F10", "mods": "shift", "action": "hide_ui", "source": "ours (round 837; F10 before)"},
 	# WM_KEYUP of VK_SNAPSHOT (0x2c) in the frame's message handler 0xba7240
 	# saves `ScreenShot\SRO[YYYY-MM-DD hh-mm-ss]_NN.jpg` -- on the release.
 	{"keys": "PrintScreen", "mods": "", "action": "screenshot", "source": "read 0xba7240"},
@@ -318,6 +321,8 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 				return ["debug_tabs", 0]
 			KEY_F3:
 				return ["debug_panel", 0]
+			KEY_F10:
+				return ["hide_ui", 0]
 	if ctrl:
 		var d := _digit(keycode)
 		if d == 1:
@@ -344,7 +349,7 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 	if keycode == KEY_F9:
 		return ["camera_cycle", 0]
 	if keycode == KEY_F10:
-		return ["hide_ui", 0]
+		return ["item_mall", 0]
 	var slot = slot_for_key(keycode)
 	if slot == null:
 		return []

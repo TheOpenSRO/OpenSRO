@@ -46,6 +46,7 @@ type tradeFixtureDeps struct {
 	chars    *character.MemStore
 	inv      *inventory.SQLStore
 	trades   *trade.Hub
+	hub      *world.Hub // round 837: the mall's handler needs it
 }
 
 // exchangeItems is the reference rows the fixture's items have: tradeable
@@ -104,7 +105,7 @@ func setupTradeTestWrapped(t *testing.T, extra func(d tradeFixtureDeps) []gatewa
 		ItemOpHandler(ItemOpDeps{Hub: hub, Inv: bag, Trades: trades, Items: items, Chars: chars}),
 		ExchangeHandler(ExchangeDeps{Chars: chars, Inv: bag, Items: items, Hub: hub, Trades: trades, Parties: parties})}
 	if extra != nil {
-		handlers = append(handlers, extra(tradeFixtureDeps{accounts: accounts, chars: chars, inv: inv, trades: trades})...)
+		handlers = append(handlers, extra(tradeFixtureDeps{accounts: accounts, chars: chars, inv: inv, trades: trades, hub: hub})...)
 	}
 	addr, cleanup := startTestServer(t, gateway.Chain(handlers...))
 	t.Cleanup(cleanup)

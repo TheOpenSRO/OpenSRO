@@ -51,6 +51,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/shop"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/skill"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/specialty"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/storage"
@@ -936,6 +937,13 @@ func main() {
 	jobWeekDay := flag.String("job-week-day", "monday",
 		"the weekday the weekly job procedure runs (the job rewards and rankings, round 799); \"off\" never runs it")
 	jobWeekHour := flag.Int("job-week-hour", 0, "the local hour (0..23) the weekly job procedure runs at")
+	// Round 837: the item mall's catalogue and the starting silk.
+	mallCSV := flag.String("mall-csv", os.Getenv("OPENSRO_MALL_CSV"),
+		"path to the item mall's catalogue (from cmd/export-refdata -mode mall on a client's own shop tables and "+
+			"itemdata parts; round 837): the silk shops a 0x7034 type 0x18 buy names. Without it every buy is refused 2")
+	startingSilkEnv, startingSilkEnvErr := envInt("OPENSRO_STARTING_SILK", 0)
+	startingSilk := flag.Int64("starting-silk", int64(startingSilkEnv),
+		"own silk an account is given once, the first time its balances are read (round 837, OURS; 0 gives none)")
 	// Round 801: the specialty trade's tables.
 	specialtyShopsCSV := flag.String("specialty-shops-csv", os.Getenv("OPENSRO_SPECIALTY_SHOPS_CSV"),
 		"path to the specialty stores' goods (from cmd/export-refdata -mode specialty on a client's own shop "+
@@ -1292,6 +1300,13 @@ func main() {
 		logger.Warn("OPENSRO_MAX_PLAYERS is not a number; the capacity keeps its default unless -max-players is given",
 			"err", maxPlayersEnvErr, "default", defaultMaxPlayers)
 	}
+	if startingSilkEnvErr != nil {
+		logger.Warn("OPENSRO_STARTING_SILK is not a number; no starting silk unless -starting-silk is given", "err", startingSilkEnvErr)
+	}
+	// Round 837 (OURS): login notices, "account=text;account=text".
+	if n := session.SetLoginNotices(os.Getenv("OPENSRO_LOGIN_NOTICES")); n > 0 {
+		logger.Info("login notices on (OURS, OPENSRO_LOGIN_NOTICES)", "accounts", n)
+	}
 	if inspectionEnvErr != nil {
 		logger.Warn("OPENSRO_INSPECTION is not a boolean; the server is open unless -inspection is given", "err", inspectionEnvErr)
 	}
@@ -1443,6 +1458,9 @@ func main() {
 		// The job records (round 799, internal/jobs): _CharTrijob and its
 		// tables.
 		jobStore jobs.Store
+		// The item mall's purchase log and item chest (round 837,
+		// internal/mall).
+		mallStore mall.Store
 	)
 
 	if *inMemory {
@@ -1516,6 +1534,7 @@ func main() {
 		guilds = guild.NewMemStore()
 		quests = quest.NewMemStore()
 		friends = friend.NewMemStore()
+		mallStore = mall.NewMemStore()
 		logger.Warn("in-memory storage ready -- nothing will be persisted")
 		{
 			n, err := memRef.CountSkills(context.Background())
@@ -1717,6 +1736,15 @@ func main() {
 			os.Exit(1)
 		}
 
+		// The item mall's records (round 837): their tables migrate
+		// themselves.
+		sqlMall, err := mall.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening mall store", "error", err)
+			os.Exit(1)
+		}
+		mallStore = sqlMall
+
 		accounts, registerer = sqlAccounts, sqlAccounts
 		chars, refItems = sqlChars, sqlRef
 		dropSrc = sqlRef
@@ -1916,6 +1944,10 @@ func main() {
 	session.StartJobWeekly(ctx, *jobWeekDay, *jobWeekHour, logger)
 	// The specialty trade (round 801).
 	specialtyShops := loadSpecialty(ctx, logger, *specialtyShopsCSV, *quotationCSV, *tradeScale, *specialGoods, refItems, chars)
+	// The item mall (round 837).
+	mallCatalogue := loadMall(logger, *mallCSV)
+	silkStore := silkStoreOf(logger, accounts, *startingSilk)
+	go pruneTakeLog(ctx, logger, mallStore)
 	session.SetItemRecordTypes(func(ref uint32) ([4]int, bool) {
 		it, err := refItems.GetItem(context.Background(), int64(ref))
 		if err != nil || it == nil {
@@ -2419,7 +2451,7 @@ func main() {
 		Chars: chars, Inv: inv, Equip: eq, Avatars: avatars, Items: refItems, Skills: skills,
 		Monsters: monsters, World: hub, Mana: manaTracker, Berserk: zerkTracker, Levels: levelTable,
 		Species: gmSpecies(), Zones: gmZones(), Logger: logger,
-		Uniques: gmUniques(), Parties: parties, Guilds: guilds,
+		Uniques: gmUniques(), Parties: parties, Guilds: guilds, Silk: silkStore,
 	}
 	if speciesTable != nil {
 		gmDeps.LookupSpecies = gmSpeciesLookup(speciesTable, speciesSkills)
@@ -2621,6 +2653,11 @@ func main() {
 		// operation's 0x7034 types 4, 5 and 0xd.
 		session.ExchangeHandler(session.ExchangeDeps{Chars: chars, Inv: inv, Items: refItems, Hub: hub, Trades: trades, Parties: parties}),
 		session.FriendHandler(chars, friends, hub),
+		// The item mall (round 837, session/mall.go): 0x7121, the silk
+		// history 0x711a and the item chest (OURS 0x00D0..0x00D4); the buy is
+		// the item operation's 0x7034 type 0x18.
+		session.MallHandler(session.MallDeps{Catalogue: mallCatalogue, Store: mallStore, Silk: silkStore, Chars: chars,
+			Inv: inv, Items: refItems, Hub: hub, Trades: trades, Logger: logger}),
 		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
 		session.MotionHandler(hub),

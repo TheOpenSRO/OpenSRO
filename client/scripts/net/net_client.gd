@@ -502,6 +502,30 @@ signal exchange_result(op: int, code: int)
 signal exchange_moved(result: Dictionary)
 ## 0x3087 / 0x3088 (1 for done, else the code).
 signal exchange_closed(code: int)
+## Round 837: the item mall (MallNet). 0xB121's result; a mall buy's 0xB034
+## (MallNet.decode_buy_result's dictionary, or {"ok": false, "code"}); the
+## silk balances (0x3153) and an outside change (0x3154); the silk history
+## (0xB11A).
+signal mall_open_result(ok: bool)
+signal mall_buy_result(result: Dictionary)
+signal mall_silk(silk: int, gift: int, point: int)
+signal mall_silk_changed(change: Dictionary)
+signal mall_history(result: Dictionary)
+## OURS, the item chest: its list, a take's result, the take log and an
+## item that went into it.
+signal chest_list(entries: Array)
+signal chest_take_result(result: Dictionary)
+signal chest_log(entries: Array)
+signal chest_received(entry: Dictionary)
+## Round 837 (OURS): the server's big notice (0x00D8 {u16 len, text}).
+signal big_notice(text: String)
+const OP_BIG_NOTICE := 0x00D8
+## A big notice that arrived before anything listened (it comes with the
+## world entry, during the loading screen): the HUD shows it when built.
+var pending_big_notice := ""
+## The last 0x3153: [silk, gift silk, point] (CGInterface +0x4ac/+0x4b0/+0x4b4).
+var silk_balances: Array = [0, 0, 0]
+var has_silk := false
 
 ## Round 834: friends on the retail wire (FriendNet). The list (0x3305 and
 ## every 0x3B07 applied to it), kept in last_friend_list.
@@ -1157,6 +1181,8 @@ func _forget_session_lists() -> void:
 	last_guild_result = null
 	last_friend_list = []
 	has_friend_list = false
+	silk_balances = [0, 0, 0]
+	has_silk = false
 	quest.reset()
 	# A new entry starts with no COS (round 803 fix): the server tells this
 	# entry's own with 0x30C8 after it. Kept, the COS of the last session --
@@ -1930,6 +1956,26 @@ func exchange_approve() -> void:
 func exchange_cancel() -> void:
 	_send(ExchangeNet.OP_CANCEL)
 
+## Round 837: the item mall's requests (MallNet).
+func mall_open(group: int) -> void:
+	_send(MallNet.OP_OPEN, MallNet.encode_open(group))
+
+func mall_buy(b: MallNet.Buy) -> void:
+	_send(MallNet.OP_ITEM_MOVE, MallNet.encode_buy(b))
+	_item_op_kinds.append("mall")
+
+func mall_history_request(kind: int, period: int) -> void:
+	_send(MallNet.OP_HISTORY, MallNet.encode_history(kind, period))
+
+func chest_list_request() -> void:
+	_send(MallNet.OP_CHEST_LIST)
+
+func chest_take(entry: int) -> void:
+	_send(MallNet.OP_CHEST_TAKE, MallNet.encode_chest_take(entry))
+
+func chest_log_request() -> void:
+	_send(MallNet.OP_CHEST_LOG)
+
 ## Round 834: ask a player by name (0x7302; the Add box, the target menu,
 ## /friend and /invite).
 func friend_ask(target_name: String) -> void:
@@ -2617,6 +2663,15 @@ func _dispatch(p: Packet) -> void:
 		CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK:
 			cos_reply.emit(p.opcode, CosNet.decode_reply(p.data))
 		ItemOpNet.OP_MOVE_RESULT:
+			# Round 837: a mall buy (type 0x18), and a refusal while one is
+			# the oldest move out.
+			var mb := MallNet.decode_buy_result(p.data)
+			if not mb.is_empty() or (p.data.size() >= 3 and p.data[0] == 2 and not _item_op_kinds.is_empty()
+					and _item_op_kinds[0] == "mall"):
+				if not _item_op_kinds.is_empty() and _item_op_kinds[0] == "mall":
+					_item_op_kinds.pop_front()
+				mall_buy_result.emit(mb if not mb.is_empty() else {"ok": false, "code": MallNet.decode_failure(p.data)})
+				return
 			# Round 834: the exchange's moves (types 4, 5, 0xd), and a refusal
 			# while one is the oldest move out.
 			var em := ExchangeNet.decode_move_result(p.data)
@@ -2663,6 +2718,34 @@ func _dispatch(p: Packet) -> void:
 			buyback_failed.emit(int(f.get("code", 0)))
 		UseItemNet.OP_RESULT:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
+		MallNet.OP_OPEN_RESULT:
+			mall_open_result.emit(MallNet.decode_open_result(p.data))
+		MallNet.OP_SILK:
+			var sb := MallNet.decode_silk(p.data)
+			if sb.size() == 3:
+				silk_balances = sb
+				has_silk = true
+				mall_silk.emit(int(sb[0]), int(sb[1]), int(sb[2]))
+		MallNet.OP_SILK_CHANGED:
+			mall_silk_changed.emit(MallNet.decode_silk_changed(p.data))
+		MallNet.OP_HISTORY_RESULT:
+			mall_history.emit(MallNet.decode_history(p.data))
+		MallNet.OP_CHEST_LIST_RESULT:
+			chest_list.emit(MallNet.decode_chest_list(p.data))
+		MallNet.OP_CHEST_TAKE_RESULT:
+			chest_take_result.emit(MallNet.decode_chest_take(p.data))
+		MallNet.OP_CHEST_LOG_RESULT:
+			chest_log.emit(MallNet.decode_chest_log(p.data))
+		MallNet.OP_CHEST_RECEIVED:
+			chest_received.emit(MallNet.decode_chest_received(p.data))
+		OP_BIG_NOTICE:
+			if p.data.size() >= 2:
+				var bn := p.data.decode_u16(0)
+				var bt := p.data.slice(2, 2 + bn).get_string_from_utf8()
+				if big_notice.get_connections().is_empty():
+					pending_big_notice = bt
+				else:
+					big_notice.emit(bt)
 		AutoPotionNet.OP_CONFIG:
 			auto_potion_config.emit(p.data)
 		CharacterLockNet.OP_REPLY:
