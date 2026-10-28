@@ -29,6 +29,8 @@ type MemStore struct {
 	// autoPotion is each character's auto potion settings (AutoPotionStore,
 	// round 786); none is nil.
 	autoPotion map[int64][]byte
+	// service is each character's service state (ServiceStore, round 838).
+	service map[int64]*memService
 }
 
 // NewMemStore returns an empty MemStore.

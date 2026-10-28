@@ -445,6 +445,9 @@ var guild_data := GuildData.new()
 var guild_ops := GuildOpsState.new()
 ## Round 824: the guilds' crests (CrestCache; World3D gives it silk.dat).
 var crest_cache := CrestCache.new()
+## Round 838 (OURS): the service scrolls' messages -- the service lines, the
+## plate colours, the rename at character select (ServiceNet).
+var service := ServiceNet.new()
 ## The game clock (round 786, GameClock): kept here so it outlives a scene
 ## change, as retail keeps it in its CGame config object.
 var game_clock := GameClock.new()
@@ -1772,6 +1775,9 @@ func _init() -> void:
 			guild_data.crest_rev = u.rev
 			guild_data.changed.emit())
 	register_handler(CrestNet.OP_CREST_DATA, func(data: PackedByteArray) -> void: crest_cache.handle_data(data))
+	# Round 838 (OURS): the service scrolls' lines, plate colours and rename.
+	service.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
+	service.register_with(self)
 	guild_data.changed.connect(func() -> void:
 		if guild_data.in_guild:
 			crest_cache.note_guild(guild_data.guild_name, guild_data.guild_id, guild_data.crest_rev))

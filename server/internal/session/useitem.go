@@ -1099,6 +1099,13 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if !it.CanUse {
 			return fail("that item cannot be used")
 		}
+		// Round 838 (servicescroll.go, OURS): the private server's service
+		// scrolls, by code name -- before the COS, composite and return
+		// scroll kinds, since eight of them are typed 3/3/3/1 and were cast
+		// as return scrolls.
+		if svc, ok := serviceScrollOf(it); ok {
+			return useServiceScroll(ctx, sess, characterID, it, held, have, svc)
+		}
 		// Round 795 (cossummon.go, cosuse.go): a pet item or a ride scroll
 		// calls its COS out; a pet's potion, food, revival or clock acts on
 		// the pet it names.

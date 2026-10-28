@@ -2738,6 +2738,9 @@ func _try_initialize_pk2_ui() -> void:
 	# Using a potion returns the new HP/MP directly, so the bars redraw
 	# without a follow-up stats round trip, and the bag count is refreshed.
 	NetClient.use_item_result.connect(_on_use_item_result)
+	# Round 838 (OURS): the service scrolls' lines and the plate colours.
+	NetClient.service.line.connect(func(text: String) -> void: _log_system(text))
+	NetClient.service.plate_colours_changed.connect(_on_plate_colours_changed)
 	# QA: once a kill has dropped a potion into the bag, drink it, so a render
 	# can show a consumable actually working. Never fires in real play.
 	if OS.get_environment("OPENSRO_QA_USEITEM") != "":
@@ -9376,7 +9379,8 @@ func _refresh_player_name_plate() -> void:
 		who = _plate_alias
 	var plate := _name_plate(job_plate_text(who, js), top)
 	# Round 811: the original's plate (_retail_plate_look), white (c:0x9cfd50).
-	_retail_plate_look(plate, PLAYER_NAME_COLOUR)
+	# Round 838 (OURS): a Name Color scroll's colour instead.
+	_retail_plate_look(plate, _plate_name_colour(_own_id()))
 	player.add_child(plate)
 	if was_shown:
 		plate.visible = true
@@ -9575,7 +9579,9 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 		# 1`), bit 1 the bold glyph set (FUN_008b39e0: +0x60 & 2 selects the
 		# font's style 2 -- INFERRED the client's weight-600 variant, MEASURED
 		# 2-px stems in the user's private-server picture).
-		_retail_plate_look(title, JOB_TITLE_COLOUR, false)
+		# Round 838 (OURS): a Title Color scroll's colour instead of the yellow.
+		var title_colour := _plate_title_colour(_own_id() if holder == label else int(holder.get_meta("character_id", -1)))
+		_retail_plate_look(title, title_colour, false)
 		var bold := _plate_bold_font()
 		if bold != null:
 			title.font = bold
@@ -9586,7 +9592,7 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 		shadow.fixed_size = true
 		shadow.no_depth_test = true
 		shadow.outline_size = 0
-		shadow.modulate = Color(0.0, 0.0, 0.0, JOB_TITLE_COLOUR.a)
+		shadow.modulate = Color(0.0, 0.0, 0.0, title_colour.a)
 		shadow.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 		shadow.render_priority = label.render_priority
 		shadow.layers = OverlayView.BIT
@@ -9738,6 +9744,40 @@ func _on_guild_grant_result(d: Dictionary) -> void:
 
 ## A character's guild line changed (NetClient.guild_line_changed): the own
 ## plate re-made, or that player's line.
+## Round 838 (OURS): a character's name colour -- a Name Color scroll's
+## (NetClient.service, 0x013B), else the plate's own white.
+func _plate_name_colour(uid: int) -> Color:
+	return NetClient.service.name_colour(uid, PLAYER_NAME_COLOUR)
+
+## Round 838 (OURS): a character's title colour -- a Title Color scroll's,
+## else the title's own yellow.
+func _plate_title_colour(uid: int) -> Color:
+	return NetClient.service.title_colour(uid, JOB_TITLE_COLOUR)
+
+## Round 838 (OURS): 0x013B changed uid's colours -- its plate's name (the
+## hostile colour of an opposed job still wins, as before) and its title.
+func _on_plate_colours_changed(uid: int) -> void:
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		_refresh_player_name_plate()
+		return
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) != uid:
+			continue
+		var node: Node3D = _other_bodies[id]
+		if node == null or not is_instance_valid(node):
+			continue
+		var label := node.get_node_or_null("Name") as Label3D
+		if label != null:
+			label.modulate = Color(0, 0, 0, 0) # forces _colour_enemy_plate's redraw
+			_colour_enemy_plate(node, JobPvpNet.enemy_name(_own_job_state(), _their_job_state(int(id))))
+		var title := node.get_node_or_null("JobTitle") as Label3D
+		if title != null:
+			var c := _plate_title_colour(uid)
+			title.modulate = c
+			var shadow := title.get_node_or_null("Shadow") as Label3D
+			if shadow != null:
+				shadow.modulate = Color(0.0, 0.0, 0.0, c.a)
+
 func _on_guild_line_changed(uid: int) -> void:
 	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
 		_refresh_player_name_plate()
@@ -10578,7 +10618,8 @@ func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	var js := int(job.get("state", UserSpawnNet.JOB_STATE_NONE))
 	var plate := _name_plate(job_plate_text(char_name, js), top, not batched)
 	# Round 811: the original's plate; a batched one's box is the batch's.
-	_retail_plate_look(plate, PLAYER_NAME_COLOUR, not batched)
+	# Round 838 (OURS): a Name Color scroll's colour instead of the white.
+	_retail_plate_look(plate, _plate_name_colour(int(node.get_meta("character_id", -1))), not batched)
 	# Round 802: an opposed job's name in the hostile colour (c:0x9cfd50).
 	if JobPvpNet.enemy_name(_own_job_state(), js):
 		plate.modulate = JobPvpNet.ENEMY_NAME_COLOUR
@@ -14668,7 +14709,7 @@ func _recolour_enemy_plates() -> void:
 func _colour_enemy_plate(body: Node3D, enemy: bool) -> void:
 	var label := body.get_node_or_null("Name") as Label3D
 	if label != null:
-		var want: Color = JobPvpNet.ENEMY_NAME_COLOUR if enemy else PLAYER_NAME_COLOUR
+		var want: Color = JobPvpNet.ENEMY_NAME_COLOUR if enemy else _plate_name_colour(int(body.get_meta("character_id", -1)))
 		if label.modulate == want:
 			return
 		label.modulate = want
@@ -18217,6 +18258,26 @@ func _qa_job_step() -> void:
 					else:
 						NetClient.use_item(NetClient.current_character_name, k)
 					break
+		# Round 838 (QA only): bag_rclick:<ITEM_CODE> right-clicks the first
+		# bag cell holding that code, as a real mouse press and release over
+		# the cell (the inventory window open: panel:inventory first).
+		elif what.begins_with("bag_rclick:"):
+			var rcode := what.substr(11)
+			var cell: Control = null
+			var inv_win: HudWindow = _hud_panels._windows.get("inventory")
+			if inv_win != null and inv_win.visible:
+				for c in inv_win.find_children("*", "Control", true, false):
+					var cc := c as Control
+					if cc.has_meta("inv_slot") and cc.has_meta("inv_item_id") and cc.is_visible_in_tree() \
+							and _hud_panels.item_code_for_id(int(cc.get_meta("inv_item_id"))) == rcode:
+						cell = cc
+						break
+			if cell == null:
+				print("QA SERVICE: tick %d bag_rclick %s: no visible bag cell holds it" % [_qa_tick, rcode])
+			else:
+				var rclick_at := cell.get_global_rect().get_center()
+				print("QA SERVICE: tick %d bag_rclick %s at slot %d, %s" % [_qa_tick, rcode, int(cell.get_meta("inv_slot")), str(rclick_at)])
+				_qa_push_click(rclick_at, MOUSE_BUTTON_RIGHT, true)
 		elif what == "plates":
 			var holders: Array = [[player, player.get_node_or_null("Name") if player != null else null]]
 			for oid in _other_bodies:
@@ -18230,9 +18291,10 @@ func _qa_job_step() -> void:
 				var holder: Node = plate if h[0] == player else h[0]
 				var title := holder.get_node_or_null("JobTitle") as Label3D
 				var mk := holder.get_node_or_null("JobMark") as Sprite3D
-				print("QA JOB: tick %d plate '%s' title '%s' (offset %.1f) mark %s (offset %.1f)" % [_qa_tick, plate.text,
+				print("QA JOB: tick %d plate '%s' title '%s' (offset %.1f) mark %s (offset %.1f) colours name #%s title #%s" % [_qa_tick, plate.text,
 					title.text if title != null else "", title.offset.x if title != null else 0.0,
-					mk.texture.resource_path.get_file() if mk != null and mk.texture != null else "none", mk.offset.x if mk != null else 0.0])
+					mk.texture.resource_path.get_file() if mk != null and mk.texture != null else "none", mk.offset.x if mk != null else 0.0,
+					plate.modulate.to_html(), title.modulate.to_html() if title != null else "-"])
 				# Round 808: the heights over the holder's feet (a rider's plate is raised).
 				var feet := (h[0] as Node3D).global_position.y
 				var head := "-"

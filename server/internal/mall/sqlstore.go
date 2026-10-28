@@ -62,7 +62,7 @@ type SQLStore struct {
 // NewSQLStore opens the store on a pool shared with the other stores and
 // creates its tables.
 func NewSQLStore(db *sql.DB) (*SQLStore, error) {
-	if err := txn.Migrate(db, schema); err != nil {
+	if err := txn.Migrate(db, schema, lotterySchema); err != nil {
 		return nil, fmt.Errorf("mall: creating schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil
@@ -78,7 +78,7 @@ func (s *SQLStore) TxDB() *sql.DB {
 
 // TruncateForTest clears the tables. Not for production use.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE mall_purchases, mall_chest, mall_chest_log`)
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE mall_purchases, mall_chest, mall_chest_log, mall_lottery`)
 	return err
 }
 

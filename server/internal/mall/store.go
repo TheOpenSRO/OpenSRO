@@ -95,6 +95,8 @@ type MemStore struct {
 	log       map[int64][]memLog
 	nextID    int64
 	seq       int64
+	// lottery is the Silk Lottery's registrations (LotteryStore, round 838).
+	lottery []memLottery
 }
 
 // memPurchase and memLog carry a sequence number, so an undo removes its own

@@ -211,6 +211,7 @@ func mallBuy(ctx context.Context, sess *gateway.Session, data []byte) error {
 	for _, c := range res.chest {
 		sendTo(sess, mall.OpChestReceived, mall.EncodeChestReceived(c.ItemID, c.Quantity))
 	}
+	lotteryRegistered(sess, res.plan)
 	d.logger().Info("mall: purchase", "character", e.CharacterID, "account", acct, "package", req.Code,
 		"quantity", req.Quantity, "own", res.plan.Pay.Own, "gift", res.plan.Pay.Gift, "point", res.plan.Pay.Point,
 		"gold", res.plan.Pay.Gold, "slots", res.slots, "chest", len(res.chest))
@@ -265,6 +266,11 @@ func (d *MallDeps) purchase(ctx context.Context, cid, acct int64, req mall.BuyRe
 			if code != 0 {
 				return refuse(code)
 			}
+			return err
+		}
+		// Round 838 (servicescroll.go, OURS): a Silk Lottery ticket
+		// registers with its purchase.
+		if err := registerLottery(ctx, d.Store, cid, acct, plan, d.now()); err != nil {
 			return err
 		}
 		return d.Store.RecordPurchase(ctx, mall.Purchase{AccountID: acct, CharacterID: cid,

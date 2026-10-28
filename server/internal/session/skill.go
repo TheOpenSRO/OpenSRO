@@ -1947,34 +1947,45 @@ func SkillStateHandlerWithRefs(chars character.Store, store skill.Store, skillRe
 		if errStr != "" {
 			return send(&SkillStateResult{Error: errStr})
 		}
-		owned, err := chars.GetByID(ctx, characterID)
-		if err != nil {
-			return send(&SkillStateResult{Error: "lookup failed"})
-		}
-		points, err := store.SkillPoints(ctx, characterID)
-		if err != nil {
-			return send(&SkillStateResult{Error: "lookup failed"})
-		}
-		levels, err := store.MasteryLevels(ctx, characterID)
-		if err != nil {
-			return send(&SkillStateResult{Error: "lookup failed"})
-		}
-		result := &SkillStateResult{Level: int32(owned.Level), SkillPoints: int32(points)}
-		// Every mastery the character HOLDS, a level-0 one included -- retail's
-		// character data carries the whole _CharSkillMastery list (seeded at
-		// level 0 by _AddNewChar), and the client's skill window lays out
-		// exactly that list (FUN_006aa3e0 walks the server's mastery map into
-		// one tab manager per TabID, READ). Round 691: the client picks the
-		// race's masteries from this; another race's stored row is not sent.
-		for _, id := range skill.DefaultMasteries(characterCountry(owned)) {
-			result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(levels[id])})
-		}
-		sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
-		if learned, err := store.KnownSkills(ctx, characterID); err == nil {
-			result.KnownSkills = purgeUnholdable(ctx, store, skillRef, characterID, characterCountry(owned), learned)
+		result, errStr := buildSkillState(ctx, chars, store, skillRef, characterID)
+		if errStr != "" {
+			return send(&SkillStateResult{Error: errStr})
 		}
 		return send(result)
 	}
+}
+
+// buildSkillState is OpSkillStateResult's content for characterID (the
+// handler's, and round 838's push after a service scroll changed the skills);
+// a non-empty string is the refusal.
+func buildSkillState(ctx context.Context, chars character.Store, store skill.Store, skillRef SkillRefStore, characterID int64) (*SkillStateResult, string) {
+	owned, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return nil, "lookup failed"
+	}
+	points, err := store.SkillPoints(ctx, characterID)
+	if err != nil {
+		return nil, "lookup failed"
+	}
+	levels, err := store.MasteryLevels(ctx, characterID)
+	if err != nil {
+		return nil, "lookup failed"
+	}
+	result := &SkillStateResult{Level: int32(owned.Level), SkillPoints: int32(points)}
+	// Every mastery the character HOLDS, a level-0 one included -- retail's
+	// character data carries the whole _CharSkillMastery list (seeded at
+	// level 0 by _AddNewChar), and the client's skill window lays out
+	// exactly that list (FUN_006aa3e0 walks the server's mastery map into
+	// one tab manager per TabID, READ). Round 691: the client picks the
+	// race's masteries from this; another race's stored row is not sent.
+	for _, id := range skill.DefaultMasteries(characterCountry(owned)) {
+		result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(levels[id])})
+	}
+	sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
+	if learned, err := store.KnownSkills(ctx, characterID); err == nil {
+		result.KnownSkills = purgeUnholdable(ctx, store, skillRef, characterID, characterCountry(owned), learned)
+	}
+	return result, ""
 }
 
 // RaiseMasteryRequest is the OpRaiseMastery payload.
