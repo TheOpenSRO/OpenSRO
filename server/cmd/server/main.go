@@ -2622,7 +2622,7 @@ func main() {
 		// (session/scroll.go), the map option's points from -teleport-dir's
 		// optionalteleport.csv (SetRecallNetwork's table).
 		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper,
-			session.NewScrollCaster(chars, eq, hub, zerkTracker, logger)),
+			session.NewScrollCaster(chars, eq, hub, zerkTracker, logger).SetParties(parties)),
 		session.CompositeHandler(chars, refItems, compositeKeeper, zerkTracker, gmGate, hub),
 		// Round 768: the alchemy window's elixirs and stones (session/alchemy.go).
 		session.AlchemyHandler(session.AlchemyDeps{Hub: hub, Inv: inv, Items: refItems, Options: magicOptions, Logger: logger}),

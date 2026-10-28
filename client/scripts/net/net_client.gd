@@ -541,6 +541,9 @@ signal friend_failed(failure: FriendNet.Failure)
 signal friend_delete_result(ok: bool, value: int)
 ## Using a consumable: what it restored, and how many are left.
 signal use_item_result(result: UseItemNet.Result)
+## Round 838: the special reverse return scroll's saved locations
+## (UseItemNet.decode_reverse_saved).
+signal reverse_saved_result(result: Dictionary)
 ## The Auto potion window's saved settings (round 786, AutoPotionNet): the
 ## seven bytes retail's character data carries.
 signal auto_potion_config(settings: PackedByteArray)
@@ -858,7 +861,7 @@ func _passes_group(p: Packet) -> bool:
 	match p.opcode:
 		InventoryNet.OP_LIST_RESULT, InventoryNet.OP_MOVE_RESULT, StatsNet.OP_STATS_RESULT, EquipmentNet.OP_RESULT, \
 				EquipmentNet.OP_REPAIR_RESULT, ShopNet.OP_BUY_RESULT, ShopNet.OP_LIST_RESULT, ShopNet.OP_SELL_RESULT, \
-				ItemOpNet.OP_MOVE_RESULT, ItemOpNet.OP_BUYBACK_FAIL, UseItemNet.OP_RESULT, CompositeNet.OP_STATE, \
+				ItemOpNet.OP_MOVE_RESULT, ItemOpNet.OP_BUYBACK_FAIL, UseItemNet.OP_RESULT, UseItemNet.OP_REVERSE_SAVED_RESULT, CompositeNet.OP_STATE, \
 				CompositeNet.OP_USE_RESULT, CompositeNet.OP_END, StorageNet.OP_LIST_RESULT, StorageNet.OP_DEPOSIT_RESULT, \
 				StorageNet.OP_WITHDRAW_RESULT, StorageNet.OP_GOLD_RESULT, CombatNet.OP_ATTACK_RESULT, CombatNet.OP_BERSERK_RESULT, \
 				CombatNet.OP_MONSTER_DAMAGED, CombatNet.OP_MONSTER_DIED, CombatNet.OP_LOOT_DROPPED, CombatNet.OP_MONSTER_LEFT, \
@@ -1467,6 +1470,12 @@ func load_auto_potion() -> void:
 ## The casting bar's cancel (round 779): retail's 0x705B, no body.
 func scroll_cancel() -> void:
 	_send(UseItemNet.OP_SCROLL_CANCEL, PackedByteArray())
+
+## Round 838: list the special scroll's saved locations, or register where
+## the player stands into `saved_slot` (UseItemNet.SAVED_*), the scroll in
+## `bag_slot`.
+func reverse_saved(action: int, saved_slot: int, bag_slot: int) -> void:
+	_send(UseItemNet.OP_REVERSE_SAVED, UseItemNet.encode_reverse_saved(action, saved_slot, bag_slot))
 
 ## Spends one use of a granted item (the fill an Energy of life scroll grants).
 func composite_use(char_name: String, item_id: int) -> void:
@@ -2529,6 +2538,10 @@ func _dispatch(p: Packet) -> void:
 			var token := ActionNet.decode_ping_echo(p.data)
 			if token >= 0:
 				ping_echo.emit(token)
+		UseItemNet.OP_REVERSE_SAVED_RESULT:
+			var rs := UseItemNet.decode_reverse_saved(p.data)
+			if not rs.is_empty():
+				reverse_saved_result.emit(rs)
 		UseItemNet.OP_SCROLL_CANCEL_RESULT:
 			# READ: FUN_008727a0 shows nothing for a refusal (round 779).
 			print("NetClient: scroll cancel refused (code %d)" % UseItemNet.decode_cancel_result(p.data))

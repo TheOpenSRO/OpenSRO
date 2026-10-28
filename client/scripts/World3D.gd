@@ -2994,6 +2994,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.cos_item_requested.connect(_use_cos_item)
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
+	# Round 838: the special scroll's lists name places by their zone.
+	_hud_panels.region_namer = _zone_name_for_region
 	# The return scrolls' casting bar's cancel (round 779): 0x705B.
 	_hud_panels.cast_cancel_requested.connect(_on_cast_cancel_requested)
 	_setup_console_and_help()

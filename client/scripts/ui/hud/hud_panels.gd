@@ -5450,10 +5450,14 @@ func crest_used(code_name: String) -> void:
 func open_reverse_return_box(slot: int) -> ReverseReturnBox:
 	close_reverse_return_box()
 	var box := ReverseReturnBox.new()
-	box.build(_builder, slot)
+	# Round 838: the special scroll's box has the add-on's two more buttons.
+	var special := is_special_reverse_scroll(_bag_item_id_at_slot(slot))
+	box.build(_builder, slot, special)
 	box.option_chosen.connect(func(option: int) -> void:
 		reverse_return_requested.emit(slot, option, 0))
 	box.map_requested.connect(_on_reverse_map_requested)
+	box.party_requested.connect(_open_reverse_party.bind(slot))
+	box.saved_requested.connect(_open_reverse_saved.bind(slot))
 	add_child(box)
 	if box.is_inside_tree():
 		box.position = box.screen_position(get_viewport_rect().size)
@@ -5461,6 +5465,150 @@ func open_reverse_return_box(slot: int) -> ReverseReturnBox:
 	print("REVERSEBOX opened for bag slot %d: %s" % [slot, ", ".join(
 		["LastReturn", "LastDeath", "MapPoint", "Cancel"].map(func(m): return "'%s'" % box.caption_of(m)))])
 	return box
+
+## Round 838: whether item_id is the special reverse return scroll
+## (ITEM_MALL_REVERSE_RETURN_SCROLL_SPECIAL: the plain scroll's row but its
+## id, code and icon -- the server's IsSpecialReverseReturnScroll).
+func is_special_reverse_scroll(item_id: int) -> bool:
+	return item_id >= 0 and item_code_for_id(item_id).to_upper().ends_with("_REVERSE_RETURN_SCROLL_SPECIAL")
+
+# --- The special scroll's add-on options (round 838, OURS; ReverseAddonBox) --
+
+## Injected by the world: a region id's zone name (World3D's
+## _zone_name_for_region), for the positions the lists show.
+var region_namer: Callable
+## The add-on list up, or null.
+var _reverse_addon: ReverseAddonBox = null
+## What the saved-location list asked for is wanted for: "register" or
+## "move", "" when nothing waits.
+var _reverse_saved_wanted := ""
+var _reverse_saved_bag := -1
+var _reverse_saved_slots: Array = []
+
+func reverse_addon_box() -> ReverseAddonBox:
+	if _reverse_addon != null and is_instance_valid(_reverse_addon) and not _reverse_addon.is_queued_for_deletion():
+		return _reverse_addon
+	return null
+
+func _show_reverse_addon(box: ReverseAddonBox) -> void:
+	var old := reverse_addon_box()
+	if old != null:
+		old.close()
+	add_child(box)
+	if box.is_inside_tree():
+		box.position = box.screen_position(get_viewport_rect().size)
+	_reverse_addon = box
+
+## A place's words: its zone's name, else the region id (a dungeon's too).
+func _reverse_place_text(region: int) -> String:
+	if region == 0:
+		return ""
+	var zone := ""
+	if region > 0 and (region & 0x8000) == 0 and region_namer.is_valid():
+		zone = String(region_namer.call(region >> 8, region & 0xff))
+	return zone if zone != "" else "Region %d" % region
+
+## Option 4: "Movement of Party Members" -- one Move row per other member,
+## "Character Name (Position)"; a row sends the use with the member's JID.
+func _open_reverse_party(slot: int) -> void:
+	close_reverse_return_box()
+	var party: PartyState = NetClient.party
+	var rows: Array = []
+	var jids: Array = []
+	if party != null and party.in_party:
+		for m in party.members:
+			if m.jid == party.own_jid:
+				continue
+			rows.append({"text": "%s  (%s)" % [m.member_name, _reverse_place_text(m.region)], "enabled": true})
+			jids.append(m.jid)
+	if rows.is_empty():
+		# OURS words: the add-on's own line for this is not in the archive.
+		system_notice.emit("There is no party member to move to.")
+		return
+	var box := ReverseAddonBox.new()
+	box.header = "%s / %s / %s" % [_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_CHARACTER_NAME_TEXT", "Character Name"),
+		_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_POSITION_TEXT", "Position"),
+		_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_MOVE_TEXT", "Move")]
+	box.build_list(_builder, slot, "VPLUS_UI_REVERSE_PARTY_MEMBERS_CAPTION_TEXT", "Movement of Party Members", "", "", rows)
+	box.name = "ReversePartyBox"
+	box.row_chosen.connect(func(i: int) -> void:
+		print("REVERSEBOX party member %d chosen for bag slot %d" % [int(jids[i]), slot])
+		reverse_return_requested.emit(slot, ReverseReturnBox.OPTION_PARTY, int(jids[i]))
+		box.close())
+	_show_reverse_addon(box)
+
+## Option 5: the "User Setting Window" -- Setting Location / Movement, each
+## asking the server for the slots first.
+func _open_reverse_saved(slot: int) -> void:
+	close_reverse_return_box()
+	if not NetClient.reverse_saved_result.is_connected(_on_reverse_saved_result):
+		NetClient.reverse_saved_result.connect(_on_reverse_saved_result)
+	var box := ReverseAddonBox.new()
+	box.build_list(_builder, slot, "VPLUS_UI_REVERSE_SAVED_LOCATION_CAPTION_TEXT", "User Setting Window",
+		"VPLUS_UI_REVERSE_SAVED_LOCATION_DESC_TEXT", "Setting Location: Register current location...", [
+			{"text": _resolve_ui("VPLUS_UI_REVERSE_SAVED_LOCATION_BUTTON_SETTING_TEXT", "Setting Location")},
+			{"text": _resolve_ui("VPLUS_UI_REVERSE_SAVED_LOCATION_BUTTON_MOVEMENT_TEXT", "Movement")}])
+	box.name = "ReverseSavedBox"
+	box.row_chosen.connect(func(i: int) -> void:
+		_reverse_saved_wanted = "register" if i == 0 else "move"
+		_reverse_saved_bag = slot
+		NetClient.reverse_saved(UseItemNet.SAVED_LIST, 0, slot))
+	_show_reverse_addon(box)
+
+## The server's slots: a refusal is said; a registration says the add-on's
+## line; then the list the player asked for is shown.
+func _on_reverse_saved_result(r: Dictionary) -> void:
+	if not bool(r.get("ok", false)):
+		system_notice.emit(String(r.get("reason", "")))
+		return
+	_reverse_saved_slots = r.get("slots", [])
+	if bool(r.get("registered", false)):
+		system_notice.emit(_resolve_ui("VPLUS_MSG_REVERSE_SCROLL_LOCATION_UPDATED", "Saved location has got updated."))
+	print("REVERSEBOX saved slots: %s" % [_reverse_saved_slots.map(func(s): return int(s["region"]))])
+	match _reverse_saved_wanted:
+		"register":
+			_open_reverse_slot_list(true)
+		"move":
+			_open_reverse_slot_list(false)
+
+func _open_reverse_slot_list(register: bool) -> void:
+	var rows: Array = []
+	for s in _reverse_saved_slots:
+		var region := int(s["region"])
+		var label := _reverse_place_text(region) if region != 0 \
+			else _resolve_ui("VPLUS_UI_REVERSE_EMPTY_SLOT_TEXT", "Empty Slot")
+		rows.append({"text": "%d. %s" % [rows.size() + 1, label], "enabled": register or region != 0})
+	var box := ReverseAddonBox.new()
+	if register:
+		box.build_list(_builder, _reverse_saved_bag, "VPLUS_UI_REVERSE_REGISTER_CAPTION_TEXT", "Location Registration Information Window",
+			"VPLUS_UI_REVERSE_REGISTER_DESC_TEXT", "Click the button to save location.", rows)
+	else:
+		box.build_list(_builder, _reverse_saved_bag, "VPLUS_UI_REVERSE_MOVE_CAPTION_TEXT", "Location Movement Information Window",
+			"VPLUS_UI_REVERSE_MOVE_DESC_TEXT", "You may move to the saved location on the button.", rows)
+	box.name = "ReverseRegisterBox" if register else "ReverseMoveBox"
+	var bag := _reverse_saved_bag
+	box.row_chosen.connect(func(i: int) -> void:
+		if not register:
+			print("REVERSEBOX saved slot %d chosen for bag slot %d" % [i, bag])
+			_reverse_saved_wanted = ""
+			reverse_return_requested.emit(bag, ReverseReturnBox.OPTION_SAVED, i)
+			box.close()
+			return
+		var send := func() -> void:
+			print("REVERSEBOX registering slot %d" % i)
+			NetClient.reverse_saved(UseItemNet.SAVED_REGISTER, i, bag)
+		if i < _reverse_saved_slots.size() and int(_reverse_saved_slots[i]["region"]) != 0:
+			var ask := PartyMatchConfirm.new()
+			if ask.build(_builder, _resolve_ui("VPLUS_UI_REVERSE_REGISTER_CONFIRMATION_DESC_TEXT", "Do you confirm updating this slot?")):
+				ask.name = "ReverseRegisterConfirm"
+				ask.confirmed.connect(send)
+				add_child(ask)
+				ask.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+				return
+			ask.free()
+		send.call())
+	box.cancelled.connect(func() -> void: _reverse_saved_wanted = "")
+	_show_reverse_addon(box)
 
 ## The box up, or null.
 func reverse_return_box() -> ReverseReturnBox:

@@ -71,7 +71,7 @@ func (r *UseItemRequest) Encode() []byte {
 	out := append(encodeStrings(r.CharacterName), encodeInt64(int64(r.InventorySlot))...)
 	if r.Option != 0 {
 		out = append(out, r.Option)
-		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget {
+		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget || r.Option == ReverseOptionParty || r.Option == ReverseOptionSaved {
 			out = binary.LittleEndian.AppendUint32(out, r.Target)
 		}
 		if r.Option == UseOptionCrest {
@@ -1036,6 +1036,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// The casting bar's cancel (round 779, scroll.go): retail's 0x705B.
 		if p.Opcode == OpScrollCancel && scrolls != nil {
 			return scrolls.cancelRequest(sess)
+		}
+		// Round 838 (scroll838.go): the special reverse return scroll's saved
+		// locations.
+		if p.Opcode == OpReverseSaved && scrolls != nil {
+			return scrolls.savedRequest(ctx, sess, inv, items, p)
 		}
 		if p.Opcode != OpUseItem {
 			return nil
