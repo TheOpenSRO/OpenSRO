@@ -75,6 +75,9 @@ const PANELS := {
 	# belongs to GDR_ALCHEMYBOX, which the client never shows.
 	"alchemy": [AlchemyWindow.ENCHANT_2DT, ""],
 	"exchange": ["resinfo\\ifexchange.txt", "Exchange"],
+	# Round 839: the stall window, CIFStall (GDR_STALL, ID 33), shown by the
+	# server's answers (StallController).
+	"stall": ["resinfo\\ifstall.txt", "Stall"],
 	# Opened by Escape, not a hotkey (see _unhandled_key_input). The system
 	# menu the original raises over everything: Option, Help, Restart, Exit.
 	"system": ["resinfo\\ifsystemwnd.txt", "System"],
@@ -207,6 +210,8 @@ const REGISTRY_FRAMES := {
 	"exchange": {"name": "GDR_EXCHANGE",
 		"defines": ["APPLY_EXCHANGE_UPDATE_1TH", "UI_UPDATE_2009_FIRST"]},
 	"system": {"name": "GDR_SYSTEM"},
+	# Round 839: ginterface's IFStall section, 467x490, UIIT_STT_STALL.
+	"stall": {"name": "GDR_STALL"},
 	"partymatch": {"name": "GDR_PARTY_MATCH"},
 	"autopotion": {"name": "GDR_AUTO_POTION"},
 	# Round 789: GDR_GRANT_MAGIC_ATTRIBUTE (CIFGrantMagicAttributeWnd), 272x395,
@@ -4038,6 +4043,160 @@ func exchange_button_enabled(enabled: bool) -> void:
 	if b != null:
 		b.disabled = not enabled
 
+# --- The stall (round 839; StallController, docs/protocol/stall.md) ------------
+
+signal stall_system_line(text: String, line_type: int)
+var stall: StallController
+
+func _stall() -> StallController:
+	if stall == null:
+		stall = StallController.new(self)
+	return stall
+
+## The stall window is on screen (c:0x77c8e0's test: World3D takes no world
+## click, walk, attack or action while it is).
+func stall_window_shown() -> bool:
+	return stall != null and stall.shown()
+
+## The action window's Stall (World3D checked its gates).
+func start_stall() -> String:
+	return _stall().start()
+
+## The window shown (built at its first use), centred and moved (0, -60)
+## (c:0x79be20(1), 0x79be96).
+func open_stall_window() -> void:
+	var was := _window_shown(StallController.WINDOW)
+	var window := open(StallController.WINDOW)
+	if window == null:
+		return
+	StallWindowView.wire(self, window, _stall())
+	if not was:
+		window.centre()
+		window.position += StallController.OPEN_SHIFT
+	window.move_to_front()
+
+func close_stall_window() -> void:
+	var window: HudWindow = _windows.get(StallController.WINDOW)
+	if window != null:
+		window.hide()
+	for box_name in ["StallTitleInput", "StallGreetingInput"]:
+		var b := get_node_or_null(box_name)
+		if b != null:
+			b.queue_free()
+
+func stall_draw(c: StallController) -> void:
+	StallWindowView.draw(self, _windows.get(StallController.WINDOW), c)
+
+func stall_chat_add(text: String, colour: Color) -> void:
+	StallWindowView.chat_add(_windows.get(StallController.WINDOW), text, colour)
+
+## A stall refusal's text (category 10, c:0x7b8b40 case 10): a game line;
+## codes with no text show nothing.
+func stall_code_message(code: int) -> void:
+	var key := String(StallNet.CODE_TEXTS.get(code, ""))
+	if key == "":
+		print("HudPanels: stall code 0x%x -- the client shows nothing for it" % code)
+		return
+	var text := _resolve_ui(key, "")
+	if text != "":
+		stall_system_line.emit(text, HudSystemMessage.TYPE_GAME)
+
+## A participant's name for the user list (the spawn record's, else the id).
+func stall_player_name(uid: int) -> String:
+	if uid == (int(NetClient.own_character_id) & 0xffffffff):
+		return NetClient.current_character_name
+	var g: Dictionary = NetClient.user_guilds.get(uid, {})
+	var n := String(g.get("name", ""))
+	return n if n != "" else str(uid)
+
+## An item's TypeID1..4 as an Array (the group lookup).
+func item_type_ids(item_id: int) -> Array:
+	return Array(item_types(item_id))
+
+## fmntidgroupmapdata.txt from Media.pk2, read once (StallNet.parse_tid_groups).
+var _stall_tid_groups = null
+
+func stall_tid_groups() -> Dictionary:
+	if _stall_tid_groups != null:
+		return _stall_tid_groups
+	_stall_tid_groups = {}
+	var media: Pk2Reader = _builder.media_archive() if _builder != null else null
+	if media == null:
+		return _stall_tid_groups
+	var e := ObjectLoader.find_file(media, StallController.TID_GROUP_TABLE)
+	if e == null:
+		print("HudPanels: no %s" % StallController.TID_GROUP_TABLE)
+		return _stall_tid_groups
+	var raw: PackedByteArray = media.read_file(e)
+	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+		raw = raw.slice(2)
+	var text := TextDecode.utf16(raw)
+	if text.is_empty():
+		text = raw.get_string_from_utf8()
+	_stall_tid_groups = StallNet.parse_tid_groups(text)
+	print("HudPanels: fmntidgroupmapdata %d rows" % (_stall_tid_groups as Dictionary).size())
+	return _stall_tid_groups
+
+## The title (false) or greeting (true) box, centred over the screen.
+func open_stall_text_box(greeting: bool, prefill: String, on_ok: Callable, on_cancel: Callable) -> HudCosBox:
+	if _builder == null:
+		return null
+	var box := HudCosBox.new()
+	if not box.build_stall_input(_builder, greeting, prefill):
+		box.queue_free()
+		return null
+	box.accepted.connect(on_ok)
+	box.cancelled.connect(on_cancel)
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
+## "Establish as an avatar stall?" (UIIT_MSG_PREMIUM_AVATAR_SHOP_USE,
+## MsgBoxSimple type 3, c:0x793fac..0x794029); `answered(yes)` either way
+## (c:0x788ae0). OURS: the box's size is the question box's default.
+func open_stall_avatar_question(answered: Callable) -> PartyMatchConfirm:
+	if _builder == null:
+		answered.call(false)
+		return null
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _resolve_ui("UIIT_MSG_PREMIUM_AVATAR_SHOP_USE", "Establish as an avatar stall?")):
+		box.free()
+		answered.call(false)
+		return null
+	box.name = "StallAvatarQuestion"
+	box.confirmed.connect(func() -> void: answered.call(true))
+	box.declined.connect(func() -> void: answered.call(false))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
+## The register, price or buy box (StoreMessageBox's stall kinds) over the
+## inventory's box spot; `on_ok(count, price)`.
+func open_stall_box(kind: int, item_id: int, count: int, price: int, on_ok: Callable) -> StoreMessageBox:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	var host := StallController.WINDOW if _window_shown(StallController.WINDOW) else "inventory"
+	var box := _open_store_box(host, "StallBox", kind, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
+		"stack": maxi(1, count), "price": price,
+	}, func(_n: int) -> void: pass)
+	if box == null:
+		return null
+	box.confirmed.connect(func(n: int) -> void: on_ok.call(n, box.price_value))
+	return box
+
+## A stall slot's icon: picked up onto the cursor (to be put down on the
+## bag: the owner's take-back while modifying, a visitor's buy).
+func _on_stall_cell_input(event: InputEvent, icon: TextureRect, index: int) -> void:
+	if stall == null or not stall.active or not stall.entries.has(index):
+		return
+	if _is_pick_click_on(event, icon) and (held_icon == null or not held_icon.is_holding()):
+		if stall.own and stall.open:
+			return
+		var e: StallNet.Entry = stall.entries[index]
+		pick_up_icon({"kind": "stall", "index": index, "item_id": e.item.ref_item_id, "icon": icon.texture},
+			icon.texture, icon, (event as InputEventMouseButton).global_position)
+
 # --- The item mall (round 837; ItemMallController, docs/protocol/item_mall.md) ---
 
 var item_mall: ItemMallController
@@ -4566,8 +4725,12 @@ func _exchange_dim(cell: Node, on: bool) -> void:
 	if dim != null:
 		dim.visible = on
 
-## Whether a bag slot is offered (disabled while it is, 0x6b3f00).
+## Whether a bag slot is offered (disabled while it is, 0x6b3f00). Round
+## 839: a slot listed in this player's own stall is marked by the same call
+## (0x6b3f00(slot, 1) while listed, c:0x87a6f0's unmark after a sale).
 func exchange_offered(slot: int) -> bool:
+	if stall != null and stall.listed_bag_slot(slot):
+		return true
 	return exchange != null and exchange.active and exchange.offered_slots.has(slot)
 
 ## The client's own refusal before the box (SOItem::FUN_008baf10): the
@@ -5157,7 +5320,7 @@ func _interface_shown() -> bool:
 ## to a sound, so its close button stays silent. The .2dt windows (quest,
 ## world map, community: 0x46d7c0; the guild: 0x5b4cc0) only hide, silently;
 ## the alchemy window's is close_alchemy.
-const SILENT_CLOSE_BUTTONS := ["exchange"]
+const SILENT_CLOSE_BUTTONS := ["exchange", "stall"]
 
 func _wire_close_sound(panel_id: String, window: HudWindow) -> void:
 	if panel_id in SILENT_CLOSE_BUTTONS or not window.has_signal("closed"):
@@ -6388,6 +6551,9 @@ func _item_instance(where: String, slot: int) -> Object:
 	# Round 834: the exchange's grids (ExchangeController).
 	if where == "exchange_my" or where == "exchange_other":
 		return exchange.instance_at(where == "exchange_my", slot) if exchange != null else null
+	# Round 839: the stall's slots (StallController).
+	if where == "stall":
+		return stall.instance_at(slot) if stall != null else null
 	if slot < 0 or not _INSTANCE_LISTS.has(where):
 		return null
 	var list = NetClient.get(_INSTANCE_LISTS[where])
@@ -7140,6 +7306,9 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 				_confirm_deposit(from, item_id, qty)    # 0x46 -> 0x13: type 2
 			elif _over_window("exchange", at) and exchange_mode():
 				_exchange().offer_from_bag(from, item_id, qty)   # 0x46 -> 0x1a: type 4
+			elif _over_window(StallController.WINDOW, at) and stall != null and stall.active:
+				# Round 839: CIFStall::vslot_028 (c:0x6b9ec0 -> 0x6b9be0).
+				print("HudPanels: stall drop -> %s" % stall.drop_from_bag(from, item_id, qty, at))
 			elif not _over_any_window(at):
 				held_dropped_outside.emit(what, at)     # a quick slot, or the ground (OPEN)
 		"exchange":
@@ -7147,6 +7316,12 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 			# 0x46, CIFInventory::vslot_028 c:0x6b5b80): type 5.
 			if on_bag and exchange_mode():
 				exchange.remove_index(int(what.get("index", -1)), false)
+		"stall":
+			# Round 839: a stall slot (kind 0x21) put down on the bag
+			# (c:0x6b5e91..0x6b5eff the owner's type 3; c:0x6b2070 a
+			# visitor's buy box).
+			if on_bag and stall != null:
+				print("HudPanels: stall slot to the bag -> %s" % stall.slot_to_bag(int(what.get("index", -1))))
 		"worn":
 			if on_bag:
 				_drop_worn_item(from, at)
@@ -7372,6 +7547,36 @@ func _bag_cell_of_item(item_id: int) -> Control:
 		if _bag_item_id_at_slot(_bag_page * BAG_PAGE_SLOTS + i) == item_id:
 			return grid.get_child(i) as Control
 	return null
+
+## Round 839 (QA_INPUT's bagempty): the shown page's first empty bag cell
+## that no other window covers, or null.
+func qa_empty_bag_cell() -> Control:
+	var window: HudWindow = _windows.get("inventory")
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control if window != null else null
+	if grid == null:
+		return null
+	for i in range(grid.get_child_count()):
+		var cell := grid.get_child(i) as Control
+		if _bag_item_id_at_slot(_bag_page * BAG_PAGE_SLOTS + i) < 0 and cell != null \
+				and _over_inventory_window(cell.get_global_rect().get_center()):
+			return cell
+	return null
+
+## Round 839 (QA_INPUT's stallicon / stallmodify): slot i's icon or modify
+## button in the stall window, or null.
+func qa_stall_slot_control(i: int, what: String) -> Control:
+	var window: HudWindow = _windows.get(StallController.WINDOW)
+	if window == null or not window.visible:
+		return null
+	var display := window.node("GDR_STALL_DISPLAY") as Control
+	var slot := display.get_node_or_null("StallSlot%d" % i) as Control if display != null else null
+	if slot == null:
+		return null
+	if what == "modify":
+		return slot.get_node_or_null("Body/GDR_STALLSLOT_MODIFY") as Control
+	if what == "slot":
+		return slot
+	return slot.get_node_or_null("Body/GDR_STALLSLOT_ICON/ItemIcon") as Control
 
 ## Round 838 (QA_INPUT's worn): the worn slot's icon, or null.
 func qa_worn_icon(slot: int) -> Control:

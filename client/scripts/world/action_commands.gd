@@ -77,7 +77,6 @@ const PANELS := {ALCHEMY: "alchemy", AUTO_POTION: "autopotion", ACADEMY: "academ
 ## The system line for an action OpenSRO has no system for (OURS).
 const UNSUPPORTED := {
 	AUTO_RUN: "Auto Run does nothing in the original client either.",
-	STALL: "Stalls are not available yet on this server.",
 	HELPER: "The helper mark is not available yet on this server.",
 	FORT_RETURN: "Fortress return is not available yet: this server has no fortress war.",
 	FREE_PVP: "Free PvP is not available yet on this server.",
@@ -108,6 +107,9 @@ static func plan(id: int) -> Dictionary:
 			return {"kind": "auto_select"}
 		EXCHANGE:
 			return {"kind": "exchange"}
+		STALL:
+			# Round 839: the stall (StallController.start after World3D's gates).
+			return {"kind": "stall"}
 		PARTY:
 			return {"kind": "party"}
 		AUTO_GET:

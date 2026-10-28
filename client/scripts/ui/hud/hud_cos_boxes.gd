@@ -76,6 +76,33 @@ const GRANT_CANCEL_AT := Vector2(183, 124)
 const FRIEND_TITLE_RECT := Rect2(1, 49, 305, 12)
 const FRIEND_EDIT_RECT := Rect2(19, 73, 266, 20)
 
+## Round 839: the stall's two MsgBoxInsertMsg boxes (CIFMessageBox mode 4, ID
+## 1000, built by c:0x6ba7d0 and filled by UI_SILKMALL 0x641f40 purposes 0
+## and 1; READ, docs/protocol/stall.md): title UIIT_STT_INPUT_BOX, centred;
+## the title box 280x144 -- the prompt UIIT_STT_INSERT_STALL_NAME at (27, 47)
+## 225x14, control 11 at (11, 68) 257x25, 12 at (15, 72) 249x17, the edit at
+## (18, 70) 243x20 taking 40 characters, OK (55, 104), Cancel (143, 104) --
+## and the greeting box 420x144 -- UIIT_STT_INSERT_OWNER_MESSAGE at (0, 48)
+## 420x12, 11 at (9, 66) 400x28, 12 at (13, 70) 392x20, the edit at (16, 68)
+## 386x20 taking 64, OK (128, 104), Cancel (216, 104). The prompts' colour is
+## not set on this path (OURS: the naming box's).
+const STALL_TITLE_SIZE := Vector2(280, 144)
+const STALL_TITLE_PROMPT_RECT := Rect2(27, 47, 225, 14)
+const STALL_TITLE_FRAME_RECT := Rect2(11, 68, 257, 25)
+const STALL_TITLE_BG_RECT := Rect2(15, 72, 249, 17)
+const STALL_TITLE_EDIT_RECT := Rect2(18, 70, 243, 20)
+const STALL_TITLE_OK_AT := Vector2(55, 104)
+const STALL_TITLE_CANCEL_AT := Vector2(143, 104)
+const STALL_TITLE_MAX := 40
+const STALL_GREETING_SIZE := Vector2(420, 144)
+const STALL_GREETING_PROMPT_RECT := Rect2(0, 48, 420, 12)
+const STALL_GREETING_FRAME_RECT := Rect2(9, 66, 400, 28)
+const STALL_GREETING_BG_RECT := Rect2(13, 70, 392, 20)
+const STALL_GREETING_EDIT_RECT := Rect2(16, 68, 386, 20)
+const STALL_GREETING_OK_AT := Vector2(128, 104)
+const STALL_GREETING_CANCEL_AT := Vector2(216, 104)
+const STALL_GREETING_MAX := 64
+
 const CLEAN_SIZE := Vector2(388, 144)
 const CLEAN_SHIFT := 40.0
 
@@ -174,6 +201,36 @@ func build_friend_add_input(builder: UiBuilder, prefill: String) -> bool:
 		edit.call_deferred("grab_focus")
 	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), NAME_OK_AT, press_ok)
 	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), NAME_CANCEL_AT, press_cancel)
+	return true
+
+## Round 839: the stall's title box (purpose 0) or greeting box (purpose 1),
+## its edit holding `prefill`. False without the layout.
+func build_stall_input(builder: UiBuilder, greeting: bool, prefill: String) -> bool:
+	name = "StallGreetingInput" if greeting else "StallTitleInput"
+	var box_size := STALL_GREETING_SIZE if greeting else STALL_TITLE_SIZE
+	if not build_shell(builder, box_size, "UIIT_STT_INPUT_BOX", "UIIT_STT_INPUT_BOX", LAYOUT, "MsgBoxInsertMsg"):
+		return false
+	_add_background(builder, box_size)
+	var title := node("GDR_MB_INSERT_MSG_TITLE")
+	if title != null:
+		_place(title, STALL_GREETING_PROMPT_RECT if greeting else STALL_TITLE_PROMPT_RECT)
+		var key := "UIIT_STT_INSERT_OWNER_MESSAGE" if greeting else "UIIT_STT_INSERT_STALL_NAME"
+		var l := builder.set_static_text(title, text(key, key))
+		if l != null:
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			l.add_theme_color_override("font_color", NAME_TITLE_COLOUR)
+	_rebuild(builder, "MsgBoxInsertMsg", "GDR_MB_INSERT_MSG_EDIT_FRAME", STALL_GREETING_FRAME_RECT if greeting else STALL_TITLE_FRAME_RECT)
+	_place(node("GDR_MB_INSERT_MSG_EDIT_BG"), STALL_GREETING_BG_RECT if greeting else STALL_TITLE_BG_RECT)
+	edit = node("GDR_MB_INSERT_MSG_EDIT") as LineEdit
+	if edit != null:
+		_place(edit, STALL_GREETING_EDIT_RECT if greeting else STALL_TITLE_EDIT_RECT)
+		edit.max_length = STALL_GREETING_MAX if greeting else STALL_TITLE_MAX
+		edit.text = prefill
+		edit.caret_column = prefill.length()
+		edit.text_submitted.connect(func(_t: String) -> void: press_ok())
+		edit.call_deferred("grab_focus")
+	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), STALL_GREETING_OK_AT if greeting else STALL_TITLE_OK_AT, press_ok)
+	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), STALL_GREETING_CANCEL_AT if greeting else STALL_TITLE_CANCEL_AT, press_cancel)
 	return true
 
 ## Builds the guild's grant-name box for `member` (round 814). False without

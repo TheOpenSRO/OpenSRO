@@ -2867,6 +2867,9 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 834: the exchange's banners and system lines.
 	_hud_panels.exchange_banner.connect(func(t: String) -> void: _show_banner("exchange", t))
 	_hud_panels.exchange_system_line.connect(func(t: String, ty: int) -> void: _log_system(t, ty))
+	# Round 839: the stalls (StallController, StallWorld).
+	_hud_panels.stall_system_line.connect(func(t: String, ty: int) -> void: _log_system(t, ty))
+	_wire_stalls()
 	# Round 834: friends' boxes.
 	_hud_panels.friend_ask_requested.connect(friend_ask)
 	_hud_panels.friend_answer_requested.connect(friend_answer)
@@ -13399,6 +13402,11 @@ func _refresh_other_loop(character_id: int) -> void:
 func _other_loop_action(character_id: int) -> int:
 	var gait: Dictionary = _other_gaits.get(character_id, {})
 	var moving := bool(gait.get("moving", false))
+	# Round 839: a stalling owner's vendor loop (state 0xF, type 80), when its
+	# body has one.
+	if not moving and _stall_world != null and gait.has("body") and _stall_world.stalling(character_id) \
+			and _body_animation_for(gait["body"], StallWorld.VENDOR_ACTION, gait["group"]) != null:
+		return StallWorld.VENDOR_ACTION
 	if moving:
 		return BsrReader.AnimationEntry.TYPE_WALK if _other_walking.has(character_id) else BsrReader.AnimationEntry.TYPE_RUN
 	if _other_stance_until.has(character_id) and not _riders.has(character_id):
@@ -14434,6 +14442,9 @@ func _other_player_collider(height: float) -> StaticBody3D:
 func _pick_character(screen_pos: Vector2) -> String:
 	if not NetClient.is_connected_to_server() or _objects_hidden:
 		return ""
+	# Round 839: c:0x77c8e0 -- no target click while a stall window is shown.
+	if _hud_panels != null and _hud_panels.stall_window_shown():
+		return "stall window"
 	var include_self := Input.is_key_pressed(KEY_SHIFT)
 	var mask := MONSTER_COLLISION_LAYER | OTHER_PLAYER_COLLISION_LAYER
 	# The self body exists before any Shift-click needs it: a body added in
@@ -14634,6 +14645,20 @@ func _cos_is_enemy(uid: int, alt: bool) -> bool:
 ## A click on another player (c:0x792f00's player branch).
 func _click_player(character_id: int, char_name: String) -> String:
 	var alt := Input.is_key_pressed(KEY_ALT)
+	# Round 839: a stalling player (c:0x793570 at 0x7938d5): selected, then
+	# its stall entered -- at once within 100.0, else after a walk there.
+	if _stall_world != null and _stall_world.stalling(character_id) and not _player_is_enemy(character_id, alt):
+		_select_character(character_id, char_name)
+		if _hud_panels != null and _hud_panels.alchemy_window() != null and _hud_panels.alchemy_window().visible:
+			# Category 0x12, 0x5417 (READ c:0x7938d5); its key INFERRED from
+			# the name beside 0x5416's.
+			_log_system(_resolve_any_text("UIIT_MSG_REINFORCERR_CANNOT_JOIN_FLEAMARKET", ""), HudSystemMessage.TYPE_GAME)
+			return "stall refused: the alchemy window is open"
+		var body: Node3D = _other_bodies.get(character_id)
+		var d := player.global_position.distance_to(body.global_position) if body != null and is_instance_valid(body) else 1e9
+		return "stall: " + _stall_world.click(character_id, d, func() -> void:
+			if body != null and is_instance_valid(body):
+				_issue_walk(body.global_position))
 	var what := JobPvpNet.player_click(_selected_character == character_id, alt,
 		_player_is_enemy(character_id, alt), _in_own_party(character_id), _player_level)
 	if what == "select" or _selected_character != character_id:
@@ -17998,6 +18023,12 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       (round 791); rbagitem:<id> right-clicks it, the
 #                       item's use (round 838)
 #   gachacard           left click the Magic POP pane's first card (round 838)
+#   playerclick:<name>  left click the middle of that player's body (round 839)
+#   stallicon:<i> / stallmodify:<i> / stallslot:<i>  left click stall slot i's
+#                       icon, modify button or the slot (round 839)
+#   bagempty            left click the shown bag page's first empty cell
+#   actionslot:<id>     right click the action window's button (round 839)
+#   stallclose          left click the stall window's X (round 839)
 #   worn:<slot>         left click that worn slot's icon (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
@@ -18934,6 +18965,60 @@ func _qa_input_step() -> void:
 				var centre := cell.get_global_rect().get_center()
 				_qa_input_report = "%s at %s" % [action, centre]
 				_qa_push_click(centre, MOUSE_BUTTON_RIGHT if kind == "rbagitem" else MOUSE_BUTTON_LEFT)
+		"playerclick":
+			# Round 839: left click the middle of another player's body, as a
+			# player clicks it (the pick, the cursor's class and the click's
+			# dispatch decide what it does).
+			var pbody: Node3D = null
+			for cid in _other_bodies:
+				var nb = _other_bodies[cid]
+				if nb != null and is_instance_valid(nb) and String((nb as Node).get_meta("character_name", "")) == arg:
+					pbody = nb
+			if pbody == null or camera_3d == null:
+				_qa_input_report = action + " (no such player drawn)"
+			else:
+				var top := float(pbody.get_meta(STALL_TOP_META, 1.8 * PLAYER_SCALE_RATIO))
+				var at := camera_3d.unproject_position(pbody.global_position + Vector3(0, top * 0.5, 0))
+				_qa_input_report = "%s at %s" % [action, at]
+				_qa_push_click(at, MOUSE_BUTTON_LEFT)
+		"stallicon", "stallmodify", "stallslot":
+			# Round 839: left click a stall slot's icon, its modify button, or
+			# the slot itself (an empty one, to put a held item on).
+			var what := "icon" if kind == "stallicon" else ("modify" if kind == "stallmodify" else "slot")
+			var sc := _hud_panels.qa_stall_slot_control(int(arg), what) if _hud_panels != null else null
+			if sc == null:
+				_qa_input_report = action + " (no stall slot shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, sc.get_global_rect().get_center()]
+				_qa_push_click(sc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"stallclose":
+			# Round 839: left click the stall window's X.
+			var sw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null
+			var sx := sw.get_node_or_null("CloseButton") as Control if sw != null and sw.visible else null
+			if sx == null:
+				_qa_input_report = action + " (no stall window shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, sx.get_global_rect().get_center()]
+				_qa_push_click(sx.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"actionslot":
+			# Round 839: right click the action window's button for that
+			# action id (its use, HudActionPane._on_slot_input).
+			var ap = _hud_panels.action_pane if _hud_panels != null else null
+			var aslot: Control = (ap.slots as Dictionary).get(int(arg)) if ap != null else null
+			if aslot == null or not aslot.is_visible_in_tree():
+				_qa_input_report = action + " (no such action button shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, aslot.get_global_rect().get_center()]
+				_qa_push_click(aslot.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+		"bagempty":
+			# Round 839: left click the shown bag page's first empty cell (to
+			# put a held icon down there).
+			var ec := _hud_panels.qa_empty_bag_cell() if _hud_panels != null else null
+			if ec == null:
+				_qa_input_report = action + " (no empty cell shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, ec.get_global_rect().get_center()]
+				_qa_push_click(ec.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
 		"gachacard":
 			# Round 838: left click the Magic POP window's inventory cell holding
 			# the first Magic POP card (GachaWindow.card_cell).
@@ -22319,6 +22404,8 @@ func _process(_delta: float) -> void:
 	_step_slope_tilts(_delta)
 	# The auto potion's interface timers (round 786, 0xb933d0's pass).
 	_auto_potion.step(Time.get_ticks_msec())
+	# Round 839: a walk to a stall sends 0x70B3 once in reach (StallWorld).
+	_stall_tick()
 	# The time of day (round 786, DayCycle): the environment eased toward the
 	# clock's phase, every frame.
 	_day_tick(_delta)
@@ -22745,6 +22832,10 @@ func _physics_step(delta: float) -> void:
 		if is_moving:
 			# The walk (type 1) while this player walks (round 781).
 			action = BsrReader.AnimationEntry.TYPE_WALK if _walk_mode else BsrReader.AnimationEntry.TYPE_RUN
+		elif _stall_world != null and _stall_world.stalling(_own_id()) \
+				and _body_animation_for(_player_body, StallWorld.VENDOR_ACTION, _player_anim_group()) != null:
+			# Round 839: this player's own stall, the vendor loop (type 80).
+			action = StallWorld.VENDOR_ACTION
 		elif _sit.sitting:
 			# The sitting loop, under the sit-down one-shot while that runs.
 			action = BsrReader.AnimationEntry.TYPE_SITTING
@@ -23426,6 +23517,9 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	other_entities.add_child(node)
 	var sp2 := Time.get_ticks_usec() if FrameSplit.on else 0
 	_other_bodies[character_id] = node
+	# Round 839: a stalling owner's booth and title from the start (the
+	# dressing places the title again over the built body).
+	_stall_refresh.call_deferred(character_id)
 	# Round 771: made while V is held, it starts hidden (not one frame shown).
 	if _objects_hidden and KeyMap.hides_under_v("other_player"):
 		node.visible = false
@@ -23812,6 +23906,12 @@ func _ghost_other_now(character_id: int) -> void:
 	var re := bool((args as Dictionary).get("reghost", false))
 	var old: CrowdGpu.Body = crowd.body_of(node)
 	if old != null and not re:
+		return
+	# Round 839: a stalling owner is left to the dressing (its vendor loop
+	# and booth are the full path's, StallWorld).
+	if old == null and _stall_world != null and _stall_world.stalling(character_id):
+		_ghost_refused[character_id] = true
+		_page_unwait(character_id)
 		return
 	var body := String(node.get_meta("body", ""))
 	if _body_assets(body).is_empty():
@@ -24495,6 +24595,9 @@ func _dress_other(character_id: int) -> void:
 	if video_options().value(VideoOptions.SHADOW) >= 2:
 		CharacterBlobs.set_casting(node, false)
 	_light_character(node)
+	# Round 839: a stalling owner gets its booth and title (StallWorld).
+	node.set_meta(STALL_TOP_META, top)
+	_stall_refresh(character_id)
 	if dt != null:
 		dt.mark("plate_click_light")
 	# The auras of the buffs this client holds for them go on the new body
@@ -25784,6 +25887,11 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 	# shows its own line from the 0xB025 OK instead (0x877340, case 4).
 	if u.type == HudChat.TYPE_PARTY and u.sender_name == NetClient.current_character_name:
 		return
+	# Round 839: type 9 is the stall window's chat module (0x778a10).
+	if u.type == StallNet.CHAT_TYPE:
+		if _hud_panels != null and _hud_panels.stall != null:
+			_hud_panels.stall.chat_line(u.sender_name, u.message_text)
+		return
 	if u.type == HudChat.TYPE_WHISPER:
 		# R replies to this name (KeyMap slot 20; _key_whisper_reply).
 		_last_whisperer = u.sender_name
@@ -25801,6 +25909,9 @@ func _on_chat_result(r: ChatNet.Result) -> void:
 	if r == null:
 		return
 	print("CHAT RESULT: type %d index %d ok %s code 0x%x" % [r.type, r.index, str(r.ok), r.code])
+	# Round 839: a stall line's answer -- its line comes back as 0x3026.
+	if r.type == StallNet.CHAT_TYPE:
+		return
 	if r.type == HudChat.TYPE_GLOBAL:
 		if r.ok:
 			if NetClient.current_character_name != "":
@@ -26994,7 +27105,9 @@ func _hover_kind_at(screen_pos: Vector2) -> String:
 			# client yet (GameCursor.player_kind).
 			# Round 802: IsHostile(Alt) with the job rules (_player_is_enemy).
 			var hid := int(who.get_meta("character_id", -1))
-			return GameCursor.player_kind(_player_is_enemy(hid, Input.is_key_pressed(KEY_ALT)), _in_own_party(hid), false)
+			# Round 839: a stalling player's pouch (0xa3).
+			return GameCursor.player_kind(_player_is_enemy(hid, Input.is_key_pressed(KEY_ALT)), _in_own_party(hid),
+				_stall_world != null and _stall_world.stalling(hid))
 	var talk_node := _talk_ray_at(screen_pos)["node"] as Node
 	if talk_node != null and _hover_held(talk_node, "gate" if talk_node.has_meta("gate_point_id") else "npc"):
 		return "gate" if talk_node.has_meta("gate_point_id") else "talk"
@@ -28516,6 +28629,10 @@ const MOVE_BLOCKING_STATES := 0xc1 | 0x4000
 ## filters it is not read.
 func _own_move_blocked() -> bool:
 	if _trade_established:
+		return true
+	# Round 839: c:0x77c8e0 -- no walk while a stall window is shown (the
+	# server drops a move at INTERACTMODE 2 and 4 too, s:0x4b0ea0).
+	if _hud_panels != null and _hud_panels.stall_window_shown():
 		return true
 	var id := _own_id()
 	if id < 0:
@@ -33214,6 +33331,8 @@ func _run_action(action_id: int) -> String:
 				what = _action_auto_select()
 			"exchange":
 				what = _action_exchange()
+			"stall":
+				what = _action_stall()
 			"party":
 				what = _action_party()
 			"auto_get":
@@ -33286,6 +33405,77 @@ func _action_auto_select() -> String:
 ## selection.
 func _action_exchange() -> String:
 	return exchange_request(_selected_character)
+
+## Stall (0x793b00 case 0x3f1, READ): a job suit refuses it (category 10,
+## 0x3c3b), the alchemy window (category 0x12, 0x5416); then the avatar
+## stall's question or the title box (StallController.start). The +0x7bc
+## refusal (0x1834) is not made: what sets that byte is OPEN (exchange.md).
+func _action_stall() -> String:
+	if _hud_panels == null or not NetClient.is_connected_to_server():
+		return "not connected"
+	if _own_job_state() != JobPvpNet.STATE_NONE:
+		_hud_panels.stall_code_message(0x3c3b)
+		return "refused: a job suit"
+	if _hud_panels.alchemy_window() != null and _hud_panels.alchemy_window().visible:
+		_log_system(_resolve_any_text("UIIT_MSG_REINFORCERR_CANNOT_OPEN_FLEAMARKET", ""), HudSystemMessage.TYPE_GAME)
+		return "refused: the alchemy window is open"
+	return _hud_panels.start_stall()
+
+# --- Round 839: the stalls (StallWorld, StallController) ------------------------
+
+const STALL_TOP_META := &"stall_plate_top"
+var _stall_world: StallWorld = null
+
+func _wire_stalls() -> void:
+	_stall_world = StallWorld.new(self)
+	var c := _hud_panels._stall()
+	NetClient.stall_open_result.connect(c.on_open_result)
+	NetClient.stall_close_result.connect(c.on_close_result)
+	NetClient.stall_leave_result.connect(c.on_leave_result)
+	NetClient.stall_entered.connect(c.on_entered)
+	NetClient.stall_buy_result.connect(c.on_buy_result)
+	NetClient.stall_updated.connect(c.on_updated)
+	NetClient.stall_event.connect(c.on_event)
+	NetClient.stall_appeared.connect(func(d: Dictionary) -> void:
+		_stall_refresh(int(d["owner"])))
+	NetClient.stall_gone.connect(func(d: Dictionary) -> void:
+		c.on_gone(d)
+		_stall_refresh(int(d["owner"])))
+	NetClient.stall_renamed.connect(func(d: Dictionary) -> void:
+		c.on_renamed(d)
+		_stall_refresh(int(d["owner"])))
+
+## The booth, title and loop of uid's body as its stall state says.
+func _stall_refresh(uid: int) -> void:
+	if _stall_world == null:
+		return
+	var own := _own_id() >= 0 and (uid & 0xffffffff) == (_own_id() & 0xffffffff)
+	var node: Node3D = player if own else _other_bodies.get(uid)
+	if node == null or not is_instance_valid(node):
+		print("STALL: %d has no body here (stalling %s)" % [uid, str(_stall_world.stalling(uid))])
+		return
+	# A ghost (round 756) is dressed now: its loop is swapped on the full
+	# path (_refresh_other_loop below).
+	if not own and _dress_ghost_now(uid):
+		return
+	var body := _player_body if own else String(node.get_meta("body", ""))
+	var top := float(node.get_meta(STALL_TOP_META, 0.0))
+	if own and _player_skeleton != null:
+		top = _skeleton_top(_player_skeleton)
+	if top <= 0.0:
+		top = 1.8 * PLAYER_SCALE_RATIO
+	_stall_world.apply(uid, node, _race_of_body(body), top)
+	var group := _player_anim_group() if own else String((_other_gaits.get(uid, {}) as Dictionary).get("group", "default"))
+	print("STALL: %d's vendor clip (type %d, %s, group %s): %s" % [uid, StallWorld.VENDOR_ACTION, body, group,
+		"found" if _body_animation_for(body, StallWorld.VENDOR_ACTION, group) != null else "none"])
+	if not own:
+		_refresh_other_loop(uid)
+
+func _stall_tick() -> void:
+	if _stall_world == null or _stall_world.pending_owner < 0 or player == null:
+		return
+	var body: Node3D = _other_bodies.get(_stall_world.pending_owner)
+	_stall_world.step(player.global_position.distance_to(body.global_position) if body != null and is_instance_valid(body) else -1.0)
 
 ## Party (0x793b00 case 0x3ef, READ): the main popup's party tab, then the
 ## party window's Invite (0x6d5970) -- create-and-invite out of a party,
