@@ -206,7 +206,7 @@ Retail items with real stats, blues, alchemy and potions.
 | Composite items | 🟡 Partial | Only the Energy of Life scroll kind works |
 | Avatars | ✅ Supported | Hat, dress, attachment and flag slots; worn avatars cover your gear for you and others, on the select screen too; avatar stats and blues apply |
 | Avatar magic options | ✅ Supported | The blacksmith grants avatar blues, free, up to the original's per-kind limits |
-| Devil's Spirit | 🟡 Partial | Worn, awakened and expires on time; its per-plus abilities and skill strip are missing |
+| Devil's Spirit | ✅ Supported | Worn, awakened and expires on time; its plus-level abilities and skill strip from the original server's own tables (the angel's spirits' missing +6..+10 options filled from their sibling spirits); its skills' buffs end when it is taken off |
 
 ## Economy
 
@@ -275,7 +275,7 @@ Pets, horses, the item mall's rides and the trade transports from the original's
 | Growth and fellow pets | ✅ Supported | Follow, fight what the owner attacks, gain EXP and level up, hunger, naming once |
 | Horses and rides | ✅ Supported | Horses, tigers, beetles, ostriches and the other ride scrolls: summoned at the owner's level bracket, ridden at the mount's speed; Walk or Run on a mount plays its walk or run (a pegasus flies only at a run); mounts, pets and monsters lean with the slope they stand on, by each one's own factors from the game's data, and a rider leans with its mount (players and NPCs stay upright, as retail) |
 | Pet controls | ✅ Supported | Pet window, status slot, command bar, the retail pet keys, pet potions (on the current pet, transports included), revival and clocks; the Test Items NPC sells pets and rides |
-| Trade transports | ✅ Supported | For a trader or thief in a suit: the goods bag sized by level, the 100 m leash, goods dropped when it dies or is dismissed, no teleport scrolls with a cart (the thief den's excepted) |
+| Trade transports | ✅ Supported | For a trader or thief in a suit: the original's one-slot goods bag (its size rule caps by level, its transports hold one stack), the 100 m leash, goods dropped when it dies or is dismissed, no teleport scrolls with a cart (the thief den's excepted) |
 
 ## Events / special
 
