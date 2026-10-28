@@ -139,7 +139,9 @@ func TestGachaDrawAndExchange(t *testing.T) {
 	}
 	play := func(npc uint32, gid uint32, slot byte, want []byte, what string) {
 		t.Helper()
-		c.send(OpGachaPlay, EncodeGachaPlay(npc, gid, slot))
+		req := binary.LittleEndian.AppendUint32(nil, npc)
+		req = binary.LittleEndian.AppendUint32(req, gid)
+		c.send(OpGachaPlay, append(req, slot))
 		if got := c.next(OpGachaPlayResult).Data; !bytes.Equal(got, want) {
 			t.Fatalf("%s: % x, want % x", what, got, want)
 		}
@@ -178,11 +180,10 @@ func TestGachaDrawAndExchange(t *testing.T) {
 	if got := c.next(OpGachaExchangeResult).Data; !bytes.Equal(got, fail(0x1c0f)) {
 		t.Fatalf("exchange at the machine: % x", got)
 	}
+	// A success sends nothing (s:0x4c8130); a refused draw after it is the
+	// barrier that says it was handled.
 	c.send(OpGachaExchange, binary.LittleEndian.AppendUint32(nil, gori.UID))
-	want := EncodeGachaExchanged([]GachaExchanged{{Slot: 13, Ref: 3705, Count: 1}, {Slot: 15, Ref: 3680, Count: 1}})
-	if got := c.next(OpGachaExchanged).Data; !bytes.Equal(got, want) {
-		t.Fatalf("exchange: % x, want % x", got, want)
-	}
+	play(machine.UID, 3916, 13+1, fail(0x1806), "the barrier after the exchange")
 	slots, _ = inv.List(ctx, c0.ID)
 	got = map[int]inventory.Slot{}
 	for _, s := range slots {

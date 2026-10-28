@@ -520,6 +520,12 @@ signal chest_list(entries: Array)
 signal chest_take_result(result: Dictionary)
 signal chest_log(entries: Array)
 signal chest_received(entry: Dictionary)
+## Round 838: Magic POP (GachaNet). The draw's 0xB118 (decode_play_result's
+## dictionary), Gori's refusal 0xB119 (the code) and a Visible prize's
+## notice 0x3120.
+signal gacha_play_result(result: Dictionary)
+signal gacha_exchange_failed(code: int)
+signal gacha_announce(ref: int, count: int)
 ## Round 837 (OURS): the server's big notice (0x00D8 {u16 len, text}).
 signal big_notice(text: String)
 const OP_BIG_NOTICE := 0x00D8
@@ -1995,6 +2001,14 @@ func chest_take(entry: int) -> void:
 func chest_log_request() -> void:
 	_send(MallNet.OP_CHEST_LOG)
 
+## Round 838: Magic POP's draw (0x7118) with the card in `bag_slot`, and
+## Gori's exchange (0x7119).
+func gacha_play(npc_uid: int, gacha_id: int, bag_slot: int) -> void:
+	_send(GachaNet.OP_PLAY, GachaNet.encode_play(npc_uid, gacha_id, bag_slot))
+
+func gacha_exchange(npc_uid: int) -> void:
+	_send(GachaNet.OP_EXCHANGE, GachaNet.encode_exchange(npc_uid))
+
 ## Round 834: ask a player by name (0x7302; the Add box, the target menu,
 ## /friend and /invite).
 func friend_ask(target_name: String) -> void:
@@ -2773,6 +2787,14 @@ func _dispatch(p: Packet) -> void:
 			chest_log.emit(MallNet.decode_chest_log(p.data))
 		MallNet.OP_CHEST_RECEIVED:
 			chest_received.emit(MallNet.decode_chest_received(p.data))
+		GachaNet.OP_PLAY_RESULT:
+			gacha_play_result.emit(GachaNet.decode_play_result(p.data))
+		GachaNet.OP_EXCHANGE_RESULT:
+			gacha_exchange_failed.emit(GachaNet.decode_failure(p.data))
+		GachaNet.OP_ANNOUNCE:
+			var ga := GachaNet.decode_announce(p.data)
+			if not ga.is_empty():
+				gacha_announce.emit(int(ga["ref"]), int(ga["count"]))
 		OP_BIG_NOTICE:
 			if p.data.size() >= 2:
 				var bn := p.data.decode_u16(0)

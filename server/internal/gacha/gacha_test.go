@@ -21,11 +21,11 @@ func archive() *Table {
 }
 
 func TestLoseSharesNormalised(t *testing.T) {
-	if got := archive().Shares(2); !reflect.DeepEqual(got, []int{1600, 4800, 7200, 10000}) {
+	if got := archive().shares(2); !reflect.DeepEqual(got, []int{1600, 4800, 7200, 10000}) {
 		t.Fatalf("set 2's running totals %v, want 1600/4800/7200/10000", got)
 	}
 	// An uneven set gives the remainder to its last row.
-	if got := Build([]Row{{Set: 3, Ratio: 1}, {Set: 3, Ratio: 1}, {Set: 3, Ratio: 1}}, nil).Shares(3); !reflect.DeepEqual(got, []int{3333, 6666, 10000}) {
+	if got := Build([]Row{{Set: 3, Ratio: 1}, {Set: 3, Ratio: 1}, {Set: 3, Ratio: 1}}, nil).shares(3); !reflect.DeepEqual(got, []int{3333, 6666, 10000}) {
 		t.Fatalf("thirds %v", got)
 	}
 }
@@ -73,8 +73,8 @@ func TestCSVRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(back.Rows(), archive().Rows()) || !reflect.DeepEqual(back.Maps(), archive().Maps()) {
-		t.Fatalf("round trip lost rows: %+v %+v", back.Rows(), back.Maps())
+	if !reflect.DeepEqual(back.Rows(), archive().Rows()) || !reflect.DeepEqual(back.maps, archive().maps) {
+		t.Fatalf("round trip lost rows: %+v %+v", back.Rows(), back.maps)
 	}
 }
 

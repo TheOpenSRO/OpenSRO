@@ -6250,6 +6250,11 @@ static func bag_pages(size: int) -> int:
 func _bag_size_shown() -> int:
 	return _bag_size if _bag_size > 0 else BAG_PAGE_SLOTS * BAG_MAX_PAGES
 
+## The bag's entries as the server last sent them (round 838: Magic POP's
+## inventory pane reads them).
+func bag_entries() -> Array:
+	return _bag_slots
+
 ## The page shown (a test hook and the QA log).
 func bag_page() -> int:
 	return _bag_page

@@ -106,9 +106,8 @@ func Build(rows []Row, maps []NPCMap) *Table {
 	return t
 }
 
-// Rows and Maps return what the table was built from.
+// Rows returns the item rows the table was built from.
 func (t *Table) Rows() []Row     { return t.rows }
-func (t *Table) Maps() []NPCMap  { return t.maps }
 func (t *Table) Len() (int, int) { return len(t.rows), len(t.maps) }
 
 // Machine reports the map entry of an NPC ref id: the NPC is a Magic POP
@@ -138,8 +137,8 @@ func (t *Table) Consolation(set int, roll2 int) (Row, bool) {
 	return rs[i].row, true
 }
 
-// Shares are the LOSE map's running totals of a set, in order (tests).
-func (t *Table) Shares(set int) []int {
+// shares are the LOSE map's running totals of a set, in order (tests).
+func (t *Table) shares(set int) []int {
 	var out []int
 	for _, c := range t.lose[set] {
 		out = append(out, c.upTo)

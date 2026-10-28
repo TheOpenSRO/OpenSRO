@@ -10878,6 +10878,7 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 		return {}
 	var model: String = _npc_models.get(rec.ref_id, "")
 	if model == "":
+		print("World3D: NPC ref=%d uid=%d not placed: no model in the NPC table" % [rec.ref_id, rec.uid])
 		return {}
 	var archive := _open_pk2_if_set()
 	if archive == null:
@@ -10887,8 +10888,11 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	# assembly and just copy a node (sharing its mesh/texture resources).
 	var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
 	if template == null:
-		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
+		# Round 838: a skinned object resource is an NPC body too (the Magic
+		# POP machine's type-3 .bsr; SkinnedBsrAssembler's skinned_object).
+		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true, false, 0, true)
 		if template == null:
+			print("World3D: NPC ref=%d uid=%d not placed: %s did not assemble" % [rec.ref_id, rec.uid, model])
 			return {}
 		_npc_model_cache[model] = template
 	var skeleton := template.skeleton.duplicate() as Skeleton3D
@@ -17723,6 +17727,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   bagitem:<id>        left click the shown bag cell holding that item id
 #                       (round 791); rbagitem:<id> right-clicks it, the
 #                       item's use (round 838)
+#   gachacard           left click the Magic POP pane's first card (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
@@ -18551,6 +18556,16 @@ func _qa_input_step() -> void:
 				var centre := cell.get_global_rect().get_center()
 				_qa_input_report = "%s at %s" % [action, centre]
 				_qa_push_click(centre, MOUSE_BUTTON_RIGHT if kind == "rbagitem" else MOUSE_BUTTON_LEFT)
+		"gachacard":
+			# Round 838: left click the Magic POP window's inventory cell holding
+			# the first Magic POP card (GachaWindow.card_cell).
+			var gcell := _gacha_window.card_cell() if _gacha_window != null and _gacha_window.visible else null
+			if gcell == null:
+				_qa_input_report = action + " (no card in the Magic POP pane)"
+			else:
+				var gc := gcell.get_global_rect().get_center()
+				_qa_input_report = "%s at %s" % [action, gc]
+				_qa_push_click(gc, MOUSE_BUTTON_LEFT)
 		"drag":
 			var v := arg.split(",")
 			var from := Vector2(float(v[0]), float(v[1]))
@@ -26795,6 +26810,10 @@ func _on_npc_opened(id: int) -> void:
 			# beside it (READ c:0x888e30 -> 0x79d4a0(1), 0x79af20).
 			var grant := _hud_panels.open_grant_window()
 			print("NPC grant window: %s" % ("open" if grant != null else "unavailable"))
+		0x11:
+			# Round 838: 0xB046 {1, 0x11} -> Magic POP (c:0x79c060): the
+			# select window first.
+			_open_gacha_select()
 
 ## The talk window, the store or the storage went away (HudPanels'
 ## npc_window_hidden): the end request 0x704B (READ: the NPC window's close
@@ -26810,6 +26829,157 @@ func _on_npc_window_hidden(panel_id: String) -> void:
 		return
 	if _npc_talk.end():
 		print("NPC end 0x704B: %s closed" % panel_id)
+
+# --- Magic POP (round 838, GachaWindow / GachaSelectWindow / GachaNet) --------
+
+var _gacha_tables: GachaTables = null
+var _gacha_select: GachaSelectWindow = null
+var _gacha_window: GachaWindow = null
+## The machine the select window was opened for (its uid and ref id).
+var _gacha_npc_uid := 0
+var _gacha_npc_ref := 0
+
+func _gacha_tables_loaded() -> GachaTables:
+	if _gacha_tables == null and _ui_builder != null and _ui_builder.media_archive() != null:
+		var archive := _ui_builder.media_archive()
+		_gacha_tables = GachaTables.new().load(func(path: String) -> PackedByteArray:
+			var entry := ObjectLoader.find_file(archive, path)
+			return archive.read_file(entry) if entry != null else PackedByteArray())
+		print("GACHA: tables -- %d prizes, %d machines, %d kinds" % [_gacha_tables.prizes.size(),
+			_gacha_tables.machines.size(), _gacha_tables.kinds.size()])
+	return _gacha_tables
+
+func _gacha_connect() -> void:
+	if not NetClient.gacha_play_result.is_connected(_on_gacha_play_result):
+		NetClient.gacha_play_result.connect(_on_gacha_play_result)
+		NetClient.gacha_exchange_failed.connect(_on_gacha_exchange_failed)
+		NetClient.gacha_announce.connect(_on_gacha_announce)
+		NetClient.inventory_list_result.connect(func(s: Array, e: String) -> void:
+			if e == "" and not _gacha_coupon_slots.is_empty():
+				_on_gacha_exchanged(s)
+			if _gacha_window != null:
+				_gacha_window.call_deferred("on_bag_changed"))
+
+## 0xB046 {1, 0x11}: the select window (c:0x746be0).
+func _open_gacha_select() -> void:
+	var tables := _gacha_tables_loaded()
+	if tables == null or ui_control == null:
+		_log_system("Magic POP is unavailable.")
+		return
+	_gacha_connect()
+	_gacha_npc_uid = _talk_npc_uid()
+	_gacha_npc_ref = _npc_id_for_code(_talk_npc_code)
+	if _gacha_select == null:
+		_gacha_select = GachaSelectWindow.new()
+		_gacha_select.name = "GachaSelectWindow"
+		ui_control.add_child(_gacha_select)
+		if not _gacha_select.setup(_ui_builder, tables):
+			_gacha_select.queue_free()
+			_gacha_select = null
+			_log_system("Magic POP is unavailable.")
+			return
+		_gacha_select.start_requested.connect(_on_gacha_start)
+		_gacha_select.closed.connect(func() -> void:
+			if _gacha_window == null or not _gacha_window.visible:
+				_gacha_end_talk())
+	# The talk box gives way to the game (OURS: what hides it is not read).
+	if _hud_panels != null and _hud_panels.is_open("npctalk"):
+		_npc_hide_silent += 1
+		_hud_panels.close("npctalk")
+		_npc_hide_silent -= 1
+	_gacha_select.open()
+	print("GACHA: select window open for NPC %d (ref %d)" % [_gacha_npc_uid, _gacha_npc_ref])
+
+## Start (c:0x74a2b0): the main window with the chosen kind's prizes.
+func _on_gacha_start(kind: GachaTables.Kind) -> void:
+	var tables := _gacha_tables_loaded()
+	if tables == null:
+		return
+	if _gacha_window == null:
+		_gacha_window = GachaWindow.new()
+		_gacha_window.name = "GachaWindow"
+		ui_control.add_child(_gacha_window)
+		if not _gacha_window.setup(_ui_builder):
+			_gacha_window.queue_free()
+			_gacha_window = null
+			_log_system("Magic POP is unavailable.")
+			return
+		_gacha_window.icon_of = func(ref: int) -> Texture2D: return _hud_panels._item_icon(ref) if _hud_panels != null else null
+		_gacha_window.types_of = func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array()
+		_gacha_window.bag_of = func() -> Array: return _hud_panels.bag_entries() if _hud_panels != null else []
+		_gacha_window.play_requested.connect(func(uid: int, gid: int, bag_slot: int) -> void:
+			NetClient.gacha_play(uid, gid, bag_slot))
+		_gacha_window.closed.connect(_gacha_end_talk)
+	var list := tables.prizes_for(tables.prize_set(_gacha_npc_ref), kind,
+		func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array())
+	_gacha_select.hide()
+	_gacha_window.open_for(_gacha_npc_uid, list)
+	print("GACHA: main window open, %d prize(s)" % list.size())
+
+func _gacha_end_talk() -> void:
+	if _talk_server and _npc_talk != null and _npc_talk.end():
+		print("NPC end 0x704B: Magic POP closed")
+
+func _on_gacha_play_result(result: Dictionary) -> void:
+	print("GACHA RESULT: %s" % str(result))
+	if _gacha_window != null:
+		_gacha_window.on_result(result)
+	if bool(result.get("ok", false)) and NetClient.current_character_name != "":
+		NetClient.list_inventory(NetClient.current_character_name)
+
+## The bag slots that held a coupon when 0x7119 went out (bag slot -> coupon
+## item id); emptied by the next bag list.
+var _gacha_coupon_slots: Dictionary = {}
+
+## Gori's line (c:0x7020c0 case 0x28).
+func _gacha_exchange() -> void:
+	_gacha_connect()
+	_gacha_coupon_slots.clear()
+	if _hud_panels != null:
+		for e in _hud_panels.bag_entries():
+			var id := int(GachaWindow._field(e, ["item_id", "id"]))
+			var t := _hud_panels.item_types(id)
+			if t.size() >= 4 and t[0] == 3 and t[1] == 3 and t[2] == 14 and t[3] == 2:
+				_gacha_coupon_slots[int(GachaWindow._field(e, ["slot_index", "slot", "index"]))] = id
+	if _gacha_coupon_slots.is_empty():
+		_replace_talk(_resolve_any_text("SN_TALK_CH_GACHA_OPERATOR_3",
+			"Oh. You don't have Item Exchange Coupon. Then I can't if you don't have the item exchange coupon."), [])
+		return
+	print("GACHA: exchange 0x7119 at NPC %d (%d coupon(s))" % [_talk_npc_uid(), _gacha_coupon_slots.size()])
+	NetClient.gacha_exchange(_talk_npc_uid())
+	# Retail is told each slot by 0x3040; this client asks for its bag, which
+	# the server answers after the exchange (OURS, session/gacha.go).
+	if NetClient.current_character_name != "":
+		NetClient.list_inventory(NetClient.current_character_name)
+
+## The bag after Gori's exchange: retail's 0x3040 line for each coupon slot
+## that now holds something else, UIIT_MSG_GACHA_EXCHANGE "Has been changed
+## to [%s][%d]." (c:0x88bf30), with the new item's name and count.
+func _on_gacha_exchanged(slots: Array) -> void:
+	var fmt := _resolve_any_text("UIIT_MSG_GACHA_EXCHANGE", "Has been changed to [%s][%d].")
+	for e in slots:
+		var at = GachaWindow._field(e, ["slot_index", "slot", "index"])
+		if at == null or not _gacha_coupon_slots.has(int(at)):
+			continue
+		var id := int(GachaWindow._field(e, ["item_id", "id"]))
+		if id == int(_gacha_coupon_slots[int(at)]):
+			continue
+		var count = GachaWindow._field(e, ["quantity", "count"])
+		var line := fmt.replace("%s", _hud_panels.item_name(id) if _hud_panels != null else str(id)) \
+			.replace("%d", str(int(count) if count != null else 1))
+		print("SYSLOG gacha: %s" % line)
+		_log_system(line, HudSystemMessage.TYPE_GAME)
+	_gacha_coupon_slots.clear()
+
+## 0xB119 {2, code}: category 1's code (c:0x88d700); this client logs it.
+func _on_gacha_exchange_failed(code: int) -> void:
+	print("GACHA: exchange refused, code %d" % code)
+
+## 0x3120: "[%s][%d]has been won from Magic POP." (c:0x88f880).
+func _on_gacha_announce(ref: int, count: int) -> void:
+	var line := _resolve_any_text("UIIT_MSG_GACHA_ANNOUNCE", "[%s][%d]has been won from Magic POP.") \
+		.replace("%s", _hud_panels.item_name(ref) if _hud_panels != null else str(ref)).replace("%d", str(count))
+	_show_banner("gm_notice", line)
 
 ## Round 819: 0xB04B's close, FUN_0079e350 (READ): the NPC talk window, the
 ## store and the storage are hidden by ShowWindow(0) -- no 0x704B goes back
@@ -27371,6 +27541,16 @@ func _on_npc_service_selected(key: String) -> void:
 			return
 		if key == "talk":
 			_npc_talk.open(2)
+			return
+		# Round 838: Magic POP. The machine's line 0x27 opens 0x11; Gori's
+		# line 0x28 sends the exchange 0x7119 when the bag holds a coupon
+		# (3/3/14/2, c:0x745ab0), else his talk says he cannot
+		# (SN_TALK_CH_GACHA_OPERATOR_3) -- c:0x7020c0, READ.
+		if key == "gacha_machine":
+			_npc_talk.open(0x11)
+			return
+		if key == "gacha_operator":
+			_gacha_exchange()
 			return
 	# A tab group's store line (round 725): that group's tabs.
 	if key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):

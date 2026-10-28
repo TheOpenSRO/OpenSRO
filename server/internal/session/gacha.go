@@ -34,11 +34,11 @@ package session
 //
 // OURS, disclosed:
 //
-//   - Retail tells the client about the changed slot with 0x3040 (the item
-//     update); OpenSRO's client re-lists its bag on 0xB118, and the exchange's
-//     changes come as OpGachaExchanged (0x00FE, lane 5's block) -- one
-//     {slot + 13, new ref, count} per coupon, from which the client writes
-//     retail's UIIT_MSG_GACHA_EXCHANGE line as 0x3040's handler does.
+//   - Retail tells the client about each changed slot with 0x3040 (the item
+//     update); OpenSRO sends no 0x3040 here -- its client re-lists its bag
+//     after 0xB118 and after sending 0x7119 (the session's messages are
+//     handled in order, so the list carries the exchange), and writes
+//     retail's UIIT_MSG_GACHA_EXCHANGE line for each coupon slot that changed.
 //   - An exchanged prize gets a fresh instance (variance, durability) as a
 //     new item does; the archive's [BIIV] free params of the flag rows (the
 //     'V'/'M'/'O'/'D' stats retail writes at the exchange) are not applied
@@ -64,16 +64,13 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
-// Magic POP's messages: retail's opcodes, and one of OpenSRO's own.
+// Magic POP's messages, retail's opcodes.
 const (
 	OpGachaPlay           uint16 = 0x7118 // C->S the draw
 	OpGachaPlayResult     uint16 = 0xB118 // S->C {1, win} | {2, u16 code}
 	OpGachaExchange       uint16 = 0x7119 // C->S Gori's exchange
 	OpGachaExchangeResult uint16 = 0xB119 // S->C {2, u16 5} (a failure only)
 	OpGachaAnnounce       uint16 = 0x3120 // S->C {u32 ref, u16 count}: a Visible prize won
-	// OpGachaExchanged (OURS, lane 5's block): the coupons the exchange
-	// turned, {u8 n, n x {u8 slot + 13, u32 new ref, u16 count}}.
-	OpGachaExchanged uint16 = 0x00FE
 )
 
 // The NPC interaction ids (npcspawn).
@@ -123,33 +120,8 @@ func decodeGachaPlay(b []byte) (gachaPlay, bool) {
 	return gachaPlay{NPC: binary.LittleEndian.Uint32(b), GachaID: binary.LittleEndian.Uint32(b[4:]), Slot: b[8]}, true
 }
 
-// EncodeGachaPlay is the client's 0x7118 (tests and the bot).
-func EncodeGachaPlay(npc, gachaID uint32, slot byte) []byte {
-	out := binary.LittleEndian.AppendUint32(nil, npc)
-	out = binary.LittleEndian.AppendUint32(out, gachaID)
-	return append(out, slot)
-}
-
 func gachaFail(code uint16) []byte {
 	return binary.LittleEndian.AppendUint16([]byte{2}, code)
-}
-
-// GachaExchanged is one entry of OpGachaExchanged.
-type GachaExchanged struct {
-	Slot  byte // bag slot + 13
-	Ref   uint32
-	Count uint16
-}
-
-// EncodeGachaExchanged is OpGachaExchanged's payload.
-func EncodeGachaExchanged(list []GachaExchanged) []byte {
-	out := []byte{byte(len(list))}
-	for _, e := range list {
-		out = append(out, e.Slot)
-		out = binary.LittleEndian.AppendUint32(out, e.Ref)
-		out = binary.LittleEndian.AppendUint16(out, e.Count)
-	}
-	return out
 }
 
 // GachaHandler answers 0x7118 and 0x7119.
@@ -303,7 +275,6 @@ func (d GachaDeps) exchange(ctx context.Context, sess *gateway.Session, data []b
 	if err != nil {
 		return fail()
 	}
-	var done []GachaExchanged
 	for _, s := range slots {
 		it, err := d.Items.GetItem(ctx, s.ItemID)
 		if err != nil || !isGachaCoupon(it) || len(s.MagParams) < 2 {
@@ -328,12 +299,9 @@ func (d GachaDeps) exchange(ctx context.Context, sess *gateway.Session, data []b
 			return fail()
 		}
 		d.log("gacha exchange", "character_id", cid, "slot", s.Index, "coupon", it.CodeName, "prize", prize.CodeName, "count", count)
-		done = append(done, GachaExchanged{Slot: byte(s.Index + gachaBagBase), Ref: uint32(prizeID), Count: uint16(count)})
 	}
-	if len(done) == 0 {
-		return nil
-	}
-	return sess.Send(&proto.Packet{Opcode: OpGachaExchanged, Data: EncodeGachaExchanged(done)})
+	// No answer on success: s:0x4c8130 sends only the failure.
+	return nil
 }
 
 // replaceInPlace takes the whole of slot (it must still hold wantItem) and
