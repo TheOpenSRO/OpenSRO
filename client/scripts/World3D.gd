@@ -33445,14 +33445,19 @@ func _wire_stalls() -> void:
 		c.on_renamed(d)
 		_stall_refresh(int(d["owner"])))
 
-## The booth, title and loop of uid's body as its stall state says.
+## The booth, title and loop of uid's body as its stall state says. Nothing
+## is done for a body that neither stalls nor carries a booth (every spawn
+## asks: round 839 keeps the crowd's path as it was).
 func _stall_refresh(uid: int) -> void:
 	if _stall_world == null:
 		return
 	var own := _own_id() >= 0 and (uid & 0xffffffff) == (_own_id() & 0xffffffff)
 	var node: Node3D = player if own else _other_bodies.get(uid)
 	if node == null or not is_instance_valid(node):
-		print("STALL: %d has no body here (stalling %s)" % [uid, str(_stall_world.stalling(uid))])
+		return
+	var stalling := _stall_world.stalling(uid)
+	if not stalling and node.get_node_or_null(StallWorld.BOOTH_NODE) == null \
+			and node.get_node_or_null(StallWorld.TITLE_NODE) == null:
 		return
 	# A ghost (round 756) is dressed now: its loop is swapped on the full
 	# path (_refresh_other_loop below).
@@ -33465,9 +33470,10 @@ func _stall_refresh(uid: int) -> void:
 	if top <= 0.0:
 		top = 1.8 * PLAYER_SCALE_RATIO
 	_stall_world.apply(uid, node, _race_of_body(body), top)
-	var group := _player_anim_group() if own else String((_other_gaits.get(uid, {}) as Dictionary).get("group", "default"))
-	print("STALL: %d's vendor clip (type %d, %s, group %s): %s" % [uid, StallWorld.VENDOR_ACTION, body, group,
-		"found" if _body_animation_for(body, StallWorld.VENDOR_ACTION, group) != null else "none"])
+	if stalling:
+		var group := _player_anim_group() if own else String((_other_gaits.get(uid, {}) as Dictionary).get("group", "default"))
+		print("STALL: %d's vendor clip (type %d, %s, group %s): %s" % [uid, StallWorld.VENDOR_ACTION, body, group,
+			"found" if _body_animation_for(body, StallWorld.VENDOR_ACTION, group) != null else "none"])
 	if not own:
 		_refresh_other_loop(uid)
 
