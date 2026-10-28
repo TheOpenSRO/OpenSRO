@@ -38,7 +38,46 @@ func TestMagParamPacking(t *testing.T) {
 
 func r732Instance() Instance {
 	return Instance{Variance: 0x0123456789abcdef, Durability: 41, OptLevel: 5,
-		MagParams: []uint64{MagParam(1, 7), MagParam(16, 100)}, AdvElixir: 2}
+		MagParams: []uint64{MagParam(1, 7), MagParam(16, 100)}, AdvElixir: 2,
+		Model: 62515} // round 838: a model switcher's choice travels too
+}
+
+// Round 838: MutateItem turns a slot's item into another in place -- the
+// slot, the serial and the given instance -- and refuses a slot that holds
+// something else or nothing.
+func testMutateItem(t *testing.T, s Store) {
+	t.Helper()
+	ctx := context.Background()
+	m, ok := s.(Mutator)
+	if !ok {
+		t.Fatal("the store is not a Mutator")
+	}
+	if err := s.AddItem(ctx, 1, 100, 1); err != nil {
+		t.Fatal(err)
+	}
+	inst := r732Instance()
+	if err := m.MutateItem(ctx, 1, 0, 101, 102, inst); err != ErrItemChanged {
+		t.Errorf("the wrong item: %v, want ErrItemChanged", err)
+	}
+	if err := m.MutateItem(ctx, 1, 4, 100, 102, inst); err != ErrSlotEmpty {
+		t.Errorf("an empty slot: %v, want ErrSlotEmpty", err)
+	}
+	if err := m.MutateItem(ctx, 1, 0, 100, 102, inst); err != nil {
+		t.Fatalf("MutateItem: %v", err)
+	}
+	slots, err := s.List(ctx, 1)
+	if err != nil || len(slots) != 1 || slots[0].Index != 0 || slots[0].ItemID != 102 || slots[0].Quantity != 1 ||
+		!slots[0].Instance().Equal(inst) {
+		t.Fatalf("after: %+v %v", slots, err)
+	}
+}
+
+func TestMutateItemMem(t *testing.T) {
+	testMutateItem(t, NewMemStore(stubMaxStacks{100: 1, 102: 1}))
+}
+
+func TestMutateItemSQL(t *testing.T) {
+	testMutateItem(t, openTestSQLStore(t, stubMaxStacks{100: 1, 102: 1}))
 }
 
 // The instance survives SetInstance, a move, a swap and a stack split, in

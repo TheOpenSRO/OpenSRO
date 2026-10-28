@@ -220,12 +220,14 @@ type Equipped struct {
 	OptLevel  uint8
 	MagParams []uint64
 	AdvElixir uint8
+	// Model is the drawn model (round 838, inventory.Instance.Model).
+	Model int64
 }
 
 // Instance returns the worn item's per-instance fields.
 func (e Equipped) Instance() inventory.Instance {
 	return inventory.Instance{Variance: e.Variance, Durability: e.Durability, OptLevel: e.OptLevel,
-		MagParams: append([]uint64(nil), e.MagParams...), AdvElixir: e.AdvElixir}
+		MagParams: append([]uint64(nil), e.MagParams...), AdvElixir: e.AdvElixir, Model: e.Model}
 }
 
 // EffectivePlus is the plus other players are told the worn item carries:
@@ -248,6 +250,7 @@ type InstanceSetter interface {
 func (e *Equipped) SetInstance(inst inventory.Instance) {
 	e.Variance, e.Durability = inst.Variance, inst.Durability
 	e.OptLevel, e.MagParams, e.AdvElixir = inst.OptLevel, append([]uint64(nil), inst.MagParams...), inst.AdvElixir
+	e.Model = inst.Model
 }
 
 // Store is anything that can equip, unequip, and list a character's

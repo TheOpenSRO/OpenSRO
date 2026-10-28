@@ -45,6 +45,7 @@ ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS opt_level SMALLINT NOT NULL DEFAULT 0
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS mag_params BYTEA NOT NULL DEFAULT ''::bytea;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS adv_elixir SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS creator TEXT NOT NULL DEFAULT '';
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS model_item_id BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS serial BIGINT;
 UPDATE %[1]s SET serial = nextval('item_serial_seq') WHERE serial IS NULL;
 ALTER TABLE %[1]s ALTER COLUMN serial SET DEFAULT nextval('item_serial_seq');
@@ -71,7 +72,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS %[1]s_serial_key ON %[1]s (serial);
 // existed -- initialised on first read, never read as broken. Round 732
 // added `opt_level` (the plus), `mag_params` (the blue options, 8
 // little-endian bytes each, EncodeMagParams) and `adv_elixir` (the
-// advanced-elixir plus); a row from before them reads +0 with none.
+// advanced-elixir plus); a row from before them reads +0 with none. Round
+// 838 added `model_item_id` (Instance.Model, OURS), 0 -- the item's own
+// model -- on every row from before it.
 
 // SQLStore is a Store backed by PostgreSQL, consistent with
 // account/character/refdata's approach. Needs a MaxStackLookup (in
@@ -243,7 +246,7 @@ func (s *SQLStore) lock(ctx context.Context, q txn.Querier, owner int64) error {
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
 	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx,
-		s.q(`SELECT slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator FROM %s WHERE character_id = $1 ORDER BY slot`),
+		s.q(`SELECT slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator, model_item_id FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: listing slots: %w", err)
@@ -256,7 +259,7 @@ func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) 
 		var variance int64
 		var opt, adv int
 		var params []byte
-		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &variance, &sl.Durability, &opt, &params, &adv, &sl.Creator); err != nil {
+		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &variance, &sl.Durability, &opt, &params, &adv, &sl.Creator, &sl.Model); err != nil {
 			return nil, fmt.Errorf("inventory: scanning slot: %w", err)
 		}
 		sl.Variance = uint64(variance)
@@ -328,8 +331,8 @@ func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot int,
 		return ErrInvalidSlot
 	}
 	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		s.q(`UPDATE %s SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5, creator = $8 WHERE character_id = $6 AND slot = $7`),
-		int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), characterID, slot, inst.Creator)
+		s.q(`UPDATE %s SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5, creator = $8, model_item_id = $9 WHERE character_id = $6 AND slot = $7`),
+		int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), characterID, slot, inst.Creator, inst.Model)
 	if err != nil {
 		return fmt.Errorf("inventory: setting the instance of slot %d: %w", slot, err)
 	}
@@ -337,6 +340,33 @@ func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot int,
 		return ErrSlotEmpty
 	}
 	return nil
+}
+
+// MutateItem implements Mutator: one UPDATE of the row, guarded by the item
+// it must hold, so the row keeps its slot and serial.
+func (s *SQLStore) MutateItem(ctx context.Context, owner int64, slot int, wantItem, newItem int64, inst Instance) error {
+	if slot < 0 || slot >= s.capacityFor(ctx, owner) {
+		return ErrInvalidSlot
+	}
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
+		s.q(`UPDATE %s SET item_id = $1, variance = $2, durability = $3, opt_level = $4, mag_params = $5, adv_elixir = $6, creator = $7, model_item_id = $8 WHERE character_id = $9 AND slot = $10 AND item_id = $11`),
+		newItem, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), inst.Creator, inst.Model,
+		owner, slot, wantItem)
+	if err != nil {
+		return fmt.Errorf("inventory: mutating slot %d: %w", slot, err)
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		return nil
+	}
+	var held int64
+	err = txn.Conn(ctx, s.db).QueryRowContext(ctx, s.q(`SELECT item_id FROM %s WHERE character_id = $1 AND slot = $2`), owner, slot).Scan(&held)
+	if err == sql.ErrNoRows {
+		return ErrSlotEmpty
+	}
+	if err != nil {
+		return fmt.Errorf("inventory: reading slot %d: %w", slot, err)
+	}
+	return ErrItemChanged
 }
 
 func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quantity int, inst Instance) error {
@@ -415,12 +445,12 @@ func (s *SQLStore) insertRow(ctx context.Context, q txn.Querier, owner int64, sl
 	var err error
 	if serial != 0 {
 		_, err = q.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`),
-			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), serial, inst.Creator)
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator, model_item_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`),
+			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), serial, inst.Creator, inst.Model)
 	} else {
 		_, err = q.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`),
-			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), inst.Creator)
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator, model_item_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`),
+			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), inst.Creator, inst.Model)
 	}
 	if err != nil {
 		return fmt.Errorf("inventory: inserting into slot %d: %w", slot, err)
@@ -438,9 +468,10 @@ func (s *SQLStore) takeLocked(ctx context.Context, tx txn.Querier, owner int64, 
 	var current, dura, opt, adv int
 	var params []byte
 	var creator string
+	var model int64
 	err := tx.QueryRowContext(ctx,
-		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
-		owner, slot).Scan(&itemID, &current, &variance, &dura, &opt, &params, &adv, &serial, &creator)
+		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator, model_item_id FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
+		owner, slot).Scan(&itemID, &current, &variance, &dura, &opt, &params, &adv, &serial, &creator, &model)
 	if err == sql.ErrNoRows {
 		return 0, Instance{}, ErrSlotEmpty
 	}
@@ -454,7 +485,7 @@ func (s *SQLStore) takeLocked(ctx context.Context, tx txn.Querier, owner int64, 
 		return 0, Instance{}, ErrInsufficientQuantity
 	}
 	inst := Instance{Variance: uint64(variance), Durability: dura, OptLevel: uint8(opt), MagParams: DecodeMagParams(params), AdvElixir: uint8(adv),
-		Creator: creator}
+		Creator: creator, Model: model}
 	var res sql.Result
 	if quantity == current {
 		inst.Serial = serial
@@ -563,11 +594,12 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		advElixir  int
 		serial     int64
 		creator    string
+		model      int64
 	}
 	readSlot := func(slot int) (r row, found bool, err error) {
 		err = tx.QueryRowContext(ctx,
-			s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
-			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability, &r.optLevel, &r.magParams, &r.advElixir, &r.serial, &r.creator)
+			s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator, model_item_id FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
+			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability, &r.optLevel, &r.magParams, &r.advElixir, &r.serial, &r.creator, &r.model)
 		if err == sql.ErrNoRows {
 			return row{}, false, nil
 		}
@@ -632,10 +664,10 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $20), ($1, $11, $12, $13, $14, $15, $16, $17, $18, $19, $21)`),
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator, model_item_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $20, $22), ($1, $11, $12, $13, $14, $15, $16, $17, $18, $19, $21, $23)`),
 			characterID, to, srcItem, srcQty, src.variance, src.durability, src.optLevel, src.magParams, src.advElixir, src.serial,
 			from, dstItem, dstQty, dst.variance, dst.durability, dst.optLevel, dst.magParams, dst.advElixir, dst.serial,
-			src.creator, dst.creator); err != nil {
+			src.creator, dst.creator, src.model, dst.model); err != nil {
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 	}

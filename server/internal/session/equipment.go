@@ -34,6 +34,27 @@ type EquippedSnapshot struct {
 	// it out -- the own list's items carry their whole instance in Infos --
 	// and the entity snapshots send it in their pluses tail (encodePluses).
 	Plus uint8
+	// Model is the worn item's drawn model (round 838, OURS:
+	// inventory.Instance.Model), 0 for its own. Encode leaves it out; the
+	// spawn record a client draws another player from carries it in place of
+	// the item's own id (displayRef).
+	Model int64
+}
+
+// displayRef is the item id another player's client is told a worn item is
+// (round 838, OURS): the row whose model the item is drawn with when a model
+// switcher gave it one, else the item's own. Only the clients that DRAW the
+// item hear it -- the 0x3015/0x3019 spawn record (lookOf) and the 0x3038
+// broadcast (broadcastWorn) -- and they read nothing from it but the drawing:
+// the model, the weapon's glow type (itemoption.txt lists the _SWITCHnn rows
+// with their own types, which follow the mesh) and the visual slot, which the
+// row's TypeIDs keep. The owner's own lists carry the true id and the model
+// beside it (ItemInfo.Model).
+func displayRef(itemID, model int64) int64 {
+	if model > 0 {
+		return model
+	}
+	return itemID
 }
 
 func (e *EquippedSnapshot) Encode() []byte {

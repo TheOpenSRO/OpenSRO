@@ -153,7 +153,7 @@ func sendPlusesAsBroadcasts(sess interface{ Send(*proto.Packet) error }, others 
 			if it.Plus == 0 || equipment.Slot(it.Slot) > BroadcastSlotMax {
 				continue
 			}
-			msg := &EquipBroadcast{UID: uint32(o.CharacterID), Slot: uint8(it.Slot), RefItemID: uint32(it.ItemID), Plus: it.Plus, HasPlus: true}
+			msg := &EquipBroadcast{UID: uint32(o.CharacterID), Slot: uint8(it.Slot), RefItemID: uint32(displayRef(it.ItemID, it.Model)), Plus: it.Plus, HasPlus: true}
 			_ = sess.Send(&proto.Packet{Opcode: OpEquipBroadcast, Data: msg.Encode()})
 		}
 	}
@@ -179,7 +179,8 @@ func broadcastWorn(ctx context.Context, hub *world.Hub, store equipment.Store, i
 		if w.Slot != slot {
 			continue
 		}
-		msg := &EquipBroadcast{UID: uint32(characterID), Slot: uint8(slot), RefItemID: uint32(w.ItemID)}
+		// Round 838: a model switcher's choice is drawn (displayRef).
+		msg := &EquipBroadcast{UID: uint32(characterID), Slot: uint8(slot), RefItemID: uint32(displayRef(w.ItemID, w.Model))}
 		if isEquipmentItem(ctx, items, w.ItemID) {
 			msg.Plus, msg.HasPlus = w.EffectivePlus(), true
 		}

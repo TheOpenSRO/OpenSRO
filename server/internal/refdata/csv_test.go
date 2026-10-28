@@ -733,8 +733,8 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	if got := load(append(append([]string(nil), row...), "1")).ChildItemCount; got != 1 {
 		t.Errorf("column 89 loaded ChildItemCount %d, want 1", got)
 	}
-	if ItemCSVColumnCount != 92 {
-		t.Errorf("ItemCSVColumnCount %d, want 92", ItemCSVColumnCount)
+	if ItemCSVColumnCount != 93 {
+		t.Errorf("ItemCSVColumnCount %d, want 93", ItemCSVColumnCount)
 	}
 	// Round 795: column 90 is Desc2, a ride scroll's level list.
 	withDesc := append(append([]string(nil), row...), "1", "120")
@@ -747,5 +747,14 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	}
 	if got := load(withDesc).ReviveCost; got != 0 {
 		t.Errorf("a 91-column export loaded ReviveCost %d, want 0", got)
+	}
+	// Round 838: column 92 is OrgCodeName (itemdata column 4), the gender
+	// switch tool's twin; a 92-column export reads "".
+	withRevive := append(append([]string(nil), withDesc...), "297")
+	if got := load(withRevive).OrgCodeName; got != "" {
+		t.Errorf("a 92-column export loaded OrgCodeName %q, want empty", got)
+	}
+	if got := load(append(append([]string(nil), withRevive...), "ITEM_CH_W_HEAVY_01_BA_A_DEF")).OrgCodeName; got != "ITEM_CH_W_HEAVY_01_BA_A_DEF" {
+		t.Errorf("column 92 loaded OrgCodeName %q", got)
 	}
 }

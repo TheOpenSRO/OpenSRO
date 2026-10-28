@@ -224,7 +224,8 @@ func lookOf(ctx context.Context, d viewDeps, characterID int64) look {
 		if it.Slot < 0 || equipment.Slot(it.Slot) > equipment.SlotJobSuit || it.ItemID <= 0 {
 			continue
 		}
-		item := pcspawn.Item{RefItemID: uint32(it.ItemID)}
+		// Round 838: a model switcher's choice is drawn (displayRef).
+		item := pcspawn.Item{RefItemID: uint32(displayRef(it.ItemID, it.Model))}
 		if itemHasPlus(ctx, it.ItemID) {
 			item.Plus, item.HasPlus = it.Plus, true
 		}

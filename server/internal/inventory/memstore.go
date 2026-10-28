@@ -355,6 +355,26 @@ func (m *MemStore) journalLocked(ctx context.Context, owner int64) {
 }
 
 // TakeItem implements Taker.
+// MutateItem implements Mutator.
+func (m *MemStore) MutateItem(ctx context.Context, owner int64, slot int, wantItem, newItem int64, inst Instance) error {
+	if slot < 0 || slot >= m.capacityFor(ctx, owner) {
+		return ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sl := m.slots[owner][slot]
+	if sl == nil {
+		return ErrSlotEmpty
+	}
+	if sl.ItemID != wantItem {
+		return ErrItemChanged
+	}
+	m.journalLocked(ctx, owner)
+	sl.ItemID = newItem
+	sl.SetInstance(inst)
+	return nil
+}
+
 func (m *MemStore) TakeItem(ctx context.Context, owner int64, slot, quantity int, wantItem int64) (int64, Instance, error) {
 	if slot < 0 || slot >= m.capacityFor(ctx, owner) {
 		return 0, Instance{}, ErrInvalidSlot
