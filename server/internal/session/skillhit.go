@@ -158,7 +158,17 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 			return targetOutcome{}, err
 		}
 		base = combat.ApplyMasteryScale(base, c.terms.masteryPercent)
-		blow := resolveBlow(base+bonus, defPct, def, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
+		// Round 838: a player's p188 (a devil's spirit skill's 'msid') is
+		// the chance to skip the monster's defence: Combat_ResolveDamage
+		// rolls trunc(p188) for a PC hitting a non-PC (0x58eddb..0x58ee35)
+		// and sets hit flag 0x20, on which Formula_Mitigate* skips d / (1 +
+		// p7/100) - p5 (0x40e4f7, READ). OURS: the 0x20 is not sent (the
+		// client's reading of it is INFERRED).
+		hitDef, hitDefPct := def, defPct
+		if ignoreDefenceRoll(c.casterID) {
+			hitDef, hitDefPct = 0, 0
+		}
+		blow := resolveBlow(base+bonus, hitDefPct, hitDef, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
 		dmg := 0
 		switch {
 		case blow.Blocked:

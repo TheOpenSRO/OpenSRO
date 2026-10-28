@@ -56,6 +56,9 @@ const (
 	// added to 128..131's in Formula_Mitigate* (0x40e5ba..0x40e5de, READ;
 	// round 838).
 	ParamUniqueDamage = 259
+	// ParamIgnoreDefence is p188 ('msid', 'mdia'): the chance a player's
+	// blow skips a monster's defence (round 838).
+	ParamIgnoreDefence = 188
 )
 
 // typeSelect is the 2x2 selector (0x410bb0 / 0x410c20, READ): a mask's
@@ -180,6 +183,12 @@ func StatContributions(r skillparam.Runs, actionKind, activity int) []Contributi
 	}
 	if v, ok := r.Values("ru"); ok {
 		add(ParamRange, base, val(v, 0))
+	}
+	// Round 838: 'msid' (the devil's spirit's MOBDEFENCEIGNORE skills) puts
+	// value[0] in p188 slot 0, the chance to skip a monster's defence
+	// (ApplySkillParamsToChar 0x596747, READ; session's ignoreDefenceRoll).
+	if v, ok := r.Values("msid"); ok {
+		add(ParamIgnoreDefence, base, val(v, 0))
 	}
 	if v, ok := r.Values("dcri"); ok {
 		add(ParamEvadeCrit, base, val(v, 0))

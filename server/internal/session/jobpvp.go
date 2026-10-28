@@ -667,7 +667,7 @@ func giveCharacterExp(ctx context.Context, d combatDeps, e world.Entity, exp int
 		_ = d.chars.ResetHP(ctx, e.CharacterID)
 		bonus := character.BonusOf(e.CharacterID)
 		if d.mp != nil {
-			d.mp.Refill(e.CharacterID, character.MaxMPFor(newInt+bonus.Int, newLevel)+bonus.MP)
+			d.mp.Refill(e.CharacterID, character.MaxMPWith(newInt, newLevel, bonus))
 		}
 		lu = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 	}

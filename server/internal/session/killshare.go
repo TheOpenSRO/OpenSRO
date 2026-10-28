@@ -291,9 +291,9 @@ func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) 
 		}
 		// Round 769: with the worn items' options (character.MaxHP's rule).
 		bonus := character.BonusOf(a.characterID)
-		out.hp = character.MaxHPFor(newStr+bonus.Str, newLevel) + bonus.HP
+		out.hp = character.MaxHPWith(newStr, newLevel, bonus)
 		if d.mp != nil {
-			d.mp.Refill(a.characterID, character.MaxMPFor(newInt+bonus.Int, newLevel)+bonus.MP)
+			d.mp.Refill(a.characterID, character.MaxMPWith(newInt, newLevel, bonus))
 		}
 		out.levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 	}

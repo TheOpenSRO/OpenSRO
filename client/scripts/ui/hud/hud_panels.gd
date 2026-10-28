@@ -320,6 +320,7 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 	_set_shown(window, BTN_TO_AVATAR, not avatar)
 	_set_shown(window, BTN_TO_EQUIPMENT, avatar)
 	_set_shown(window, AVATAR_SKILL_STRIP, _avatar_skill_strip_shown())
+	_fill_spirit_strip(window, _avatar_skill_strip_shown())
 	_show_equipment_backdrops()
 
 # --- the avatar slots (round 789) ----------------------------------------------
@@ -336,6 +337,95 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 ## table's +0x61 and +0xfc bytes, not READ (OPEN, docs/rounds/r789ac.md).
 func _avatar_skill_strip_shown() -> bool:
 	return AvatarEquipment.skill_strip_shown(_equipment_avatar_mode, NetClient.last_avatar_instances, item_types)
+
+# --- The devil's spirit's skill strip (round 838) -----------------------------
+#
+# READ (sro_client.exe): CIFEquipment c:0x6ae5b0 fills GDR_AVATAR_SKILL_WND
+# (CIFEquipSkillSlotWnd, layout resinfo\ifequipskillslotwnd.txt: four
+# CIFSkillSlot GDR_AVATAR_SKILL_SLOT_01..04 at x 11 / 52 / 93 / 134, y 4,
+# 32 x 32, each over a pt_block02.ddj GDR_AVATAR_SKILL_SLOT_BG_0n at x - 2,
+# y 2, 40 x 40) with the worn spirit's skills by (RefItemID, OptLevel)
+# (SpiritAbilities); c:0x6aec30 shows a slot with a skill (IFSkillSlot type 9)
+# and hides an empty one; c:0x6aeca0 clears all four. A slot's skill is cast
+# as any skill is (0x7074; the server's FindLearned 0x59d680 accepts the
+# spirit's kind-3 entries). OURS: the cast is the slot's right click, as the
+# quick slots' (the IFSkillSlot type-9 click was not traced); no drag to the
+# quick slot bar.
+
+## World3D casts it (World3D._cast_skill).
+signal spirit_skill_use_requested(skill_id: int)
+## (ref_id, opt_level) -> PackedInt32Array, and skill_id -> icon path under
+## icon\ ; World3D binds both.
+var spirit_skills_of: Callable = Callable()
+var skill_icon_of: Callable = Callable()
+
+const SPIRIT_SLOT_X := [11, 52, 93, 134]
+const SPIRIT_BG_DDJ := "interface\\pet\\pt_block02.ddj"
+
+## The skills the strip shows now (its slots' order).
+func spirit_strip_skills() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if not spirit_skills_of.is_valid():
+		return out
+	var storage: Dictionary = NetClient.last_avatar_instances
+	for s in storage:
+		var v = storage[s]
+		if not (v is ItemInstance):
+			continue
+		var it := v as ItemInstance
+		var t := item_types(it.ref_item_id)
+		if t.size() >= 3 and t[0] == 3 and t[1] == 1 and t[2] == 14 and AvatarEquipment.spirit_seconds_left(it) > 0:
+			return spirit_skills_of.call(it.ref_item_id, it.opt_level)
+	return out
+
+func _fill_spirit_strip(window: HudWindow, shown: bool) -> void:
+	var strip := window.node(AVATAR_SKILL_STRIP) as Control
+	if strip == null:
+		return
+	var skills := spirit_strip_skills() if shown else PackedInt32Array()
+	for i in 4:
+		var bg := strip.get_node_or_null("SpiritSlotBg%d" % i) as TextureRect
+		if bg == null:
+			bg = TextureRect.new()
+			bg.name = "SpiritSlotBg%d" % i
+			bg.position = Vector2(SPIRIT_SLOT_X[i] - 2, 2)
+			bg.size = Vector2(40, 40)
+			bg.stretch_mode = TextureRect.STRETCH_SCALE
+			bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			bg.texture = _builder.load_texture(SPIRIT_BG_DDJ) if _builder != null else null
+			strip.add_child(bg)
+		var slot := strip.get_node_or_null("SpiritSlot%d" % i) as TextureRect
+		if slot == null:
+			slot = TextureRect.new()
+			slot.name = "SpiritSlot%d" % i
+			slot.position = Vector2(SPIRIT_SLOT_X[i], 4)
+			slot.size = Vector2(32, 32)
+			slot.stretch_mode = TextureRect.STRETCH_SCALE
+			slot.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			slot.mouse_filter = Control.MOUSE_FILTER_STOP
+			slot.gui_input.connect(func(ev: InputEvent) -> void:
+				var mb := ev as InputEventMouseButton
+				if mb != null and mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and slot.has_meta("skill_id"):
+					print("HudPanels: spirit skill %d used from its slot" % int(slot.get_meta("skill_id")))
+					spirit_skill_use_requested.emit(int(slot.get_meta("skill_id"))))
+			strip.add_child(slot)
+		var has := i < skills.size()
+		bg.visible = has
+		slot.visible = has
+		if has:
+			slot.set_meta("skill_id", skills[i])
+			var path: String = skill_icon_of.call(skills[i]) if skill_icon_of.is_valid() else ""
+			slot.texture = _builder.load_texture(path) if _builder != null and path != "" else null
+		elif slot.has_meta("skill_id"):
+			slot.remove_meta("skill_id")
+	if shown:
+		var worn := []
+		for s in NetClient.last_avatar_instances:
+			var v = NetClient.last_avatar_instances[s]
+			if v is ItemInstance:
+				worn.append("%d:%d+%d" % [s, (v as ItemInstance).ref_item_id, (v as ItemInstance).opt_level])
+		print("HudPanels: spirit skill strip %s (worn %s)" % [str(skills), ", ".join(worn)])
 
 ## A display window's control (0 hat .. 4 devil's spirit), or null.
 func _avatar_slot_control(display: int) -> Control:
@@ -400,6 +490,7 @@ func _fill_avatar_slots() -> void:
 	if att != null:
 		att.modulate = Color(0.45, 0.45, 0.45) if AvatarEquipment.attachment_disabled(storage, item_types, _child_item_count) else Color.WHITE
 	_set_shown(window, AVATAR_SKILL_STRIP, _avatar_skill_strip_shown())
+	_fill_spirit_strip(window, _avatar_skill_strip_shown())
 	# The held avatar is let go when its slot no longer holds it.
 	if held_icon != null and held_icon.is_holding() and held_icon.kind() == "avatar":
 		var held_slot := int(held_icon.payload.get("slot", -1))

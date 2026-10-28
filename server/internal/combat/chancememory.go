@@ -60,6 +60,13 @@ const (
 	// because the engine keys accumulators per kind; which of its six ASCII
 	// tags denotes blocking is not recovered.
 	ChanceBlock
+
+	// ChanceIgnoreDefence is the roll of a player's p188 (a devil's spirit
+	// skill's 'msid', an avatar's 'mdia') to skip a monster's defence (round
+	// 838). The engine keys it 0x4D000000 | (skill id & 0xFFFFFF) ('M', READ
+	// Combat_ResolveDamage 0x58eddb..0x58ee35); OpenSRO keeps one streak per
+	// attacker for it (OURS: not per skill).
+	ChanceIgnoreDefence ChanceKind = 0xC0
 )
 
 // ChanceStatus is the accumulator of one abnormal state, by its kind (1..25,

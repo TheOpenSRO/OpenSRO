@@ -2994,6 +2994,30 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.cos_item_requested.connect(_use_cos_item)
 	# Round 838: an item used on another (HudPanels' use-on mode).
 	_hud_panels.use_on_requested.connect(_on_use_on_requested)
+	# Round 838: the worn devil's spirit's skill strip (SpiritAbilities): its
+	# skills from the client's own tables, their icons from the skill rows,
+	# and a slot's use cast as a self cast (every spirit skill is a
+	# Target_Required 0 self buff, MEASURED).
+	_spirit_abilities = SpiritAbilities.from_archive(_ui_builder.media_archive() if _ui_builder != null else null)
+	print("World3D: %d devil's spirit abilities" % _spirit_abilities.size())
+	_hud_panels.spirit_skills_of = _spirit_abilities.skills_for
+	_hud_panels.skill_icon_of = func(skill_id: int) -> String:
+		if _hud_buff_board == null or _hud_buff_board.catalog == null:
+			return ""
+		var icon := String(_hud_buff_board.catalog.info(skill_id).get("icon", ""))
+		if icon == "":
+			return ""
+		return icon if icon.to_lower().begins_with("icon\\") else "icon\\" + icon
+	_hud_panels.spirit_skill_use_requested.connect(func(skill_id: int) -> void:
+		var left := _skill_cooldown_left(skill_id)
+		if left > 0:
+			_log_system(_resolve_any_text(COOLDOWN_TEXT_KEY, COOLDOWN_TEXT_FALLBACK))
+			return
+		var code := ""
+		if _hud_buff_board != null and _hud_buff_board.catalog != null:
+			code = String(_hud_buff_board.catalog.info(skill_id).get("basic_code", ""))
+		print("World3D: spirit skill %d cast on the player" % skill_id)
+		_send_self_cast(skill_id, code, SkillNet.TARGET_NONE, Vector3.ZERO))
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
 	# The return scrolls' casting bar's cancel (round 779): 0x705B.
@@ -3178,6 +3202,10 @@ func _on_composite_use_result(result: CompositeNet.UseResult) -> void:
 		return
 	if _hud_player_info != null:
 		_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
+
+## Round 838: the devil's spirits' skill table, held here (a Callable to a
+## RefCounted's method does not keep it alive).
+var _spirit_abilities: SpiritAbilities = null
 
 ## Round 838: a reverse return box opened for a composite grant's fill
 ## carries this slot less the fill's item id (World3D's own marker; a bag
@@ -18619,6 +18647,16 @@ func _qa_input_step() -> void:
 				bubble.position = Vector2(680, 60)
 				get_tree().create_timer(4.0).timeout.connect(bubble.queue_free)
 				_qa_input_report = "%s slot %d: %s" % [action, tip_slot, ItemTooltipLines.as_text(tip_lines).replace("\n", " | ")]
+		"spirit_slot":
+			# Round 838: right click the devil's spirit strip's slot n.
+			var sw := _hud_panels._windows.get("inventory") as HudWindow if _hud_panels != null else null
+			var strip := sw.node(HudPanels.AVATAR_SKILL_STRIP) as Control if sw != null else null
+			var ss := strip.get_node_or_null("SpiritSlot%s" % arg) as Control if strip != null else null
+			if ss == null or not ss.is_visible_in_tree():
+				_qa_input_report = action + " (no shown slot; strip %s)" % str(_hud_panels.spirit_strip_skills())
+			else:
+				_qa_input_report = "%s at %s skill %s" % [action, ss.get_global_rect().get_center(), str(ss.get_meta("skill_id", -1))]
+				_qa_push_click(ss.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
 		"useon_ok":
 			# Round 838: the use-on box's OK.
 			var ok_at := _hud_panels.use_on_box_ok_centre() if _hud_panels != null else Vector2(-1, -1)

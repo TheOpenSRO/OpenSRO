@@ -166,6 +166,22 @@ var uniqueDamagePercent = func(characterID int64) float64 {
 	return 0
 }
 
+// ignoreDefenceRoll is the p188 roll (round 838, skillhit.go): trunc(p188),
+// clamped 0..100, through the attacker's bad-luck streak.
+func ignoreDefenceRoll(characterID int64) bool {
+	t, ok := buffTotal(characterID, buff.ParamIgnoreDefence)
+	if !ok {
+		return false
+	}
+	chance := int(t.Apply(0))
+	if chance <= 0 {
+		return false
+	}
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.RollChanceTracked(min(chance, 100), damageRollNG, chanceMemory, characterID, combat.ChanceIgnoreDefence)
+}
+
 // buffBonus is the character.Bonus the buffs give (round 785): Str and Int
 // (p1/p2 slot 0), max HP and MP flat and percent (p3/p4 slots 0 and 1),
 // evade-critical (p57).
@@ -182,6 +198,10 @@ func buffBonus(characterID int64) character.Bonus {
 		EvadeCrit: int(all[buff.ParamEvadeCrit].Flat),
 		HPPct:     all[buff.ParamMaxHP].Pct,
 		MPPct:     all[buff.ParamMaxMP].Pct,
+		// Round 838: params 52 / 53 slot 1 (a devil's spirit's 'hpna' /
+		// 'mpna', avatarstats.go).
+		StrHPPct: all[52].Pct,
+		IntMPPct: all[53].Pct,
 	}
 	return b
 }

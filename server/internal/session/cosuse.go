@@ -122,7 +122,7 @@ func useCOSConsumable(ctx context.Context, sess *gateway.Session, inv inventory.
 			return cosRefusal(sess, cos.ErrCannotBeUsed, "lookup failed")
 		}
 		bonus := character.BonusOf(characterID)
-		maxHP := character.MaxHPFor(c.Str+bonus.Str, c.Level) + bonus.HP
+		maxHP := character.MaxHPWith(c.Str, c.Level, bonus)
 		hp, _ := potionRestore(it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct, c.Level, c.Str+bonus.Str, c.Int+bonus.Int, maxHP, 0)
 		if hp < 1 {
 			// FUN_0049aa70 came out below 1: result 2, nothing spent.

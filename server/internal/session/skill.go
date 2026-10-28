@@ -867,13 +867,19 @@ func useSkillHandler(
 		if err != nil {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
 		}
+		// Round 838: a worn, awake devil's spirit's skills are in the book
+		// while it is (spiritSkillGranted).
+		spiritGranted := false
+		if !knows && spiritSkillGranted(ctx, characterID, req.SkillID) {
+			knows, spiritGranted = true, true
+		}
 		if !knows {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill not known"}).Encode()})
 		}
 		// A known skill must also be one a player of this race may hold (the
 		// round 691 review, playerskill.go): a monster's row or another race's,
 		// learned before the learn gate refused it, is refused and dropped.
-		if castRow != nil {
+		if castRow != nil && !spiritGranted {
 			owned, err := chars.GetByID(ctx, characterID)
 			if err != nil {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})

@@ -987,6 +987,11 @@ func main() {
 			"alchemy window's magic stones write their blue options from it, and a failed reinforce its durability "+
 			"flaw. Without it every magic stone is refused and a flaw writes nothing; elixirs and attribute stones "+
 			"still work. A configured path that does not load is fatal.")
+	itemOptLevelCSV := flag.String("item-opt-level-csv", os.Getenv("OPENSRO_ITEM_OPT_LEVEL_CSV"),
+		"path to the devil's spirits' plus-level table as CSV (env OPENSRO_ITEM_OPT_LEVEL_CSV; from cmd/export-refdata "+
+			"-mode itemoptlevel on the client's refabilitybyitemoptleveldata.txt, refmagicoptbyitemoptleveldata.txt and "+
+			"refskillbyitemoptleveldata.txt, round 838): an awake spirit's HP / MP percent, block rate and skills by its "+
+			"plus level. Without it a spirit gives only its own blue options. A configured path that does not load is fatal.")
 	magicOptAssignCSV := flag.String("magic-option-assign-csv", os.Getenv("OPENSRO_MAGIC_OPTION_ASSIGN_CSV"),
 		"path to the game's magic option assign table as CSV (env OPENSRO_MAGIC_OPTION_ASSIGN_CSV; from "+
 			"cmd/export-refdata -mode magicoptassign on a client's own server_dep\\silkroad\\textdata\\"+
@@ -2056,6 +2061,18 @@ func main() {
 		logger.Info("magic option table loaded: the alchemy stones write blue options and worn options count", "path", *magicOptionsCSV, "rows", t.Len())
 	} else {
 		logger.Info("no magic option table (-magic-options-csv / OPENSRO_MAGIC_OPTIONS_CSV): every magic stone is refused")
+	}
+	// The devil's spirits' plus-level table (round 838, avatarstats.go).
+	if *itemOptLevelCSV != "" {
+		t, err := avatar.LoadOptLevelCSV(*itemOptLevelCSV)
+		if err != nil {
+			logger.Error("loading the item opt level table", "path", *itemOptLevelCSV, "err", err)
+			os.Exit(1)
+		}
+		session.SetSpiritAbilities(t)
+		logger.Info("item opt level table loaded: devil's spirits give their plus-level abilities", "path", *itemOptLevelCSV, "keys", t.Len())
+	} else {
+		logger.Info("no item opt level table (-item-opt-level-csv / OPENSRO_ITEM_OPT_LEVEL_CSV): a devil's spirit gives only its own blue options")
 	}
 	// The magic option assign table (round 770): what equipment drops roll.
 	if *magicOptAssignCSV != "" {

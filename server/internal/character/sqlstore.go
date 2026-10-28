@@ -394,8 +394,8 @@ func (s *SQLStore) RespawnHP(ctx context.Context, characterID int64) error {
 	// (hpPctFactor; scalePct's floor of 1 is GREATEST's).
 	b := BonusOf(characterID)
 	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		`UPDATE characters SET hp = GREATEST(1, FLOOR(GREATEST(1, FLOOR((ROUND((str + $5) * $1 * POWER($2, level - 1)) + $6) * $7)) * $3)) WHERE id = $4`,
-		HPPerStr, StatGrowth, RespawnFraction, characterID, b.Str, b.HP, hpPctFactor(b.HPPct))
+		`UPDATE characters SET hp = GREATEST(1, FLOOR(GREATEST(1, FLOOR((`+strChainSQL("$5", "$8")+` + $6) * $7)) * $3)) WHERE id = $4`,
+		HPPerStr, StatGrowth, RespawnFraction, characterID, b.Str, b.HP, hpPctFactor(b.HPPct), 100+b.StrHPPct)
 	if err != nil {
 		return fmt.Errorf("character: respawning hp: %w", err)
 	}
@@ -416,8 +416,8 @@ func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 	// And its buffs' percent (round 785's review; MaxHPWith's scalePct).
 	b := BonusOf(characterID)
 	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		`UPDATE characters SET hp = GREATEST(1, FLOOR((ROUND((str + $4) * $1 * POWER($2, level - 1)) + $5) * $6)) WHERE id = $3`,
-		HPPerStr, StatGrowth, characterID, b.Str, b.HP, hpPctFactor(b.HPPct))
+		`UPDATE characters SET hp = GREATEST(1, FLOOR((`+strChainSQL("$4", "$7")+` + $5) * $6)) WHERE id = $3`,
+		HPPerStr, StatGrowth, characterID, b.Str, b.HP, hpPctFactor(b.HPPct), 100+b.StrHPPct)
 	if err != nil {
 		return fmt.Errorf("character: resetting hp: %w", err)
 	}
@@ -502,4 +502,14 @@ func (s *SQLStore) SavePosition(ctx context.Context, characterID int64, zone, fr
 
 func isUniqueConstraintErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint")
+}
+
+// strChainSQL is MaxHPWith's Str chain in SQL (round 838, chainPct): the
+// rounded chain as before when p52's percent is 0, else Str x 10 x (100 +
+// percent) / 100 x growth truncated, in chainPct's order. strArg is the bonus
+// Str's placeholder, factorArg 100 + the percent's; $1 is HPPerStr and $2
+// StatGrowth.
+func strChainSQL(strArg, factorArg string) string {
+	return `(CASE WHEN ` + factorArg + `::float8 = 100 THEN ROUND((str + ` + strArg + `) * $1 * POWER($2, level - 1)) ELSE FLOOR((str + ` +
+		strArg + `) * $1 * ` + factorArg + `::float8 / 100 * POWER($2, level - 1)) END)`
 }
