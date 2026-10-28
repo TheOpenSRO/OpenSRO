@@ -259,7 +259,12 @@ func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) 
 	// The award's growth pet is paid its own reward (round 795, cosexp.go).
 	cosKillExp(ctx, d, m, a, char)
 	exp, sp = leveldata.ApplyRewardMultiplier(exp, sp, a.multiplier)
+	// Round 838: the premium Gold Time's +EXP % and +SP % (params 0x100 and
+	// 0x102, goldtime.go), each a share of the award after its multiplier,
+	// added beside the rate term (CGObjPC::vslot_420, 0x4ea6f3..0x4ea93a).
+	goldExp, goldSP := goldTimeAward(a.characterID, exp, sp)
 	exp, sp = leveldata.ApplyRateBonus(exp, sp, rates.Current().ExpFor(a.inParty))
+	exp, sp = exp+goldExp, sp+goldSP
 	out.exp, out.sp = exp, sp
 
 	// GainExpAndLevel (slot 92): the skill experience, then the experience.

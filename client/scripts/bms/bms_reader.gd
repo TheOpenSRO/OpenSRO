@@ -359,9 +359,20 @@ static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 	# finding no room left in it -- which is true, and irrelevant, because
 	# the weights are not in the vertex record. They are in their own
 	# section, and hdr[0] points at it. See docs/protocol/BMS_FORMAT.md.
-	_parse_skin(data, hdr[0], hdr[1], vertex_count, mesh)
+	# Round 838: the client reads the body as one stream (CPrimMesh::
+	# FUN_00c1bb20, READ: the vertices, the bone count and names, vcount x 6
+	# weight bytes, then the triangle count and its indices), not by the
+	# header's pointers. Some of the player's archive's meshes (its
+	# private-server "_parz" meshes, e.g. cos\dinotpet.bsr's
+	# t_rhinoceros_parz1.bms, MEASURED) carry an index pointer short of the
+	# stream's by 9 or 14 bytes; when the header's triangle section does not
+	# fit, the stream's own position is taken, and the later sections shift
+	# with it. The native reader answers {error} for these and leaves them
+	# here.
+	var shift := _stream_shift(data, hdr[0], hdr[1], vertex_count)
+	_parse_skin(data, hdr[0], hdr[1] + shift, vertex_count, mesh)
 
-	var index_off := hdr[1]
+	var index_off := hdr[1] + shift
 	if index_off + 4 > data.size():
 		push_error("bms: index section offset (hdr[1]) out of range")
 		return null
@@ -375,7 +386,7 @@ static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 	for i in range(tri_count * 3):
 		mesh.indices[i] = _le_u16(data, index_start + i * 2)
 
-	var bbox_off := hdr[4]
+	var bbox_off := hdr[4] + shift
 	if bbox_off + 24 <= data.size():
 		mesh.bounds_min = Vector3(_le_f32(data, bbox_off), _le_f32(data, bbox_off + 4), _le_f32(data, bbox_off + 8))
 		mesh.bounds_max = Vector3(_le_f32(data, bbox_off + 12), _le_f32(data, bbox_off + 16), _le_f32(data, bbox_off + 20))
@@ -383,6 +394,36 @@ static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 	_parse_vertex_motion(data, mesh)
 	_parse_vertex_links(data, mesh)
 	return mesh
+
+## The distance from the header's index pointer to where the stream puts
+## the triangle section (above), or 0 when the header's own section fits or
+## the stream's does not.
+static func _stream_shift(data: PackedByteArray, skin_off: int, index_off: int, vertex_count: int) -> int:
+	if index_off > 0 and index_off + 4 <= data.size():
+		var tris := _le_u32(data, index_off)
+		if tris >= 0 and index_off + 4 + tris * INDEX_REC_SIZE <= data.size():
+			return 0
+	if skin_off <= 0 or skin_off + 4 > data.size():
+		return 0
+	var bones := _le_u32(data, skin_off)
+	if bones < 0 or bones > 512:
+		return 0
+	var off := skin_off + 4
+	for i in range(bones):
+		if off + 4 > data.size():
+			return 0
+		var n := _le_u32(data, off)
+		if n <= 0 or n > 128:
+			return 0
+		off += 4 + n
+	if bones > 0:
+		off += vertex_count * SKIN_REC_SIZE
+	if off + 4 > data.size():
+		return 0
+	var stream_tris := _le_u32(data, off)
+	if stream_tris < 0 or off + 4 + stream_tris * INDEX_REC_SIZE > data.size():
+		return 0
+	return off - index_off
 
 ## Round 774: the light map (READ, CPrimMesh::FUN_00c1bb20 0xc1bc04..): bit
 ## 0x400 of the flag word at file offset 0x40 -- the first u32 the mesh body

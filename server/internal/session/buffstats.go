@@ -113,10 +113,25 @@ func buffDamagePercent(characterID int64, magical bool) float64 {
 // and its debuffed multiplier (p178/179, 'pmdg'), as the mitigation's tail
 // does (0x40e5a4, 0x40e75b, READ).
 func applyBuffDamage(characterID int64, magical bool, dmg int) int {
+	return applyBuffDamageVs(characterID, magical, false, dmg)
+}
+
+// applyBuffDamageVs is applyBuffDamage against a monster: unique names a
+// class-3 (unique) defender, against which the attacker's p259 ('umdu', the
+// devil's spirit stone; round 838) adds its percent of the same blow D:
+// Formula_MitigatePhysicalDamage (0x40e450) tests IsMonster and
+// GetMonsterClass == 3 (0x40e5ba..0x40e5de, READ) and computes
+// (1 + p128/100) D + (p259/100) D, the magical twin (0x40e830) with p130 --
+// so one factor 1 + (p128 + p259)/100. Rarity 8 does not qualify.
+func applyBuffDamageVs(characterID int64, magical, unique bool, dmg int) int {
 	if dmg <= 0 {
 		return dmg
 	}
-	f := 1 + buffDamagePercent(characterID, magical)/100
+	pct := buffDamagePercent(characterID, magical)
+	if unique {
+		pct += uniqueDamagePercent(characterID)
+	}
+	f := 1 + pct/100
 	mp := buff.ParamAttackerMult
 	if magical {
 		mp++
@@ -130,6 +145,15 @@ func applyBuffDamage(characterID int64, magical bool, dmg int) int {
 		out = 1
 	}
 	return out
+}
+
+// uniqueDamagePercent is the attacker's p259 (flat, slot 0); a test
+// replaces it.
+var uniqueDamagePercent = func(characterID int64) float64 {
+	if t, ok := buffTotal(characterID, buff.ParamUniqueDamage); ok {
+		return t.Apply(0)
+	}
+	return 0
 }
 
 // buffBonus is the character.Bonus the buffs give (round 785): Str and Int

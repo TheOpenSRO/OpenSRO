@@ -1500,6 +1500,8 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		departPlayer(hub, left, remaining)
 		// Its COS leave with it, their state saved (round 795).
 		cosOwnerLeft(left.CharacterID)
+		// Round 838: its premium is saved and dropped (goldtime.go).
+		goldTimeLeft(left.CharacterID)
 		// Its job's runtime state (round 800): a pending suit change, the
 		// battle state, the cached record.
 		forgetJobMode(left.CharacterID)

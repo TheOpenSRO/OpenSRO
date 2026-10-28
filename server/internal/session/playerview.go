@@ -547,6 +547,10 @@ func arrivePlayer(d viewDeps, arrived world.Entity) {
 	// Its COS arrive with it (round 795, cossummon.go): before the spawns
 	// both ways, so the players it meets get them with its own.
 	cosArrived(d.ctx, arrived)
+	// Round 838: its premium Gold Time and composite grants (goldtime.go,
+	// composite.go), kept across a restart.
+	goldTimeArrived(d.ctx, arrived)
+	compositeArrived(d.ctx, arrived)
 	others := othersInView(d.hub, arrived)
 	spawnPlayersTo(d, arrived, others)
 	spawnPlayerToOthersAs(d, arrived, others, true, zoneNoticeFrame(zoneNoticeEntered, arrived))

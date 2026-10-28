@@ -247,6 +247,25 @@ func _test_lightmap() -> void:
 	_check(uvs.size() == 2 and uvs[0] == Vector2(0.25, 0.75) and uvs[1] == Vector2(0.75, 0.75),
 		"r774: the record's bytes 0x20..0x27 are the light map coordinates (got %s)" % str(uvs))
 
+## Round 838: a header whose index pointer (and the sections after it) sits
+## 9 bytes short of the stream, as the archive's "_parz" meshes write it; the
+## client reads the stream (CPrimMesh::FUN_00c1bb20), so the reader takes the
+## stream's place. A header that fits is left as it is.
+func _test_stream_order() -> void:
+	var good := _build_synthetic_mesh(44, true)
+	var bad := good.duplicate()
+	for k in [1, 4]:
+		var at: int = BmsReader.HEADER_PTRS_BASE + k * 4
+		_put_u32(bad, at, _read_u32(bad, at) - 9)
+	var m := BmsReader.parse(bad)
+	_check(m != null, "stream order: a short index pointer still parses")
+	if m != null:
+		_check(m.indices.size() == 3, "stream order: 3 indices (got %d)" % m.indices.size())
+		_check(m.bounds_max == Vector3(1, 0, 1), "stream order: the bounds shift with it (got %s)" % m.bounds_max)
+		_check(m.bone_names.size() == 2, "stream order: the skin's palette is read (got %d)" % m.bone_names.size())
+	var ok := BmsReader.parse(good)
+	_check(ok != null and ok.indices.size() == 3, "stream order: a fitting header is untouched")
+
 func _init() -> void:
 	var data := _build_synthetic_mesh()
 	var mesh := BmsReader.parse(data)
@@ -441,6 +460,7 @@ func _init() -> void:
 		"a link pointing outside the mesh leaves the whole list unread")
 
 	_test_lightmap()
+	_test_stream_order()
 
 	if _failures == 0:
 		print("ALL PASS")

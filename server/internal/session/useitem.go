@@ -1113,6 +1113,16 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if avatar.IsDevilSpirit(it) {
 			return useDevilSpirit(ctx, sess, inv, characterID, held, it)
 		}
+		// Round 838 (petgrowth.go): a pet composite (3/3/13/15, PSU1) starts
+		// its skill job on the pet whose summon item it names.
+		if isPetComposite(it) {
+			return usePetComposite(ctx, sess, inv, items, characterID, it, held, have, req)
+		}
+		// Round 838 (goldtime.go): a premium time row's own use, UseByKind
+		// case 4.
+		if isPremiumTime(it) {
+			return usePremiumTime(ctx, sess, fail, inv, characterID, it, held.Index, have)
+		}
 		if isNasrunExtension(it) {
 			return useNasrunExtension(ctx, sess, inv, items, characterID, held, have, it, req.Option)
 		}

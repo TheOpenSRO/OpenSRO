@@ -124,3 +124,9 @@ func ScaleMonsterAttack(v int, f float32) int {
 	}
 	return int(float64(v) * float64(f))
 }
+
+// RarityUnique is GetMonsterClass 3, the unique: the class Formula_Mitigate*
+// tests before adding the attacker's 'umdu' percent (0x40e5ba, READ; round
+// 838). Class 8 (the tomb generals) keeps its own row's HP as 3 does but is
+// not a unique there.
+const RarityUnique = 3

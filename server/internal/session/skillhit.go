@@ -176,7 +176,9 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 				// The attacker's damage percent and debuffed multiplier
 				// (p128..131, p178/179), the target's multiplier (p174..177),
 				// inside the mitigation's tail (READ 0x40e5a4, 0x40e75b).
-				dmg = applyBuffDamage(c.casterID, magical, dmg)
+				// Round 838: against a unique (class 3) the attacker's
+				// 'umdu' percent joins them (applyBuffDamageVs).
+				dmg = applyBuffDamageVs(c.casterID, magical, m.Rarity == combat.RarityUnique, dmg)
 				// A passive's variable on the row's getv key (passives.go).
 				dmg = applyGetvDamage(c.casterID, c.row, dmg)
 				dmg = applyMonsterTaken(m.ID, magical, dmg)

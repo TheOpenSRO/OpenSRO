@@ -51,6 +51,11 @@ const (
 	ParamAttackerMult = 178 // 178 physical, 179 magical: x on the attacker's blow
 	ParamDefenderMult = 174 // 174..177 by type: x on the blow taken
 	ParamThreat       = 187
+	// ParamUniqueDamage is 'umdu' (MATTR_NASRUN_UMDU, the devil's spirit
+	// magic stone): a damage percent against a class-3 (unique) monster,
+	// added to 128..131's in Formula_Mitigate* (0x40e5ba..0x40e5de, READ;
+	// round 838).
+	ParamUniqueDamage = 259
 )
 
 // typeSelect is the 2x2 selector (0x410bb0 / 0x410c20, READ): a mask's

@@ -5337,6 +5337,185 @@ static func is_reverse_return_scroll(types: PackedInt32Array) -> bool:
 static func is_cos_target_item(types: PackedInt32Array) -> bool:
 	return UseItemNet.is_cos_target_item(types)
 
+# --- Using an item on another (round 838) ------------------------------------
+#
+# READ (sro_client.exe): a right click on the item (IFSlotWithHelp::
+# FUN_00676570, c:0x676570, from CIFSlotWithHelp::vslot_033 c:0x685ee0 ->
+# c:0x682040 case 0x46) keeps its slot (inventory +0x380, c:0x6aef80) and
+# forces the gold arrow, cursor 0xa6 (ForceCursor c:0x777e70 at c:0x6769fa);
+# nothing is sent. The kinds: 3/3/13 with TypeID4 8, 12, 15 or 16 whose
+# CanUse has both bits 0x81, and 3/3/1/6 with any CanUse (c:0x67699f..
+# 0x676a04); a dead player gets 0x1889 instead (c:0x676974). A click on an
+# occupied slot then (CIFSlotWithHelp::vslot_029 c:0x680fa0, 0x68111d..
+# 0x6811b8) restores the cursor and opens message box 0x1f, UIIT_STT_CONFIRM_
+# BOX / UIIT_MSG_QUESTION_SILKMALL_ITEM_USE; a click on an empty one keeps the
+# mode; a right click on a slot, a right press over the world or Escape ends
+# it. The box's OK (FUN_00797d90 case 0x1f) runs the sender's checks and
+# sends 0x704C with the target (SendItem_HandleUseItem c:0x796a85..0x797044):
+#   3/3/1/6   the revival: a bag 3/2/1 growth pet item in state 4, else
+#             CANT_USEITEM (not dead) / CANT_USE_WRONGOBJECT;
+#   3/3/13/12 the clock: a bag 3/2/1 ability pet item (no state test);
+#   3/3/13/15 a pet composite: a growth pet with the potion's Param6 bit 1,
+#             an ability pet with bit 2, else WRONGOBJECT; any target that
+#             is not a summon item goes unchecked (the server decides);
+#   3/3/13/16 the Nasrun extension: a bag 3/1/14 devil's spirit
+#             (WRONGOBJECT otherwise; a worn one is NASRUN_WEAR_EXTENSION_
+#             ITEM_NOT_USE -- this client's target clicks are bag slots).
+# OURS: CanUse is not in this client's item table; every mall row of these
+# kinds carries 129 and the revivals 1 or 129 (MEASURED), so the kinds alone
+# enter the mode. The potion's Param6 test is the server's (it answers 3).
+# The pet forms go as UseItemNet.OPTION_COS_TARGET with the target's bag
+# index; the Nasrun extension's option byte is the target's wire slot
+# (bag index + 13), as the server reads them.
+
+## World3D sends the use and prints the refusals: `src` the item's bag slot,
+## `target` the target's.
+signal use_on_requested(src: int, target: int)
+
+## The item's bag slot while the mode is up, else -1.
+var _use_on_slot := -1
+
+## Whether TypeIDs enter the use-on mode (above).
+static func is_use_on_item(types: PackedInt32Array) -> bool:
+	if types.size() < 4 or types[0] != 3 or types[1] != 3:
+		return false
+	if types[2] == 1 and types[3] == 6:
+		return true
+	return types[2] == 13 and types[3] in [8, 12, 15, 16]
+
+func _begin_use_on(slot: int) -> void:
+	if player_dead:
+		system_notice.emit(DEAD_INPUT_LINE)
+		return
+	_use_on_slot = slot
+	GameCursor.force(CursorSet.ID_ITEM_USE, get_window())
+	print("HudPanels: use-on mode for bag slot %d (cursor 0x%x)" % [slot, CursorSet.ID_ITEM_USE])
+
+## Ends the mode, the cursor back.
+func end_use_on(why: String) -> void:
+	if _use_on_slot < 0:
+		return
+	_use_on_slot = -1
+	GameCursor.force(-1, get_window())
+	print("HudPanels: use-on mode off (%s)" % why)
+
+## The slot the mode is up for, or -1.
+func use_on_slot() -> int:
+	return _use_on_slot
+
+func _use_on_target(target: int) -> void:
+	var src := _use_on_slot
+	end_use_on("a target clicked")
+	if _bag_item_id_at_slot(target) < 0:
+		return
+	print("HudPanels: use bag slot %d on bag slot %d? (box 0x1f)" % [src, target])
+	_use_on_confirm(src, target)
+
+## Message box 0x1f, then the sender's checks (use_on_check) and the send.
+func _use_on_confirm(src: int, target: int) -> void:
+	var title := _builder.resolve_text("UIIT_STT_CONFIRM_BOX") if _builder != null else "Confirm"
+	var body := _builder.resolve_text("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE") if _builder != null else ""
+	if body == "" or body == "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE":
+		body = "Will you use the selected item?"
+	_open_simple_confirm(title, body, func() -> void:
+		var why := use_on_check(src, target)
+		if why != "":
+			print("HudPanels: use-on refused locally: %s" % why)
+			var line := _builder.resolve_text(why) if _builder != null else why
+			system_notice.emit(line if line != "" else why)
+			return
+		print("HudPanels: use-on sent: bag slot %d on bag slot %d" % [src, target])
+		use_on_requested.emit(src, target))
+
+## The sender's checks for the item in `src` used on `target`: "" to send, or
+## the text key it prints.
+func use_on_check(src: int, target: int) -> String:
+	var types := bag_item_types(src)
+	var ttypes := bag_item_types(target)
+	if types.size() < 4:
+		return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+	var inst := _item_instance("bag", target) as ItemInstance
+	var is_pet_item := ttypes.size() >= 4 and ttypes[0] == 3 and ttypes[1] == 2 and ttypes[2] == 1
+	var pet_kind := 0
+	if is_pet_item and inst != null and ItemInstance.cos_kind_of.is_valid():
+		pet_kind = int(ItemInstance.cos_kind_of.call(inst.cos_ref))
+	if types[2] == 1 and types[3] == 6:
+		if not is_pet_item or (pet_kind != 0 and pet_kind != CosNet.KIND_GROWTH):
+			return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+		if inst == null or inst.cos_state != CosNet.ITEM_STATE_DEAD:
+			return "UIIT_MSG_COSPETERR_CANT_USEITEM"
+		return ""
+	match types[3]:
+		12:
+			if not is_pet_item or pet_kind != CosNet.KIND_ABILITY:
+				return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+		15:
+			if is_pet_item and pet_kind != CosNet.KIND_GROWTH and pet_kind != CosNet.KIND_ABILITY and pet_kind != 0:
+				return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+		16:
+			if not (ttypes.size() >= 4 and ttypes[0] == 3 and ttypes[1] == 1 and ttypes[2] == 14):
+				return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+	return ""
+
+## A centred OK / Cancel box with a title and a line (the style of the
+## board's confirm), `on_ok` run at OK.
+func _open_simple_confirm(title_text: String, body_text: String, on_ok: Callable) -> void:
+	var panel := PanelContainer.new()
+	panel.name = "UseOnConfirm"
+	panel.custom_minimum_size = Vector2(308, 120)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	var title := Label.new()
+	title.text = title_text
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var body := Label.new()
+	body.name = "Body"
+	body.text = body_text
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# A wrapping label needs its width, or the box grows to its full height.
+	body.custom_minimum_size = Vector2(280, 0)
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(body)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var ok := Button.new()
+	ok.name = "OK"
+	ok.text = "OK"
+	ok.custom_minimum_size = Vector2(96, 0)
+	ok.pressed.connect(func() -> void:
+		panel.queue_free()
+		on_ok.call())
+	row.add_child(ok)
+	var cancel := Button.new()
+	cancel.name = "Cancel"
+	cancel.text = "Cancel"
+	cancel.custom_minimum_size = Vector2(96, 0)
+	cancel.pressed.connect(func() -> void: panel.queue_free())
+	row.add_child(cancel)
+	add_child(panel)
+	var view := get_viewport_rect().size if is_inside_tree() else Vector2(800, 600)
+	panel.position = ((view - panel.custom_minimum_size) * 0.5).round()
+	_use_on_box = panel
+
+## The box up, for QA (its OK's centre), or null.
+var _use_on_box: PanelContainer = null
+
+func use_on_box_ok_centre() -> Vector2:
+	if _use_on_box == null or not is_instance_valid(_use_on_box):
+		return Vector2(-1, -1)
+	var ok := _use_on_box.find_child("OK", true, false) as Control
+	return ok.get_global_rect().get_center() if ok != null else Vector2(-1, -1)
+
 # --- The reverse return scroll (round 778) -----------------------------------
 #
 # The box (ReverseReturnBox, message box kind 0x21) and the world map's
@@ -6325,6 +6504,17 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	if _repair_mode and mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
 		_repair_click("bag", slot)
 		return
+	# Round 838: the use-on mode's target click (_use_on_target); the press
+	# is swallowed so nothing is picked up. A right click on any slot ends
+	# the mode (c:0x682040's first test).
+	if _use_on_slot >= 0:
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if not mb.pressed:
+				_use_on_target(slot)
+			return
+		if mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed:
+			end_use_on("a right click on a slot")
+			return
 	# Used on the right RELEASE, over the slot: CIFSlotWithHelp's right press
 	# (vslot 32, 0x6665b0) only captures the mouse and its release (vslot 33,
 	# 0x685ee0) uses (READ) -- the same as the quick slots.
@@ -6346,6 +6536,10 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		var crest_kind := int(CREST_ITEM_BOXES.get(item_code_for_id(item_id), 0))
 		if crest_kind != 0:
 			open_crest_box(slot, crest_kind)
+			return
+		# Round 838: an item used ON another item enters the use-on mode.
+		if is_use_on_item(item_types(item_id)):
+			_begin_use_on(slot)
 			return
 		# Round 805: a pet's potion, food or cure names the current COS.
 		if is_cos_target_item(item_types(item_id)):
@@ -6464,6 +6658,17 @@ func _is_pick_click_on(event: InputEvent, control: Control) -> bool:
 func _input(event: InputEvent) -> void:
 	# Before anything else, and without consuming the press (see the function).
 	release_text_focus_on_press(event)
+	# Round 838: Escape, or a right press over the world, ends the use-on
+	# mode (CURSOR.md; the slot's own right click is _on_inventory_cell_input's).
+	if _use_on_slot >= 0:
+		var esc := event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE
+		var rpress := event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT \
+			and not _over_any_window((event as InputEventMouseButton).position)
+		if esc or rpress:
+			end_use_on("Escape" if esc else "a right press over the world")
+			if esc:
+				get_viewport().set_input_as_handled()
 	if held_icon != null and held_icon.handle(event):
 		get_viewport().set_input_as_handled()
 		return

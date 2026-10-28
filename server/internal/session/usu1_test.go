@@ -15,6 +15,7 @@ const (
 	testPremiumTime    = 99102
 	testOnlyUnmodelled = 99103
 	testPremiumSkill   = 99201
+	testBooth          = 99104
 )
 
 func TestUsu1StartsTheSkillBuff(t *testing.T) {
@@ -29,7 +30,7 @@ func TestUsu1StartsTheSkillBuff(t *testing.T) {
 	slot, _ := f.slotOf(testPremium)
 	res := f.use(slot)
 	if res.Error != "" {
-		t.Fatalf("premium: %q, want used (UIU1 3/3/13/4 and BFI1 skipped, USU1 started)", res.Error)
+		t.Fatalf("premium: %q, want used (UIU1 3/3/13/4 skipped with no Gold Time store, BFI1 granted, USU1 started)", res.Error)
 	}
 	if p := f.recv(); p.Opcode != OpCompositeState {
 		t.Fatalf("after the premium: opcode %#x, want the composite state", p.Opcode)
@@ -73,7 +74,7 @@ func TestCompositeWithNothingModelledIsRefused(t *testing.T) {
 	}
 	slot, _ := f.slotOf(testOnlyUnmodelled)
 	if res := f.use(slot); res.Error != "that cannot be used" {
-		t.Errorf("a BFI1-only item got %q, want refused", res.Error)
+		t.Errorf("a BCS1-only item got %q, want refused", res.Error)
 	}
 	if n := f.countOf(testOnlyUnmodelled); n != 1 {
 		t.Errorf("the refused item was spent: %d left", n)
