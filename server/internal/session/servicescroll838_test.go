@@ -247,7 +247,7 @@ func TestRound838ServiceScrollKinds(t *testing.T) {
 		}
 	}
 	// The return scrolls stay return scrolls; a name colour has no white.
-	for _, code := range []string{"ITEM_ETC_SCROLL_RETURN_01", "ITEM_MALL_RETURN_SCROLL_HIGH_SPEED", "ITEM_NAME_COLOR_WHITE",
+	for _, code := range []string{"ITEM_ETC_SCROLL_RETURN_01", "ITEM_MALL_RETURN_SCROLL_HIGH_SPEED",
 		"ITEM_LOTTERY_GOLD", "ITEM_ANTHEIA_SILK_SCROLL_X"} {
 		if got, ok := serviceScrollOf(&refdata.Item{CodeName: code}); ok {
 			t.Errorf("%s is a service scroll: %+v", code, got)

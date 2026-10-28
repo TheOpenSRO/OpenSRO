@@ -201,7 +201,7 @@ var plateColourByName = map[string]uint32{
 	"BLACK":     0xFF000000, // black
 	"ARSENIC":   0xFF3B444B, // the named colour Arsenic
 	"ANTIQUE":   0xFFCD9575, // Antique Brass ("Antique White" would be the default white)
-	"WHITE":     0xFFFFFFFF, // white (the title's only: the name's default is white)
+	"WHITE":     0xFFFFFFFF, // white (the archive has a name one too, ITEM_NAME_COLOR_WHITE, not sold)
 }
 
 // silkScrollPrefix names the silk scrolls: ITEM_ANTHEIA_SILK_SCROLL_<n>.
@@ -257,7 +257,7 @@ func serviceScrollOf(it *refdata.Item) (serviceScroll, bool) {
 		}
 		return serviceScroll{}, false
 	}
-	if c, ok := strings.CutPrefix(code, "ITEM_NAME_COLOR_"); ok && c != "WHITE" {
+	if c, ok := strings.CutPrefix(code, "ITEM_NAME_COLOR_"); ok {
 		if argb, ok := plateColourByName[c]; ok {
 			return serviceScroll{kind: svcNameColour, colour: argb}, true
 		}

@@ -24,6 +24,9 @@ var botMall struct {
 	history string // -mall-history "<kind>,<period>"
 	open    int    // -mall-open: send 0x7121 with this group first (0: not)
 	delay   time.Duration
+	// use is -use-slots (round 838): bag slots to use (0x008a), in order,
+	// after the other mall steps.
+	use string
 }
 
 func mallLog(b *bot, format string, args ...any) {
@@ -58,7 +61,7 @@ func parseMallBuy(s string) (mall.BuyRequest, error) {
 // mallSteps runs the mall steps once in the world, -social-delay apart.
 func (b *bot) mallSteps() {
 	m := &botMall
-	if m.buy == "" && m.chest == "" && m.history == "" && m.open == 0 {
+	if m.buy == "" && m.chest == "" && m.history == "" && m.open == 0 && m.use == "" {
 		return
 	}
 	go func() {
@@ -105,6 +108,16 @@ func (b *bot) mallSteps() {
 				_ = b.send(mall.OpHistory, []byte{byte(kind), byte(period)})
 			}
 		}
+		// Round 838: the service scrolls, used from the bag.
+		for _, f := range strings.Split(m.use, ",") {
+			slot, err := strconv.Atoi(strings.TrimSpace(f))
+			if err != nil {
+				continue
+			}
+			time.Sleep(m.delay)
+			mallLog(b, "-> 0x008a use bag slot %d", slot)
+			_ = b.send(session.OpUseItem, (&session.UseItemRequest{CharacterName: b.name, InventorySlot: int32(slot)}).Encode())
+		}
 	}()
 }
 
@@ -137,5 +150,18 @@ func (b *bot) noteMall(op uint16, data []byte) {
 		}
 	case mall.OpOpenResult, mall.OpChestListResult, mall.OpChestTakeResult, mall.OpChestLogResult, mall.OpChestReceived:
 		mallLog(b, "%#04x % x", op, data)
+	// Round 838: the service scrolls' answers.
+	case session.OpUseItemResult:
+		if r, err := session.DecodeUseItemResult(data); err == nil {
+			mallLog(b, "0x008b use: error %q, %d left, item %d", r.Error, r.Remaining, r.ItemID)
+		}
+	case session.OpServiceLine:
+		if len(data) >= 2 {
+			mallLog(b, "0x0138 %q", string(data[2:]))
+		}
+	case session.OpPlateColours:
+		if len(data) >= 12 {
+			mallLog(b, "0x013B uid %d name %08x title %08x", u32(0), u32(4), u32(8))
+		}
 	}
 }

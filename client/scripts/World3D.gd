@@ -2739,8 +2739,12 @@ func _try_initialize_pk2_ui() -> void:
 	# without a follow-up stats round trip, and the bag count is refreshed.
 	NetClient.use_item_result.connect(_on_use_item_result)
 	# Round 838 (OURS): the service scrolls' lines and the plate colours.
-	NetClient.service.line.connect(func(text: String) -> void: _log_system(text))
+	NetClient.service.line.connect(func(text: String) -> void:
+		print("World3D: service line: %s" % text)
+		_log_system(text))
 	NetClient.service.plate_colours_changed.connect(_on_plate_colours_changed)
+	# The own colours may have come before this was connected.
+	_own_plate_colours_told()
 	# QA: once a kill has dropped a potion into the bag, drink it, so a render
 	# can show a consumable actually working. Never fires in real play.
 	if OS.get_environment("OPENSRO_QA_USEITEM") != "":
@@ -9757,6 +9761,7 @@ func _plate_title_colour(uid: int) -> Color:
 ## Round 838 (OURS): 0x013B changed uid's colours -- its plate's name (the
 ## hostile colour of an opposed job still wins, as before) and its title.
 func _on_plate_colours_changed(uid: int) -> void:
+	print("World3D: plate colours of %d: %s" % [uid, str(NetClient.service.plate_colours.get(uid, "default"))])
 	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
 		_refresh_player_name_plate()
 		return
@@ -9777,6 +9782,14 @@ func _on_plate_colours_changed(uid: int) -> void:
 			var shadow := title.get_node_or_null("Shadow") as Label3D
 			if shadow != null:
 				shadow.modulate = Color(0.0, 0.0, 0.0, c.a)
+
+## Round 838: redraws the own plate when 0x013B named the own id already
+## (it arrives with the world entry, which can come before the plate's
+## signal is connected or before the id is known).
+func _own_plate_colours_told() -> void:
+	var own := _own_id()
+	if own >= 0 and NetClient.service.plate_colours.has(own & 0xffffffff):
+		_refresh_player_name_plate()
 
 func _on_guild_line_changed(uid: int) -> void:
 	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
@@ -18268,8 +18281,10 @@ func _qa_job_step() -> void:
 			if inv_win != null and inv_win.visible:
 				for c in inv_win.find_children("*", "Control", true, false):
 					var cc := c as Control
-					if cc.has_meta("inv_slot") and cc.has_meta("inv_item_id") and cc.is_visible_in_tree() \
-							and _hud_panels.item_code_for_id(int(cc.get_meta("inv_item_id"))) == rcode:
+					# A number names the item id instead of its code.
+					var cid := int(cc.get_meta("inv_item_id", -1))
+					if cc.has_meta("inv_slot") and cid >= 0 and cc.is_visible_in_tree() \
+							and (_hud_panels.item_code_for_id(cid) == rcode or (rcode.is_valid_int() and cid == int(rcode))):
 						cell = cc
 						break
 			if cell == null:
@@ -18278,6 +18293,32 @@ func _qa_job_step() -> void:
 				var rclick_at := cell.get_global_rect().get_center()
 				print("QA SERVICE: tick %d bag_rclick %s at slot %d, %s" % [_qa_tick, rcode, int(cell.get_meta("inv_slot")), str(rclick_at)])
 				_qa_push_click(rclick_at, MOUSE_BUTTON_RIGHT, true)
+		# Round 838 (QA only): chest_icon clicks the item chest's icon under
+		# the minimap (a real press), which opens the chest window.
+		# stat_plus:<n> presses the character window's Str "+" n times (real
+		# presses; the window open: panel:character first), once per process
+		# (a reconnect's second World3D replays the steps).
+		elif what.begins_with("stat_plus:"):
+			var cw: HudWindow = _hud_panels._windows.get("character")
+			var plus := cw.node("GDR_PI_BTN_ADDHP") as Control if cw != null and cw.visible else null
+			if OS.get_environment("OPENSRO_QA_STAT_PLUS_DONE") != "":
+				pass
+			elif plus == null:
+				print("QA SERVICE: tick %d stat_plus: no character window" % _qa_tick)
+			else:
+				OS.set_environment("OPENSRO_QA_STAT_PLUS_DONE", "1")
+				var plus_at := plus.get_global_rect().get_center()
+				print("QA SERVICE: tick %d stat_plus x%s at %s" % [_qa_tick, what.substr(10), str(plus_at)])
+				for i in what.substr(10).to_int():
+					_qa_push_click(plus_at, MOUSE_BUTTON_LEFT, true)
+		elif what == "chest_icon":
+			var icon: Control = _hud_panels.item_chest_icon
+			if icon == null or not icon.is_visible_in_tree():
+				print("QA SERVICE: tick %d chest icon: none shown" % _qa_tick)
+			else:
+				var icon_at := icon.get_global_rect().get_center()
+				print("QA SERVICE: tick %d chest icon click at %s" % [_qa_tick, str(icon_at)])
+				_qa_push_click(icon_at, MOUSE_BUTTON_LEFT, true)
 		elif what == "plates":
 			var holders: Array = [[player, player.get_node_or_null("Name") if player != null else null]]
 			for oid in _other_bodies:
@@ -32942,6 +32983,9 @@ func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 ## and move handlers and the sit state alike.
 func _on_self_id_received(_character_id: int) -> void:
 	_sync_own_id()
+	# Round 838: a plate built before the id came was drawn in the default
+	# colours; the own 0x013B may already be in.
+	_own_plate_colours_told()
 	# This player selected before its id came (round 638 review): the target
 	# window's owner "character:-1" becomes the real id's key.
 	if _hud_target != null and _hud_target.buff_owner() == _fx_owner_key(-1, SkillNet.OWNER_CHARACTER) and _own_id() >= 0:

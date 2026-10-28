@@ -200,7 +200,6 @@ var baseline = map[string]string{
 	"EquippedIn":          "internal/session/world.go",
 	"IntForMaxRatio":      "internal/combat/statratio.go",
 	"IntLevelDamageRatio": "internal/combat/statratio.go",
-	"ListAllSkills":       "internal/refdata/memstore.go",
 	"NewPacketChecksum":   "internal/proto/security.go",
 	"NewRollingByte":      "internal/proto/security.go",
 	"NewTestSession":      "internal/gateway/gateway.go",
