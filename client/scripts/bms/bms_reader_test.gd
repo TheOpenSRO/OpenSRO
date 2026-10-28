@@ -247,7 +247,25 @@ func _test_lightmap() -> void:
 	_check(uvs.size() == 2 and uvs[0] == Vector2(0.25, 0.75) and uvs[1] == Vector2(0.75, 0.75),
 		"r774: the record's bytes 0x20..0x27 are the light map coordinates (got %s)" % str(uvs))
 
+## Round 838: the client reads the mesh body in sequence (CPrimMesh::
+## FUN_00c1bb20, READ); a file whose hdr[1] points short of where the skin
+## section ends (the archive's 3-bone cape, 16 bytes short) is read where the
+## sequence puts the triangle count.
+func _test_header_index_off() -> void:
+	var data := _build_synthetic_mesh(44, true)
+	var good := _read_u32(data, BmsReader.HEADER_PTRS_BASE + 4)
+	var bad := data.duplicate()
+	# hdr[1] pointing where no triangle count fits (the cape's points into
+	# its weights, where the "count" reads 0xFFFF).
+	_put_u32(bad, BmsReader.HEADER_PTRS_BASE + 4, bad.size() - 2)
+	var mesh := BmsReader.parse(bad)
+	_check(mesh != null and mesh.indices.size() == 3 and mesh.bone_names.size() == 2,
+		"r838: a wrong hdr[1] is read at the skin section's end (%s)" % ("null" if mesh == null else "%d indices, %d bones" % [mesh.indices.size(), mesh.bone_names.size()]))
+	_check(BmsReader._skin_section_end(data, _read_u32(data, BmsReader.HEADER_PTRS_BASE), 3) == good,
+		"r838: _skin_section_end lands on the index section")
+
 func _init() -> void:
+	_test_header_index_off()
 	var data := _build_synthetic_mesh()
 	var mesh := BmsReader.parse(data)
 	_check(mesh != null, "parses synthetic mesh")

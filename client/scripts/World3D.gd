@@ -7970,6 +7970,8 @@ func _exit_tree() -> void:
 	# load) must not hold the next world's effects.
 	EfpEffect.pause_world(false)
 	EfpEffect.gate_ticks(false)
+	# Round 838: the auras' models (AuraModel) and any preparation still out.
+	AuraModel.reset()
 	BerserkLook.clear()
 	StateLook.clear()
 	_fx_owner_buffs.clear()
@@ -17702,6 +17704,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       that name under the UI (find_child pattern)
 #   bagitem:<id>        left click the shown bag cell holding that item id
 #                       (round 791)
+#   rbagitem:<id>       right click it: the item's use (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
@@ -18485,6 +18488,16 @@ func _qa_input_step() -> void:
 				var centre := cell.get_global_rect().get_center()
 				_qa_input_report = "%s at %s" % [action, centre]
 				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
+		"rbagitem":
+			# Round 838: right click the bag cell holding that item id (the
+			# shown page), as a player uses an item.
+			var rcell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
+			if rcell == null:
+				_qa_input_report = action + " (not on the shown bag page)"
+			else:
+				var rcentre := rcell.get_global_rect().get_center()
+				_qa_input_report = "%s at %s" % [action, rcentre]
+				_qa_push_click(rcentre, MOUSE_BUTTON_RIGHT)
 		"drag":
 			var v := arg.split(",")
 			var from := Vector2(float(v[0]), float(v[1]))
@@ -31266,6 +31279,8 @@ func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 	# The buff's remaining time bounds the aura in case its end never
 	# arrives (SkillEffects.AURA_GRACE_MS, OURS).
 	var remaining := start.remaining_ms if start.remaining_ms > 0 else start.duration_ms
+	# Round 838: an aura's .bsr models (AuraModel) load from Data.pk2.
+	_deco_archive()
 	# A re-sent start of a buff whose aura already draws on this body keeps it
 	# (round 646, SkillEffects.ensure_aura).
 	SkillEffects.ensure_aura(_fx_owner_key(owner_id, kind), start.token, start.skill_id, body, remaining)
@@ -31288,6 +31303,7 @@ func _fx_resync_owner(key: String, why: String) -> int:
 	var starts := roster.starts_of(key, Time.get_ticks_msec())
 	if starts.is_empty():
 		return 0
+	_deco_archive() # round 838: the auras' .bsr models (AuraModel)
 	var n := 0
 	for bs in starts:
 		var start: SkillNet.BuffStart = bs
