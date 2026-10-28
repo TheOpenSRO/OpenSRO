@@ -384,6 +384,12 @@ func performSkillAttack(ctx context.Context, d combatDeps, sess *gateway.Session
 	if len(outcomes) == 0 {
 		return refuse("target not found")
 	}
+	// The ammunition (round 838, ammo.go): spent once a cast, after the
+	// blows are resolved and before they land (Skill_BuildUseContext_A); none
+	// in slot 7 now, no blow.
+	if r := spendAmmo(ctx, sess, chars, eq, d.inv, items, characterID, castRow); r != "" {
+		return refuse(r)
+	}
 	cc.apply(outcomes, action)
 	if report != nil && outcomes[0].before.ID == primaryID {
 		report.Landed, report.Blocked = true, outcomes[0].blocked

@@ -1174,6 +1174,15 @@ func combatHandler(
 			// all (playtest 2026-09-20, item 2). This server cannot walk the
 			// player into range the way the engine does, so it refuses and
 			// says why -- the same stated departure the keep-up carries.
+			// The ammunition (round 838, ammo.go): a bow's or a crossbow's
+			// base attack carries `cnsm`, and Tick_Attack's phase 0 tests it
+			// (mask 0x64) before the reach.
+			if base, ok := baseAttackOf(ctx, characterID, eq, items); ok {
+				if refusal := ammoRefusal(ctx, chars, eq, items, characterID, base); refusal != "" {
+					keepUp.Cancel(characterID)
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusal, MonsterID: req.TargetMonsterID}).Encode()})
+				}
+			}
 			if !firstSwingInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID) {
 				// Round 785: the refusal names its monster, and the requester
 				// is told where the server has that monster (resyncMonster),
@@ -1358,6 +1367,11 @@ func performAttack(
 	}
 	if len(outcomes) == 0 || outcomes[0].before.ID != monster.ID {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
+	}
+	// The ammunition (round 838, ammo.go): the swing is its base attack
+	// skill's cast, which spends after its blows resolve and before they land.
+	if r := spendAmmo(ctx, sess, chars, eq, inv, items, characterID, baseRow); r != "" {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: r, MonsterID: targetMonsterID}).Encode()})
 	}
 	swingAction := &ActionBlock{Target: uint32(monster.ID), TargetKind: ActionTargetMonster, HitCount: uint8(cc.terms.hits)}
 	// The blow, with the players watching the monster before it and after it

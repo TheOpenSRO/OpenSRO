@@ -28,7 +28,7 @@ func (s stubMaxStacks) GetMaxStack(_ context.Context, itemID int64) (int, error)
 
 func openTestStores(t *testing.T) (*SQLStore, inventory.Store) {
 	t.Helper()
-	inv, err := inventory.OpenSQLStore(testDSN(), stubMaxStacks{100: 1, 200: 1})
+	inv, err := inventory.OpenSQLStore(testDSN(), stubMaxStacks{100: 1, 200: 1, 300: 10000})
 	if err != nil {
 		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
 	}
@@ -237,3 +237,49 @@ func TestArmorSlotsRealOrder(t *testing.T) {
 }
 
 var _ Store = (*SQLStore)(nil)
+var _ AmmoStore = (*SQLStore)(nil)
+var _ AmmoStore = (*MemStore)(nil)
+
+// Round 838: the ammunition in slot 7 is worn as a whole stack, spent in one
+// step, and returned whole.
+func TestSQLWornStackQuantity(t *testing.T) {
+	eq, inv := openTestStores(t)
+	ctx := context.Background()
+	if err := inv.AddItem(ctx, 1, 300, 10000); err != nil {
+		t.Fatal(err)
+	}
+	if err := eq.Equip(ctx, 1, SlotShield, 0); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	if bag, _ := inv.List(ctx, 1); len(bag) != 0 {
+		t.Fatalf("the bag kept %+v", bag)
+	}
+	worn, _ := eq.Get(ctx, 1)
+	if len(worn) != 1 || worn[0].Count() != 10000 {
+		t.Fatalf("worn %+v, want 10000", worn)
+	}
+	if left, err := eq.SpendWorn(ctx, 1, SlotShield, 3); err != nil || left != 9997 {
+		t.Fatalf("SpendWorn = %d, %v; want 9997", left, err)
+	}
+	if left, err := eq.SpendWorn(ctx, 1, SlotShield, 20000); err != nil || left != 0 {
+		t.Fatalf("SpendWorn past the stack = %d, %v; want 0", left, err)
+	}
+	if err := eq.DiscardWorn(ctx, 1, SlotShield); err != nil {
+		t.Fatal(err)
+	}
+	if err := eq.DiscardWorn(ctx, 1, SlotShield); !errors.Is(err, ErrSlotEmpty) {
+		t.Fatalf("a second discard: %v", err)
+	}
+	if err := inv.AddItem(ctx, 1, 300, 250); err != nil {
+		t.Fatal(err)
+	}
+	if err := eq.Equip(ctx, 1, SlotShield, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := eq.Unequip(ctx, 1, SlotShield); err != nil {
+		t.Fatal(err)
+	}
+	if bag, _ := inv.List(ctx, 1); len(bag) != 1 || bag[0].Quantity != 250 {
+		t.Fatalf("unequipped %+v, want the 250 back", bag)
+	}
+}

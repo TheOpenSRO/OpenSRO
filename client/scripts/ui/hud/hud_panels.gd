@@ -8284,6 +8284,9 @@ func _fill_equipment_slots(items: Array) -> void:
 				_set_item_tip(icon, -1)
 				_set_item_seal_edge(icon, -1)
 				DurabilityMark.apply(icon, DurabilityMark.State.NONE, null, null)
+			var count_clear := slot.get_node_or_null("CountLabel") as Label
+			if count_clear != null:
+				count_clear.text = ""
 	var durability := _durability_map(NetClient.last_equipment_durabilities)
 	for entry in items:
 		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
@@ -8313,6 +8316,11 @@ func _fill_equipment_slots(items: Array) -> void:
 			# (playtest 2026-09-20, item 7).
 			icon.set_meta("worn_slot", int(slot_index))
 			icon.set_meta("worn_item_id", int(item_id))
+			# Round 838: the ammunition in slot 7 shows its count, the bag's
+			# rule (an equipment slot is kind 0x47, whose case in
+			# FUN_00680da0 tests the same expendable type word, READ); the
+			# count is the worn record's (NetClient.last_equipment_instances).
+			_set_worn_count(slot, int(item_id), int(slot_index))
 			if not icon.has_meta("worn_click_wired"):
 				icon.set_meta("worn_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void:
@@ -8326,10 +8334,48 @@ func _fill_equipment_slots(items: Array) -> void:
 							"item_id": int(icon.get_meta("worn_item_id", 0)), "icon": icon.texture},
 							icon.texture, icon, (ev as InputEventMouseButton).global_position))
 
+## The worn slot's count label (round 838): an expendable's stack -- the
+## arrows or bolts in slot 7 -- from its worn record, else nothing.
+func _set_worn_count(slot: Control, item_id: int, slot_index: int) -> void:
+	var label := slot.get_node_or_null("CountLabel") as Label
+	if label == null:
+		return
+	var inst = NetClient.last_equipment_instances.get(slot_index)
+	var qty := int(inst.count) if inst != null else 0
+	label.text = str(qty) if qty > 0 and shows_count(item_id, qty) else ""
+
+## 0x3201 (round 838): the worn ammunition's new count (c:0x882280, READ):
+## the slot-7 count redrawn, and the slot cleared at 0 (c:0x6ae4e0) -- the
+## server's reload, when there is one, follows as the worn list.
+func _on_ammo_count(count: int) -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return
+	var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + AMMO_SLOT)) as Control
+	if slot == null:
+		return
+	var icon := slot.get_node_or_null("ItemIcon") as TextureRect
+	if count <= 0:
+		if icon != null:
+			icon.texture = null
+			_set_item_tip(icon, -1)
+			_set_item_seal_edge(icon, -1)
+			icon.remove_meta("worn_slot")
+		var label := slot.get_node_or_null("CountLabel") as Label
+		if label != null:
+			label.text = ""
+		return
+	if icon != null and icon.has_meta("worn_item_id"):
+		_set_worn_count(slot, int(icon.get_meta("worn_item_id")), AMMO_SLOT)
+
+## The worn slot ammunition is in (equipment slot 7, READ CGStorage::GetItem(7)).
+const AMMO_SLOT := 7
+
 func connect_net() -> void:
 	if _net_connected:
 		return
 	_net_connected = true
+	NetClient.ammo_count.connect(_on_ammo_count)
 	# The inventory's authored presentation is its lattice grid
 	# (GDR_INVENTORY_LATTICE), filled with item icons -- the same as the real
 	# client.

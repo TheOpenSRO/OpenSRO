@@ -118,6 +118,9 @@ signal character_stats_result(stats: StatsNet.Stats)
 ## Callers that need to react to "my equip request succeeded" specifically
 ## should track that they're awaiting one.
 signal equipment_result(items: Array, error: String)
+## Round 838: 0x3201, the worn ammunition's count after a cast spent some
+## (READ c:0x882280: a u16, slot 7 implied).
+signal ammo_count(count: int)
 ## A repair's outcome: 0 = repaired, otherwise a refusal code; the gold spent
 ## and the worn slots' durability afterwards (EquipmentNet.RepairResult).
 signal repair_result(code: int, gold_spent: int, durabilities: Array)
@@ -520,6 +523,8 @@ signal chest_received(entry: Dictionary)
 ## Round 837 (OURS): the server's big notice (0x00D8 {u16 len, text}).
 signal big_notice(text: String)
 const OP_BIG_NOTICE := 0x00D8
+## Round 838: retail's 0x3201, the worn ammunition's count (ammo_count).
+const OP_AMMO_COUNT := 0x3201
 ## A big notice that arrived before anything listened (it comes with the
 ## world entry, during the loading screen): the HUD shows it when built.
 var pending_big_notice := ""
@@ -859,7 +864,7 @@ static func _move_uid(p: Packet) -> int:
 ## status or a monster's blow on this player). Everything else waits.
 func _passes_group(p: Packet) -> bool:
 	match p.opcode:
-		InventoryNet.OP_LIST_RESULT, InventoryNet.OP_MOVE_RESULT, StatsNet.OP_STATS_RESULT, EquipmentNet.OP_RESULT, \
+		InventoryNet.OP_LIST_RESULT, InventoryNet.OP_MOVE_RESULT, StatsNet.OP_STATS_RESULT, EquipmentNet.OP_RESULT, OP_AMMO_COUNT, \
 				EquipmentNet.OP_REPAIR_RESULT, ShopNet.OP_BUY_RESULT, ShopNet.OP_LIST_RESULT, ShopNet.OP_SELL_RESULT, \
 				ItemOpNet.OP_MOVE_RESULT, ItemOpNet.OP_BUYBACK_FAIL, UseItemNet.OP_RESULT, UseItemNet.OP_REVERSE_SAVED_RESULT, CompositeNet.OP_STATE, \
 				CompositeNet.OP_USE_RESULT, CompositeNet.OP_END, StorageNet.OP_LIST_RESULT, StorageNet.OP_DEPOSIT_RESULT, \
@@ -2577,6 +2582,18 @@ func _dispatch(p: Packet) -> void:
 			if _stats_requests_pending > 0:
 				_stats_requests_pending -= 1
 			character_stats_result.emit(StatsNet.decode_result(p.data))
+		OP_AMMO_COUNT:
+			# Round 838: the slot-7 stack's new count (c:0x6ab830 sets the
+			# worn item's count, READ).
+			if p.data.size() >= 2:
+				var n := p.data.decode_u16(0)
+				print("AMMO: slot 7 count %d" % n)
+				var worn = last_equipment_instances.get(7)
+				if worn != null:
+					worn.count = n
+					if n == 0:
+						last_equipment_instances.erase(7)
+				ammo_count.emit(n)
 		EquipmentNet.OP_RESULT:
 			var r := EquipmentNet.decode_result(p.data)
 			last_equipment_durabilities = r.durabilities

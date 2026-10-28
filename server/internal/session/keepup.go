@@ -422,6 +422,12 @@ func armKeepUp(
 			_ = sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusedTooFar, MonsterID: target}).Encode()})
 			return 0, false
 		}
+		// The ammunition (round 838, ammo.go): Tick_Attack's phase 1 tests
+		// it on every swing (mask 0x24), and a refusal ends the attack.
+		if refusal := ammoRefusal(ctx, deps.chars, deps.eq, deps.items, characterID, base); refusal != "" {
+			_ = sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusal, MonsterID: target}).Encode()})
+			return 0, false
+		}
 		now := time.Now()
 		if deps.skills != nil {
 			if last, ever, err := deps.skills.LastUsed(ctx, characterID, base.ID); err == nil && ever {

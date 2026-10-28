@@ -25326,6 +25326,11 @@ func _use_cos_item(slot: int) -> void:
 	NetClient.use_item_option(NetClient.current_character_name, slot, UseItemNet.OPTION_COS_TARGET, uid)
 
 const COS_CANT_USE_ITEM_KEY := "UIIT_MSG_COSPETERR_CANT_USEITEM"
+## Round 838: the server's 0x300e lines (session/ammo.go) and their text keys.
+const AMMO_REFUSALS := {
+	"Insufficient arrows.": "UIIT_SKILL_USE_FAIL_RUNOUT_AMMO",
+	"Insufficient bolts.": "UIIT_SKILL_USE_FAIL_RUNOUT_AMMO_VOLT",
+}
 const COS_WRONG_OBJECT_KEY := "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
 
 # --- The skin change scroll (round 838, SkinChangeWindow) ---------------------
@@ -30525,6 +30530,11 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		# The server's target test (round 622): a friendly skill at a monster.
 		if result.error == SelfCast.INVALID_TARGET_TEXT or result.error == SelfCast.NO_TARGET_TEXT:
 			_log_system(result.error)
+		# Round 838: 0x300e, no ammunition in slot 7 -- the original's line by
+		# the player's race (c:0x7b98ce: UIIT_SKILL_USE_FAIL_RUNOUT_AMMO /
+		# _VOLT), resolved from the archive's text when it has it.
+		if result.error in AMMO_REFUSALS:
+			_log_system(_resolve_any_text(String(AMMO_REFUSALS[result.error]), result.error))
 		_pending_skill_id = 0
 		_pending_skill_hit_code = ""
 		# A refusal of a request the approach walk released is that walk's
