@@ -160,8 +160,9 @@ func RentSecondsLeft(end, now time.Time) uint32 {
 
 // The inventory a COS is created with (_AddNewCOS's ninth argument, READ
 // s:0x440300..): 28 slots for an ability pet (0x1c), none for a growth pet;
-// a ride or transport takes its row's InventorySize (not modelled: OpenSRO
-// has no trade goods, OURS).
+// a ride or transport takes its row's InventorySize. A transport's usable
+// bag is specialty.BagSize (s:0x4d1a50, min(level cap, InventorySize));
+// session/specialtytrade.go's transportBagSize sizes it at each summon.
 const AbilityPetSlots = 28
 
 // PetOption is _CHARCOS.PetOption at creation: 1 for a growth pet, 7 for an

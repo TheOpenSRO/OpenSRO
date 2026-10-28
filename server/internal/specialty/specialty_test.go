@@ -125,6 +125,36 @@ func TestBagSize(t *testing.T) {
 	}
 }
 
+// TestBagSizeShippedTransports is round 839's check of the user's "1 slot
+// at level 110": every COS_T row the archive ships has InventorySize 1, and
+// FUN_004d1a50 is min(level cap, InventorySize) -- 1 at every level, for
+// either rarity, cash or not. The level only matters for a row with a
+// bigger InventorySize (the shard's own COS_T_SCORPION rows hold 50..177).
+func TestBagSizeShippedTransports(t *testing.T) {
+	for goldMin := int64(0); goldMin <= 100000; goldMin += 7 {
+		for _, rarity := range []int{1, 2} {
+			for _, cash := range []bool{false, true} {
+				if n := BagSize(1, goldMin, rarity, cash); n != 1 {
+					t.Fatalf("InventorySize 1, goldMin %d, rarity %d, cash %v: %d slots", goldMin, rarity, cash, n)
+				}
+			}
+		}
+	}
+	// A bigger InventorySize: the cap grows with the level's gold minimum
+	// until InventorySize holds it.
+	prev := 0
+	for _, goldMin := range []int64{10, 50, 100, 200, 400, 800} {
+		n := BagSize(177, goldMin, 1, false)
+		if n < prev || n > 177 {
+			t.Fatalf("goldMin %d: %d slots after %d", goldMin, n, prev)
+		}
+		prev = n
+	}
+	if prev != 177 {
+		t.Fatalf("a high level's cap is held to InventorySize 177: %d", prev)
+	}
+}
+
 func TestSaleExp(t *testing.T) {
 	for _, c := range []struct {
 		profit int64
