@@ -729,7 +729,8 @@ func TestRound786EveryRelocationGoesThroughWarpVia(t *testing.T) {
 		"Release":        {"releaseArrival"},
 		"Relocate":       {"handleUnstuck", "moveBySkill"},
 		"warpTo":         {"handleChangeZone"},
-		"warpHome":       {"returnAfterKill:death: respawn after a kill", "returnToPoint:death: return point", "complete:return scroll"},
+		"warpHome": {"returnAfterKill:death: respawn after a kill", "returnToPoint:death: return point", "complete:return scroll",
+			"skillReset:skill reset scroll"}, // round 838, servicescroll.go
 		"warpVia": {"handleUnstuck:/unstuck", "use:gate teleport", "walkIn:walk-in teleport", "complete:reverse return scroll",
 			"warpHome", "warpTo:zone change", "GMCommandHandler"},
 	}

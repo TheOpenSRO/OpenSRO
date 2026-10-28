@@ -1099,6 +1099,7 @@ func main() {
 	flag.StringVar(&botMall.chest, "mall-chest", "", "bot (round 837): after the buy, list the item chest (\"list\"), take all (\"all\") or take one entry id")
 	flag.StringVar(&botMall.history, "mall-history", "", "bot (round 837): ask the silk history \"<kind>,<period>\" (0x711a), e.g. 1,4")
 	flag.IntVar(&botMall.open, "mall-open", 0, "bot (round 837): send 0x7121 with this shop group first")
+	flag.StringVar(&botMall.use, "use-slots", "", "bot (round 838): bag slots to use (0x008a) once in the world, \"0,1\", after the mall steps")
 	flag.DurationVar(&botMall.delay, "mall-delay", 2*time.Second, "bot (round 837): the wait before each mall step")
 	flag.DurationVar(&botSocial.delay, "social-delay", 2*time.Second, "bot (round 834): the wait before each friend or exchange step")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")

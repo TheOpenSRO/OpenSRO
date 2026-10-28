@@ -1549,6 +1549,13 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 			Data:   (&EnterWorldResult{Reason: "the character is pending deletion"}).Encode(),
 		})
 	}
+	// Nor around a waiting rename (round 838, OURS, as handleStart).
+	if startRefusalForService(ctx, chars, owned.ID) != 0 {
+		return sess.Send(&proto.Packet{
+			Opcode: OpEnterWorldResult,
+			Data:   (&EnterWorldResult{Reason: "the character's name change is waiting"}).Encode(),
+		})
+	}
 	return enterOwned(ctx, sess, owned, chars, eq, hub, onEnter, zerk)
 }
 
@@ -1591,6 +1598,11 @@ func handleStart(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	if owned.Deleting() {
 		return refuse(LobbyErrRefused)
 	}
+	// Round 838 (servicescroll.go, OURS): a rename the Name Change Scroll
+	// left waits for the select screen's new name.
+	if code := startRefusalForService(ctx, chars, owned.ID); code != 0 {
+		return refuse(code)
+	}
 	if err := sess.Send(&proto.Packet{Opcode: OpStartResult, Data: (&StartResult{OK: true}).Encode()}); err != nil {
 		return err
 	}
@@ -1605,6 +1617,10 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 			log.Printf("session: enter hook for %q: %v", owned.Name, err)
 		}
 	}
+	// Round 838 (servicescroll.go, OURS): the plate colours cached, and a
+	// stat or skill reset a scroll left for this login run before the
+	// character is placed.
+	owned = serviceAtEntry(ctx, chars, owned)
 	// The avatar inventory's integrity (round 789, avatar.go): a failing item
 	// goes to the bag; with no room the entry is refused, as retail refuses
 	// the login (CGObjPC::Create s:0x4e0dc0).
@@ -1760,6 +1776,8 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	mallAfterEnter(ctx, sess)
 	// Round 837 (OURS): an account's login notice (loginnotice.go).
 	loginNoticeAfterEnter(sess)
+	// Round 838 (OURS): its own plate colours and the resets' lines.
+	serviceAfterEnter(sess, owned)
 	return nil
 }
 

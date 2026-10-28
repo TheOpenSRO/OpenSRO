@@ -264,6 +264,10 @@ func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, b
 	}
 	// Its COS follow it (round 795, cosworld.go).
 	after = append(after, cosSpawnFrames(cur.CharacterID, now)...)
+	// Its plate colours (round 838, servicescroll.go, OURS).
+	if f := plateColourFrame(cur.CharacterID); f != nil {
+		after = append(after, f)
+	}
 	return playerSpawn{e: cur, record: rec, after: after, version: version}, true
 }
 

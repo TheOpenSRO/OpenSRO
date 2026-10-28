@@ -7483,6 +7483,85 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-eighth round, lane 3: the private-server service scrolls
+
+The user: "let's make all the items in the item mall functional ... Make no mistakes." This lane took
+the archive's service scrolls. Every one is the private server's own item (a Pandora/vPlus archive:
+ITEM_ANTHEIA_*, ITEM_NAME_COLOR_*, ITEM_TITLE_COLOR_*, the starter packages, the removers, the
+lottery tickets). Its filter is in no binary here, so each is OURS, built to its full in-game
+description (textdata_object, read on the render box). `session/servicescroll.go` holds every rule
+and every choice.
+
+**The bug first (MEASURED).** Eight of them are typed 3/3/3/1, the return scroll's kind:
+JOB_REMOVER, GUILD_REMOVER, REMOVEPREM, DURABILITY_REMOVER, ANTHEIA_SKILLRESET, ANTHEIA_MASTERY,
+STARTER_PACKAGE and PET_LEVEL. Each carries the return scroll's Param block (1000 / 1 / RESURRECT).
+The dispatch cast them as return scrolls (`IsReturnScroll`) and sent the player home. They are now
+caught by code name, after the CanUse test and before every kind dispatch. Only the Skill Reset
+Scroll goes home, because its description says "you will get teleported back to your appointed
+teleport area".
+
+**What each does now (OURS).** Refusals keep the item. A store-backed effect is spent in the same
+transaction as the scroll. Every accepted use answers with OpServiceLine.
+- Silk scrolls (10 ... 10000, and the unsold 250): the amount goes into **own** silk, the only
+  currency they are priced in. 0x3153 updates the mall's info block.
+- Lucky Dice: 0..500 own silk, evenly.
+- Lottery tickets (CanUse 0): "registers you ... upon purchase". The purchase records one entry
+  per ticket, weighted by the silk it cost. `/lottery` shows the entries; `/lottery draw [prize]`
+  picks a weighted winner, pays the pot (or the given prize) as own silk, closes the entries and
+  sends a notice.
+- Job Penalty Remover: the 7-day rejoin bar (round 799) ends.
+- Guild Penalty Remover: "You must have left your guild already" is refused while in a guild.
+  Otherwise the 72-hour bar (round 822) ends.
+- Premium Remover: the SKILL_MALL_PRE_* buff and the timed grants of the ITEM_MALL_PREMIUM_*
+  composites end.
+- Red Stats Remover: the red stats are the two options whose magicoption AttrType is not '+'
+  (MEASURED): MATTR_DEC_MAXDUR, the failed elixir's flaw, and MATTR_NOT_REPARABLE. They come off the
+  item in the first bag slot, the archive's own rule for its item scrolls ("The item has to be
+  located in the first slot of your inventory").
+- Skill Reset: every learned row with a learn cost is forgotten and its ReqLearn_SP refunded. The
+  masteries stay. Then the character goes home (warpHome, no casting bar).
+- Stat Reset, and Skill & Stat Reset: the reset is stored and runs at the next entry. Stats go to
+  Str = Int = 20 + (L-1) with 3(L-1) points, the level-up rule.
+- Skill Leveler: learns every row the mastery levels open, for free, under the learn handler's
+  filter.
+- Name Change: the flag is stored and the session ends. Start is refused 0x04F0, and the select
+  screen's input box asks for the name (retail's own UIIT_MSG_ITEM_CHANGE_NAME line). The name
+  passes creation's rules and uniqueness (0x0139/0x013A). The guild member row and friend rows
+  follow it, and the PIN gate covers it.
+- Name and Title colours: stored on the character and sent as 0x013B to everyone in view, on every
+  spawn as well. The plates draw them; an opposed job's hostile name colour still wins. Title Reset
+  goes back to yellow #FFE65B (READ).
+- Starter packages: the listed contents, mapped to archive codes, are delivered by gender to the
+  item chest.
+- Pet Level Up: the summoned growth pet goes to the character's level along its rows.
+
+**Live (render box, real client and server; real right-clicks via the new `bag_rclick:` QA step).**
+- The silk went 5000 -> 5599 (scroll 100, dice 499).
+- A sword with options 1/65/68 lost the two red ones.
+- The Elite Angel package's 14 lines appeared in the Chest window, the man's pieces.
+- Premium was refused with none running, then removed after a GoldTime PLUS.
+- The Leveler opened 58 skill levels at blade 30. The Skill Reset returned 3784 SP and moved the
+  character home.
+- Pet Level Up took a wolf to 60.
+- Str 89 / 167 points became Str 79 / 177 after the relog.
+- Lanthe became Lanara through the real select screen and the typed box, and kept her red name.
+- A bot's sky-blue name was drawn on the client, and the bot logged the client's red one.
+- "Amateur Trader" turned from sky blue to red live.
+- The Guild Penalty Remover was refused in the guild, then worked after a bot expelled the
+  character.
+- The Job Penalty Remover worked: join, withdraw, remover, join again.
+- A bot bought two gold tickets, the GM drew, and the bot was paid 600 with a notice.
+
+**OPEN.**
+- ITEM_RANDOM_WING ("grant you a random wing effect in your Item Chest") is delivered by the elite
+  packages but has no use yet.
+- ITEM_TITLE_196 (the "SRO Lover Title") has none either. A non-job title line would have to read
+  `NetClient.service.title_colour`.
+- The Skill Leveler is free and the reset refunds every learned row's SP, so silk can buy SP
+  through the two.
+- A buff from a forgotten skill runs out on its own.
+- OpenSRO's QaSignIn does not answer a pending rename; the select screen does.
+
 ## Eight-hundred-and-thirty-seventh round: the item mall, with the try-on, silk and an item chest
 
 The user: "let's get the item mall fully working", with screenshots of a private server's in-game

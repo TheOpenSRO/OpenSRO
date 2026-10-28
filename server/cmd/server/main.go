@@ -2658,6 +2658,12 @@ func main() {
 		// the item operation's 0x7034 type 0x18.
 		session.MallHandler(session.MallDeps{Catalogue: mallCatalogue, Store: mallStore, Silk: silkStore, Chars: chars,
 			Inv: inv, Items: refItems, Hub: hub, Trades: trades, Logger: logger}),
+		// The private server's service scrolls (round 838,
+		// session/servicescroll.go, OURS): their stores, and the rename a
+		// character select sends (0x0139).
+		session.ServiceHandler(session.ServiceDeps{Chars: chars, Inv: inv, Items: refItems, Refs: refItems,
+			Skills: skills, Equip: eq, Hub: hub, Keeper: compositeKeeper, Zerk: zerkTracker, Options: magicOptions,
+			Parties: parties, Friends: friends, Logger: logger}),
 		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
 		session.MotionHandler(hub),

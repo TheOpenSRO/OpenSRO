@@ -231,11 +231,13 @@ var cleanupRefs = []ownerRef{
 	{"mall_purchases", "character_id", false}, // round 837, the item mall's log
 	{"mall_chest", "character_id", false},     // round 837, the item chest
 	{"mall_chest_log", "character_id", false}, // round 837
+	{"mall_lottery", "character_id", false},   // round 838, the Silk Lottery's entries
 	{inventory.WarehouseTable, "account_id", true},
 	{"character_locks", "account_id", true},        // round 788, the account PIN
 	{"character_lock_devices", "account_id", true}, // round 788, its remembered PCs
 	{"account_punishments", "account_id", true},    // round 788
 	{"mall_purchases", "account_id", true},         // round 837
+	{"mall_lottery", "account_id", true},           // round 838
 	{"characters", "account_id", true},
 	{"accounts", "id", true},
 }

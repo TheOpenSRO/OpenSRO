@@ -160,6 +160,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 	if deps.Jobs == nil {
 		deps.Jobs = gmJobs{}
 	}
+	if deps.Lottery == nil {
+		deps.Lottery = gmLottery{hub: hub}
+	}
 	// Round 788: /block refuses a GM's account; /ban kicks from the world.
 	if deps.IsGMAccount == nil {
 		deps.IsGMAccount = gate.Allows

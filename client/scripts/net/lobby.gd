@@ -451,6 +451,9 @@ const TEXT_KEY_BY_CODE := {
 	0x416: "UIO_MSG_ERROR_SEVER_CONNECT",
 	0x417: "UIO_MSG_ERROR_SEVER_CONNECT",
 	0x418: "UIO_MSG_ERROR_SEVER_CONNECT",
+	# Round 838 (OURS): Start refused while the Name Change Scroll's rename
+	# waits -- retail's own rename line (ServiceNet.START_RENAME_PENDING).
+	0x4f0: "UIIT_MSG_ITEM_CHANGE_NAME",
 }
 const SERVER_SUFFIX := [0x402, 0x403, 0x406, 0x407, 0x408, 0x409, 0x40a, 0x40b, 0x40e, 0x40f, 0x412, 0x413, 0x415, 0x416, 0x417, 0x418]
 
@@ -465,6 +468,7 @@ const FALLBACK_BY_CODE := {
 	0x40d: "That name cannot be used.",
 	0x410: "That name is already taken.",
 	0x419: "That character is not waiting to be deleted.",
+	0x4f0: "Enter the new name of your character.",
 }
 
 ## The words for a refusal: the archive's text when table has the key, our
