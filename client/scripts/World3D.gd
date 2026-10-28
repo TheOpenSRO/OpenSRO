@@ -17736,6 +17736,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   bagtip:<id>         move the mouse over it and print its tooltip
 #                       (`QA BAGTIP <id>: ...`; round 838)
 #   worn:<slot>         left click that worn slot's icon (round 838)
+#   boxyes:<name>       left click the left (Yes) button of the open HUD box
+#                       of that node name, e.g. ItemTargetConfirm (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
@@ -18528,6 +18530,21 @@ func _qa_input_step() -> void:
 					print("QA BAGTIP %s: %s" % [arg, _hud_panels.qa_bag_tip(int(arg))])
 				else:
 					_qa_push_click(centre, MOUSE_BUTTON_RIGHT if kind == "rbagitem" else MOUSE_BUTTON_LEFT)
+		"boxyes":
+			# Round 838: left click the Yes of the open box named <arg>
+			# (e.g. ItemTargetConfirm), wherever the viewport put it.
+			var box := get_tree().root.find_child(arg + "*", true, false) as Control
+			var yes: BaseButton = null
+			if box != null:
+				for b in box.find_children("*", "BaseButton", true, false):
+					if (b as BaseButton).is_visible_in_tree() and (yes == null or (b as BaseButton).get_global_rect().position.x < yes.get_global_rect().position.x):
+						yes = b as BaseButton
+			if yes == null:
+				_qa_input_report = action + (" (no button)" if box != null else " (no such box)")
+			else:
+				var centre := yes.get_global_rect().get_center()
+				_qa_input_report = "%s %s at %s" % [action, yes.name, centre]
+				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
 		"worn":
 			# Round 838: left click the worn slot's icon (the equipment pane).
 			var icon := _hud_panels.qa_worn_icon(int(arg)) if _hud_panels != null else null

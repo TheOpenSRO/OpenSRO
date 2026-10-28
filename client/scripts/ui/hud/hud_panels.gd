@@ -6590,6 +6590,13 @@ func _input(event: InputEvent) -> void:
 				_item_target_rmb_cancel = true
 		elif _item_target_rmb_cancel:
 			set_deferred("_item_target_rmb_cancel", false)
+	# Round 838: Escape with a tool's pick up ends it and is spent (READ,
+	# FUN_0078b660 0x1b -> FUN_0079d620), before any window's Escape.
+	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo \
+			and (event as InputEventKey).keycode == KEY_ESCAPE and item_target_mode():
+		end_item_target("Escape")
+		get_viewport().set_input_as_handled()
+		return
 	if held_icon != null and held_icon.handle(event):
 		get_viewport().set_input_as_handled()
 		return
