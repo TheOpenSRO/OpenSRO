@@ -275,6 +275,44 @@ func TestAmmoSpendReloadAndRemove(t *testing.T) {
 	}
 }
 
+// Arrows put on under a bow do not take the bow off: ammunition holds no
+// hand (twoHandedDisplaced), unlike a shield.
+func TestAmmoBesideTwoHandedBow(t *testing.T) {
+	ctx := context.Background()
+	items := ammo838Items()
+	items[970010] = &refdata.Item{ID: 970010, CodeName: "ITEM_CH_BOW_01_A", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 6, TwoHanded: true, MaxStack: 1}
+	items[970011] = &refdata.Item{ID: 970011, CodeName: "ITEM_CH_SHIELD_01_A", TypeID1: 3, TypeID2: 1, TypeID3: 4, TypeID4: 1, MaxStack: 1}
+	inv := inventory.NewMemStore(items)
+	eq := equipment.NewMemStore(inv)
+	_ = inv.AddItem(ctx, 1, 970010, 1)
+	if err := eq.Equip(ctx, 1, equipment.SlotWeapon, 0); err != nil {
+		t.Fatal(err)
+	}
+	_ = inv.AddItem(ctx, 1, ammo838Arrow, 50)
+	if _, ok := twoHandedDisplaced(ctx, eq, inv, items, 1, equipment.SlotShield, 0); ok {
+		t.Fatal("arrows for slot 7 would take the bow off")
+	}
+	if err := eq.Equip(ctx, 1, equipment.SlotShield, 0); err != nil {
+		t.Fatal(err)
+	}
+	// A shield still would, and a bow put on over worn arrows does not count
+	// them as a shield.
+	_ = inv.AddItem(ctx, 1, 970011, 1)
+	slots, _ := inv.List(ctx, 1)
+	if other, ok := twoHandedDisplaced(ctx, eq, inv, items, 1, equipment.SlotShield, slots[0].Index); !ok || other != equipment.SlotWeapon {
+		t.Fatalf("a shield under the bow: %v %v, want the weapon displaced", other, ok)
+	}
+	_ = inv.AddItem(ctx, 1, 970010, 1)
+	slots, _ = inv.List(ctx, 1)
+	for _, sl := range slots {
+		if sl.ItemID == 970010 {
+			if _, ok := twoHandedDisplaced(ctx, eq, inv, items, 1, equipment.SlotWeapon, sl.Index); ok {
+				t.Fatal("a bow over worn arrows took the arrows off")
+			}
+		}
+	}
+}
+
 // A worn stack's count is in the worn list's record (an expendable's u16).
 func TestAmmoWornInfoCarriesCount(t *testing.T) {
 	infos := wornItemInfos(context.Background(), []equipment.Equipped{{Slot: equipment.SlotShield, ItemID: ammo838Quiver, Quantity: 9876}}, ammo838Items())

@@ -2676,6 +2676,11 @@ func _try_initialize_pk2_ui() -> void:
 			var line := ArrivalGuard.error_line(result.error, _ui_text_table)
 			if result.error.begins_with("UIIT_"):
 				line = _resolve_any_text(result.error, result.error)
+			# Round 838: 0x300e, no ammunition in slot 7 -- the original's
+			# line by the player's race (c:0x7b98ce: UIIT_SKILL_USE_FAIL_
+			# RUNOUT_AMMO / _VOLT), in the archive's words when it has them.
+			if result.error in AMMO_REFUSALS:
+				line = _resolve_any_text(String(AMMO_REFUSALS[result.error]), result.error)
 			_log_system(line)
 			if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
@@ -30530,11 +30535,6 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		# The server's target test (round 622): a friendly skill at a monster.
 		if result.error == SelfCast.INVALID_TARGET_TEXT or result.error == SelfCast.NO_TARGET_TEXT:
 			_log_system(result.error)
-		# Round 838: 0x300e, no ammunition in slot 7 -- the original's line by
-		# the player's race (c:0x7b98ce: UIIT_SKILL_USE_FAIL_RUNOUT_AMMO /
-		# _VOLT), resolved from the archive's text when it has it.
-		if result.error in AMMO_REFUSALS:
-			_log_system(_resolve_any_text(String(AMMO_REFUSALS[result.error]), result.error))
 		_pending_skill_id = 0
 		_pending_skill_hit_code = ""
 		# A refusal of a request the approach walk released is that walk's

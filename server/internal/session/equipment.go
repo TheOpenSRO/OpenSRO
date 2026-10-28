@@ -306,6 +306,11 @@ func twoHandedDisplaced(ctx context.Context, store equipment.Store, inv inventor
 	for _, sl := range slots {
 		if sl.Index == inventorySlot {
 			if it, err := items.GetItem(ctx, sl.ItemID); err == nil && it != nil {
+				// Round 838: the arrows or bolts slot 7 takes are not a
+				// shield; they go on beside the bow that needs them.
+				if it.TypeID2 == equipment.TypeExpendable {
+					return 0, false
+				}
 				incoming = &equipment.ItemStats{TwoHanded: it.TwoHanded}
 			}
 			break
@@ -326,6 +331,9 @@ func twoHandedDisplaced(ctx context.Context, store equipment.Store, inv inventor
 			// still occupies its slot, which is what the shield case needs.
 			byslot[w.Slot] = &equipment.ItemStats{}
 			continue
+		}
+		if it.TypeID2 == equipment.TypeExpendable {
+			continue // worn ammunition (round 838) holds no hand
 		}
 		byslot[w.Slot] = &equipment.ItemStats{TwoHanded: it.TwoHanded}
 	}
