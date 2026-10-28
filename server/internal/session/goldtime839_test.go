@@ -9,6 +9,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/timedjob"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
@@ -39,7 +40,35 @@ func goldTime4W() *refdata.Item {
 // running premiums between steps the way a restart does.
 func goldTimeRestartHarness(t *testing.T, clock *time.Time) timedjob.Store {
 	t.Helper()
-	store := timedjob.NewMemStore()
+	return goldTimeRestartHarnessOn(t, clock, timedjob.NewMemStore())
+}
+
+// goldTimeSQLStore is the PostgreSQL timed-job store a production server
+// keeps the Gold Time in (table char_timed_job), on the test database, with
+// character 839's rows cleared; the test skips without a database.
+func goldTimeSQLStore(t *testing.T) timedjob.Store {
+	t.Helper()
+	db, err := txn.OpenPool(inventoryTestDSN(), 2)
+	if err != nil {
+		t.Skipf("no test database: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Skipf("no test database: %v", err)
+	}
+	store, err := timedjob.NewSQLStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM char_timed_job WHERE char_id = 839`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM char_timed_job WHERE char_id = 839`) })
+	return store
+}
+
+func goldTimeRestartHarnessOn(t *testing.T, clock *time.Time, store timedjob.Store) timedjob.Store {
+	t.Helper()
 	savedDeps := goldTimes.deps.Load()
 	goldTimes.deps.Store(&goldTimeDeps{store: store, items: goldTimeItems{9278: goldTime4W()}})
 	savedClock := useItemClock
@@ -60,10 +89,17 @@ func restartProcess() {
 	goldTimes.mu.Unlock()
 }
 
+// Over the memory store and, with a test database, the PostgreSQL store a
+// production server runs on.
 func TestGoldTimeAcrossRestart(t *testing.T) {
+	t.Run("mem", func(t *testing.T) { goldTimeAcrossRestart(t, timedjob.NewMemStore()) })
+	t.Run("sql", func(t *testing.T) { goldTimeAcrossRestart(t, goldTimeSQLStore(t)) })
+}
+
+func goldTimeAcrossRestart(t *testing.T, store timedjob.Store) {
 	start := time.Unix(1_800_000_000, 0)
 	clock := start
-	store := goldTimeRestartHarness(t, &clock)
+	goldTimeRestartHarnessOn(t, &clock, store)
 	ctx := context.Background()
 	restartProcess()
 	startGoldTime(ctx, nil, 839, goldTime4W(), clock)
