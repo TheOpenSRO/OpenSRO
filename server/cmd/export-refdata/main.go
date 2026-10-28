@@ -558,7 +558,7 @@ func main() {
 		}
 		return
 	}
-	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "specialty" && *mode != "mall" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
+	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "specialty" && *mode != "mall" && *mode != "gacha" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
@@ -566,6 +566,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode npcs -out npcs.csv characterdata_*.txt refshopgroup.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode specialty -out specialty_shops.csv refshopgroup.txt refmappingshopgroup.txt refmappingshopwithtab.txt refshoptab.txt refshopgoods.txt refscrapofpackageitem.txt itemdata_*.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode mall -out mall.csv refshopgroup.txt refmappingshopgroup.txt refmappingshopwithtab.txt refshoptabgroup.txt refshoptab.txt refshopgoods.txt refpackageitem.txt refscrapofpackageitem.txt refpricepolicyofitem.txt itemdata_*.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode gacha -out gacha.csv gachaitemset.txt gachanpcmap.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptions -out magicoptions.csv magicoption.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptassign -out magicoptassign.csv magicoptionassign.txt")
@@ -604,6 +605,14 @@ func main() {
 		// Round 801: the specialty stores' goods (internal/specialty): what
 		// cmd/server's -specialty-shops-csv loads.
 		if err := exportSpecialty(*out, inputArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "gacha":
+		// Round 838: the Magic POP machine's tables (internal/gacha): what
+		// cmd/server's -gacha-csv loads.
+		if err := exportGacha(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}

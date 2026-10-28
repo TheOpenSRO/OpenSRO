@@ -941,6 +941,10 @@ func main() {
 	mallCSV := flag.String("mall-csv", os.Getenv("OPENSRO_MALL_CSV"),
 		"path to the item mall's catalogue (from cmd/export-refdata -mode mall on a client's own shop tables and "+
 			"itemdata parts; round 837): the silk shops a 0x7034 type 0x18 buy names. Without it every buy is refused 2")
+	// Round 838: the Magic POP machine's tables.
+	gachaCSV := flag.String("gacha-csv", os.Getenv("OPENSRO_GACHA_CSV"),
+		"path to the Magic POP tables (from cmd/export-refdata -mode gacha on a client's own gachaitemset.txt and "+
+			"gachanpcmap.txt; round 838): which NPCs are machines and what they draw. Without it no NPC offers the game")
 	startingSilkEnv, startingSilkEnvErr := envInt("OPENSRO_STARTING_SILK", 0)
 	startingSilk := flag.Int64("starting-silk", int64(startingSilkEnv),
 		"own silk an account is given once, the first time its balances are read (round 837, OURS; 0 gives none)")
@@ -2279,7 +2283,8 @@ func main() {
 	if *testItemsNPC {
 		testItems = resolveTestItemsNPC(ctx, logger, refItems)
 	}
-	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems, specialtyShops)
+	gachaTable := loadGacha(logger, *gachaCSV)
+	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems, specialtyShops, gachaTable)
 	// The monsters' area of interest (round 656): each player hears about the
 	// monsters of the 3x3 message blocks around it (retail's, READ in round
 	// 664: 320-unit blocks and their 8 neighbours), and is told as they come
@@ -2675,6 +2680,9 @@ func main() {
 		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
 		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
 		session.NPCTalkHandler(hub, trades),
+		// Magic POP (round 838, session/gacha.go): the draw 0x7118 -> 0xB118
+		// and Gori's exchange 0x7119.
+		session.GachaHandler(session.GachaDeps{Table: gachaTable, Inv: inv, Items: refItems, Hub: hub, Logger: logger}),
 		// The Auto potion window's settings (round 786): retail's 0x7158 type
 		// 2, stored per character and sent back after the world entry.
 		session.AutoPotionHandler(autoPotionStoreOf(chars), hub, logger),
