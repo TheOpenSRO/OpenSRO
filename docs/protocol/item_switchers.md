@@ -9,7 +9,7 @@ tables on the RE box), **OURS** (OpenSRO's design where the original has nothing
 **OPEN**.
 
 Code: `server/internal/session/switcher.go`, `client/scripts/ui/hud/item_target_pick.gd` and
-`HudPanels`' "A tool used on another item" section.
+`HudPanels`' use-on mode (lane 4's).
 
 ## 1. The client: picking the target (READ)
 
@@ -23,15 +23,14 @@ Code: `server/internal/session/switcher.go`, `client/scripts/ui/hud/item_target_
 
 The CanUse byte is 129 (0x81) on every 3/3/13/8 row of the archive (MEASURED).
 
-**OpenSRO.** `HudPanels.begin_item_target` / `item_target_click` / `_send_item_target`, with
-`ItemTargetPick`'s rules. The box is `PartyMatchConfirm` (ifmessagebox's MsgBoxSimple, Yes / No)
--- the title and text are READ, the geometry of box mode 1 was not read (OURS, as `JobConfirmBox`).
-OpenSRO's use request is its own (OpUseItem 0x008a); the target's wire slot (bag index + 13) rides
-its Option byte, as the Nasrun extension's does (round 789). OURS, conservative: the release of the
-right press that ended a pick is not a use of the slot under it. Only TypeID4 8 is wired; 0xc, 0xf
-and 0x10 take the same pick in retail and have their own target rules in `SendItem_HandleUseItem`
-(OPEN). The private server's tools skip retail's client-side armour test (their descriptions name
-other targets); the server decides.
+**OpenSRO.** The pick is lane 4's use-on mode (`HudPanels._begin_use_on` / `_use_on_target` /
+`use_on_check`, round 838), the one target pick of the client for 3/3/13/{8,12,15,16} and 3/3/1/6.
+Lane 2 adds to it, for 3/3/13/8 (`ItemTargetPick`): a worn slot takes the target click and the
+box's OK refuses it with 0x1882; retail's gender tool on a bag item that is not armour is refused
+with 0x1884; the use goes with the target's wire slot (bag index + 13) in OpenSRO's use request's
+Option byte (OpUseItem 0x008a), as the Nasrun extension's (round 789). The private server's tools
+skip retail's client-side armour test (their descriptions name other targets); the server
+decides. Lane 4's box is its own centred OK / Cancel panel; the title and text are READ.
 
 ## 2. The server: the gender switch tool (READ)
 
@@ -57,7 +56,7 @@ armour of the archive the OrgObjCodeName is the opposite-gender twin (MEASURED: 
 5,914 armour rows name an existing row, two name a missing one; e.g. `ITEM_CH_M_HEAVY_01_BA_A_DEF`
 -> `ITEM_CH_W_HEAVY_01_BA_A_DEF`).
 
-OpenSRO: refdata.Item.OrgCodeName (export column 92), `inventory.Mutator` (the row keeps its slot
+OpenSRO: refdata.Item.OrgCodeName (export column 96), `inventory.Mutator` (the row keeps its slot
 and serial), the same codes, 0x3040 mask 1.
 
 ## 3. The private server's tools (OURS, to each description)
@@ -139,7 +138,6 @@ model it already has are refused.
 
 ## 4. Not done here
 
-- TypeID4 0xc, 0xf and 0x10's picks (OPEN, their lanes).
 - The other private-server 3/3/13/8 rows (not sold): `ITEM_MODELSWITCHER_*`, `*_UNLOCK`,
   `ITEM_UPGRADESTONE_*`, the shield type switchers -- refused as before.
 - The exchange and stall show an item's own description, not its model's.

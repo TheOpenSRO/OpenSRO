@@ -7743,7 +7743,7 @@ the mall's 34 rows of TypeID 3/3/13/8. `docs/protocol/item_switchers.md` has the
   the right button end the pick. The server (UseByKind case 8): bag slot, armour, Param1 >= the
   degree (0x1883), then the item becomes its **OrgObjCodeName** row in place (MutateItemAt: the
   instance kept, `UPDATE _ITEMS SET REFITEMID`, 0x3040 {slot, 1, ref}). OrgObjCodeName is now
-  exported (refdata column 92).
+  exported (refdata column 96).
 - **The private server's tools (OURS, to each description).** Avatar, devil's spirit and flag
   gender switchers (the twin by the code name's gender token, same TypeIDs, the other
   ReqGender: MEASURED unique wherever it exists); the fourteen type switchers on Egy A weapons
@@ -7754,10 +7754,14 @@ the mall's 34 rows of TypeID 3/3/13/8. `docs/protocol/item_switchers.md` has the
   (`model_item_id` on the bag-store and worn tables, the item-info block's models block, the own
   body and doll drawn with it, other players told the twin's id in the spawn record and 0x3038).
   `ITEM_MODEL_11` is the Default switcher (back to the item's own model).
+- **One pick for every target tool.** The merge with dev met lane 4's use-on mode, which takes
+  3/3/13/{8,12,15,16} and 3/3/1/6 (READ c:0x676570, 0x680fa0, 0x796a85). Lane 2's own pick was
+  removed; folded into lane 4's for 3/3/13/8: worn slots take the target click (OK: 0x1882),
+  retail's gender tool on a non-armour bag item (0x1884), and the send with the wire slot.
 - **No new opcodes**: the target rides OpUseItem's Option byte (as the Nasrun extension's), the
   ref change is retail's 0x3040 mask 1.
-- **Live (box, port 16820..16822, real clicks through OPENSRO_QA_INPUT's new rbagitem / bagtip /
-  worn / boxyes).** The model switcher 16 on Reaper Ghost Sword: the tooltip's description
+- **Live (box, port 16820..16822, real clicks through OPENSRO_QA_INPUT: rbagitem, bagitem, useon_ok,
+  bagtip and lane 2's worn).** The model switcher 16 on Reaper Ghost Sword: the tooltip's description
   becomes the twin's "Model Switched Item / Model: Degree 16 / Glow: Default" with every stat as
   before; worn, the body draws `ITEM_CH_SWORD_11_A_SWITCH16`'s blade (`player equipment {... 6:
   62515}`). The axe switcher on that sword: "This scroll works only on Egy A weapons." The sword

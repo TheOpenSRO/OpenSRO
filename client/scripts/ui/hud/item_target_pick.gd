@@ -56,3 +56,16 @@ static func check(tool_code: String, kind: int, target_types: PackedInt32Array) 
 	if not is_private_tool(tool_code) and not is_armour(target_types):
 		return ERR_TARGET
 	return 0
+
+## The codes' category-1 names (error_codes.md; ErrorText.SCROLL_UIIT_BY_CODE
+## carries the same rows for the server's answers).
+const REFUSAL_KEYS := {
+	ERR_EQUIPPED: "UIIT_MSG_STRGERR_CANT_MUTATE_EQUIPED_ITEM",
+	ERR_TARGET: "UIIT_MSG_STRGERR_INVALID_TRANSGENDER_TARGET",
+}
+
+## The text key HudPanels.use_on_check answers for a switch tool used on a
+## target ("" sends).
+static func refusal_key(tool_code: String, worn: bool, target_types: PackedInt32Array) -> String:
+	var code := check(tool_code, KIND_WORN if worn else KIND_BAG, target_types)
+	return String(REFUSAL_KEYS.get(code, "")) if code > 0 else ""

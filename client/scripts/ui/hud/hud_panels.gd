@@ -5573,9 +5573,7 @@ func use_on_check(src: int, target: int, worn: bool = false) -> String:
 	# case 8, ItemTargetPick.check): a worn target 0x1882, retail's gender
 	# tool on a bag item that is not armour 0x1884.
 	if ItemTargetPick.is_switch_tool(types):
-		var kind := ItemTargetPick.KIND_WORN if worn else ItemTargetPick.KIND_BAG
-		var code := ItemTargetPick.check(item_code_for_id(_bag_item_id_at_slot(src)), kind, ttypes)
-		return String(ErrorText.SCROLL_UIIT_BY_CODE.get(code, "")) if code > 0 else ""
+		return ItemTargetPick.refusal_key(item_code_for_id(_bag_item_id_at_slot(src)), worn, ttypes)
 	var inst := _item_instance("bag", target) as ItemInstance
 	var is_pet_item := ttypes.size() >= 4 and ttypes[0] == 3 and ttypes[1] == 2 and ttypes[2] == 1
 	var pet_kind := 0
