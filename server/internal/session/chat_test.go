@@ -3,8 +3,8 @@ package session
 import (
 	"bufio"
 	"context"
-	"strings"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
