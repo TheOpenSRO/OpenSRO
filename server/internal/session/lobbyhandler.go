@@ -70,8 +70,8 @@ type LobbyDeps struct {
 	// Avatars is the avatar inventory the list's avatar block is read from
 	// (round 789); nil lists none.
 	Avatars inventory.Store
-	Guilds    GuildRoles
-	Mana      *mana.Tracker
+	Guilds  GuildRoles
+	Mana    *mana.Tracker
 	// Defaults is the shard's `_RefCharDefault_*` tables (round 692,
 	// -chardefaults-dir); Skills and Quests are where create puts what they
 	// give. Defaults nil: a new character gets none (the server warns at
