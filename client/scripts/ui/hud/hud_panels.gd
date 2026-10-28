@@ -5918,11 +5918,20 @@ func _tip_text(key: String, fallback: String) -> String:
 
 ## Column 6's description through the object text table (0x66f850 prints
 ## it when it resolves), or "".
+##
+## OURS (round 838): a description that is the archive's bare "0" filler
+## draws no line. The client keeps a key's first row (UiTextTable), and the
+## player's textdata_object.txt opens many avatar descriptions with an
+## untranslated row whose every language column is "0" -- the Wedding Hat's
+## SN_ITEM_MALL_AVATAR_M_CH_WEDDING_HAT_TT_DESC, whose second row reads "Hat
+## worn in Chinese weddings" (MEASURED). Retail draws the "0" (0x8c6a90
+## copies the field as it is); the item mall's new hover help showed it on
+## most avatars, as a lone "0" under the item's type.
 func _item_description(item: ItemTableReader.Item) -> String:
 	if _object_names == null or item.desc_strid == "" or item.desc_strid == "xxx":
 		return ""
 	var text := _object_names.get_text(item.desc_strid)
-	return "" if text == item.desc_strid else text
+	return "" if text == item.desc_strid or text.strip_edges() == "0" else text
 
 ## The player's level, Str, Int, gender (0 woman, 1 man) and country (0
 ## Chinese, 1 European) for the requirement lines' colours; -1 where unknown

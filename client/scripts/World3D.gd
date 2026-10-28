@@ -25773,6 +25773,62 @@ func _qa_mall(what: String) -> String:
 		"mall_search":
 			m.search(what.substr(12))
 			return "search"
+		"mall_type":
+			# mall_type:<text>: a real click on the search edit, the text as
+			# key presses, then Enter (round 838: what the player does).
+			var edit := m.node("GDR_RENEWAL_ITEM_MALL_SEARCH")
+			if edit == null:
+				return "no edit"
+			_qa_push_click(edit.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+			for ch in what.substr(10):
+				_qa_push_key(ch)
+			var typed := "focus %s text '%s'" % [_qa_focus_name(), (edit as LineEdit).text if edit is LineEdit else "?"]
+			_qa_push_key("Enter")
+			return "%s -> view %s cells %d" % [typed, String(m._view.get("kind", "")), m._cells.size()]
+		"mall_rows":
+			# Every menu row with its sub-tabs and their goods counts.
+			var rows := []
+			for r in m._rows:
+				var subs := []
+				for s in r["subs"]:
+					subs.append("%s(%d)" % [s["title"], (s.get("goods", []) as Array).size()])
+				rows.append("%s[%s]" % [(r["row"] as MallData.MenuRow).text_key, ", ".join(subs)])
+			return " ".join(rows)
+		"mall_pick":
+			# mall_pick:<row text key>:<sub title>: real clicks on that row,
+			# then on that sub-tab.
+			for r in m._rows:
+				if (r["row"] as MallData.MenuRow).text_key != parts[1]:
+					continue
+				if not bool(r["open"]):
+					_qa_push_click((r["node"] as Control).get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+				for s in r["subs"]:
+					if String(s["title"]) == parts[2]:
+						_qa_push_click((s["node"] as Control).get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+						return "picked -> view %s cells %d" % [String(m._view.get("kind", "")), m._cells.size()]
+				return "row open, no sub %s" % parts[2]
+			return "no row %s" % parts[1]
+		"mall_tip":
+			# mall_tip:<i>: the pointer onto cell i's icon (real motion);
+			# the tooltip it shows.
+			if int(parts[1]) >= m._cells.size():
+				return "no cell"
+			var slot := (m._cells[int(parts[1])] as Control).find_child("GDR_RENEWAL_SHOP_SLOT_ICON", true, false) as Control
+			if slot == null:
+				return "no icon"
+			var mm := InputEventMouseMotion.new()
+			mm.position = slot.get_global_rect().get_center()
+			mm.global_position = mm.position
+			get_viewport().push_input(mm, true)
+			var g: MallData.Good = (m._cells[int(parts[1])] as Control).get_meta("good")
+			return "%s: %s" % [g.package.code, ItemTooltipLines.as_text(_hud_panels.item_tip_shown()).replace("\n", " | ")]
+		"mall_findbtn":
+			# A real click on the Search button.
+			var fb := m.node("GDR_RENEWAL_ITEM_MALL_SEARCH_BTN")
+			if fb == null:
+				return "no button"
+			_qa_push_click(fb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+			return "clicked -> view %s cells %d" % [String(m._view.get("kind", "")), m._cells.size()]
 		"mall_original":
 			m.press_original()
 			return "original"

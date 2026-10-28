@@ -241,9 +241,11 @@ func Build(t Tables, items func(code string) (Item, bool)) *Catalogue {
 		}
 	}
 	tabsOf := map[string][]string{}
+	tabName := map[string]string{}
 	for _, r := range live(t.Tab) {
 		if col(r, 3) != "" {
 			tabsOf[col(r, 4)] = append(tabsOf[col(r, 4)], col(r, 3))
+			tabName[col(r, 3)] = col(r, 5)
 		}
 	}
 	packages := buildPackages(t, items)
@@ -259,6 +261,7 @@ func Build(t Tables, items func(code string) (Item, bool)) *Catalogue {
 		}
 		goodsOf[col(r, 2)][slot] = &Good{Slot: slot, Package: pk}
 	}
+	borrowed := borrowedGoods(shopsOf[AvatarStoreGroup], groupsOf, tabsOf, tabName, goodsOf)
 	cat := &Catalogue{Groups: map[int]*Group{}}
 	for _, r := range live(t.ShopGroup) {
 		id, err := strconv.Atoi(col(r, 2))
@@ -271,6 +274,9 @@ func Build(t Tables, items func(code string) (Item, bool)) *Catalogue {
 			if tgs := groupsOf[sc]; len(tgs) > 0 {
 				for _, tc := range tabsOf[tgs[0]] {
 					goods := goodsOf[tc]
+					if len(goods) == 0 {
+						goods = borrowed[tabName[tc]]
+					}
 					if goods == nil {
 						goods = map[int]*Good{}
 					}
@@ -282,6 +288,44 @@ func Build(t Tables, items func(code string) (Item, bool)) *Catalogue {
 		cat.Groups[id] = g
 	}
 	return cat
+}
+
+// AvatarStoreGroup is the shop group whose tabs fill a silk shop's empty
+// ones (OURS, round 838). The player's archive leaves the mall's Avatar
+// shop's Hat, Dress and Attach tabs empty and sells its avatars, for silk, at
+// an NPC store (GROUP_STORE_AVATARS) whose tabs carry the same names. An
+// empty tab of an NPC-less group takes the goods of the avatar store's tab
+// of its name, so the mall sells them at the store's SlotIndex. The client
+// does the same (client MallData.borrowed_goods), so a purchase's (shop,
+// tab, slot) names the same good on both sides.
+const AvatarStoreGroup = "GROUP_STORE_AVATARS"
+
+// borrowedGoods is the avatar store's goods by tab name: each tab of each of
+// its shops' first tab group, its goods with a silk or gift-silk price only.
+func borrowedGoods(storeShops []string, groupsOf, tabsOf map[string][]string, tabName map[string]string, goodsOf map[string]map[int]*Good) map[string]map[int]*Good {
+	out := map[string]map[int]*Good{}
+	for _, sc := range storeShops {
+		tgs := groupsOf[sc]
+		if len(tgs) == 0 {
+			continue
+		}
+		for _, tc := range tabsOf[tgs[0]] {
+			name := tabName[tc]
+			if name == "" || out[name] != nil {
+				continue
+			}
+			goods := map[int]*Good{}
+			for slot, g := range goodsOf[tc] {
+				if g.Package.Mask&(DeviceSilk|DeviceGiftSilk) != 0 {
+					goods[slot] = g
+				}
+			}
+			if len(goods) > 0 {
+				out[name] = goods
+			}
+		}
+	}
+	return out
 }
 
 // buildPackages reads the packages with their scrap rows and prices.

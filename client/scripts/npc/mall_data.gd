@@ -24,6 +24,13 @@ class_name MallData
 ##   refpricepolicyofitem  one row per payment-device bit: Cost
 ##
 ## Service 0 rows are skipped (the loader tests column 0 first, c:0x95739d).
+##
+## OURS (round 838): the player's archive leaves the Avatar shop's Hat, Dress
+## and Attach tabs empty, and sells its avatars, for silk, at an NPC store
+## (GROUP_STORE_AVATARS) whose tabs carry the same names. An empty mall tab
+## takes the goods of the avatar store's tab of its name (borrowed_goods), so
+## the mall shows them and the try-on can wear them. The server's catalogue
+## does the same (server internal/mall Build), so a buy names the same slot.
 
 const TD := "server_dep\\silkroad\\textdata\\"
 const T_MENU := TD + "mallitemmenulistdata.txt"
@@ -40,6 +47,8 @@ const T_PRICE := TD + "refpricepolicyofitem.txt"
 
 ## c:0x9843ce..0x9843e6: the mall group's code, an exact compare.
 const MALL_GROUP_CODE := "GROUP_MALL"
+## OURS (round 838): the shop group whose tabs fill the mall's empty ones.
+const AVATAR_STORE_GROUP := "GROUP_STORE_AVATARS"
 ## The "no value" literal the parsers turn into an empty string (c:0x97f920,
 ## `xxx` at 0xd81d38).
 const NONE := "xxx"
@@ -161,9 +170,12 @@ func load(read: Callable) -> MallData:
 				best = id
 	group_id = maxi(best, 0)
 	var shop_list: Array = []
+	var store_shops: Array = []
 	for r in _rows(read.call(T_MAPGROUP)):
 		if r.size() > 3 and _s(r[2]) == MALL_GROUP_CODE:
 			shop_list.append(_s(r[3]))
+		elif r.size() > 3 and _s(r[2]) == AVATAR_STORE_GROUP:
+			store_shops.append(_s(r[3]))
 	var tabgroups_by_shop := {}
 	for r in _rows(read.call(T_MAPTAB)):
 		if r.size() > 3:
@@ -230,6 +242,7 @@ func load(read: Callable) -> MallData:
 		p.costs[bit] = cost
 		p.previous[bit] = int(r[4]) if f.size() >= 14 else 0
 		p.devices |= bit
+	var borrowed := borrowed_goods(store_shops, tabgroups_by_shop, tabs_by_group, goods_by_tab)
 	for i in shop_list.size():
 		var code: String = shop_list[i]
 		var shop := Shop.new()
@@ -247,6 +260,8 @@ func load(read: Callable) -> MallData:
 			t.index = k
 			t.name_strid = tabs[k][2]
 			var list: Array = goods_by_tab.get(t.code, [])
+			if list.is_empty():
+				list = borrowed.get(t.name_strid, [])
 			list.sort_custom(func(a, b): return int(a[0]) < int(b[0]))
 			for g in list:
 				var pkg: Package = packages.get(String(g[1]))
@@ -268,6 +283,28 @@ func load(read: Callable) -> MallData:
 		shops[code] = shop
 	_load_menu(read.call(T_MENU))
 	return self
+
+## OURS (round 838): the avatar store's goods by tab name, [SlotIndex,
+## package code] each, only those with a silk price: what an empty mall tab
+## of that name shows (the class comment).
+func borrowed_goods(store_shops: Array, tabgroups_by_shop: Dictionary, tabs_by_group: Dictionary, goods_by_tab: Dictionary) -> Dictionary:
+	var out := {}
+	for sc in store_shops:
+		var groups: Array = tabgroups_by_shop.get(sc, [])
+		if groups.is_empty():
+			continue
+		for t in tabs_by_group.get(groups[0], []):
+			var name := String(t[2])
+			if name == "" or out.has(name):
+				continue
+			var list: Array = []
+			for g in goods_by_tab.get(t[0], []):
+				var pkg: Package = packages.get(String(g[1]))
+				if pkg != null and pkg.devices & (PAY_SILK | PAY_GIFT):
+					list.append(g)
+			if not list.is_empty():
+				out[name] = list
+	return out
 
 ## The two sections of mallitemmenulistdata.txt (c:0x97fbe0, 0x957444).
 func _load_menu(data: PackedByteArray) -> void:
@@ -330,15 +367,18 @@ func goods_with_tag(bit: int) -> Array:
 			out.append(g)
 	return out
 
-## Every good whose package name (through `name_of`) contains `text`, case as
-## typed, no de-duplication (c:0x7e32d0).
+## Every good whose package name (through `name_of`) contains `text`, no
+## de-duplication (c:0x7e32d0). Retail matches case as typed: the name's
+## std::wstring::find (c:0x7e34ee -> 0x4ee310), which no case folding
+## precedes, so "wings" never found "Wings of Azure" (the user, round 838:
+## "the item mall search doesn't seem to work"). OURS: any case matches.
 func search(text: String, name_of: Callable) -> Array:
 	var out: Array = []
 	if text == "":
 		return out
 	for g in goods:
 		var n := String(name_of.call((g as Good).package))
-		if n.find(text) >= 0:
+		if n.findn(text) >= 0:
 			out.append(g)
 	return out
 

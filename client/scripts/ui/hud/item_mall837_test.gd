@@ -43,7 +43,15 @@ func _run() -> void:
 	for s in ["MALL_ARCHEMY", "MALL_AVATAR", "MALL_CONSUME", "MALL_PET", "MALL_PREMIUM"]:
 		codes.append((d.shops[s] as MallData.Shop).index if d.shops.has(s) else -1)
 	_check(codes == [0, 1, 2, 3, 4], "shop indexes in the mapping's file order (got %s)" % str(codes))
-	_check(d.goods.size() == 220, "220 goods (item_mall_data.md: A's mall; got %d)" % d.goods.size())
+	_check(d.goods.size() == 745, "745 goods: A's mall's 220 (item_mall_data.md) and the avatar store's 525 (round 838; got %d)" % d.goods.size())
+	# Round 838 (OURS): the empty Hat / Dress / Attach tabs take the avatar
+	# store's goods of their names, at the store's SlotIndex.
+	var av: MallData.Shop = d.shops["MALL_AVATAR"]
+	var tab_sizes := {}
+	for t in av.tabs:
+		tab_sizes[(t as MallData.Tab).code] = (t as MallData.Tab).goods.size()
+	_check(tab_sizes.get("MALL_AVATAR_HAT") == 187 and tab_sizes.get("MALL_AVATAR_DRESS") == 191 and tab_sizes.get("MALL_AVATAR_ATTACH") == 147
+		and tab_sizes.get("MALL_AVATAR_BALLOON") == 0, "the avatar tabs: hat 187, dress 191, attach 147, balloon empty (got %s)" % str(tab_sizes))
 	var menu_keys: Array = []
 	for m in d.visible_menu():
 		menu_keys.append((m as MallData.MenuRow).text_key)
@@ -112,6 +120,12 @@ func _run() -> void:
 	mall.search(name.substr(0, mini(5, name.length())))
 	_check(String(mall._view.get("kind", "")) == "search" and (mall._view["sections"][0]["goods"] as Array).size() >= 1,
 		"search by part of a name (%s)" % name)
+	# Round 838 (OURS): any case matches.
+	mall.search(name.substr(0, mini(5, name.length())).to_lower())
+	var lower_n := (mall._view["sections"][0]["goods"] as Array).size()
+	mall.search(name.substr(0, mini(5, name.length())).to_upper())
+	_check(lower_n >= 1 and (mall._view["sections"][0]["goods"] as Array).size() == lower_n,
+		"search in lower or upper case finds the same goods (%d)" % lower_n)
 	_check(mall.unit_text(rrs).ends_with("Unit"), "the unit text ' N' + Unit (got '%s')" % mall.unit_text(rrs))
 	_check(mall.close() and not panels.call("item_mall_open") and panels.get("_windows").get("itemmall") == null, "closed and dropped")
 	panels.queue_free()
