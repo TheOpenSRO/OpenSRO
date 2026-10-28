@@ -37,6 +37,9 @@ type MemStore struct {
 	// savedLocs are each character's saved locations (SavedLocationStore,
 	// round 838), keyed by (id, slot).
 	savedLocs map[[2]int64]SavedPoint
+	// titles is each character's title (TitleStore, round 838); none is
+	// level 0.
+	titles map[int64]memTitle
 }
 
 // NewMemStore returns an empty MemStore.

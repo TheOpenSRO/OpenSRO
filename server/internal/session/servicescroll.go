@@ -174,6 +174,10 @@ const (
 	svcTitleColour
 	svcStarter
 	svcPetLevel
+	// Round 838 lane 6 (titlescroll.go): the title scrolls and the Random
+	// Wing Scroll.
+	svcTitle
+	svcRandomWing
 )
 
 // serviceScroll is what one scroll does: its kind and the kind's argument.
@@ -182,6 +186,9 @@ type serviceScroll struct {
 	amount int64
 	colour uint32
 	pack   []starterItem
+	// text is what the use request carried (UseItemRequest.Text): the
+	// custom title's.
+	text string
 }
 
 // The plate colours (OURS, chosen from the item names; 0xAARRGGBB). The
@@ -247,6 +254,9 @@ func serviceScrollOf(it *refdata.Item) (serviceScroll, bool) {
 		return serviceScroll{kind: svcTitleColour}, true
 	case "ITEM_PET_LEVEL":
 		return serviceScroll{kind: svcPetLevel}, true
+	}
+	if s, ok := titleScrollOf(code); ok {
+		return s, true
 	}
 	if pack, ok := starterPackages[code]; ok {
 		return serviceScroll{kind: svcStarter, pack: pack}, true
@@ -415,6 +425,10 @@ func useServiceScroll(ctx context.Context, sess *gateway.Session, characterID in
 		return u.starter(ctx, svc.pack)
 	case svcPetLevel:
 		return u.petLevel(ctx)
+	case svcTitle:
+		return u.title(ctx, uint8(svc.amount), svc.text)
+	case svcRandomWing:
+		return u.randomWing(ctx)
 	}
 	return fail("that cannot be used")
 }

@@ -68,6 +68,9 @@ type UseItemRequest struct {
 	// Scale is a skin change's scale byte (round 838, UseOptionSkinChange,
 	// after the u32 RefObjID in Target).
 	Scale byte
+	// Text is a custom title's (round 838, UseOptionCustomTitle): u16
+	// length and UTF-8 after the option byte.
+	Text string
 }
 
 func (r *UseItemRequest) Encode() []byte {
@@ -83,6 +86,9 @@ func (r *UseItemRequest) Encode() []byte {
 		}
 		if r.Option == UseOptionCrest {
 			out = append(out, r.Pixels...)
+		}
+		if r.Option == UseOptionCustomTitle {
+			out = appendServiceStr(out, r.Text)
 		}
 	}
 	return out
@@ -102,6 +108,15 @@ func DecodeUseItemRequest(data []byte) (*UseItemRequest, error) {
 		req.Option = rest[0]
 		if req.Option == UseOptionCrest {
 			req.Pixels = append([]byte(nil), rest[1:]...)
+		} else if req.Option == UseOptionCustomTitle {
+			if len(rest) < 3 {
+				return nil, errors.New("session: decoding UseItemRequest: truncated title")
+			}
+			n := 3 + int(binary.LittleEndian.Uint16(rest[1:3]))
+			if len(rest) < n {
+				return nil, errors.New("session: decoding UseItemRequest: truncated title")
+			}
+			req.Text = string(rest[3:n])
 		} else if len(rest) >= 5 {
 			req.Target = binary.LittleEndian.Uint32(rest[1:5])
 			if req.Option == UseOptionSkinChange && len(rest) >= 6 {
@@ -1122,6 +1137,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// scroll kinds, since eight of them are typed 3/3/3/1 and were cast
 		// as return scrolls.
 		if svc, ok := serviceScrollOf(it); ok {
+			svc.text = req.Text
 			return useServiceScroll(ctx, sess, characterID, it, held, have, svc)
 		}
 		// Round 795 (cossummon.go, cosuse.go): a pet item or a ride scroll

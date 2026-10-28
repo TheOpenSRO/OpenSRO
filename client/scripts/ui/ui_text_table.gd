@@ -202,7 +202,19 @@ const FIRST_ROW_PREFIX := "UIIT_STT_MASTERY_"
 
 ## Whether a key keeps its first row in a joined table (FIRST_ROW_PREFIX).
 static func keeps_first_row(token: String) -> bool:
-	return token.begins_with(FIRST_ROW_PREFIX) or LOGIN_FIRST_ROW_KEYS.has(token) or EXCHANGE_FIRST_ROW_KEYS.has(token)
+	return token.begins_with(FIRST_ROW_PREFIX) or token.begins_with(HWAN_TITLE_PREFIX) \
+		or LOGIN_FIRST_ROW_KEYS.has(token) or EXCHANGE_FIRST_ROW_KEYS.has(token)
+
+## **Round 838: the hwan titles keep the client's first row too.** The title
+## a character's hwan level draws is the text of hwanleveldata's key through
+## TextStringManager (READ FUN_00941000 -> 0x8c9bb0), which keeps the first
+## row (READ 0x8ca120 above). The box's textuisystem.txt has the private
+## server's titles in its first table (UIO_SECOND_HWAN_CH_NAME_LEVEL_1
+## "Ambassador" ... 6 "Unique", 196 "SRO Lover") and the stock ones in the
+## later (1 "Captain" ... 6 "General Lord"; MEASURED, 2026-10-28), and the
+## archive's title scrolls are named for the first: ITEM_TITLE_1 is the
+## "Ambassador Title". The joined-table rule had drawn "Captain" for it.
+const HWAN_TITLE_PREFIX := "UIO_SECOND_HWAN_"
 
 ## **Round 834: the exchange's keys keep the client's first row too**
 ## (docs/protocol/exchange_verify.md W8). The later table's copies of these

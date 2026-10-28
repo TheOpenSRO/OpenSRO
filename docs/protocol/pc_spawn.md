@@ -54,7 +54,7 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
 |---|---|---|---|---|---|
 | 1 | u32 | RefObjID | `CInstancePC::vslot_010` `0x8412b0`: instance `+0x28` | `0x8a6bd0` | the character's body (`modelOf`) |
 | 2 | u8 | Scale (Height low nibble, Volume high) | instance `+0x64` | slot 22 → `+0x794` | the character's scale byte |
-| 3 | u8 | HwanLevel | instance `+0xf2` | slot 22 → `0xef1bb8` | 0 (OURS: not modelled) |
+| 3 | u8 | HwanLevel | instance `+0xf2` | slot 22 → `0xef1bb8`, then slot 27 (`0x9dbcc0`) → `FUN_009ca930`, the title | the character's title (round 838, `titlescroll.go`: the title scrolls set it; 0 for none) |
 | 4 | u8 | PVP cape | PC `+0x21ec` (`0x4e5a3d`) | slot 22 → `+0x824`; slot 25: 1..5 | 0 |
 | 5 | u8 | AutoInvestExp | instance `+0xa8` (`0x4e5a4f`) | slot 22 → `0xef1bb9` | 0 |
 | 6 | u8 | inventory size | storage capacity | read, dropped | 109 = `inventory.DefaultBagSlots` + 13 (OURS) |

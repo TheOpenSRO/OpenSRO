@@ -73,6 +73,9 @@ const OPTION_CREST := 0xC6
 ## retail's 0x704C carries {u32 ref, u8 scale} after the slot and type word
 ## (SendItem_HandleUseItem 0x796660 case 9, c:0x797049..0x797222).
 const OPTION_SKIN_CHANGE := 0xFC
+## Round 838 (OURS, the server's UseOptionCustomTitle): the Custom Title
+## Scroll's use, the title after the option as u16 length + UTF-8.
+const OPTION_CUSTOM_TITLE := 0xC7
 
 ## Whether TypeIDs are an item the client sends with the current COS's uid
 ## (round 805; SendItem_HandleUseItem 0x796660, READ): a COS HP potion 3/3/1/4,
@@ -160,6 +163,17 @@ static func encode_use_skin(character_name: String, inventory_slot: int, ref_obj
 	id.encode_u32(0, ref_obj_id)
 	out.append_array(id)
 	out.append(scale & 0xff)
+	return out
+
+## The Custom Title Scroll's use: the plain use, OPTION_CUSTOM_TITLE, the text.
+static func encode_use_custom_title(character_name: String, inventory_slot: int, text: String) -> PackedByteArray:
+	var out := encode_use(character_name, inventory_slot)
+	out.append(OPTION_CUSTOM_TITLE)
+	var b := text.to_utf8_buffer()
+	var n := out.size()
+	out.resize(n + 2)
+	out.encode_u16(n, b.size())
+	out.append_array(b)
 	return out
 
 ## A crest register's use: the plain use, OPTION_CREST, the 256 bytes.

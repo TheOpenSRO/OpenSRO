@@ -903,6 +903,8 @@ signal system_notice(text: String)
 ## holding `count` (round 634): retail opens the "Chat to all" window for it
 ## (IFSlotWithHelp 0x676570's case 5 -> 0x79b8a0) instead of using it.
 signal global_chat_requested(slot: int, count: int)
+## Round 838 (OURS): the Custom Title Scroll's box answered with a title.
+signal custom_title_requested(slot: int, text: String)
 ## An item used on the current COS (is_cos_target_item, round 805) was used
 ## from bag slot `slot`: World3D names the pet (World3D._use_cos_item).
 signal cos_item_requested(slot: int)
@@ -5885,6 +5887,26 @@ func _open_reverse_slot_list(register: bool) -> void:
 	box.cancelled.connect(func() -> void: _reverse_saved_wanted = "")
 	_show_reverse_addon(box)
 
+## Round 838 (OURS): the Custom Title Scroll's box for bag `slot` (any open
+## one closed first); OK sends the use with the typed title.
+var custom_title_box: HudCosBox = null
+
+func open_custom_title_box(slot: int) -> HudCosBox:
+	if custom_title_box != null and is_instance_valid(custom_title_box):
+		custom_title_box.queue_free()
+	custom_title_box = HudCosBox.new()
+	if not custom_title_box.build_custom_title_input(_builder):
+		custom_title_box.free()
+		custom_title_box = null
+		return null
+	custom_title_box.accepted.connect(func(text: String) -> void:
+		print("CUSTOMTITLE: slot %d '%s'" % [slot, text])
+		custom_title_requested.emit(slot, text))
+	add_child(custom_title_box)
+	custom_title_box.centre_on(get_viewport_rect().size)
+	print("CUSTOMTITLE: box opened for bag slot %d" % slot)
+	return custom_title_box
+
 ## The box up, or null.
 func reverse_return_box() -> ReverseReturnBox:
 	if _reverse_box != null and is_instance_valid(_reverse_box) and not _reverse_box.is_queued_for_deletion():
@@ -6833,6 +6855,11 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		# Round 838: an item used ON another item enters the use-on mode.
 		if is_use_on_item(item_types(item_id)):
 			_begin_use_on(slot)
+			return
+		# Round 838 (OURS): the Custom Title Scroll opens its box ("A window
+		# will open where you can enter your custom title").
+		if item_code_for_id(item_id) == TitleNet.CUSTOM_ITEM_CODE:
+			open_custom_title_box(slot)
 			return
 		# Round 805: a pet's potion, food or cure names the current COS.
 		if is_cos_target_item(item_types(item_id)):

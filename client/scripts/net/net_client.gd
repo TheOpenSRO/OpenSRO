@@ -451,6 +451,9 @@ var crest_cache := CrestCache.new()
 ## Round 838 (OURS): the service scrolls' messages -- the service lines, the
 ## plate colours, the rename at character select (ServiceNet).
 var service := ServiceNet.new()
+## Round 838: the characters' titles -- retail's hwan level (0x30DF and the
+## spawn record) and the OURS custom title's text (TitleNet).
+var titles := TitleNet.new()
 ## The game clock (round 786, GameClock): kept here so it outlives a scene
 ## change, as retail keeps it in its CGame config object.
 var game_clock := GameClock.new()
@@ -1232,6 +1235,9 @@ func enter_world(char_name: String) -> void:
 	# The OpSelfId that answers this entry names the character entering now.
 	own_character_id = -1
 	own_guild_line = {}
+	# Round 838: every title comes again -- the own one after the entry, the
+	# others' with their spawns.
+	titles.clear()
 	# Start (round 682): 0x7001, answered by 0xB001 and, when it is OK, the
 	# enter-world result.
 	_send(LobbyNet.OP_START, LobbyNet.encode_start(char_name))
@@ -1482,6 +1488,11 @@ func use_item_crest(char_name: String, inventory_slot: int, pixels: PackedByteAr
 func use_item_skin(char_name: String, inventory_slot: int, ref_obj_id: int, scale: int) -> void:
 	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_skin(char_name, inventory_slot, ref_obj_id, scale))
+
+## Round 838 (OURS): the Custom Title Scroll's use with the typed title.
+func use_item_custom_title(char_name: String, inventory_slot: int, text: String) -> void:
+	last_use_slot = inventory_slot
+	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_custom_title(char_name, inventory_slot, text))
 
 func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
 	last_use_slot = inventory_slot
@@ -1816,6 +1827,8 @@ func _init() -> void:
 	# Round 838 (OURS): the service scrolls' lines, plate colours and rename.
 	service.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
 	service.register_with(self)
+	# Round 838: 0x30DF and the custom title's text.
+	titles.register_with(self)
 	guild_data.changed.connect(func() -> void:
 		if guild_data.in_guild:
 			crest_cache.note_guild(guild_data.guild_name, guild_data.guild_id, guild_data.crest_rev))
@@ -2389,6 +2402,8 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	# Round 814: its guild line as the record carries it.
 	user_guilds[rec.uid] = {"guild_id": rec.guild_id, "guild_name": rec.guild_name, "nickname": rec.nickname, "name": rec.name,
 		"crest_rev": rec.crest_rev}
+	# Round 838: its title as the record carries it (slot 27 -> FUN_009ca930).
+	titles.note_level(rec.uid, rec.hwan_level, false)
 	crest_cache.note_guild(rec.guild_name, rec.guild_id, rec.crest_rev)
 	var mode := WorldNet.StateChange.new()
 	mode.object_id = rec.uid
@@ -2468,6 +2483,7 @@ func _user_left(uid: int) -> void:
 	user_roster.erase(uid)
 	user_jobs.erase(uid)
 	user_guilds.erase(uid)
+	titles.forget(uid)
 	buff_roster.drop(BuffRoster.key_of(uid, SkillNet.OWNER_CHARACTER))
 	body_modes.erase(uid)
 	character_states.erase(uid)

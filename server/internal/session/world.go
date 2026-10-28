@@ -1623,6 +1623,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// stat or skill reset a scroll left for this login run before the
 	// character is placed.
 	owned = serviceAtEntry(ctx, chars, owned)
+	// Round 838 (titlescroll.go): the title cached before the character is
+	// placed, so its spawn record carries it.
+	titleAtEntry(ctx, chars, owned.ID)
 	// The avatar inventory's integrity (round 789, avatar.go): a failing item
 	// goes to the bag; with no room the entry is refused, as retail refuses
 	// the login (CGObjPC::Create s:0x4e0dc0).
@@ -1783,6 +1786,8 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	loginNoticeAfterEnter(sess)
 	// Round 838 (OURS): its own plate colours and the resets' lines.
 	serviceAfterEnter(sess, owned)
+	// Round 838: its own title (retail's 0x3013 HwanLevel; OURS 0x30DF).
+	titleAfterEnter(sess, owned.ID)
 	return nil
 }
 

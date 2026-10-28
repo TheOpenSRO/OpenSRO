@@ -176,6 +176,16 @@ func _joined_checks() -> void:
 	_check(mt.get_text("UIIT_K1") == "Stock 1", "NEGATIVE: a non-mastery key still takes the stock row (got %s)" % mt.get_text("UIIT_K1"))
 	_check(UiTextTable.keeps_first_row("UIIT_STT_MASTERY_VI") and not UiTextTable.keeps_first_row("UIIT_CTL_FORCE_SKILL"),
 		"keeps_first_row names the mastery keys only")
+	# Round 838: a hwan title keeps the first table's row ("Ambassador", the
+	# ITEM_TITLE_1 scroll's name), not the stock table's ("Captain").
+	var h_first := first.duplicate()
+	h_first.append(_row16("UIO_SECOND_HWAN_CH_NAME_LEVEL_1", "Ambassador"))
+	var h_second := second.duplicate()
+	h_second.append(_row19("UIO_SECOND_HWAN_CH_NAME_LEVEL_1", "Captain"))
+	var ht := UiTextTable.parse(("\n".join(h_first + h_second)).to_utf16_buffer())
+	_check(ht.get_text("UIO_SECOND_HWAN_CH_NAME_LEVEL_1") == "Ambassador",
+		"a hwan title keeps the first row, 'Ambassador', not the stock 'Captain' (got %s)" % ht.get_text("UIO_SECOND_HWAN_CH_NAME_LEVEL_1"))
+	_check(ht.get_text("UIIT_K1") == "Stock 1", "and the other keys still take the stock row")
 	var last := UiTextTable.parse(("\n".join(first + second)).to_utf16_buffer(), 8, false)
 	_check(last.get_text("UIIT_K5") == "", "keep_first false still keeps the last row, whatever it holds (got %s)" % last.get_text("UIIT_K5"))
 
