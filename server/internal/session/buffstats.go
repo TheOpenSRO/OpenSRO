@@ -8,7 +8,9 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"math"
+	"os"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
@@ -129,7 +131,11 @@ func applyBuffDamageVs(characterID int64, magical, unique bool, dmg int) int {
 	}
 	pct := buffDamagePercent(characterID, magical)
 	if unique {
-		pct += uniqueDamagePercent(characterID)
+		u := uniqueDamagePercent(characterID)
+		pct += u
+		if umduTrace && u != 0 {
+			slog.Info("combat: umdu against a unique", "character", characterID, "umdu_pct", u, "damage_pct", pct, "blow", dmg)
+		}
 	}
 	f := 1 + pct/100
 	mp := buff.ParamAttackerMult
@@ -146,6 +152,10 @@ func applyBuffDamageVs(characterID int64, magical, unique bool, dmg int) int {
 	}
 	return out
 }
+
+// umduTrace (OPENSRO_UMDU_TRACE, QA only) logs each blow the umdu term
+// raises.
+var umduTrace = os.Getenv("OPENSRO_UMDU_TRACE") != ""
 
 // uniqueDamagePercent is the attacker's p259 (flat, slot 0); a test
 // replaces it.

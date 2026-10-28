@@ -95,17 +95,18 @@ import (
 //     not modelled, and the buff's params (dru, odar, hr, luck ...) are
 //     not applied -- the book models only run speed (TODO.md).
 //
-// Not modelled (disclosed): the grant and the bonus are in memory, so a
-// server restart loses them (the engine's timed jobs survive a relog through
-// their __time32_t stamps -- OpenSRO's survive a relog too, not a restart);
-// the engine's order queues the UIL1 job before it meets a running 0x706874
-// job, OpenSRO checks both first. OURS since the round 638 review: an entry
-// OpenSRO does not model -- a UIU1 3/3/13/4 row (the premium time, a type-3
-// job, FUN_0049a400), a UIU1 3/3/3/10 row whose FourCC is not 0x706874, and
-// BCS1, BFI1, PSU1, UQL1 and USL1 -- is SKIPPED and logged, where it used to
-// refuse the whole item; an item none of whose entries is modelled is still
-// refused. So a premium item starts its skill buff and its UIL1 grants and
-// nothing else.
+// Not modelled (disclosed): the berserk bonus is in memory, so a server
+// restart loses it; the engine's order queues the UIL1 job before it meets a
+// running 0x706874 job, OpenSRO checks both first. Round 838: the UIL1, BFI1
+// and UQL1 grants are kept in timedjob.Store (retail's _TIMEDJOB) and loaded
+// at the character's world entry, so they survive a restart; the UIU1
+// 3/3/13/4 premium time is goldtime.go's, BFI1 and UQL1 compositeextra.go's,
+// and a UIL1 fill of a return scroll runs the scroll's routine. OURS since
+// the round 638 review: an entry OpenSRO does not model -- a UIU1 3/3/3/10
+// row whose FourCC is not 0x706874, BCS1, PSU1 (the pet composite's own
+// path, petgrowth.go) and USL1, and UQL1 on a server without a quest
+// catalogue -- is SKIPPED and logged; an item none of whose entries is
+// modelled is still refused.
 const (
 	OpCompositeUse       uint16 = 0x0104 // client -> server: spend a granted fill
 	OpCompositeUseResult uint16 = 0x0105 // server -> client
