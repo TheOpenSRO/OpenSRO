@@ -7766,11 +7766,17 @@ the mall's 34 rows of TypeID 3/3/13/8. `docs/protocol/item_switchers.md` has the
   before; worn, the body draws `ITEM_CH_SWORD_11_A_SWITCH16`'s blade (`player equipment {... 6:
   62515}`). The axe switcher on that sword: "This scroll works only on Egy A weapons." The sword
   switcher on Egy A axe 25622: it became Asue 25611 (Seal of Nova). Server log: `switch: item
-  changed ... model=62515` and `... from=25622 to=25611`.
+  changed ... model=62515` and `... from=25622 to=25611`. The gender tools: female copper armour
+  3646 became 3637 ("Male", the same stats) and was worn; the wedding dress, the devil's spirit
+  and the Gold Dragon Flag became their male rows; the avatar switcher on a flag was refused;
+  Escape ended a pick with the inventory left open. A worn target and retail's tool on a sword
+  printed the archive's 0x1882 / 0x1884 lines. An observer (a second account on one server) saw
+  the actor's sword change on its 0x3038 (`item 62515`), and the model survived a relog. Frames:
+  `/var/tmp/r8382/keep/` on the box.
 - **Tests.** Server `go test ./...` passes (switcher838_test: every tool, every refusal, the
   0x3040, the models block, the observers' display ref; MutateItem and the model column through
-  both stores). Client: `item_target_pick838_test`, `item_instance_test`, `useitem_test`; native
-  `cargo test` (the CanUse column). No perf gate: UI, net and server only.
+  both stores). Client: the box's whole GDScript suite, "ran 382 GDScript test(s)" with no error
+  (`item_target_pick838_test` new); native `cargo test` (the CanUse column). No perf gate: UI, net and server only.
 
 ## Eight-hundred-and-thirty-seventh round: the item mall, with the try-on, silk and an item chest
 
