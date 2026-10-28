@@ -8,7 +8,9 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"math"
+	"os"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
@@ -113,10 +115,29 @@ func buffDamagePercent(characterID int64, magical bool) float64 {
 // and its debuffed multiplier (p178/179, 'pmdg'), as the mitigation's tail
 // does (0x40e5a4, 0x40e75b, READ).
 func applyBuffDamage(characterID int64, magical bool, dmg int) int {
+	return applyBuffDamageVs(characterID, magical, false, dmg)
+}
+
+// applyBuffDamageVs is applyBuffDamage against a monster: unique names a
+// class-3 (unique) defender, against which the attacker's p259 ('umdu', the
+// devil's spirit stone; round 838) adds its percent of the same blow D:
+// Formula_MitigatePhysicalDamage (0x40e450) tests IsMonster and
+// GetMonsterClass == 3 (0x40e5ba..0x40e5de, READ) and computes
+// (1 + p128/100) D + (p259/100) D, the magical twin (0x40e830) with p130 --
+// so one factor 1 + (p128 + p259)/100. Rarity 8 does not qualify.
+func applyBuffDamageVs(characterID int64, magical, unique bool, dmg int) int {
 	if dmg <= 0 {
 		return dmg
 	}
-	f := 1 + buffDamagePercent(characterID, magical)/100
+	pct := buffDamagePercent(characterID, magical)
+	if unique {
+		u := uniqueDamagePercent(characterID)
+		pct += u
+		if umduTrace && u != 0 {
+			slog.Info("combat: umdu against a unique", "character", characterID, "umdu_pct", u, "damage_pct", pct, "blow", dmg)
+		}
+	}
+	f := 1 + pct/100
 	mp := buff.ParamAttackerMult
 	if magical {
 		mp++
@@ -160,6 +181,35 @@ func applyPlayerTaken(characterID int64, magical bool, dmg int) int {
 	return out
 }
 
+// umduTrace (OPENSRO_UMDU_TRACE, QA only) logs each blow the umdu term
+// raises.
+var umduTrace = os.Getenv("OPENSRO_UMDU_TRACE") != ""
+
+// uniqueDamagePercent is the attacker's p259 (flat, slot 0); a test
+// replaces it.
+var uniqueDamagePercent = func(characterID int64) float64 {
+	if t, ok := buffTotal(characterID, buff.ParamUniqueDamage); ok {
+		return t.Apply(0)
+	}
+	return 0
+}
+
+// ignoreDefenceRoll is the p188 roll (round 838, skillhit.go): trunc(p188),
+// clamped 0..100, through the attacker's bad-luck streak.
+func ignoreDefenceRoll(characterID int64) bool {
+	t, ok := buffTotal(characterID, buff.ParamIgnoreDefence)
+	if !ok {
+		return false
+	}
+	chance := int(t.Apply(0))
+	if chance <= 0 {
+		return false
+	}
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.RollChanceTracked(min(chance, 100), damageRollNG, chanceMemory, characterID, combat.ChanceIgnoreDefence)
+}
+
 // buffBonus is the character.Bonus the buffs give (round 785): Str and Int
 // (p1/p2 slot 0), max HP and MP flat and percent (p3/p4 slots 0 and 1),
 // evade-critical (p57).
@@ -176,6 +226,10 @@ func buffBonus(characterID int64) character.Bonus {
 		EvadeCrit: int(all[buff.ParamEvadeCrit].Flat),
 		HPPct:     all[buff.ParamMaxHP].Pct,
 		MPPct:     all[buff.ParamMaxMP].Pct,
+		// Round 838: params 52 / 53 slot 1 (a devil's spirit's 'hpna' /
+		// 'mpna', avatarstats.go).
+		StrHPPct: all[52].Pct,
+		IntMPPct: all[53].Pct,
 	}
 	return b
 }

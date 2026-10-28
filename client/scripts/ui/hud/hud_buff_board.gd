@@ -163,6 +163,9 @@ signal cancel_requested(skill_id: int, token: int)
 ## CIFMagicStateBoard::vslot_029 (0x800430, WM_LBUTTONUP) opens the
 ## CompositeItem window for it (FUN_0079d390(1, id) at 0x80051b).
 signal item_state_clicked(token: int)
+## Round 838: the premium Gold Time's icon was clicked (vslot_029's kind-3
+## branch, c:0x800430): World3D asks to pause or resume it.
+signal gold_time_clicked(token: int)
 
 ## One icon on the board.
 class Buff:
@@ -519,6 +522,22 @@ func add_item_state(token: int, icon: String, total_ms: int, remaining_ms: int, 
 ## 0xb branch was not read).
 const KIND_SAFE_TRADE := 0xb
 
+## Round 838: the premium Gold Time (FUN_00777f20(3, ...) -> FUN_00805a40
+## case 3, from 0x3206): no gauge; its tooltip (0x800a10's kind 3) is the
+## item's name, the period left and the gold time (previous day + today),
+## composed by the caller. Main list, as kind 0xb (INFERRED).
+const KIND_GOLD_TIME := 3
+
+func add_gold_time(token: int, icon: String, tooltip: String) -> Buff:
+	var b := add_state_entry(KIND_GOLD_TIME, token, icon, tooltip)
+	b.info = {"icon": icon, "tooltip": tooltip}
+	return b
+
+func remove_gold_time(token: int) -> void:
+	var b: Buff = _by_token.get(token)
+	if b != null and b.kind == KIND_GOLD_TIME:
+		_remove(b)
+
 func add_state_entry(kind: int, token: int, icon: String, tooltip: String) -> Buff:
 	var b: Buff = _by_token.get(token)
 	if b != null:
@@ -568,6 +587,8 @@ func on_slot_left_click(token: int) -> void:
 	var b: Buff = _by_token.get(token)
 	if b != null and b.kind == 5:
 		item_state_clicked.emit(token)
+	elif b != null and b.kind == KIND_GOLD_TIME:
+		gold_time_clicked.emit(token)
 
 ## What a right-click on the icon with `token` does (vslot_033).
 func right_click_action(token: int) -> String:
@@ -576,7 +597,7 @@ func right_click_action(token: int) -> String:
 		return ACTION_NONE
 	# OURS: an item grant is not a skill buff; vslot_033's kind-5 branch was
 	# not read, so a right-click on it does nothing rather than send a cancel.
-	if b.kind == 5 or b.kind == KIND_SAFE_TRADE:
+	if b.kind == 5 or b.kind == KIND_SAFE_TRADE or b.kind == KIND_GOLD_TIME:
 		return ACTION_NONE
 	if bool(b.info.get("nbuf", false)) and not bool(b.info.get("lnks", false)):
 		return ACTION_NONE
@@ -624,6 +645,11 @@ func _send_cancel(skill_id: int, token: int) -> void:
 ## UIIT_STT_CONFIRM_BOX, with OK and Cancel; OK sends the cancel (INFERRED:
 ## what box type 0x20's OK does was not read).
 func _open_confirm(skill_id: int, token: int) -> void:
+	open_confirm_box("", func() -> void: _send_cancel(skill_id, token))
+
+## The confirm box above with `body` as its line and `on_ok` run at OK
+## (round 838: the Gold Time's pause question uses it too).
+func open_confirm_box(body_text: String, on_ok: Callable) -> void:
 	var host: Node = get_parent() if get_parent() != null else self
 	var old := host.get_node_or_null(CONFIRM_NAME)
 	if old != null:
@@ -649,7 +675,11 @@ func _open_confirm(skill_id: int, token: int) -> void:
 	box.add_child(title)
 	var body := Label.new()
 	body.name = "Body"
-	body.text = ""
+	body.text = body_text
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# A wrapping label needs its width, or the box grows to its full height.
+	body.custom_minimum_size = Vector2(280, 0)
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(body)
 	var row := HBoxContainer.new()
@@ -660,7 +690,7 @@ func _open_confirm(skill_id: int, token: int) -> void:
 	ok.text = "OK"
 	ok.custom_minimum_size = Vector2(96, 0)
 	ok.pressed.connect(func() -> void:
-		_send_cancel(skill_id, token)
+		on_ok.call()
 		panel.queue_free())
 	row.add_child(ok)
 	var cancel := Button.new()
@@ -678,7 +708,7 @@ func tooltip_for(token: int) -> String:
 	var b: Buff = _by_token.get(token)
 	if b == null:
 		return ""
-	if b.kind == 5 or b.kind == KIND_SAFE_TRADE:
+	if b.kind == 5 or b.kind == KIND_SAFE_TRADE or b.kind == KIND_GOLD_TIME:
 		var item_lines := PackedStringArray([String(b.info.get("tooltip", ""))])
 		if b.total_ms >= 0:
 			item_lines.append(remain_line(b.remaining_ms(), _unit_texts()))

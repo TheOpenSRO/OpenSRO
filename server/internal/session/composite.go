@@ -20,6 +20,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/timedjob"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
@@ -93,17 +94,18 @@ import (
 //     only the recast rule is run (round 838, itemSkillRefusal), and the
 //     buff's params apply as any buff's do (round 785, buff/stats.go).
 //
-// Not modelled (disclosed): the grant and the bonus are in memory, so a
-// server restart loses them (the engine's timed jobs survive a relog through
-// their __time32_t stamps -- OpenSRO's survive a relog too, not a restart);
-// the engine's order queues the UIL1 job before it meets a running 0x706874
-// job, OpenSRO checks both first. OURS since the round 638 review: an entry
-// OpenSRO does not model -- a UIU1 3/3/13/4 row (the premium time, a type-3
-// job, FUN_0049a400), a UIU1 3/3/3/10 row whose FourCC is not 0x706874, and
-// BCS1, BFI1, PSU1, UQL1 and USL1 -- is SKIPPED and logged, where it used to
-// refuse the whole item; an item none of whose entries is modelled is still
-// refused. So a premium item starts its skill buff and its UIL1 grants and
-// nothing else.
+// Not modelled (disclosed): the berserk bonus is in memory, so a server
+// restart loses it; the engine's order queues the UIL1 job before it meets a
+// running 0x706874 job, OpenSRO checks both first. Round 838: the UIL1, BFI1
+// and UQL1 grants are kept in timedjob.Store (retail's _TIMEDJOB) and loaded
+// at the character's world entry, so they survive a restart; the UIU1
+// 3/3/13/4 premium time is goldtime.go's, BFI1 and UQL1 compositeextra.go's,
+// and a UIL1 fill of a return scroll runs the scroll's routine. OURS since
+// the round 638 review: an entry OpenSRO does not model -- a UIU1 3/3/3/10
+// row whose FourCC is not 0x706874, BCS1, PSU1 (the pet composite's own
+// path, petgrowth.go) and USL1, and UQL1 on a server without a quest
+// catalogue -- is SKIPPED and logged; an item none of whose entries is
+// modelled is still refused.
 const (
 	OpCompositeUse       uint16 = 0x0104 // client -> server: spend a granted fill
 	OpCompositeUseResult uint16 = 0x0105 // server -> client
@@ -171,9 +173,21 @@ func parseCompositeDesc(desc string) ([]compositeEntry, error) {
 			fields[i] = strings.TrimSpace(fields[i])
 		}
 		e.code = fields[0]
-		if e.fourCC == "UIL1" {
+		switch e.fourCC {
+		case "BFI1":
+			// BUFF_ITEM::vslot_001 (0x8646b0): code, A|P, seconds (round 838).
+			if len(fields) != 3 || (fields[1] != "A" && fields[1] != "P") {
+				return nil, fmt.Errorf("composite: BFI1 %q: want code,A|P,seconds", body)
+			}
+			e.flagP = fields[1] == "P"
+			var err error
+			if e.seconds, err = strconv.Atoi(fields[2]); err != nil {
+				return nil, fmt.Errorf("composite: BFI1 seconds: %w", err)
+			}
+		}
+		if e.fourCC == "UIL1" || e.fourCC == "UQL1" {
 			if len(fields) != 4 || (fields[1] != "A" && fields[1] != "P") {
-				return nil, fmt.Errorf("composite: UIL1 %q: want code,A|P,seconds,count", body)
+				return nil, fmt.Errorf("composite: %s %q: want code,A|P,seconds,count", e.fourCC, body)
 			}
 			e.flagP = fields[1] == "P"
 			var err error
@@ -214,10 +228,35 @@ type CompositeKeeper struct {
 	grants   map[int64]map[int64]*compositeGrant // character -> fill id -> grant
 	sessions map[int64]*gateway.Session          // character -> the session to push to
 	gen      uint64                              // stamps each put, so a stale timer ends nothing
+	// Round 838: the BFI1 and UQL1 grants (compositeextra.go), the store
+	// every grant is kept in across a restart, the scroll caster a return
+	// scroll's fill runs through, and the characters whose kept grants were
+	// loaded.
+	extras  map[int64][]*compositeExtra
+	store   timedjob.Store
+	scrolls *ScrollCaster
+	loaded  map[int64]bool
 }
 
 func NewCompositeKeeper() *CompositeKeeper {
-	return &CompositeKeeper{grants: map[int64]map[int64]*compositeGrant{}, sessions: map[int64]*gateway.Session{}}
+	return &CompositeKeeper{grants: map[int64]map[int64]*compositeGrant{}, sessions: map[int64]*gateway.Session{},
+		extras: map[int64][]*compositeExtra{}, loaded: map[int64]bool{}}
+}
+
+// SetStore keeps the grants in store (round 838): each put, use and end is
+// written, and a character's are loaded at its world entry.
+func (k *CompositeKeeper) SetStore(store timedjob.Store) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.store = store
+}
+
+// SetScrolls names the caster a return scroll's fill runs through (round
+// 838).
+func (k *CompositeKeeper) SetScrolls(s *ScrollCaster) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.scrolls = s
 }
 
 // bind records the session a character's end pushes go to.
@@ -274,8 +313,31 @@ func (k *CompositeKeeper) put(characterID int64, g compositeGrant, lasts time.Du
 	g.gen = k.gen
 	m[g.fillID] = &g
 	k.mu.Unlock()
+	k.saveGrant(characterID, g)
 	gen := g.gen
 	time.AfterFunc(lasts, func() { k.expire(characterID, g.fillID, gen) })
+}
+
+// saveGrant writes a UIL1 grant to the store (round 838).
+func (k *CompositeKeeper) saveGrant(characterID int64, g compositeGrant) {
+	k.mu.Lock()
+	store := k.store
+	k.mu.Unlock()
+	if store == nil {
+		return
+	}
+	_ = store.Put(context.Background(), timedjob.Job{CharID: characterID, Type: timedjob.TypeComposite, Sub: "UIL1",
+		Ref: g.fillID, Key: g.scrollID, Start: useItemClock(), End: g.until, V1: int64(g.remaining), V2: int64(g.max)})
+}
+
+// dropGrant removes a UIL1 grant's row (round 838).
+func (k *CompositeKeeper) dropGrant(characterID, fillID int64) {
+	k.mu.Lock()
+	store := k.store
+	k.mu.Unlock()
+	if store != nil {
+		_ = store.Delete(context.Background(), characterID, timedjob.TypeComposite, "UIL1", fillID)
+	}
 }
 
 // expire is the timer's end: the grant, if it is still the one the timer was
@@ -291,14 +353,21 @@ func (k *CompositeKeeper) expire(characterID, fillID int64, gen uint64) {
 	k.removeLocked(characterID, fillID)
 	sess := k.sessions[characterID]
 	k.mu.Unlock()
+	k.dropGrant(characterID, fillID)
 	sendCompositeEnd(sess, ended)
 }
 
 func (k *CompositeKeeper) setRemaining(characterID, fillID int64, remaining int) {
 	k.mu.Lock()
-	defer k.mu.Unlock()
-	if g, ok := k.grants[characterID][fillID]; ok {
+	g, ok := k.grants[characterID][fillID]
+	var cp compositeGrant
+	if ok {
 		g.remaining = remaining
+		cp = *g
+	}
+	k.mu.Unlock()
+	if ok {
+		k.saveGrant(characterID, cp)
 	}
 }
 
@@ -314,6 +383,7 @@ func (k *CompositeKeeper) end(characterID, fillID int64) {
 	k.removeLocked(characterID, fillID)
 	sess := k.sessions[characterID]
 	k.mu.Unlock()
+	k.dropGrant(characterID, fillID)
 	sendCompositeEnd(sess, ended)
 }
 
@@ -401,6 +471,10 @@ type compositePlan struct {
 	skillFor []time.Duration
 	// skipped names the entries OpenSRO does not model (OURS, logged).
 	skipped []string
+	// Round 838: the premium (a UIU1 3/3/13/4 row, goldtime.go) and the
+	// BFI1 / UQL1 grants (compositeextra.go).
+	premium *refdata.Item
+	extras  []compositeExtra
 }
 
 // skillByCode resolves a USU1 entry's skill (0x495690).
@@ -460,7 +534,25 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			continue
 		}
 		switch e.fourCC {
-		case "UIL1", "UIU1":
+		case "UIL1", "UIU1", "BFI1":
+		case "UQL1":
+			// The pre-check needs the quest (round 838). A server with no
+			// quest catalogue cannot name it: the entry is skipped (OURS).
+			rt := questRT.Load()
+			if rt == nil || rt.cat == nil {
+				plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
+				continue
+			}
+			q, ok := rt.cat.ByCode[e.code]
+			if !ok || q == nil {
+				return plan, "that cannot be used"
+			}
+			if _, running := keeper.extra(characterID, "UQL1", q.ID, now); running {
+				return plan, compositeOverlapRefusal
+			}
+			plan.extras = append(plan.extras, compositeExtra{fourCC: "UQL1", refID: q.ID, scrollID: scroll.ID,
+				until: now.Add(time.Duration(e.seconds) * time.Second), remaining: e.count, max: e.count})
+			continue
 		default:
 			// OURS: a kind OpenSRO does not model is skipped (header).
 			plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
@@ -471,6 +563,17 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			return plan, "that cannot be used"
 		}
 		switch e.fourCC {
+		case "BFI1":
+			// FUN_0049a460('BFI1', id) in the pre-check, then the branch's
+			// 3/3/3/4 test: any other row queues nothing (round 838).
+			if _, running := keeper.extra(characterID, "BFI1", part.ID, now); running {
+				return plan, compositeOverlapRefusal
+			}
+			if !isBFI1Decoration(part) {
+				continue
+			}
+			plan.extras = append(plan.extras, compositeExtra{fourCC: "BFI1", refID: part.ID, scrollID: scroll.ID,
+				until: now.Add(time.Duration(e.seconds) * time.Second)})
 		case "UIL1":
 			if _, running := keeper.get(characterID, part.ID, now); running { // FUN_0049a460(UIL1, id)
 				return plan, compositeOverlapRefusal
@@ -497,9 +600,18 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			// urse -> params 256/258/258, 0x6552d0) are refused. Its
 			// Param1..3 are exported as RestoreHP, the packed ReinforceRate1
 			// (Param2, u32) and ReinforceRate2 (Param3).
-			if part.TypeID1 == equipment.TypeItem && part.TypeID2 == equipment.TypeExpendable && part.TypeID3 == 13 && part.TypeID4 == 4 {
-				// The premium time (a type-3 job): not modelled, skipped (OURS).
-				plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
+			if isPremiumTime(part) {
+				// The premium time (round 838, goldtime.go): a type-3 job,
+				// refused 0x1894 while any runs (0x49f44a..0x49f47d). A
+				// server without its store skips it (OURS).
+				if goldTimeDepsNow() == nil {
+					plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
+					continue
+				}
+				if goldTimeRunning(characterID) {
+					return plan, compositeOverlapRefusal
+				}
+				plan.premium = part
 				continue
 			}
 			if !(part.TypeID1 == equipment.TypeItem && part.TypeID2 == equipment.TypeExpendable &&
@@ -518,7 +630,7 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			plan.bonusValid = true
 		}
 	}
-	if len(plan.grants) == 0 && !plan.bonusValid && len(plan.skills) == 0 {
+	if len(plan.grants) == 0 && !plan.bonusValid && len(plan.skills) == 0 && plan.premium == nil && len(plan.extras) == 0 {
 		// Nothing OpenSRO models: the item is refused, not spent.
 		return plan, "that cannot be used"
 	}
@@ -555,6 +667,15 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	if plan.bonusValid {
 		zerk.SetDurationBonus(characterID, plan.bonusSecs, now, plan.bonusFor)
 	}
+	// Round 838: the premium and the BFI1 / UQL1 grants.
+	if plan.premium != nil {
+		startGoldTime(ctx, sess, characterID, plan.premium, now)
+	}
+	for _, x := range plan.extras {
+		keeper.putExtra(characterID, x, now, true)
+		slog.Info("composite: grant", "item", it.ID, "character", characterID, "entry", x.fourCC, "ref", x.refID,
+			"seconds", int64(x.until.Sub(now)/time.Second), "count", x.max)
+	}
 	// USU1: the skill job's buff, started on the user's own book and told to
 	// its zone as any buff is (round 638 review).
 	for i, ref := range plan.skills {
@@ -574,14 +695,27 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	return sendCompositeState(sess, keeper, zerk, characterID, now)
 }
 
-// CompositeUseRequest spends one use of a granted item.
+// CompositeUseRequest spends one use of a granted item. Round 838: a
+// reverse return scroll's fill carries the scroll's option after the item
+// (0x715f's u8 option when not 0, then a u32 refoptionalteleport id for 7;
+// client 0x821720), the same bytes the scroll's own use carries.
 type CompositeUseRequest struct {
 	CharacterName string
 	ItemID        int64
+	Option        byte
+	Target        uint32
 }
 
 func (r *CompositeUseRequest) Encode() []byte {
-	return append(encodeStrings(r.CharacterName), encodeInt64(r.ItemID)...)
+	out := append(encodeStrings(r.CharacterName), encodeInt64(r.ItemID)...)
+	if r.Option == 0 {
+		return out
+	}
+	out = append(out, r.Option)
+	if r.Option == ReverseOptionMap {
+		out = binary.LittleEndian.AppendUint32(out, r.Target)
+	}
+	return out
 }
 
 func DecodeCompositeUseRequest(data []byte) (*CompositeUseRequest, error) {
@@ -589,11 +723,18 @@ func DecodeCompositeUseRequest(data []byte) (*CompositeUseRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding CompositeUseRequest: %w", err)
 	}
-	id, _, err := decodeInt64(rest)
+	id, rest, err := decodeInt64(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding CompositeUseRequest: item: %w", err)
 	}
-	return &CompositeUseRequest{CharacterName: fields[0], ItemID: id}, nil
+	r := &CompositeUseRequest{CharacterName: fields[0], ItemID: id}
+	if len(rest) > 0 {
+		r.Option = rest[0]
+		if r.Option == ReverseOptionMap && len(rest) >= 5 {
+			r.Target = binary.LittleEndian.Uint32(rest[1:5])
+		}
+	}
+	return r, nil
 }
 
 // CompositeUseResult answers a fill: the error text, the item, the uses
@@ -604,16 +745,20 @@ type CompositeUseResult struct {
 	Remaining     int32
 	BerserkGauge  int32
 	BerserkActive bool
+	// CastMs is a return scroll fill's delay (round 838): the casting bar,
+	// as the scroll's own use result carries it. A trailing u32.
+	CastMs uint32
 }
 
 func (r *CompositeUseResult) Encode() []byte {
 	out := append(encodeStrings(r.Error), encodeInt64(r.ItemID)...)
-	buf := make([]byte, 9)
+	buf := make([]byte, 13)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.Remaining))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.BerserkGauge))
 	if r.BerserkActive {
 		buf[8] = 1
 	}
+	binary.LittleEndian.PutUint32(buf[9:13], r.CastMs)
 	return append(out, buf...)
 }
 
@@ -629,10 +774,14 @@ func DecodeCompositeUseResult(data []byte) (*CompositeUseResult, error) {
 	if len(rest) < 9 {
 		return nil, errors.New("session: decoding CompositeUseResult: truncated")
 	}
-	return &CompositeUseResult{Error: fields[0], ItemID: id,
+	r := &CompositeUseResult{Error: fields[0], ItemID: id,
 		Remaining:     int32(binary.LittleEndian.Uint32(rest[0:4])),
 		BerserkGauge:  int32(binary.LittleEndian.Uint32(rest[4:8])),
-		BerserkActive: rest[8] != 0}, nil
+		BerserkActive: rest[8] != 0}
+	if len(rest) >= 13 {
+		r.CastMs = binary.LittleEndian.Uint32(rest[9:13])
+	}
+	return r, nil
 }
 
 // CompositeGrantState is one running grant as the client sees it.
@@ -777,6 +926,11 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 		fill, err := items.GetItem(ctx, req.ItemID)
 		if err != nil || fill == nil {
 			return fail("that cannot be used", req.ItemID)
+		}
+		// Round 838: a return scroll's fill (vslot_007's TypeID3 3 branch,
+		// 0x654258 / 0x65423b) runs the scroll's own routine.
+		if fill.TypeID1 == equipment.TypeItem && fill.TypeID2 == equipment.TypeExpendable && (IsReturnScroll(fill) || IsReverseReturnScroll(fill)) {
+			return useScrollFill(ctx, sess, hub, keeper, zerk, characterID, fill, g, req, fail)
 		}
 		// vslot_007's row test, TypeID3 1 branch: 3/3 expendable, TypeID4 8.
 		// Its TypeID3 3 and 13 branches (other recovery, resurrection) are

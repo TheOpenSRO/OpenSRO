@@ -85,6 +85,16 @@ static func is_cos_target_item(types: PackedInt32Array) -> bool:
 		return types[3] == 4 or types[3] == 5 or types[3] == 7 or types[3] == 9
 	return types[2] == 2 and types[3] == 7
 
+## Round 838: whether TypeIDs are used ON another item (HudPanels' use-on
+## mode; IFSlotWithHelp::FUN_00676570 c:0x67699f..0x676a04, READ): 3/3/13
+## with TypeID4 8, 12, 15 or 16, and the pet revival 3/3/1/6.
+static func is_use_on_item(types: PackedInt32Array) -> bool:
+	if types.size() < 4 or types[0] != 3 or types[1] != 3:
+		return false
+	if types[2] == 1 and types[3] == 6:
+		return true
+	return types[2] == 13 and types[3] in [8, 12, 15, 16]
+
 static func encode_use(character_name: String, inventory_slot: int, option: int = 0, target: int = 0) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
 	var out := PackedByteArray()

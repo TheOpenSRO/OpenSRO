@@ -79,7 +79,9 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 		{ID: testPremiumTime, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 4, CanUse: true,
 			CodeName: "ITEM_TEST_PRE_TIME"},
 		{ID: testOnlyUnmodelled, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 14, CanUse: true,
-			CodeName: "ITEM_TEST_BOOTH_ONLY", CompositeDesc: "[BFI1:ITEM_TEST_BOOTH,A,2419200]"},
+			CodeName: "ITEM_TEST_BOOTH_ONLY", CompositeDesc: "[BCS1:ITEM_TEST_BOOTH]"},
+		// Round 838: the BFI1 entry's stall decoration (3/3/3/4).
+		{ID: testBooth, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 4, CanUse: true, CodeName: "ITEM_TEST_BOOTH"},
 	}); err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -154,7 +156,13 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 	}
 	f.use = func(slot int) *UseItemResult {
 		t.Helper()
-		res, err := DecodeUseItemResult(send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slot)}).Encode()).Data)
+		p := send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slot)}).Encode())
+		// Round 838: a BFI1 grant's 0x315C goes out as its job starts, before
+		// the use's reply.
+		for p.Opcode == OpBuffItemStart {
+			p = f.recv()
+		}
+		res, err := DecodeUseItemResult(p.Data)
 		if err != nil {
 			t.Fatalf("decode result: %v", err)
 		}

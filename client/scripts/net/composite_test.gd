@@ -25,6 +25,50 @@ func _state_bytes() -> PackedByteArray:
 	out.encode_s32(34, 3599)
 	return out
 
+## Round 838: the Gold Time's 0x3206 (the server's own golden bytes,
+## mall838_test.go's TestGoldTimeStateBytes), its pause, a reverse return
+## fill's option and the fill result's cast time, the BFI1 push, the board's
+## Gold Time icon and the use-on kinds.
+func _round838() -> void:
+	var st := CompositeNet.decode_gold_time(PackedByteArray([3, 1, 0x3e, 0x24, 0, 0, 0x00, 0xea, 0x24, 0x00, 0x30, 0x2a, 0x64, 0x00, 1]))
+	_check(st != null and st.sub == 1 and st.ref_id == 9278 and st.period_left == 2419200 and st.prev == 100 \
+		and st.today == 10800 and st.paused and not st.ended, "0x3206 state decodes")
+	var end := CompositeNet.decode_gold_time(PackedByteArray([3, 1, 0x3e, 0x24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+	_check(end != null and end.ended, "0x3206 end decodes")
+	var ref := CompositeNet.decode_gold_time(PackedByteArray([3, 2, 0xfb, 0x18, 0x3e, 0x24, 0, 0]))
+	_check(ref != null and ref.sub == 2 and ref.code == 0x18fb and ref.ref_id == 9278, "0x3206 refusal decodes")
+	_check(CompositeNet.encode_gold_time_pause(true) == PackedByteArray([3, 1]), "0x34BF pause")
+	var enc := CompositeNet.encode_use("Aria", 3795, UseItemNet.OPTION_MAP, 12)
+	_check(enc.size() == 2 + 4 + 8 + 5 and enc[14] == 7 and enc.decode_u32(15) == 12, "a map fill carries 7 and the point")
+	_check(CompositeNet.encode_use("Aria", 3795, 2).size() == 2 + 4 + 8 + 1, "a recall fill carries the option alone")
+	var res := PackedByteArray()
+	res.resize(2 + 8 + 13)
+	res.encode_s64(2, 3769)
+	res.encode_s32(10, 2)
+	res.encode_u32(19, 1000)
+	var u := CompositeNet.decode_use_result(res)
+	_check(u.item_id == 3769 and u.remaining == 2 and u.cast_ms == 1000, "a fill result's cast time decodes")
+	var bi := CompositeNet.decode_buff_item(CompositeNet.OP_BUFF_ITEM_START, PackedByteArray([0x8f, 0x8a, 0, 0, 0x00, 0xea, 0x24, 0x00, 0x07, 0x0f, 0, 0]))
+	_check(int(bi.get("key", 0)) == 35471 and int(bi.get("decoration", 0)) == 3847 and not bool(bi.get("ended", true)), "0x315C decodes")
+	var board := HudBuffBoard.new(null, SkillBuffCatalog.new(null))
+	root.add_child(board)
+	var b := board.add_gold_time(-0x3206, "", "Gold Time\nline")
+	_check(b != null and b.kind == HudBuffBoard.KIND_GOLD_TIME and board.tooltip_for(-0x3206).begins_with("Gold Time"), "the Gold Time icon and tooltip")
+	_check(board.right_click_action(-0x3206) == HudBuffBoard.ACTION_NONE, "a right-click on it does nothing")
+	var clicked := [0]
+	board.gold_time_clicked.connect(func(t: int) -> void: clicked[0] = t)
+	board.on_slot_left_click(-0x3206)
+	_check(clicked[0] == -0x3206, "a left-click asks to pause or resume")
+	board.remove_gold_time(-0x3206)
+	_check(board.buff(-0x3206) == null, "the end removes it")
+	board.queue_free()
+	for t in [[[3, 3, 13, 12], true], [[3, 3, 13, 15], true], [[3, 3, 13, 16], true], [[3, 3, 1, 6], true],
+			[[3, 3, 13, 14], false], [[3, 3, 1, 4], false], [[3, 1, 14, 1], false]]:
+		_check(UseItemNet.is_use_on_item(PackedInt32Array(t[0])) == bool(t[1]), "use-on kind %s -> %s" % [str(t[0]), str(t[1])])
+
+func add_child_to_root(n: Node) -> void:
+	root.add_child(n)
+
 func _init() -> void:
 	var st := CompositeNet.decode_state(_state_bytes())
 	_check(st.grants.size() == 1, "one grant decodes")
@@ -86,6 +130,7 @@ func _init() -> void:
 		cancel.pressed.emit()
 	_check(not win.visible, "Cancel closes the window")
 	win.queue_free()
+	_round838()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

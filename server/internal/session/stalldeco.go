@@ -85,9 +85,13 @@ func GrantStallDecoration(characterID int64, refObjID int, until time.Time) {
 }
 
 // StallDecorationOf is FUN_004f0f00: the booth characterID's stall shows --
-// a BFI1 grant still in force, else the decoration item last used, else 0
-// (the race's default stall).
+// the override a BFI1 grant set through 0x7160 (compositeextra.go's
+// StallDecorationOverride), else a grant still in force, else the decoration
+// item last used, else 0 (the race's default stall).
 func StallDecorationOf(ctx context.Context, chars character.Store, characterID int64) int {
+	if v, ok := StallDecorationOverride(characterID); ok && v != 0 {
+		return int(v)
+	}
 	stallGrants.Lock()
 	g, ok := stallGrants.m[characterID]
 	if ok && !g.until.After(stallClock()) {

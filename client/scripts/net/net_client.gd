@@ -566,6 +566,14 @@ signal composite_state(state: CompositeNet.State)
 signal composite_use_result(result: CompositeNet.UseResult)
 ## A grant ended (expired or consumed): drop its icon (retail 0x315B).
 signal composite_ended(item_id: int, scroll_id: int)
+## Round 838: the premium Gold Time's state or refusal (CompositeNet.GoldTime),
+## and a BFI1 grant (CompositeNet.decode_buff_item's Dictionary).
+signal gold_time(state: CompositeNet.GoldTime)
+signal buff_item(info: Dictionary)
+## The BFI1 grants held, by decoration id (CIFMagicStateBoard +0x394's map:
+## recorded only, no icon; the stall's "Establish as an avatar stall?" reads
+## it).
+var buff_items := {}
 
 ## The GM console's reply (GmNet.Result): whether this account is a GM, the
 ## text to print, and any place to move to / views to refresh.
@@ -876,7 +884,8 @@ func _passes_group(p: Packet) -> bool:
 		InventoryNet.OP_LIST_RESULT, InventoryNet.OP_MOVE_RESULT, StatsNet.OP_STATS_RESULT, EquipmentNet.OP_RESULT, OP_AMMO_COUNT, \
 				EquipmentNet.OP_REPAIR_RESULT, ShopNet.OP_BUY_RESULT, ShopNet.OP_LIST_RESULT, ShopNet.OP_SELL_RESULT, \
 				ItemOpNet.OP_MOVE_RESULT, ItemOpNet.OP_BUYBACK_FAIL, UseItemNet.OP_RESULT, UseItemNet.OP_REVERSE_SAVED_RESULT, CompositeNet.OP_STATE, \
-				CompositeNet.OP_USE_RESULT, CompositeNet.OP_END, StorageNet.OP_LIST_RESULT, StorageNet.OP_DEPOSIT_RESULT, \
+				CompositeNet.OP_USE_RESULT, CompositeNet.OP_END, CompositeNet.OP_GOLD_TIME, CompositeNet.OP_BUFF_ITEM_START, \
+				CompositeNet.OP_BUFF_ITEM_REFRESH, CompositeNet.OP_BUFF_ITEM_END, StorageNet.OP_LIST_RESULT, StorageNet.OP_DEPOSIT_RESULT, \
 				StorageNet.OP_WITHDRAW_RESULT, StorageNet.OP_GOLD_RESULT, CombatNet.OP_ATTACK_RESULT, CombatNet.OP_BERSERK_RESULT, \
 				CombatNet.OP_MONSTER_DAMAGED, CombatNet.OP_MONSTER_DIED, CombatNet.OP_LOOT_DROPPED, CombatNet.OP_MONSTER_LEFT, \
 				CombatNet.OP_MONSTER_MOVED, CombatNet.OP_MONSTER_MOTION_LIST, CombatNet.OP_MONSTER_SPAWNED, \
@@ -1497,8 +1506,12 @@ func reverse_saved(action: int, saved_slot: int, bag_slot: int) -> void:
 	_send(UseItemNet.OP_REVERSE_SAVED, UseItemNet.encode_reverse_saved(action, saved_slot, bag_slot))
 
 ## Spends one use of a granted item (the fill an Energy of life scroll grants).
-func composite_use(char_name: String, item_id: int) -> void:
-	_send(CompositeNet.OP_USE, CompositeNet.encode_use(char_name, item_id))
+func composite_use(char_name: String, item_id: int, option: int = 0, target: int = 0) -> void:
+	_send(CompositeNet.OP_USE, CompositeNet.encode_use(char_name, item_id, option, target))
+
+## Round 838: the premium Gold Time's pause (true) or resume (false), 0x34BF.
+func gold_time_pause(pause: bool) -> void:
+	_send(CompositeNet.OP_GOLD_TIME_PAUSE, CompositeNet.encode_gold_time_pause(pause))
 
 ## Asks which item grants this character holds (answered by composite_state).
 func composite_list(char_name: String) -> void:
@@ -2821,6 +2834,19 @@ func _dispatch(p: Packet) -> void:
 			var ended := CompositeNet.decode_end(p.data)
 			if ended.size() == 2:
 				composite_ended.emit(int(ended[0]), int(ended[1]))
+		CompositeNet.OP_GOLD_TIME:
+			var gt := CompositeNet.decode_gold_time(p.data)
+			if gt != null:
+				gold_time.emit(gt)
+		CompositeNet.OP_BUFF_ITEM_START, CompositeNet.OP_BUFF_ITEM_REFRESH, CompositeNet.OP_BUFF_ITEM_END:
+			var bi := CompositeNet.decode_buff_item(p.opcode, p.data)
+			if not bi.is_empty():
+				if bool(bi["ended"]):
+					buff_items.erase(int(bi["decoration"]))
+				else:
+					buff_items[int(bi["decoration"])] = bi
+				print("NetClient: BFI1 grant %s" % str(bi))
+				buff_item.emit(bi)
 		StorageNet.OP_LIST_RESULT:
 			var r := StorageNet.decode_list_result(p.data)
 			last_storage_instances = _note_instances("warehouse", r.instances)

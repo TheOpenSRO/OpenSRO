@@ -37,6 +37,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/magicopt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
@@ -52,11 +53,11 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/skill"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/skilljob"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
-	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/specialty"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/storage"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/timedjob"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
@@ -991,6 +992,11 @@ func main() {
 			"alchemy window's magic stones write their blue options from it, and a failed reinforce its durability "+
 			"flaw. Without it every magic stone is refused and a flaw writes nothing; elixirs and attribute stones "+
 			"still work. A configured path that does not load is fatal.")
+	itemOptLevelCSV := flag.String("item-opt-level-csv", os.Getenv("OPENSRO_ITEM_OPT_LEVEL_CSV"),
+		"path to the devil's spirits' plus-level table as CSV (env OPENSRO_ITEM_OPT_LEVEL_CSV; from cmd/export-refdata "+
+			"-mode itemoptlevel on the client's refabilitybyitemoptleveldata.txt, refmagicoptbyitemoptleveldata.txt and "+
+			"refskillbyitemoptleveldata.txt, round 838): an awake spirit's HP / MP percent, block rate and skills by its "+
+			"plus level. Without it a spirit gives only its own blue options. A configured path that does not load is fatal.")
 	magicOptAssignCSV := flag.String("magic-option-assign-csv", os.Getenv("OPENSRO_MAGIC_OPTION_ASSIGN_CSV"),
 		"path to the game's magic option assign table as CSV (env OPENSRO_MAGIC_OPTION_ASSIGN_CSV; from "+
 			"cmd/export-refdata -mode magicoptassign on a client's own server_dep\\silkroad\\textdata\\"+
@@ -1460,6 +1466,9 @@ func main() {
 		// internal/cos): _CHARCOS and _INVCOS.
 		cosStore cos.Store
 		cosBags  inventory.Store
+		// The timed jobs kept across a restart (round 838, internal/timedjob):
+		// the premium Gold Time and the composite items' grants.
+		timedJobs timedjob.Store
 		// The job records (round 799, internal/jobs): _CharTrijob and its
 		// tables.
 		jobStore jobs.Store
@@ -1529,6 +1538,7 @@ func main() {
 		eq = equipment.NewMemStore(memInv)
 		avatars = avatar.NewMem(memRef)
 		cosStore = cos.NewMemStore()
+		timedJobs = timedjob.NewMemStore()
 		jobStore = jobs.NewMemStore()
 		memBags := inventory.NewMemStore(memRef)
 		memBags.SetDurabilityLookup(memRef)
@@ -1709,6 +1719,14 @@ func main() {
 		sqlBags.SetCapacityFunc(cosBagCapacity(cosStore))
 		cosBags = sqlBags
 
+		// The timed jobs (round 838): their table migrates itself.
+		sqlTimed, err := timedjob.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening timed job store", "error", err)
+			os.Exit(1)
+		}
+		timedJobs = sqlTimed
+
 		// The job records (round 799): their tables migrate themselves.
 		sqlJobs, err := jobs.NewSQLStore(storePool)
 		if err != nil {
@@ -1792,6 +1810,10 @@ func main() {
 	zerkTracker := berserk.NewTracker()
 	// The Energy of life scroll's grants (round 632 review, session/composite.go).
 	compositeKeeper := session.NewCompositeKeeper()
+	// Round 838: the grants are kept across a restart, and the world entry
+	// loads them.
+	compositeKeeper.SetStore(timedJobs)
+	session.SetCompositeKeeper(compositeKeeper)
 	manaTracker := mana.NewTracker()
 
 	hub := world.NewHub()
@@ -2053,6 +2075,18 @@ func main() {
 		logger.Info("magic option table loaded: the alchemy stones write blue options and worn options count", "path", *magicOptionsCSV, "rows", t.Len())
 	} else {
 		logger.Info("no magic option table (-magic-options-csv / OPENSRO_MAGIC_OPTIONS_CSV): every magic stone is refused")
+	}
+	// The devil's spirits' plus-level table (round 838, avatarstats.go).
+	if *itemOptLevelCSV != "" {
+		t, err := avatar.LoadOptLevelCSV(*itemOptLevelCSV)
+		if err != nil {
+			logger.Error("loading the item opt level table", "path", *itemOptLevelCSV, "err", err)
+			os.Exit(1)
+		}
+		session.SetSpiritAbilities(t)
+		logger.Info("item opt level table loaded: devil's spirits give their plus-level abilities", "path", *itemOptLevelCSV, "keys", t.Len())
+	} else {
+		logger.Info("no item opt level table (-item-opt-level-csv / OPENSRO_ITEM_OPT_LEVEL_CSV): a devil's spirit gives only its own blue options")
 	}
 	// The magic option assign table (round 770): what equipment drops roll.
 	if *magicOptAssignCSV != "" {
@@ -2562,6 +2596,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The return scrolls' caster (round 778), shared by the scrolls' own use
+	// and, from round 838, a composite grant's return scroll fill; and the
+	// premium Gold Time's tick (session/goldtime.go).
+	scrollCaster := session.NewScrollCaster(chars, eq, hub, zerkTracker, logger).SetParties(parties)
+	compositeKeeper.SetScrolls(scrollCaster)
+	session.StartGoldTime(ctx, timedJobs, refItems, hub)
 	handle := gateway.Chain(
 		// The COS requests (round 795, internal/session/coscommand.go).
 		session.COSHandler(hub, chars),
@@ -2639,8 +2679,12 @@ func main() {
 		// (session/scroll.go), the map option's points from -teleport-dir's
 		// optionalteleport.csv (SetRecallNetwork's table).
 		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper,
-			session.NewScrollCaster(chars, eq, hub, zerkTracker, logger).SetParties(parties)),
+			scrollCaster),
 		session.CompositeHandler(chars, refItems, compositeKeeper, zerkTracker, gmGate, hub),
+		// Round 838: the premium Gold Time's pause (0x34BF, goldtime.go) and
+		// a BFI1 grant's stall decoration (0x7160, compositeextra.go).
+		session.GoldTimePauseHandler(hub, scrollCaster),
+		session.AvatarStallHandler(hub, refItems),
 		// Round 768: the alchemy window's elixirs and stones (session/alchemy.go).
 		session.AlchemyHandler(session.AlchemyDeps{Hub: hub, Inv: inv, Items: refItems, Options: magicOptions, Logger: logger}),
 		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, gpSkills, zerkTracker, manaTracker, parties, ground, dropSrc, potions),

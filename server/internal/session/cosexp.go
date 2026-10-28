@@ -26,7 +26,7 @@ func cosKillExp(ctx context.Context, d combatDeps, m combat.Monster, a killAward
 	}
 	for _, o := range cosWorld.owned(a.characterID) {
 		cosWorld.mu.Lock()
-		growth, dead, level := o.kind == cos.KindGrowth, o.dead, o.rec.Level
+		growth, dead, level, recID := o.kind == cos.KindGrowth, o.dead, o.rec.Level, o.rec.ID
 		cosWorld.mu.Unlock()
 		if !growth || dead {
 			continue
@@ -35,7 +35,12 @@ func cosKillExp(ctx context.Context, d combatDeps, m combat.Monster, a killAward
 		pet.Level = level
 		exp, _ := killReward(ctx, d, m, a, &pet)
 		exp, _ = leveldata.ApplyRewardMultiplier(exp, 0, a.multiplier)
+		// Round 838: the pet's own param 186 (a growth potion's 'expi',
+		// petgrowth.go) adds trunc(E * p186 / 100) of the share E, computed
+		// before the rate term (FUN_004fcb00, 0x4fccdb..0x4fcd18).
+		bonus := petExpBonus(exp, petBuffs.expPercent(recID, useItemClock()))
 		exp, _ = leveldata.ApplyRateBonus(exp, 0, rates.Current().ExpFor(a.inParty))
+		exp += bonus
 		if exp > 0 {
 			cosGainExp(ctx, o, exp, uint32(m.ID), owner.Level)
 		}

@@ -49,6 +49,16 @@ var knownOrphans = map[string]string{
 	// StallDecorationOf.
 	"GrantStallDecoration": "round 838: the BFI1 composite entry's grant (pc+0x21d4), for the premium packages; called by the composite use once BFI1 is built.",
 	"StallDecorationOf":    "round 838: FUN_004f0f00, the booth a stall shows; for the 0x30B8 stall open and a stalling player's spawn, which OpenSRO does not build yet.",
+	// Round 838: the BFI1 grant's stall decoration (session/compositeextra.go)
+	// for the stall code to read and clear, and the UQL1 grant's completion
+	// count for quest 224 -- OpenSRO has no stalls and does not run that quest.
+	"StallDecorationOverride": "round 838: the stall's look while a BFI1 grant set it (PC+0x21d4, getter 0x4f0f00); OpenSRO has no stalls yet.",
+	"ClearStallDecoration":    "round 838: the stall close's reset of the BFI1 override (FUN_00472cf0); OpenSRO has no stalls yet.",
+	"UseQuestGrant":           "round 838: UseQuestByCompositeItem (0x4f0f70) for quest 224, CQSP_ALL_POTION_3, which OpenSRO does not run.",
+	// The timed-job package's recovered layout (round 274), wired from round
+	// 838 for its Store only; the getter map and the countdown are knowledge.
+	"Countdown":     "round 274: CTJ_PenaltyKeeper's countdown expiry (timedjob); the penalty jobs are not modelled.",
+	"GetterSlotFor": "round 274: the _ADDTIMEDJOB argument -> getter slot map (timedjob), knowledge of the persisted record.",
 	// Round 812: the navigation mesh's in-memory constructor.
 	"NewWorld": "round 812: navmesh.NewWorld builds a World from regions already in memory for the tests (the server opens an export with navmesh.Open).",
 	// Round 799: the job formulas the trade (round 801) and the job death

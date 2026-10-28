@@ -2750,8 +2750,10 @@ is in `docs/protocol/target_window_buffs.md`. Left open:
       open on the server:
   - the skill gate 0x58d8f0 that 0x650d40 runs;
   - the buff's params (dru, odar, hr, luck, alcu, inti, stri): the book models only run speed;
-  - the premium's other entries are skipped (OURS, logged): the UIU1 premium time (3/3/13/4,
-    a type-3 CTJ_PremiumKeeper job), BFI1 and UQL1.
+  - round 838 modelled the premium's other entries: the UIU1 premium time (3/3/13/4, the
+    Gold Time, `session/goldtime.go`), BFI1 and UQL1 (`session/compositeextra.go`). Left open:
+    no stalls exist to read the BFI1 override, and quest 224 (CQSP_ALL_POTION_3, the UQL1
+    grant's quest) is not run.
 - [ ] **What `+0x21c == -1` means** for an owner whose 0xB0BD object is destroyed, not attached
       (0x8a5d58).
 - [ ] **Pets** (the CICCos branch shows the viewer too). From round 795 a pet can be selected
@@ -3312,9 +3314,11 @@ of berserk (param 60); COOLTIME keys are per item for key 0; a GM account skips 
 - **FUN_004a0600's movement stop.** `CGObjPC::vslot_300` (`0x4ef340` -> `FUN_004a9430`) runs before
   AddHwanCount -- INFERRED a movement stop (it may send `0xB023`); no OpenSRO item use stops
   movement. Read what `0xB023` carries and what `+0x4c0` tests before mirroring it.
-- **Other composite kinds** (UIU1 of a TypeID4-4 item, BCS1, BFI1, PSU1, UQL1, USL1, USU1) are
-  refused; only the Energy of life's UIL1 + 0x706874 UIU1 is modelled. UIL1's "P" flag and the
-  0x3161 refill (`0x653a40`) are read but unused by any modelled row.
+- **Other composite kinds**: round 838 added the UIU1 premium time (3/3/13/4), BFI1, UQL1 and
+  PSU1 (the pet composite, 3/3/13/15); BCS1 and USL1 are still skipped (no mall item uses them).
+  A UIL1 fill of a return or reverse return scroll runs the scroll's routine; the other
+  vslot_007 branches (3/3/13 resurrection) are not modelled. UIL1's "P" flag and the 0x3161
+  refill (`0x653a40`) are read but unused by any modelled row.
 - **CIFCompositeItemWnd's resize** for several buttons and a zero-count button's look
   (`UI_SILKMALL::FUN_00655ec0`) are not recovered; ours disables it.
 - **Quest items 5921/10491**: the use path's quest gates are item-agnostic -- `0x185f` is

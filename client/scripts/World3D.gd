@@ -3005,6 +3005,32 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_hud_panels.cos_item_requested.connect(_use_cos_item)
 	_hud_panels.skin_change_requested.connect(_on_skin_change_requested)
+	# Round 838: an item used on another (HudPanels' use-on mode).
+	_hud_panels.use_on_requested.connect(_on_use_on_requested)
+	# Round 838: the worn devil's spirit's skill strip (SpiritAbilities): its
+	# skills from the client's own tables, their icons from the skill rows,
+	# and a slot's use cast as a self cast (every spirit skill is a
+	# Target_Required 0 self buff, MEASURED).
+	_spirit_abilities = SpiritAbilities.from_archive(_ui_builder.media_archive() if _ui_builder != null else null)
+	print("World3D: %d devil's spirit abilities" % _spirit_abilities.size())
+	_hud_panels.spirit_skills_of = _spirit_abilities.skills_for
+	_hud_panels.skill_icon_of = func(skill_id: int) -> String:
+		if _hud_buff_board == null or _hud_buff_board.catalog == null:
+			return ""
+		var icon := String(_hud_buff_board.catalog.info(skill_id).get("icon", ""))
+		if icon == "":
+			return ""
+		return icon if icon.to_lower().begins_with("icon\\") else "icon\\" + icon
+	_hud_panels.spirit_skill_use_requested.connect(func(skill_id: int) -> void:
+		var left := _skill_cooldown_left(skill_id)
+		if left > 0:
+			_log_system(_resolve_any_text(COOLDOWN_TEXT_KEY, COOLDOWN_TEXT_FALLBACK))
+			return
+		var code := ""
+		if _hud_buff_board != null and _hud_buff_board.catalog != null:
+			code = String(_hud_buff_board.catalog.info(skill_id).get("basic_code", ""))
+		print("World3D: spirit skill %d cast on the player" % skill_id)
+		_send_self_cast(skill_id, code, SkillNet.TARGET_NONE, Vector3.ZERO))
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
 	# Round 838: the special scroll's lists name places by their zone.
@@ -3089,6 +3115,9 @@ func _wire_composite_items() -> void:
 		NetClient.composite_ended.connect(_on_composite_ended)
 	if _hud_buff_board != null:
 		_hud_buff_board.item_state_clicked.connect(_on_item_state_clicked)
+		_hud_buff_board.gold_time_clicked.connect(_on_gold_time_clicked)
+	if NetClient.has_signal("gold_time"):
+		NetClient.gold_time.connect(_on_gold_time)
 	if NetClient.current_character_name != "" and NetClient.is_connected_to_server():
 		NetClient.composite_list(NetClient.current_character_name)
 
@@ -3134,6 +3163,9 @@ func _on_item_state_clicked(token: int) -> void:
 		if g.scroll_id == clicked.scroll_id:
 			var n := _hud_panels.item_name(g.item_id) if _hud_panels != null else ""
 			entries.append([g.item_id, n if n != "" else "Item %d" % g.item_id, g.remaining])
+	# Round 838: in the item ids' order (INFERRED: the board's map is keyed by
+	# them), so a premium's two fills keep their places.
+	entries.sort_custom(func(a: Array, b: Array) -> bool: return int(a[0]) < int(b[0]))
 	if _composite_window == null or not is_instance_valid(_composite_window):
 		_composite_window = CompositeItemWindow.new()
 		if not _composite_window.setup(_ui_builder):
@@ -3145,8 +3177,15 @@ func _on_item_state_clicked(token: int) -> void:
 		if reg != null:
 			_composite_window.position = Vector2(reg.rect.position)
 		_composite_window.use_requested.connect(func(item_id: int) -> void:
-			if NetClient.current_character_name != "":
-				NetClient.composite_use(NetClient.current_character_name, item_id))
+			if NetClient.current_character_name == "":
+				return
+			# Round 838: a reverse return scroll's fill asks its destination
+			# first, as the scroll does (the box's choice then sends 0x715f
+			# with the option, client 0x798951..0x79898d).
+			if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.item_types(item_id)):
+				_hud_panels.open_reverse_return_box(COMPOSITE_FILL_SLOT - item_id)
+				return
+			NetClient.composite_use(NetClient.current_character_name, item_id))
 	_composite_window.show_entries(entries)
 	_composite_window.show()
 	await get_tree().process_frame
@@ -3171,8 +3210,92 @@ func _on_composite_use_result(result: CompositeNet.UseResult) -> void:
 	if result.error != "":
 		_log_system(result.error)
 		return
+	# Round 838: a return scroll fill's casting bar, as the scroll's own.
+	if result.cast_ms > 0 and _hud_panels != null:
+		print("World3D: composite scroll fill accepted -- moving in %d ms" % result.cast_ms)
+		_hud_panels.open_cast_bar(result.item_id, result.cast_ms)
+		return
 	if _hud_player_info != null:
 		_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
+
+## Round 838: the devil's spirits' skill table, held here (a Callable to a
+## RefCounted's method does not keep it alive).
+var _spirit_abilities: SpiritAbilities = null
+
+## Round 838: a reverse return box opened for a composite grant's fill
+## carries this slot less the fill's item id (World3D's own marker; a bag
+## slot is never negative).
+const COMPOSITE_FILL_SLOT := -1000000
+
+# --- The premium Gold Time (round 838, server session/goldtime.go) -----------
+#
+# READ (sro_client.exe): 0x3206's handler (NetProcessInNavAndSkill 0x8a5360)
+# puts kind 3 on CIFMagicStateBoard through FUN_00777f20(3, ...) and removes
+# it when both words are 0; its tooltip (0x800a10) is the item's name, the
+# period left and the remaining gold time, previous day + today
+# (PARAM_PREVIOUS_DAY, PARAM_TODAY); a click on it (vslot_029, c:0x800430)
+# opens the confirm box with UIIT_STT_GOLDTIME_PAUSE_START (running) or
+# _STOP (paused), whose OK sends 0x34BF {3, pause}. The archive's texts for
+# the two questions and UIIT_STT_GOLDTIME_PAUSE_ERROR are empty: the
+# fallbacks below are OURS, as is the tooltip's line layout.
+const GOLD_TIME_TOKEN := -0x3206
+var _gold_time: CompositeNet.GoldTime = null
+
+func _on_gold_time(g: CompositeNet.GoldTime) -> void:
+	if g == null or _hud_buff_board == null:
+		return
+	if g.sub == 2:
+		var why := ""
+		match g.code:
+			0x18fb:
+				why = _resolve_any_text("UIIT_STT_GOLDTIME_PAUSE_ERROR", "")
+				if why == "" or why == "0":
+					why = "The Gold Time cannot be resumed during battle."
+			0x18fc:
+				why = "The Gold Time cannot be paused while a return scroll is working."
+			_:
+				why = "No Gold Time is left."
+		print("World3D: gold time refused, code 0x%x" % g.code)
+		_log_system(why)
+		return
+	if g.ended:
+		_gold_time = null
+		_hud_buff_board.remove_gold_time(GOLD_TIME_TOKEN)
+		print("World3D: gold time ended (item %d)" % g.ref_id)
+		return
+	_gold_time = g
+	var icon := _hud_panels.item_icon_path(g.ref_id) if _hud_panels != null else ""
+	var b := _hud_buff_board.add_gold_time(GOLD_TIME_TOKEN, icon, gold_time_tooltip(g))
+	print("QA GOLDTIME: item %d period %d s prev %d s today %d s paused %s icon '%s' at %s" % [g.ref_id, g.period_left,
+		g.prev, g.today, str(g.paused), icon, str(b.slot.global_position) if b != null and b.slot != null else "-"])
+
+## The tooltip's lines: the item's name, the period left (the board's own
+## remaining line) and "<remain> (<Previous day> h m s + <Today> h m s)".
+func gold_time_tooltip(g: CompositeNet.GoldTime) -> String:
+	var name := _hud_panels.item_name(g.ref_id) if _hud_panels != null else ""
+	var units := {"remain": _resolve_any_text("UIIT_STT_REMAIN_TIME", "Remain time"), "day": _resolve_any_text("PARAM_DAY", "Day"),
+		"hour": _resolve_any_text("PARAM_HOUR", "Hour"), "minute": _resolve_any_text("PARAM_MINUTE", "Minute"),
+		"second": _resolve_any_text("PARAM_SECOND", "Second")}
+	var hms := func(sec: int) -> String:
+		return "%d%s %d%s %d%s" % [sec / 3600, units["hour"], (sec % 3600) / 60, units["minute"], sec % 60, units["second"]]
+	var lines := PackedStringArray([name if name != "" else "Gold Time"])
+	lines.append(HudBuffBoard.remain_line(g.period_left * 1000, units))
+	lines.append("%s (%s %s + %s %s)" % [units["remain"], _resolve_any_text("PARAM_PREVIOUS_DAY", "Previous day"), hms.call(g.prev),
+		_resolve_any_text("PARAM_TODAY", "Today"), hms.call(g.today)])
+	return "\n".join(lines)
+
+func _on_gold_time_clicked(_token: int) -> void:
+	if _gold_time == null or _hud_buff_board == null:
+		return
+	var pause := not _gold_time.paused
+	var key := "UIIT_STT_GOLDTIME_PAUSE_START" if pause else "UIIT_STT_GOLDTIME_PAUSE_STOP"
+	var text := _resolve_any_text(key, "")
+	if text == "" or text == "0":
+		text = "Pause the Gold Time? It stops 20 seconds from now." if pause else "Resume the Gold Time?"
+	print("World3D: gold time clicked -- asking to %s" % ("pause" if pause else "resume"))
+	_hud_buff_board.open_confirm_box(text, func() -> void:
+		print("World3D: gold time %s requested (0x34BF)" % ("pause" if pause else "resume"))
+		NetClient.gold_time_pause(pause))
 
 ## Whether a buff's owner is this client's player (round 618's review): a
 ## character (ownerKind 0) whose id is this player's -- the one _sync_own_id
@@ -18671,6 +18794,109 @@ func _qa_input_step() -> void:
 				var gc := gcell.get_global_rect().get_center()
 				_qa_input_report = "%s at %s" % [action, gc]
 				_qa_push_click(gc, MOUSE_BUTTON_LEFT)
+		"bagitemr":
+			# Round 838: right click the bag cell holding that item id.
+			var rcell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
+			if rcell == null:
+				_qa_input_report = action + " (not on the shown bag page)"
+			else:
+				_qa_input_report = "%s at %s" % [action, rcell.get_global_rect().get_center()]
+				_qa_push_click(rcell.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+		"baghover":
+			# Round 838: the pointer over the bag cell holding that item id
+			# (its tooltip).
+			var hcell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
+			if hcell == null:
+				_qa_input_report = action + " (not on the shown bag page)"
+			else:
+				var bmo := InputEventMouseMotion.new()
+				bmo.position = hcell.get_global_rect().get_center()
+				bmo.global_position = bmo.position
+				get_viewport().push_input(bmo)
+				_qa_input_report = "%s at %s" % [action, bmo.position]
+		"bagtip":
+			# Round 838: the tooltip of the bag stack holding that item id, as
+			# the cell's hover builds it (its instance: a pet's rent, a
+			# spirit's expiry), drawn beside the bag and printed.
+			var tip_slot := -1
+			for k in 96:
+				if _hud_panels != null and _hud_panels._bag_item_id_at_slot(k) == int(arg):
+					tip_slot = k
+					break
+			if tip_slot < 0:
+				_qa_input_report = action + " (not in the bag)"
+			else:
+				var tip_lines := _hud_panels.item_tip_lines(int(arg), "bag", tip_slot)
+				var bubble := ItemTooltipBubble.new(_ui_builder)
+				_hud_panels.add_child(bubble)
+				bubble.show_lines(tip_lines, Rect2())
+				bubble.position = Vector2(680, 60)
+				get_tree().create_timer(4.0).timeout.connect(bubble.queue_free)
+				_qa_input_report = "%s slot %d: %s" % [action, tip_slot, ItemTooltipLines.as_text(tip_lines).replace("\n", " | ")]
+		"spirit_slot":
+			# Round 838: right click the devil's spirit strip's slot n.
+			var sw := _hud_panels._windows.get("inventory") as HudWindow if _hud_panels != null else null
+			var strip := sw.node(HudPanels.AVATAR_SKILL_STRIP) as Control if sw != null else null
+			var ss := strip.get_node_or_null("SpiritSlot%s" % arg) as Control if strip != null else null
+			if ss == null or not ss.is_visible_in_tree():
+				_qa_input_report = action + " (no shown slot; strip %s)" % str(_hud_panels.spirit_strip_skills())
+			else:
+				_qa_input_report = "%s at %s skill %s" % [action, ss.get_global_rect().get_center(), str(ss.get_meta("skill_id", -1))]
+				_qa_push_click(ss.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+		"useon_ok":
+			# Round 838: the use-on box's OK.
+			var ok_at := _hud_panels.use_on_box_ok_centre() if _hud_panels != null else Vector2(-1, -1)
+			_qa_input_report = "%s at %s" % [action, ok_at]
+			if ok_at.x >= 0:
+				_qa_push_click(ok_at, MOUSE_BUTTON_LEFT)
+		"board":
+			# Round 838: left click a buff-board icon by token (the Gold Time
+			# is GOLD_TIME_TOKEN; a composite grant -item id).
+			var bb: HudBuffBoard.Buff = _hud_buff_board.buff(int(arg)) if _hud_buff_board != null else null
+			if bb == null or bb.slot == null:
+				_qa_input_report = action + " (no such icon)"
+			else:
+				_qa_input_report = "%s at %s" % [action, bb.slot.get_global_rect().get_center()]
+				_qa_push_click(bb.slot.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"board_hover":
+			# Round 838: the pointer over a buff-board icon (its tooltip).
+			var hb: HudBuffBoard.Buff = _hud_buff_board.buff(int(arg)) if _hud_buff_board != null else null
+			if hb == null or hb.slot == null:
+				_qa_input_report = action + " (no such icon)"
+			else:
+				var hmo := InputEventMouseMotion.new()
+				hmo.position = hb.slot.get_global_rect().get_center()
+				hmo.global_position = hmo.position
+				get_viewport().push_input(hmo)
+				_qa_input_report = "%s at %s tooltip '%s'" % [action, hmo.position, _hud_buff_board.tooltip_for(int(arg)).replace("\n", " | ")]
+		"board_ok":
+			# Round 838: the board's confirm box's OK.
+			var conf := ui_control.find_child(HudBuffBoard.CONFIRM_NAME, true, false) as Control
+			var okb := conf.find_child("OK", true, false) as Control if conf != null else null
+			if okb == null:
+				_qa_input_report = action + " (no box)"
+			else:
+				_qa_input_report = "%s at %s body '%s'" % [action, okb.get_global_rect().get_center(),
+					(conf.find_child("Body", true, false) as Label).text]
+				_qa_push_click(okb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"composite_btn":
+			# Round 838: button n of the composite item window.
+			if _composite_window == null or not is_instance_valid(_composite_window):
+				_qa_input_report = action + " (no window)"
+			else:
+				var cb := _composite_window.button_screen_centre(int(arg))
+				_qa_input_report = "%s at %s" % [action, cb]
+				_qa_push_click(cb, MOUSE_BUTTON_LEFT)
+		"reverse":
+			# Round 838: the reverse return box's member button
+			# (LastReturn, LastDeath, MapPoint, Cancel).
+			var rb := _hud_panels.reverse_return_box() if _hud_panels != null else null
+			var mb2 := rb.member(arg) if rb != null else null
+			if mb2 == null:
+				_qa_input_report = action + " (no box)"
+			else:
+				_qa_input_report = "%s at %s" % [action, mb2.get_global_rect().get_center()]
+				_qa_push_click(mb2.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
 		"drag":
 			var v := arg.split(",")
 			var from := Vector2(float(v[0]), float(v[1]))
@@ -25449,6 +25675,23 @@ func _use_cos_item(slot: int) -> void:
 	if _hud_panels != null:
 		UiSounds.expect_use(_hud_panels.bag_item_types(slot))
 	NetClient.use_item_option(NetClient.current_character_name, slot, UseItemNet.OPTION_COS_TARGET, uid)
+
+## Round 838: the use-on mode's send (HudPanels.use_on_check passed): the
+## pet forms carry the target's bag index as OPTION_COS_TARGET's u32; the
+## Nasrun extension the target's wire slot (bag index + 13) as its option
+## byte (avataruse.go).
+func _on_use_on_requested(src: int, target: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	var types := _hud_panels.bag_item_types(src) if _hud_panels != null else PackedInt32Array()
+	if _hud_panels != null:
+		UiSounds.expect_use(types)
+	if types.size() >= 4 and types[2] == 13 and types[3] == 16:
+		print("World3D: bag slot %d used on bag slot %d (wire slot %d)" % [src, target, target + 13])
+		NetClient.use_item_option(NetClient.current_character_name, src, target + 13, 0)
+		return
+	print("World3D: bag slot %d used on the pet item in bag slot %d" % [src, target])
+	NetClient.use_item_option(NetClient.current_character_name, src, UseItemNet.OPTION_COS_TARGET, target)
 
 const COS_CANT_USE_ITEM_KEY := "UIIT_MSG_COSPETERR_CANT_USEITEM"
 ## Round 838: the server's 0x300e lines (session/ammo.go) and their text keys.
@@ -36372,6 +36615,12 @@ func _on_use_item_result(result) -> void:
 		_skin_pending = _skin_sent
 		_skin_sent = []
 		print("SKIN accepted: model %d at the warp" % int(_skin_pending[0]))
+	# Round 838: the Nasrun extension's accepted use (Item_OnUseItemResult
+	# case 0x10, c:0x87b047) prints UIIT_MSG_NASRUN_AWAKE_RENEW.
+	if result.item_id != 0 and _hud_panels != null:
+		var ut := _hud_panels.item_types(result.item_id)
+		if ut.size() >= 4 and ut[0] == 3 and ut[1] == 3 and ut[2] == 13 and ut[3] == 16:
+			_log_system(_resolve_any_text("UIIT_MSG_NASRUN_AWAKE_RENEW", "Awaken period is extended."), HudSystemMessage.TYPE_GAME)
 	# Round 824: a crest item's accepted use opens its result box.
 	if result.item_id != 0 and _hud_panels != null:
 		var code := _hud_panels.item_code_for_id(result.item_id)
@@ -36424,6 +36673,12 @@ func _on_use_item_result(result) -> void:
 ## and, for the map option, the refoptionalteleport id.
 func _on_reverse_return_requested(slot: int, option: int, target: int) -> void:
 	if NetClient.current_character_name == "" or _player_dead:
+		return
+	# Round 838: a composite grant's reverse return fill (COMPOSITE_FILL_SLOT).
+	if slot <= COMPOSITE_FILL_SLOT:
+		var fill := COMPOSITE_FILL_SLOT - slot
+		print("World3D: reverse return fill %d, option %d, point %d" % [fill, option, target])
+		NetClient.composite_use(NetClient.current_character_name, fill, option, target)
 		return
 	print("World3D: reverse return scroll at bag slot %d, option %d, point %d" % [slot, option, target])
 	UiSounds.expect_use(_hud_panels.bag_item_types(slot) if _hud_panels != null else PackedInt32Array())

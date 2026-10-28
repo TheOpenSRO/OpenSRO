@@ -111,6 +111,62 @@ var avatarTags = map[uint32]avatarTag{
 	magicopt.PackTag("luca"): {params: []int{173}},
 	magicopt.PackTag("mdia"): {params: []int{188}},
 	magicopt.PackTag("umdu"): {params: []int{259}},
+	// Round 838: 'brna' (MATTR_NASRUN_BLOCKRATE) is 'bri''s leaf (0x498b92
+	// -> 0x4988c1, READ): round(the item's own block stat, +0x1a4, or 0 when
+	// broken) + value into p10 slot 0. A spirit's +0x1a4 is 0 (INFERRED: only
+	// the vslot-0x8c kind's setter fills it), so the value alone.
+	magicopt.PackTag("brna"): {params: []int{buff.ParamBlock}},
+}
+
+// avatarAddTags are the tags whose write adds to the entry the item already
+// has for the param (0x4b3830 reads it); every other tag's write replaces it
+// (the ParamKeeper keys an entry by param, slot and contributor, FUN_004b2d60,
+// READ round 838).
+var avatarAddTags = map[uint32]bool{
+	magicopt.PackTag("stra"): true, magicopt.PackTag("inta"): true,
+	magicopt.PackTag("luca"): true, magicopt.PackTag("mdia"): true,
+}
+
+// spiritAbilities is the devil's spirits' plus-level table (round 838,
+// SetSpiritAbilities); nil: none loaded.
+var spiritAbilities atomic.Pointer[avatar.OptLevelTable]
+
+// spiritSkillGranted reports whether characterID's worn, awake devil's
+// spirit grants skillID at its plus level (round 838: FUN_00498370 puts the
+// refskillbyitemoptleveldata skills in the skill book as kind 3, and the
+// cast's FindLearned 0x59d680 accepts any kind but 2; a detach or expiry
+// takes them out, FUN_00498050 -> FUN_0059eac0; READ).
+func spiritSkillGranted(ctx context.Context, characterID, skillID int64) bool {
+	reg := avatarRegistryOf()
+	t := spiritAbilities.Load()
+	if reg == nil || t == nil {
+		return false
+	}
+	held, err := avatar.List(ctx, reg.store, reg.items, characterID)
+	if err != nil {
+		return false
+	}
+	now := time.Now()
+	for _, h := range held {
+		if !avatar.IsDevilSpirit(h.Item) || !avatar.Awake(h.Slot.Durability, now) {
+			continue
+		}
+		if g := t.Grant(h.Item.ID, int(h.Slot.OptLevel)); g != nil {
+			for _, s := range g.Skills {
+				if s == skillID {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// SetSpiritAbilities installs the by-opt-level table (cmd/server's
+// -item-opt-level-csv).
+func SetSpiritAbilities(t *avatar.OptLevelTable) {
+	spiritAbilities.Store(t)
+	avatarTotalsCache.Range(func(k, _ any) bool { avatarTotalsCache.Delete(k); return true })
 }
 
 // AvatarParamTotals is what a set of worn avatar items writes into the
@@ -120,42 +176,70 @@ func AvatarParamTotals(held []avatar.Held, table *magicopt.Table, now time.Time)
 	if table == nil {
 		return nil
 	}
+	abilities := spiritAbilities.Load()
 	out := map[int]buff.Totals{}
 	for _, h := range held {
 		if !avatar.IsAvatarItem(h.Item) {
 			continue
 		}
-		if avatar.IsDevilSpirit(h.Item) && !avatar.Awake(h.Slot.Durability, now) {
+		spirit := avatar.IsDevilSpirit(h.Item)
+		if spirit && !avatar.Awake(h.Slot.Durability, now) {
 			continue
 		}
-		for _, p := range h.Slot.MagParams {
-			row := table.ByID(inventory.MagParamOption(p))
+		// One item's entries, keyed by param and slot: the ability step's
+		// first, then the item's own options (round 838, FUN_00498020 then
+		// SetParamKeeperForMagicOpt, READ).
+		type entry struct{ param, slot int }
+		mine := map[entry]float64{}
+		var order []entry
+		write := func(row *magicopt.Row, v float64) {
 			if row == nil {
-				continue
+				return
 			}
 			tag, ok := avatarTags[row.Tag]
 			if !ok {
-				continue
+				return
 			}
-			v := float64(inventory.MagParamValue(p))
 			if tag.negate {
 				v = -v
 			}
 			for _, param := range tag.params {
-				t := out[param]
-				switch tag.slot {
-				case 0:
-					t.Flat += v
-				case 1:
-					t.Pct += v
-				case 2:
-					if !t.HasMult {
-						t.Mult, t.HasMult = 1, true
-					}
-					t.Mult *= 1 + v/100
+				k := entry{param, tag.slot}
+				if _, seen := mine[k]; !seen {
+					order = append(order, k)
 				}
-				out[param] = t
+				if avatarAddTags[row.Tag] {
+					mine[k] += v
+				} else {
+					mine[k] = v
+				}
 			}
+		}
+		if spirit {
+			if g := abilities.Grant(h.Item.ID, int(h.Slot.OptLevel)); g != nil {
+				for _, o := range g.Options {
+					write(table.ByID(uint16(o.ID)), float64(o.Value))
+				}
+			}
+		}
+		for _, p := range h.Slot.MagParams {
+			write(table.ByID(inventory.MagParamOption(p)), float64(inventory.MagParamValue(p)))
+		}
+		for _, k := range order {
+			v := mine[k]
+			t := out[k.param]
+			switch k.slot {
+			case 0:
+				t.Flat += v
+			case 1:
+				t.Pct += v
+			case 2:
+				if !t.HasMult {
+					t.Mult, t.HasMult = 1, true
+				}
+				t.Mult *= 1 + v/100
+			}
+			out[k.param] = t
 		}
 	}
 	if len(out) == 0 {
