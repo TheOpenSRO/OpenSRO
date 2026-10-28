@@ -7483,6 +7483,44 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-eighth round, lane 2: the tools used on another item (3/3/13/8)
+
+The user: "let's make all the items in the item mall functional ... Make no mistakes." This lane:
+the mall's 34 rows of TypeID 3/3/13/8. `docs/protocol/item_switchers.md` has the whole design.
+
+- **Retail's gender switch tool (READ).** The client: a right-click on a 3/3/13 tool whose CanUse
+  byte has 0x81 forces the 0xa6 arrow (IFSlotWithHelp 0x6769a5); a left click on a slot with an
+  item opens box 0x1f, "Will you use the selected item?" (CIFSlotWithHelp::vslot_029 0x681130);
+  its Yes refuses a worn target (0x1882) or a bag target that is not armour (0x1884) on the spot
+  and otherwise sends the use with the target's slot (SendItem_HandleUseItem case 8); Escape and
+  the right button end the pick. The server (UseByKind case 8): bag slot, armour, Param1 >= the
+  degree (0x1883), then the item becomes its **OrgObjCodeName** row in place (MutateItemAt: the
+  instance kept, `UPDATE _ITEMS SET REFITEMID`, 0x3040 {slot, 1, ref}). OrgObjCodeName is now
+  exported (refdata column 92).
+- **The private server's tools (OURS, to each description).** Avatar, devil's spirit and flag
+  gender switchers (the twin by the code name's gender token, same TypeIDs, the other
+  ReqGender: MEASURED unique wherever it exists); the fourteen type switchers on Egy A weapons
+  (the D11 Egyptian set A rows -- the archive's `SN_ITEM_EGYA_TT_DESC` -- keeping plus, options,
+  variance and the durability's share); the model switchers as a **per-instance model**: the
+  archive's 1,248 `_SWITCHnn` rows are the private server's targets but carry other prices and
+  (the set shields) doubled defences, so the item keeps its row and draws its twin's model
+  (`model_item_id` on the bag-store and worn tables, the item-info block's models block, the own
+  body and doll drawn with it, other players told the twin's id in the spawn record and 0x3038).
+  `ITEM_MODEL_11` is the Default switcher (back to the item's own model).
+- **No new opcodes**: the target rides OpUseItem's Option byte (as the Nasrun extension's), the
+  ref change is retail's 0x3040 mask 1.
+- **Live (box, port 16820..16822, real clicks through OPENSRO_QA_INPUT's new rbagitem / bagtip /
+  worn / boxyes).** The model switcher 16 on Reaper Ghost Sword: the tooltip's description
+  becomes the twin's "Model Switched Item / Model: Degree 16 / Glow: Default" with every stat as
+  before; worn, the body draws `ITEM_CH_SWORD_11_A_SWITCH16`'s blade (`player equipment {... 6:
+  62515}`). The axe switcher on that sword: "This scroll works only on Egy A weapons." The sword
+  switcher on Egy A axe 25622: it became Asue 25611 (Seal of Nova). Server log: `switch: item
+  changed ... model=62515` and `... from=25622 to=25611`.
+- **Tests.** Server `go test ./...` passes (switcher838_test: every tool, every refusal, the
+  0x3040, the models block, the observers' display ref; MutateItem and the model column through
+  both stores). Client: `item_target_pick838_test`, `item_instance_test`, `useitem_test`; native
+  `cargo test` (the CanUse column). No perf gate: UI, net and server only.
+
 ## Eight-hundred-and-thirty-seventh round: the item mall, with the try-on, silk and an item chest
 
 The user: "let's get the item mall fully working", with screenshots of a private server's in-game
