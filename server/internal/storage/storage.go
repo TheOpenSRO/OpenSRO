@@ -71,6 +71,24 @@ const DefaultCapacity = 50
 // item's 30-slot steps from 50 the reachable sizes are 80, 110, 140, 170, 200.
 const MaxCapacity = inventory.MaxStorageExpansionSlots
 
+// MaxAdditions is how many times one account may use the warehouse expansion
+// item: "Limited to 2 times only per account." (ITEM_MALL_WAREHOUSE_ADDITION's
+// description, MEASURED from the archive's textdata, round 838). The original
+// gets the limit out of its sizes -- a 150-slot chest (INFERRED: the only
+// 30-slot page count that lets two +30 uses pass the READ 210 bound and refuses
+// a third) -- and keeps no count. OpenSRO's start is the disclosed 50 above,
+// which would let five uses through, so the limit is counted in the size
+// instead (OURS): AdditionCeiling.
+const MaxAdditions = 2
+
+// AdditionCeiling is the largest warehouse the expansion item may leave, an
+// amount at a time: DefaultCapacity plus MaxAdditions uses, never past
+// MaxCapacity. Nothing else grows the warehouse, so a size at the ceiling means
+// the account has used both. With the original's 150 it is the READ 210 itself.
+func AdditionCeiling(amount int) int {
+	return min(MaxCapacity, DefaultCapacity+MaxAdditions*amount)
+}
+
 // ErrExpansionRefused is the warehouse expansion's refusal: the engine's
 // 0x18fe, UIIT_STT_STORAGE_EXPANSION_USE_ERORR (docs/protocol/error_codes.md),
 // which CGObjPC::ExpandInventory (0x004e1910) returns for kind 3 when the
@@ -189,7 +207,8 @@ func (s *Service) Capacity(ctx context.Context, characterID int64) (int, error) 
 // (0x4e194d `cmp ecx,0xd2 ; jle`), so the largest warehouse is MaxCapacity,
 // 210; otherwise AQ_StorageExpander::FUN_0045de20 applies the amount through
 // that record's vtable +0x24. The growth starts from DefaultCapacity for an
-// account with no stored size.
+// account with no stored size, and stops at AdditionCeiling (round 838: two
+// uses per account, as the item's description says).
 //
 // One divergence, disclosed: kind 3 answers 2 (a plain failure) when the size
 // byte is 0 (0x4e1935 `test al,al`), because a real user always has a
@@ -203,7 +222,7 @@ func (s *Service) Expand(ctx context.Context, characterID int64, amount int) (in
 	if err != nil {
 		return 0, err
 	}
-	n, err := s.ChestSizes.ExpandChest(ctx, c.AccountID, DefaultCapacity, amount, MaxCapacity)
+	n, err := s.ChestSizes.ExpandChest(ctx, c.AccountID, DefaultCapacity, amount, AdditionCeiling(amount))
 	if errors.Is(err, account.ErrChestFull) {
 		return 0, ErrExpansionRefused
 	}

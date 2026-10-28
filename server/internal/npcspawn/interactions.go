@@ -106,6 +106,12 @@ type InteractionInputs struct {
 	// the TID word 0x46c (3/3/8) and, when it does, adds 0xc (s:0x4c79a7..
 	// 0x4c79c3, READ) and builds the NPC's quotation map (FUN_004c8220).
 	SellsSpecialty bool
+	// GachaMachine (round 838) is id 0x11, Magic POP: NPC Create (s:0x4c6350)
+	// adds it at s:0x4c77c2 when the NPC's RefObjID is in the gacha NPC map
+	// (CRefGachaNpcMap, refmgr+0x110, its Service byte non-zero) while the
+	// world-config byte +0x42404 is 0 (READ). gachanpcmap.txt names one NPC,
+	// NPC_CH_GACHA_MACHINE (9251).
+	GachaMachine bool
 }
 
 // Interactions is the flag byte and the interaction list of code's spawn
@@ -157,6 +163,9 @@ func Interactions(code string, in InteractionInputs) (flags byte, ids []byte) {
 	}
 	if QuestTalk(code) {
 		add(2)
+	}
+	if in.GachaMachine {
+		add(0x11)
 	}
 	if strings.Contains(code, "NPC_CH_GACHA_OPERATOR") {
 		add(0x12)

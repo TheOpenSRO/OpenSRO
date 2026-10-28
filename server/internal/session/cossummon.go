@@ -277,6 +277,8 @@ func useRideScroll(ctx context.Context, sess *gateway.Session, d cosDeps, inv in
 		return err
 	}
 	o := spawnCOS(owner, rec, row, 0, -1, cosSpawnTypeSummoned, now)
+	d.logger.Info("cos: vehicle summoned", "character", owner.CharacterID, "scroll", it.ID, "row", row.CodeName,
+		"owner_level", level, "hp", rec.HP, "inv_size", o.rec.InvSize)
 	// Every ride and transport row can be ridden (col 66, MEASURED): the
 	// owner mounts at once when nothing refuses (s:0x4fb3cc..0x4fb3f0).
 	mountCOS(ctx, sess, owner.CharacterID, o, true)
@@ -327,6 +329,9 @@ func spawnCOS(owner world.Entity, rec cos.Record, row species.Row, itemID int64,
 	cosWorld.add(o)
 	cosAnnounce(o, spawnType)
 	sendCOSData(o, itemSlot)
+	// Round 838: the pet's running skill jobs (a growth potion's) outlive
+	// its time in the item (petgrowth.go).
+	announcePetBuffs(o, now)
 	if o.kind == cos.KindGrowth || o.kind == cos.KindTransport {
 		sendAboutCOS(o, cos.OpCOSOwnerState, cos.OwnerState(o.uid, jobStateNow(context.Background(), owner.CharacterID), 0))
 	}

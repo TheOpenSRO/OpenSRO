@@ -38,6 +38,7 @@ static func wait_tasks() -> void:
 	SkillAudio._warm_task = -1
 	SkillEffects._warm_task = -1
 	EfpEffect.wait_preloads()
+	AuraModel.wait_pending()
 
 ## Every static rendering resource the client keeps (READ: `grep -n "^static var"`
 ## over client/scripts, the ones holding a Texture, Mesh, Shader or Material).

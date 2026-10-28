@@ -411,11 +411,16 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// BOTH parties are players here, so neither divisor is covered by the
 	// monster measurement the PvE path cites -- see combat.EvadedChance.
 	blow := resolveBlow(
-		base, playerMitigationPercent, armor,
+		base, playerMitigationPercent(ctx, opponent.CharacterID, eq, items, false), armor,
 		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), playerEvadeCrit(ctx, opponent.CharacterID, eq)),
 		combat.EvadedChance(defenderBlock(ctx, opponent.CharacterID, eq, items), playerEvadeBlock(ctx, characterID, eq)),
 		atkLevel, defLevel, characterID, opponent.CharacterID)
 	damage := blow.Damage
+	// The opponent's damage-taken multiplier (round 838, applyPlayerTaken):
+	// the duel's blow is the plain attack's, physical.
+	if !blow.Blocked {
+		damage = applyPlayerTaken(opponent.CharacterID, false, damage)
+	}
 
 	// The store's died flag is not read (round 551): the duel's kill is
 	// decided as a monster's is, under the opponent's kill lock (killLock,

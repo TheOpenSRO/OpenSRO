@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gacha"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
@@ -42,7 +43,7 @@ func npcRows(placements spawn.Table, monsters *species.Table, table npcspawn.Tab
 // installNPCs builds and installs the NPCs (session.InstallNPCs). Without
 // placements -- or without a way to tell an NPC row from a monster's -- there
 // are none, and the boot log says so.
-func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.Table, db *nest.DB, tp *teleport.Table, npcsCSV string, testItems *testItemsNPCSpec, shops specialty.Shops) {
+func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.Table, db *nest.DB, tp *teleport.Table, npcsCSV string, testItems *testItemsNPCSpec, shops specialty.Shops, machines *gacha.Table) {
 	var table npcspawn.Table
 	if npcsCSV != "" {
 		t, err := npcspawn.LoadCSV(npcsCSV)
@@ -89,13 +90,18 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 	if table == nil {
 		info = nil
 	}
+	// Round 838: an NPC the Magic POP map names is a machine (id 0x11).
+	isMachine := func(id int64) bool {
+		_, ok := machines.Machine(id)
+		return ok
+	}
 	interactions := func(id int64, code string) (byte, []byte) {
 		if code == "" {
 			return 0, nil
 		}
 		f := teleportFlags[id]
 		return npcspawn.Interactions(code, npcspawn.InteractionInputs{Teleport7: f[0], Teleport9: f[1], Teleport8: f[2],
-			OwnsShop: table[id].Shop, SellsSpecialty: table[id].Shop && shops.SellsSpecialty(code)})
+			OwnsShop: table[id].Shop, SellsSpecialty: table[id].Shop && shops.SellsSpecialty(code), GachaMachine: isMachine(id)})
 	}
 	npcs, rep := npcspawn.Place(npcRows(placements, monsters, table), db, info, interactions)
 	npcs = appendTestItemsNPC(logger, npcs, table, testItems)

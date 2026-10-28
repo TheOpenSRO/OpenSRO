@@ -50,6 +50,11 @@ class Result extends RefCounted:
 const OPTION_RECALL := 2
 const OPTION_DEATH := 3
 const OPTION_MAP := 7
+## Round 838, OURS: the special reverse return scroll's party member (+ u32
+## its party JID) and saved location (+ u32 the slot), the server's
+## ReverseOptionParty / ReverseOptionSaved.
+const OPTION_PARTY := 4
+const OPTION_SAVED := 5
 
 ## Encodes an OpUseItem request: the character's name and the bag slot --
 ## and, for a reverse return scroll (round 778), the option byte and, for the
@@ -63,6 +68,14 @@ const OPTION_COS_TARGET := 0xC5
 ## 256 palette indices after the option (retail's 0x704C carries them after
 ## the slot and type word, c:0x7974a2).
 const OPTION_CREST := 0xC6
+## Round 838 (OURS, the server's UseOptionSkinChange): the skin change scroll's
+## use, the chosen body's u32 ref id and the u8 scale after the option, as
+## retail's 0x704C carries {u32 ref, u8 scale} after the slot and type word
+## (SendItem_HandleUseItem 0x796660 case 9, c:0x797049..0x797222).
+const OPTION_SKIN_CHANGE := 0xFC
+## Round 838 (OURS, the server's UseOptionCustomTitle): the Custom Title
+## Scroll's use, the title after the option as u16 length + UTF-8.
+const OPTION_CUSTOM_TITLE := 0xC7
 
 ## Whether TypeIDs are an item the client sends with the current COS's uid
 ## (round 805; SendItem_HandleUseItem 0x796660, READ): a COS HP potion 3/3/1/4,
@@ -74,6 +87,16 @@ static func is_cos_target_item(types: PackedInt32Array) -> bool:
 	if types[2] == 1:
 		return types[3] == 4 or types[3] == 5 or types[3] == 7 or types[3] == 9
 	return types[2] == 2 and types[3] == 7
+
+## Round 838: whether TypeIDs are used ON another item (HudPanels' use-on
+## mode; IFSlotWithHelp::FUN_00676570 c:0x67699f..0x676a04, READ): 3/3/13
+## with TypeID4 8, 12, 15 or 16, and the pet revival 3/3/1/6.
+static func is_use_on_item(types: PackedInt32Array) -> bool:
+	if types.size() < 4 or types[0] != 3 or types[1] != 3:
+		return false
+	if types[2] == 1 and types[3] == 6:
+		return true
+	return types[2] == 13 and types[3] in [8, 12, 15, 16]
 
 static func encode_use(character_name: String, inventory_slot: int, option: int = 0, target: int = 0) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
@@ -87,11 +110,70 @@ static func encode_use(character_name: String, inventory_slot: int, option: int 
 	out.append_array(tail)
 	if option != 0:
 		out.append(option & 0xff)
-		if option == OPTION_MAP or option == OPTION_COS_TARGET:
+		if option == OPTION_MAP or option == OPTION_COS_TARGET or option == OPTION_PARTY or option == OPTION_SAVED:
 			var id := PackedByteArray()
 			id.resize(4)
 			id.encode_u32(0, target)
 			out.append_array(id)
+	return out
+
+## Round 838, OURS: the special reverse return scroll's saved locations
+## (server session/scroll838.go): OP_REVERSE_SAVED {u8 action, u8 slot, i64
+## the bag slot of the scroll}, answered by OP_REVERSE_SAVED_RESULT {u8 ok, u8
+## registered, u16-len reason, u8 n, n x {i32 region, f32 x, f32 y, f32 z}}
+## -- region 0 an empty slot, the position region-local.
+const OP_REVERSE_SAVED := 0x00FE
+const OP_REVERSE_SAVED_RESULT := 0x00FF
+const SAVED_LIST := 0
+const SAVED_REGISTER := 1
+
+static func encode_reverse_saved(action: int, saved_slot: int, bag_slot: int) -> PackedByteArray:
+	var out := PackedByteArray([action & 0xff, saved_slot & 0xff])
+	out.resize(10)
+	out.encode_s64(2, bag_slot)
+	return out
+
+## {"ok", "registered", "reason", "slots": [{"region", "x", "y", "z"}, ...]},
+## or {} for a short payload.
+static func decode_reverse_saved(data: PackedByteArray) -> Dictionary:
+	if data.size() < 4:
+		return {}
+	var n_reason := data.decode_u16(2)
+	var at := 4 + n_reason
+	if data.size() < at + 1:
+		return {}
+	var out := {"ok": data[0] != 0, "registered": data[1] != 0,
+		"reason": data.slice(4, at).get_string_from_utf8(), "slots": []}
+	var n := data[at]
+	at += 1
+	if data.size() < at + n * 16:
+		return {}
+	for i in n:
+		out["slots"].append({"region": data.decode_s32(at), "x": data.decode_float(at + 4),
+			"y": data.decode_float(at + 8), "z": data.decode_float(at + 12)})
+		at += 16
+	return out
+
+## A skin change's use: the plain use, OPTION_SKIN_CHANGE, u32 ref, u8 scale.
+static func encode_use_skin(character_name: String, inventory_slot: int, ref_obj_id: int, scale: int) -> PackedByteArray:
+	var out := encode_use(character_name, inventory_slot)
+	out.append(OPTION_SKIN_CHANGE)
+	var id := PackedByteArray()
+	id.resize(4)
+	id.encode_u32(0, ref_obj_id)
+	out.append_array(id)
+	out.append(scale & 0xff)
+	return out
+
+## The Custom Title Scroll's use: the plain use, OPTION_CUSTOM_TITLE, the text.
+static func encode_use_custom_title(character_name: String, inventory_slot: int, text: String) -> PackedByteArray:
+	var out := encode_use(character_name, inventory_slot)
+	out.append(OPTION_CUSTOM_TITLE)
+	var b := text.to_utf8_buffer()
+	var n := out.size()
+	out.resize(n + 2)
+	out.encode_u16(n, b.size())
+	out.append_array(b)
 	return out
 
 ## A crest register's use: the plain use, OPTION_CREST, the 256 bytes.

@@ -54,6 +54,43 @@ func TestFreshItemRollsDurability(t *testing.T) {
 	}
 }
 
+// accLookup adds AccessoryLookup: item 300 is an accessory.
+type accLookup struct{ durLookup }
+
+func (accLookup) IsAccessory(_ context.Context, itemID int64) (bool, error) {
+	return itemID == 300, nil
+}
+
+// fixedRand answers every draw with the same value.
+type fixedRand int
+
+func (f fixedRand) Intn(int) int { return int(f) }
+
+// Round 838: an accessory rolls variance groups 0 and 1 only (FUN_00728d50,
+// READ) and stays Untracked; anything else without a range rolls nothing.
+func TestFreshAccessoryRollsTwoGroups(t *testing.T) {
+	ctx := context.Background()
+	look := accLookup{durLookup{id: 100, min: 62, max: 76}}
+	inst, err := FreshInstance(ctx, look, fixedRand(32767), 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Durability != durability.Untracked || inst.Variance != 31|31<<5 {
+		t.Errorf("accessory: %+v, want variance %#x and Untracked", inst, 31|31<<5)
+	}
+	inst, err = FreshInstance(ctx, look, fixedRand(32767), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Durability != durability.Untracked || inst.Variance != 0 {
+		t.Errorf("a potion: %+v, want variance 0 and Untracked", inst)
+	}
+	inst, err = FreshInstance(ctx, look.durLookup, fixedRand(32767), 300)
+	if err != nil || inst.Variance != 0 {
+		t.Errorf("without an AccessoryLookup: %+v, %v; want variance 0", inst, err)
+	}
+}
+
 func TestAddItemInstancePreservesInstance(t *testing.T) {
 	ctx := context.Background()
 	look := durLookup{id: 100, min: 62, max: 76}

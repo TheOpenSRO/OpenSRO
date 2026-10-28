@@ -119,7 +119,7 @@ func setCharLockUnlocked(sess *gateway.Session, accountID int64) {
 // CharacterLockGate answers the PIN opcodes and holds the lobby behind the
 // PIN: Start (0x7001), the older OpEnterWorld (0x0020, the same way into the
 // world), and 0x7007's delete (3) and restore (5) are refused, before next
-// sees them, unless the session has unlocked the PIN -- or the account has
+// sees them (and round 838's rename, 0x0139), unless the session has unlocked the PIN -- or the account has
 // none and the server does not require one (charlock.Service.Allows).
 // Everything else goes to next. svc nil: no lock at all, every packet to next.
 //
@@ -152,6 +152,15 @@ func CharacterLockGate(svc *charlock.Service, logger *slog.Logger, next gateway.
 				}
 				return sess.Send(&proto.Packet{Opcode: OpEnterWorldResult,
 					Data: (&EnterWorldResult{Reason: "the character lock is not open: enter the PIN first"}).Encode()})
+			}
+		case OpRename:
+			// Round 838 (OURS): the Name Change Scroll's rename at character
+			// select, behind the PIN as Start is (it follows a Start).
+			if refused, err := charLockRefuses(ctx, svc, logger, sess, "rename"); refused || err != nil {
+				if err != nil {
+					return err
+				}
+				return sess.Send(&proto.Packet{Opcode: OpRenameResult, Data: EncodeRenameResult(false, LobbyErrBusy, "")})
 			}
 		case OpLobby:
 			if len(p.Data) > 0 && (p.Data[0] == LobbyDelete || p.Data[0] == LobbyRestore) {

@@ -621,11 +621,11 @@ func TestOrgCodeNameReadsColumn4(t *testing.T) {
 			if !ok {
 				t.Fatal("itemRecord rejected a valid row")
 			}
-			if len(rec) <= 92 {
-				t.Fatalf("record has %d fields, want OrgCodeName at index 92", len(rec))
+			if len(rec) <= 96 {
+				t.Fatalf("record has %d fields, want OrgCodeName at index 96", len(rec))
 			}
-			if got := rec[92]; got != tc.want {
-				t.Errorf("record[92] = %q, want %q", got, tc.want)
+			if got := rec[96]; got != tc.want {
+				t.Errorf("record[96] = %q, want %q", got, tc.want)
 			}
 			items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
 			if err != nil {

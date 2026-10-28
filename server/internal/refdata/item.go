@@ -444,6 +444,18 @@ type Item struct {
 	// import.
 	ReviveCost int64
 
+	// PhysAbsorbMin/Max and MagAbsorbMin/Max are an accessory's absorption
+	// ranges (round 838): itemdata columns 71/72 (PAR) and 79/80 (MAR), ref
+	// +0x1d4/+0x1d8 and +0x1f8/+0x1fc (READ, RefObjItem::ExtractData
+	// s:0x6a3d50; the third float of each triple is PlusIncPhysAbsorb /
+	// PlusIncMagAbsorb). Only the earrings, necklaces and rings carry them
+	// (1,020 rows, MEASURED). Char_BuildAggregateStats rolls a worn one's value
+	// from its Variance groups 0 and 1 and Char_PublishCombatStats makes it
+	// the wearer's ParamKeeper params 7 and 8, the percentage term of the
+	// damage mitigation (see session's accessoryAbsorb). 0 on an older import.
+	PhysAbsorbMin, PhysAbsorbMax float64
+	MagAbsorbMin, MagAbsorbMax   float64
+
 	// OrgCodeName is the row's OrgObjCodeName, itemdata column 4 (round 838),
 	// "" for the table's `xxx`. RefObjCommon_ExtractData (gs:0x6a3090) reads
 	// it as the record's third string into the std::string at ref+0x48 and

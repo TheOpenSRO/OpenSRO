@@ -320,6 +320,7 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 	_set_shown(window, BTN_TO_AVATAR, not avatar)
 	_set_shown(window, BTN_TO_EQUIPMENT, avatar)
 	_set_shown(window, AVATAR_SKILL_STRIP, _avatar_skill_strip_shown())
+	_fill_spirit_strip(window, _avatar_skill_strip_shown())
 	_show_equipment_backdrops()
 
 # --- the avatar slots (round 789) ----------------------------------------------
@@ -336,6 +337,95 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 ## table's +0x61 and +0xfc bytes, not READ (OPEN, docs/rounds/r789ac.md).
 func _avatar_skill_strip_shown() -> bool:
 	return AvatarEquipment.skill_strip_shown(_equipment_avatar_mode, NetClient.last_avatar_instances, item_types)
+
+# --- The devil's spirit's skill strip (round 838) -----------------------------
+#
+# READ (sro_client.exe): CIFEquipment c:0x6ae5b0 fills GDR_AVATAR_SKILL_WND
+# (CIFEquipSkillSlotWnd, layout resinfo\ifequipskillslotwnd.txt: four
+# CIFSkillSlot GDR_AVATAR_SKILL_SLOT_01..04 at x 11 / 52 / 93 / 134, y 4,
+# 32 x 32, each over a pt_block02.ddj GDR_AVATAR_SKILL_SLOT_BG_0n at x - 2,
+# y 2, 40 x 40) with the worn spirit's skills by (RefItemID, OptLevel)
+# (SpiritAbilities); c:0x6aec30 shows a slot with a skill (IFSkillSlot type 9)
+# and hides an empty one; c:0x6aeca0 clears all four. A slot's skill is cast
+# as any skill is (0x7074; the server's FindLearned 0x59d680 accepts the
+# spirit's kind-3 entries). OURS: the cast is the slot's right click, as the
+# quick slots' (the IFSkillSlot type-9 click was not traced); no drag to the
+# quick slot bar.
+
+## World3D casts it (World3D._cast_skill).
+signal spirit_skill_use_requested(skill_id: int)
+## (ref_id, opt_level) -> PackedInt32Array, and skill_id -> icon path under
+## icon\ ; World3D binds both.
+var spirit_skills_of: Callable = Callable()
+var skill_icon_of: Callable = Callable()
+
+const SPIRIT_SLOT_X := [11, 52, 93, 134]
+const SPIRIT_BG_DDJ := "interface\\pet\\pt_block02.ddj"
+
+## The skills the strip shows now (its slots' order).
+func spirit_strip_skills() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if not spirit_skills_of.is_valid():
+		return out
+	var storage: Dictionary = NetClient.last_avatar_instances
+	for s in storage:
+		var v = storage[s]
+		if not (v is ItemInstance):
+			continue
+		var it := v as ItemInstance
+		var t := item_types(it.ref_item_id)
+		if t.size() >= 3 and t[0] == 3 and t[1] == 1 and t[2] == 14 and AvatarEquipment.spirit_seconds_left(it) > 0:
+			return spirit_skills_of.call(it.ref_item_id, it.opt_level)
+	return out
+
+func _fill_spirit_strip(window: HudWindow, shown: bool) -> void:
+	var strip := window.node(AVATAR_SKILL_STRIP) as Control
+	if strip == null:
+		return
+	var skills := spirit_strip_skills() if shown else PackedInt32Array()
+	for i in 4:
+		var bg := strip.get_node_or_null("SpiritSlotBg%d" % i) as TextureRect
+		if bg == null:
+			bg = TextureRect.new()
+			bg.name = "SpiritSlotBg%d" % i
+			bg.position = Vector2(SPIRIT_SLOT_X[i] - 2, 2)
+			bg.size = Vector2(40, 40)
+			bg.stretch_mode = TextureRect.STRETCH_SCALE
+			bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			bg.texture = _builder.load_texture(SPIRIT_BG_DDJ) if _builder != null else null
+			strip.add_child(bg)
+		var slot := strip.get_node_or_null("SpiritSlot%d" % i) as TextureRect
+		if slot == null:
+			slot = TextureRect.new()
+			slot.name = "SpiritSlot%d" % i
+			slot.position = Vector2(SPIRIT_SLOT_X[i], 4)
+			slot.size = Vector2(32, 32)
+			slot.stretch_mode = TextureRect.STRETCH_SCALE
+			slot.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			slot.mouse_filter = Control.MOUSE_FILTER_STOP
+			slot.gui_input.connect(func(ev: InputEvent) -> void:
+				var mb := ev as InputEventMouseButton
+				if mb != null and mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and slot.has_meta("skill_id"):
+					print("HudPanels: spirit skill %d used from its slot" % int(slot.get_meta("skill_id")))
+					spirit_skill_use_requested.emit(int(slot.get_meta("skill_id"))))
+			strip.add_child(slot)
+		var has := i < skills.size()
+		bg.visible = has
+		slot.visible = has
+		if has:
+			slot.set_meta("skill_id", skills[i])
+			var path: String = skill_icon_of.call(skills[i]) if skill_icon_of.is_valid() else ""
+			slot.texture = _builder.load_texture(path) if _builder != null and path != "" else null
+		elif slot.has_meta("skill_id"):
+			slot.remove_meta("skill_id")
+	if shown:
+		var worn := []
+		for s in NetClient.last_avatar_instances:
+			var v = NetClient.last_avatar_instances[s]
+			if v is ItemInstance:
+				worn.append("%d:%d+%d" % [s, (v as ItemInstance).ref_item_id, (v as ItemInstance).opt_level])
+		print("HudPanels: spirit skill strip %s (worn %s)" % [str(skills), ", ".join(worn)])
 
 ## A display window's control (0 hat .. 4 devil's spirit), or null.
 func _avatar_slot_control(display: int) -> Control:
@@ -400,6 +490,7 @@ func _fill_avatar_slots() -> void:
 	if att != null:
 		att.modulate = Color(0.45, 0.45, 0.45) if AvatarEquipment.attachment_disabled(storage, item_types, _child_item_count) else Color.WHITE
 	_set_shown(window, AVATAR_SKILL_STRIP, _avatar_skill_strip_shown())
+	_fill_spirit_strip(window, _avatar_skill_strip_shown())
 	# The held avatar is let go when its slot no longer holds it.
 	if held_icon != null and held_icon.is_holding() and held_icon.kind() == "avatar":
 		var held_slot := int(held_icon.payload.get("slot", -1))
@@ -812,9 +903,14 @@ signal system_notice(text: String)
 ## holding `count` (round 634): retail opens the "Chat to all" window for it
 ## (IFSlotWithHelp 0x676570's case 5 -> 0x79b8a0) instead of using it.
 signal global_chat_requested(slot: int, count: int)
+## Round 838 (OURS): the Custom Title Scroll's box answered with a title.
+signal custom_title_requested(slot: int, text: String)
 ## An item used on the current COS (is_cos_target_item, round 805) was used
 ## from bag slot `slot`: World3D names the pet (World3D._use_cos_item).
 signal cos_item_requested(slot: int)
+## Round 838: a character skin change scroll (is_skin_change_item) was used
+## from bag slot `slot`: World3D opens the skin change window for it.
+signal skin_change_requested(slot: int)
 ## A destination line of a gate's talk box (open_teleport_list, round 603) was
 ## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
 ## with the gate the list was opened at (NetClient.teleport_use).
@@ -2645,84 +2741,6 @@ func _end_repair_mode(why: String) -> void:
 func repair_mode() -> bool:
 	return _repair_mode
 
-# --- A tool used on another item (round 838, ItemTargetPick) -----------------
-
-## The tool's bag slot while its pick is up (the inventory's +0x380), -1 none.
-var _item_target_tool := -1
-## A right press ended the pick: its release over a bag slot is not a use
-## (OURS, conservative: retail's right press clears the forced cursor in
-## CGInterface before any slot sees the release).
-var _item_target_rmb_cancel := false
-var _item_target_box: PartyMatchConfirm = null
-
-## Whether the pick is up: the tool's slot is held and the 0xa6 arrow shows.
-func item_target_mode() -> bool:
-	return _item_target_tool >= 0 and GameCursor.forced_id == CursorSet.ID_ITEM_USE
-
-## The right-click on a tool (ItemTargetPick.is_tool): its slot is held and
-## the cursor forced to 0xa6 (READ, 0x6769ef / 0x6769ff).
-func begin_item_target(slot: int) -> void:
-	_item_target_tool = slot
-	GameCursor.force(CursorSet.ID_ITEM_USE, get_window())
-	print("HudPanels: item target pick on (tool in bag slot %d, cursor 0x%x)" % [slot, CursorSet.ID_ITEM_USE])
-
-## Ends the pick: the cursor back (0x777e70(-1)) and the slot dropped.
-func end_item_target(why: String) -> void:
-	if _item_target_tool < 0:
-		return
-	_item_target_tool = -1
-	if GameCursor.forced_id == CursorSet.ID_ITEM_USE:
-		GameCursor.force(-1, get_window())
-	print("HudPanels: item target pick off (%s)" % why)
-
-## A left click on a slot during the pick (CIFSlotWithHelp::vslot_029's 0xa6
-## branch, READ): an empty slot does nothing and the pick stays; a slot with
-## an item opens the question box and ends the pick. `kind` is the window
-## (ItemTargetPick.KIND_*), `slot` the bag index or the worn slot.
-func item_target_click(kind: int, slot: int, item_id: int) -> void:
-	if not item_target_mode() or item_id <= 0:
-		return
-	var tool := _item_target_tool
-	end_item_target("a target clicked")
-	if is_instance_valid(_item_target_box):
-		_item_target_box.close()
-	if _builder == null:
-		return
-	var box := PartyMatchConfirm.new()
-	if not box.build(_builder, _ui_line(ItemTargetPick.CONFIRM_KEY, ItemTargetPick.CONFIRM_FALLBACK)):
-		box.queue_free()
-		return
-	box.name = "ItemTargetConfirm"
-	box.confirmed.connect(func() -> void: _send_item_target(tool, kind, slot, item_id))
-	box.centre_on(get_viewport_rect().size)
-	add_child(box)
-	_item_target_box = box
-	print("HudPanels: ItemTargetConfirm opened: tool bag slot %d on %s slot %d (item %d)" % [tool, "bag" if kind == ItemTargetPick.KIND_BAG else "worn", slot, item_id])
-	_qa_print_buttons(box, str(box.name))
-
-## The box's Yes (FUN_00797d90 case 0x1f -> SendItem_HandleUseItem case 8):
-## the tool must still be in its slot; the client's own refusals are shown as
-## the server's would be; otherwise the use goes with the target's wire slot.
-func _send_item_target(tool_slot: int, kind: int, slot: int, item_id: int) -> void:
-	var tool_id := _bag_item_id_at_slot(tool_slot)
-	_load_items()
-	var tool: ItemTableReader.Item = _items.get(tool_id)
-	if not ItemTargetPick.is_pick_tool(tool):
-		print("HudPanels: item target not sent -- bag slot %d no longer holds the tool" % tool_slot)
-		return
-	if kind == ItemTargetPick.KIND_BAG and _bag_item_id_at_slot(slot) != item_id:
-		print("HudPanels: item target not sent -- bag slot %d changed" % slot)
-		return
-	var code := ItemTargetPick.check(tool.code_name, kind, item_types(item_id))
-	if code > 0:
-		print("HudPanels: item target refused here, code 0x%x" % code)
-		system_notice.emit(ErrorText.scroll_line(code, _text_table(), ""))
-		return
-	if code < 0 or NetClient.current_character_name == "":
-		return
-	print("HudPanels: item target use: tool bag slot %d (%s) on bag slot %d (item %d)" % [tool_slot, tool.code_name, slot, item_id])
-	UiSounds.expect_use(tool.type_ids)
-	NetClient.use_item_option(NetClient.current_character_name, tool_slot, slot + REPAIR_BAG_BASE)
 
 ## Round 829: a slot clicked under the hammer (CIFSlotWithHelp::vslot_029,
 ## branch 0x6811e9, READ): a worn or bag slot holding an item; CanRepair
@@ -5253,13 +5271,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key.keycode == KEY_ESCAPE:
 		if key.ctrl_pressed or key.alt_pressed:
 			return
-		# Round 838: with a tool's pick up, Escape ends it and does nothing
-		# else (READ, FUN_0078b660 0x1b -> FUN_0079d620: a forced cursor is
-		# cleared and the key is spent).
-		if item_target_mode():
-			end_item_target("Escape")
-			get_viewport().set_input_as_handled()
-			return
 		# Escape closes one window (_escape_close); with nothing open it
 		# raises the System menu, the way the original does.
 		if not _escape_close():
@@ -5412,16 +5423,240 @@ func item_types(item_id: int) -> PackedInt32Array:
 static func is_global_chat_item(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 5
 
+## Whether TypeIDs are a character skin change scroll's, 3/3/13/9 (round 838:
+## IFSlotWithHelp::FUN_00676570's 3/3/13 test 0x5dd680 and `tid >> 11 == 9`
+## at 0x676b87, which opens CIFChangePlayerModel instead of sending).
+static func is_skin_change_item(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 9
+
 ## Whether TypeIDs are a reverse return scroll's, 3/3/3/3 (round 778: the
 ## client's own test FUN_0078e870 -- `(tid & 0x780) == 0x180` and
 ## `(tid & 0xf800) == 0x1800` over 3/3).
 static func is_reverse_return_scroll(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 3
 
+## Whether TypeIDs are a repair hammer's, 3/3/13/7 (round 838).
+static func is_repair_hammer(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 7
+
+## Round 838: the repair hammer asks first. READ (sro_client): the bag's use
+## path (IFSlotWithHelp::FUN_00676570, 0x676a09) opens message box kind 0x1f
+## for a 3/3/13 item whose CanUse byte is 129 (every hammer row's) --
+## UIIT_STT_CONFIRM_BOX, UIIT_MSG_QUESTION_SILKMALL_ITEM_USE "Will you use
+## the selected item?", OK and Cancel -- and its OK (0x797d90 case 0x1f)
+## reaches SendItem_HandleUseItem (0x796660), whose case 7 sums the repair
+## quote of the worn and carried items first and, at 0, says
+## UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR without sending.
+## OURS: the box is the generic question box (PartyMatchConfirm, Yes / No);
+## kind 0x1f's own size and button words were not read. Retail asks the same
+## box for every CanUse-129 3/3/13 item but TypeID4 8, 12, 15 and 16; only
+## the hammer is routed here.
+func open_hammer_confirm(slot: int) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _resolve_ui("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE", "Will you use the selected item?")):
+		box.free()
+		return null
+	box.name = "HammerConfirm"
+	box.confirmed.connect(func() -> void:
+		if repair_all_quote() <= 0:
+			system_notice.emit(_resolve_ui("UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR", "No item needs repairing."))
+			return
+		if NetClient.current_character_name != "":
+			print("HudPanels: the repair hammer at bag slot %d" % slot)
+			NetClient.use_item(NetClient.current_character_name, slot))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
 ## Whether TypeIDs are an item used on the current COS (round 805,
 ## UseItemNet.is_cos_target_item).
 static func is_cos_target_item(types: PackedInt32Array) -> bool:
 	return UseItemNet.is_cos_target_item(types)
+
+# --- Using an item on another (round 838) ------------------------------------
+#
+# READ (sro_client.exe): a right click on the item (IFSlotWithHelp::
+# FUN_00676570, c:0x676570, from CIFSlotWithHelp::vslot_033 c:0x685ee0 ->
+# c:0x682040 case 0x46) keeps its slot (inventory +0x380, c:0x6aef80) and
+# forces the gold arrow, cursor 0xa6 (ForceCursor c:0x777e70 at c:0x6769fa);
+# nothing is sent. The kinds: 3/3/13 with TypeID4 8, 12, 15 or 16 whose
+# CanUse has both bits 0x81, and 3/3/1/6 with any CanUse (c:0x67699f..
+# 0x676a04); a dead player gets 0x1889 instead (c:0x676974). A click on an
+# occupied slot then (CIFSlotWithHelp::vslot_029 c:0x680fa0, 0x68111d..
+# 0x6811b8) restores the cursor and opens message box 0x1f, UIIT_STT_CONFIRM_
+# BOX / UIIT_MSG_QUESTION_SILKMALL_ITEM_USE; a click on an empty one keeps the
+# mode; a right click on a slot, a right press over the world or Escape ends
+# it. The box's OK (FUN_00797d90 case 0x1f) runs the sender's checks and
+# sends 0x704C with the target (SendItem_HandleUseItem c:0x796a85..0x797044):
+#   3/3/1/6   the revival: a bag 3/2/1 growth pet item in state 4, else
+#             CANT_USEITEM (not dead) / CANT_USE_WRONGOBJECT;
+#   3/3/13/12 the clock: a bag 3/2/1 ability pet item (no state test);
+#   3/3/13/15 a pet composite: a growth pet with the potion's Param6 bit 1,
+#             an ability pet with bit 2, else WRONGOBJECT; any target that
+#             is not a summon item goes unchecked (the server decides);
+#   3/3/13/16 the Nasrun extension: a bag 3/1/14 devil's spirit
+#             (WRONGOBJECT otherwise; a worn one is NASRUN_WEAR_EXTENSION_
+#             ITEM_NOT_USE -- this client's target clicks are bag slots).
+# OURS: CanUse is not in this client's item table; every mall row of these
+# kinds carries 129 and the revivals 1 or 129 (MEASURED), so the kinds alone
+# enter the mode. The potion's Param6 test is the server's (it answers 3).
+# The pet forms go as UseItemNet.OPTION_COS_TARGET with the target's bag
+# index; the Nasrun extension's option byte is the target's wire slot
+# (bag index + 13), as the server reads them.
+
+## World3D sends the use and prints the refusals: `src` the item's bag slot,
+## `target` the target's.
+signal use_on_requested(src: int, target: int)
+
+## The item's bag slot while the mode is up, else -1.
+var _use_on_slot := -1
+
+## Whether TypeIDs enter the use-on mode (above).
+static func is_use_on_item(types: PackedInt32Array) -> bool:
+	return UseItemNet.is_use_on_item(types)
+
+func _begin_use_on(slot: int) -> void:
+	if player_dead:
+		system_notice.emit(DEAD_INPUT_LINE)
+		return
+	_use_on_slot = slot
+	GameCursor.force(CursorSet.ID_ITEM_USE, get_window())
+	print("HudPanels: use-on mode for bag slot %d (cursor 0x%x)" % [slot, CursorSet.ID_ITEM_USE])
+
+## Ends the mode, the cursor back.
+func end_use_on(why: String) -> void:
+	if _use_on_slot < 0:
+		return
+	_use_on_slot = -1
+	GameCursor.force(-1, get_window())
+	print("HudPanels: use-on mode off (%s)" % why)
+
+## The slot the mode is up for, or -1.
+func use_on_slot() -> int:
+	return _use_on_slot
+
+func _use_on_target(target: int) -> void:
+	var src := _use_on_slot
+	end_use_on("a target clicked")
+	if _bag_item_id_at_slot(target) < 0:
+		return
+	print("HudPanels: use bag slot %d on bag slot %d? (box 0x1f)" % [src, target])
+	_use_on_confirm(src, target)
+
+## Message box 0x1f, then the sender's checks (use_on_check) and the send.
+## `worn`: the target is a worn slot (lane 2's 3/3/13/8 tools only).
+func _use_on_confirm(src: int, target: int, worn: bool = false) -> void:
+	var title := _builder.resolve_text("UIIT_STT_CONFIRM_BOX") if _builder != null else "Confirm"
+	var body := _builder.resolve_text("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE") if _builder != null else ""
+	if body == "" or body == "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE":
+		body = "Will you use the selected item?"
+	_open_simple_confirm(title, body, func() -> void:
+		var why := use_on_check(src, target, worn)
+		if why != "":
+			print("HudPanels: use-on refused locally: %s" % why)
+			var line := _builder.resolve_text(why) if _builder != null else why
+			system_notice.emit(line if line != "" else why)
+			return
+		print("HudPanels: use-on sent: bag slot %d on bag slot %d" % [src, target])
+		use_on_requested.emit(src, target))
+
+## The sender's checks for the item in `src` used on `target`: "" to send, or
+## the text key it prints.
+func use_on_check(src: int, target: int, worn: bool = false) -> String:
+	var types := bag_item_types(src)
+	var ttypes := bag_item_types(target)
+	if types.size() < 4:
+		return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+	# Round 838 (lane 2): the switch tools, 3/3/13/8 (SendItem_HandleUseItem
+	# case 8, ItemTargetPick.check): a worn target 0x1882, retail's gender
+	# tool on a bag item that is not armour 0x1884.
+	if ItemTargetPick.is_switch_tool(types):
+		var kind := ItemTargetPick.KIND_WORN if worn else ItemTargetPick.KIND_BAG
+		var code := ItemTargetPick.check(item_code_for_id(_bag_item_id_at_slot(src)), kind, ttypes)
+		return String(ErrorText.SCROLL_UIIT_BY_CODE.get(code, "")) if code > 0 else ""
+	var inst := _item_instance("bag", target) as ItemInstance
+	var is_pet_item := ttypes.size() >= 4 and ttypes[0] == 3 and ttypes[1] == 2 and ttypes[2] == 1
+	var pet_kind := 0
+	if is_pet_item and inst != null and ItemInstance.cos_kind_of.is_valid():
+		pet_kind = int(ItemInstance.cos_kind_of.call(inst.cos_ref))
+	if types[2] == 1 and types[3] == 6:
+		if not is_pet_item or (pet_kind != 0 and pet_kind != CosNet.KIND_GROWTH):
+			return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+		if inst == null or inst.cos_state != CosNet.ITEM_STATE_DEAD:
+			return "UIIT_MSG_COSPETERR_CANT_USEITEM"
+		return ""
+	match types[3]:
+		12:
+			if not is_pet_item or pet_kind != CosNet.KIND_ABILITY:
+				return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+		15:
+			if is_pet_item and pet_kind != CosNet.KIND_GROWTH and pet_kind != CosNet.KIND_ABILITY and pet_kind != 0:
+				return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+		16:
+			if not (ttypes.size() >= 4 and ttypes[0] == 3 and ttypes[1] == 1 and ttypes[2] == 14):
+				return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+	return ""
+
+## A centred OK / Cancel box with a title and a line (the style of the
+## board's confirm), `on_ok` run at OK.
+func _open_simple_confirm(title_text: String, body_text: String, on_ok: Callable) -> void:
+	var panel := PanelContainer.new()
+	panel.name = "UseOnConfirm"
+	panel.custom_minimum_size = Vector2(308, 120)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	var title := Label.new()
+	title.text = title_text
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var body := Label.new()
+	body.name = "Body"
+	body.text = body_text
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# A wrapping label needs its width, or the box grows to its full height.
+	body.custom_minimum_size = Vector2(280, 0)
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(body)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var ok := Button.new()
+	ok.name = "OK"
+	ok.text = "OK"
+	ok.custom_minimum_size = Vector2(96, 0)
+	ok.pressed.connect(func() -> void:
+		panel.queue_free()
+		on_ok.call())
+	row.add_child(ok)
+	var cancel := Button.new()
+	cancel.name = "Cancel"
+	cancel.text = "Cancel"
+	cancel.custom_minimum_size = Vector2(96, 0)
+	cancel.pressed.connect(func() -> void: panel.queue_free())
+	row.add_child(cancel)
+	add_child(panel)
+	var view := get_viewport_rect().size if is_inside_tree() else Vector2(800, 600)
+	panel.position = ((view - panel.custom_minimum_size) * 0.5).round()
+	_use_on_box = panel
+
+## The box up, for QA (its OK's centre), or null.
+var _use_on_box: PanelContainer = null
+
+func use_on_box_ok_centre() -> Vector2:
+	if _use_on_box == null or not is_instance_valid(_use_on_box):
+		return Vector2(-1, -1)
+	var ok := _use_on_box.find_child("OK", true, false) as Control
+	return ok.get_global_rect().get_center() if ok != null else Vector2(-1, -1)
 
 # --- The reverse return scroll (round 778) -----------------------------------
 #
@@ -5501,10 +5736,14 @@ func crest_used(code_name: String) -> void:
 func open_reverse_return_box(slot: int) -> ReverseReturnBox:
 	close_reverse_return_box()
 	var box := ReverseReturnBox.new()
-	box.build(_builder, slot)
+	# Round 838: the special scroll's box has the add-on's two more buttons.
+	var special := is_special_reverse_scroll(_bag_item_id_at_slot(slot))
+	box.build(_builder, slot, special)
 	box.option_chosen.connect(func(option: int) -> void:
 		reverse_return_requested.emit(slot, option, 0))
 	box.map_requested.connect(_on_reverse_map_requested)
+	box.party_requested.connect(_open_reverse_party.bind(slot))
+	box.saved_requested.connect(_open_reverse_saved.bind(slot))
 	add_child(box)
 	if box.is_inside_tree():
 		box.position = box.screen_position(get_viewport_rect().size)
@@ -5512,6 +5751,170 @@ func open_reverse_return_box(slot: int) -> ReverseReturnBox:
 	print("REVERSEBOX opened for bag slot %d: %s" % [slot, ", ".join(
 		["LastReturn", "LastDeath", "MapPoint", "Cancel"].map(func(m): return "'%s'" % box.caption_of(m)))])
 	return box
+
+## Round 838: whether item_id is the special reverse return scroll
+## (ITEM_MALL_REVERSE_RETURN_SCROLL_SPECIAL: the plain scroll's row but its
+## id, code and icon -- the server's IsSpecialReverseReturnScroll).
+func is_special_reverse_scroll(item_id: int) -> bool:
+	return item_id >= 0 and item_code_for_id(item_id).to_upper().ends_with("_REVERSE_RETURN_SCROLL_SPECIAL")
+
+# --- The special scroll's add-on options (round 838, OURS; ReverseAddonBox) --
+
+## Injected by the world: a region id's zone name (World3D's
+## _zone_name_for_region), for the positions the lists show.
+var region_namer: Callable
+## The add-on list up, or null.
+var _reverse_addon: ReverseAddonBox = null
+## What the saved-location list asked for is wanted for: "register" or
+## "move", "" when nothing waits.
+var _reverse_saved_wanted := ""
+var _reverse_saved_bag := -1
+var _reverse_saved_slots: Array = []
+
+func reverse_addon_box() -> ReverseAddonBox:
+	if _reverse_addon != null and is_instance_valid(_reverse_addon) and not _reverse_addon.is_queued_for_deletion():
+		return _reverse_addon
+	return null
+
+func _show_reverse_addon(box: ReverseAddonBox) -> void:
+	var old := reverse_addon_box()
+	if old != null:
+		old.close()
+	add_child(box)
+	if box.is_inside_tree():
+		box.position = box.screen_position(get_viewport_rect().size)
+	_reverse_addon = box
+
+## A place's words: its zone's name, else the region id (a dungeon's too).
+func _reverse_place_text(region: int) -> String:
+	if region == 0:
+		return ""
+	var zone := ""
+	if region > 0 and (region & 0x8000) == 0 and region_namer.is_valid():
+		zone = String(region_namer.call(region >> 8, region & 0xff))
+	return zone if zone != "" else "Region %d" % region
+
+## Option 4: "Movement of Party Members" -- one Move row per other member,
+## "Character Name (Position)"; a row sends the use with the member's JID.
+func _open_reverse_party(slot: int) -> void:
+	close_reverse_return_box()
+	var party: PartyState = NetClient.party
+	var rows: Array = []
+	var jids: Array = []
+	if party != null and party.in_party:
+		for m in party.members:
+			if m.jid == party.own_jid:
+				continue
+			rows.append({"text": "%s  (%s)" % [m.member_name, _reverse_place_text(m.region)], "enabled": true})
+			jids.append(m.jid)
+	if rows.is_empty():
+		# OURS words: the add-on's own line for this is not in the archive.
+		system_notice.emit("There is no party member to move to.")
+		return
+	var box := ReverseAddonBox.new()
+	box.header = "%s / %s / %s" % [_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_CHARACTER_NAME_TEXT", "Character Name"),
+		_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_POSITION_TEXT", "Position"),
+		_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_MOVE_TEXT", "Move")]
+	box.build_list(_builder, slot, "VPLUS_UI_REVERSE_PARTY_MEMBERS_CAPTION_TEXT", "Movement of Party Members", "", "", rows)
+	box.name = "ReversePartyBox"
+	box.row_chosen.connect(func(i: int) -> void:
+		print("REVERSEBOX party member %d chosen for bag slot %d" % [int(jids[i]), slot])
+		reverse_return_requested.emit(slot, ReverseReturnBox.OPTION_PARTY, int(jids[i]))
+		box.close())
+	_show_reverse_addon(box)
+
+## Option 5: the "User Setting Window" -- Setting Location / Movement, each
+## asking the server for the slots first.
+func _open_reverse_saved(slot: int) -> void:
+	close_reverse_return_box()
+	if not NetClient.reverse_saved_result.is_connected(_on_reverse_saved_result):
+		NetClient.reverse_saved_result.connect(_on_reverse_saved_result)
+	var box := ReverseAddonBox.new()
+	box.build_list(_builder, slot, "VPLUS_UI_REVERSE_SAVED_LOCATION_CAPTION_TEXT", "User Setting Window",
+		"VPLUS_UI_REVERSE_SAVED_LOCATION_DESC_TEXT", "Setting Location: Register current location...", [
+			{"text": _resolve_ui("VPLUS_UI_REVERSE_SAVED_LOCATION_BUTTON_SETTING_TEXT", "Setting Location")},
+			{"text": _resolve_ui("VPLUS_UI_REVERSE_SAVED_LOCATION_BUTTON_MOVEMENT_TEXT", "Movement")}])
+	box.name = "ReverseSavedBox"
+	box.row_chosen.connect(func(i: int) -> void:
+		_reverse_saved_wanted = "register" if i == 0 else "move"
+		_reverse_saved_bag = slot
+		NetClient.reverse_saved(UseItemNet.SAVED_LIST, 0, slot))
+	_show_reverse_addon(box)
+
+## The server's slots: a refusal is said; a registration says the add-on's
+## line; then the list the player asked for is shown.
+func _on_reverse_saved_result(r: Dictionary) -> void:
+	if not bool(r.get("ok", false)):
+		system_notice.emit(String(r.get("reason", "")))
+		return
+	_reverse_saved_slots = r.get("slots", [])
+	if bool(r.get("registered", false)):
+		system_notice.emit(_resolve_ui("VPLUS_MSG_REVERSE_SCROLL_LOCATION_UPDATED", "Saved location has got updated."))
+	print("REVERSEBOX saved slots: %s" % [_reverse_saved_slots.map(func(s): return int(s["region"]))])
+	match _reverse_saved_wanted:
+		"register":
+			_open_reverse_slot_list(true)
+		"move":
+			_open_reverse_slot_list(false)
+
+func _open_reverse_slot_list(register: bool) -> void:
+	var rows: Array = []
+	for s in _reverse_saved_slots:
+		var region := int(s["region"])
+		var label := _reverse_place_text(region) if region != 0 \
+			else _resolve_ui("VPLUS_UI_REVERSE_EMPTY_SLOT_TEXT", "Empty Slot")
+		rows.append({"text": "%d. %s" % [rows.size() + 1, label], "enabled": register or region != 0})
+	var box := ReverseAddonBox.new()
+	if register:
+		box.build_list(_builder, _reverse_saved_bag, "VPLUS_UI_REVERSE_REGISTER_CAPTION_TEXT", "Location Registration Information Window",
+			"VPLUS_UI_REVERSE_REGISTER_DESC_TEXT", "Click the button to save location.", rows)
+	else:
+		box.build_list(_builder, _reverse_saved_bag, "VPLUS_UI_REVERSE_MOVE_CAPTION_TEXT", "Location Movement Information Window",
+			"VPLUS_UI_REVERSE_MOVE_DESC_TEXT", "You may move to the saved location on the button.", rows)
+	box.name = "ReverseRegisterBox" if register else "ReverseMoveBox"
+	var bag := _reverse_saved_bag
+	box.row_chosen.connect(func(i: int) -> void:
+		if not register:
+			print("REVERSEBOX saved slot %d chosen for bag slot %d" % [i, bag])
+			_reverse_saved_wanted = ""
+			reverse_return_requested.emit(bag, ReverseReturnBox.OPTION_SAVED, i)
+			box.close()
+			return
+		var send := func() -> void:
+			print("REVERSEBOX registering slot %d" % i)
+			NetClient.reverse_saved(UseItemNet.SAVED_REGISTER, i, bag)
+		if i < _reverse_saved_slots.size() and int(_reverse_saved_slots[i]["region"]) != 0:
+			var ask := PartyMatchConfirm.new()
+			if ask.build(_builder, _resolve_ui("VPLUS_UI_REVERSE_REGISTER_CONFIRMATION_DESC_TEXT", "Do you confirm updating this slot?")):
+				ask.name = "ReverseRegisterConfirm"
+				ask.confirmed.connect(send)
+				add_child(ask)
+				ask.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+				return
+			ask.free()
+		send.call())
+	box.cancelled.connect(func() -> void: _reverse_saved_wanted = "")
+	_show_reverse_addon(box)
+
+## Round 838 (OURS): the Custom Title Scroll's box for bag `slot` (any open
+## one closed first); OK sends the use with the typed title.
+var custom_title_box: HudCosBox = null
+
+func open_custom_title_box(slot: int) -> HudCosBox:
+	if custom_title_box != null and is_instance_valid(custom_title_box):
+		custom_title_box.queue_free()
+	custom_title_box = HudCosBox.new()
+	if not custom_title_box.build_custom_title_input(_builder):
+		custom_title_box.free()
+		custom_title_box = null
+		return null
+	custom_title_box.accepted.connect(func(text: String) -> void:
+		print("CUSTOMTITLE: slot %d '%s'" % [slot, text])
+		custom_title_requested.emit(slot, text))
+	add_child(custom_title_box)
+	custom_title_box.centre_on(get_viewport_rect().size)
+	print("CUSTOMTITLE: box opened for bag slot %d" % slot)
+	return custom_title_box
 
 ## The box up, or null.
 func reverse_return_box() -> ReverseReturnBox:
@@ -6018,11 +6421,20 @@ func _described_row(item: ItemTableReader.Item, where: String, slot: int) -> Ite
 
 ## Column 6's description through the object text table (0x66f850 prints
 ## it when it resolves), or "".
+##
+## OURS (round 838): a description that is the archive's bare "0" filler
+## draws no line. The client keeps a key's first row (UiTextTable), and the
+## player's textdata_object.txt opens many avatar descriptions with an
+## untranslated row whose every language column is "0" -- the Wedding Hat's
+## SN_ITEM_MALL_AVATAR_M_CH_WEDDING_HAT_TT_DESC, whose second row reads "Hat
+## worn in Chinese weddings" (MEASURED). Retail draws the "0" (0x8c6a90
+## copies the field as it is); the item mall's new hover help showed it on
+## most avatars, as a lone "0" under the item's type.
 func _item_description(item: ItemTableReader.Item) -> String:
 	if _object_names == null or item.desc_strid == "" or item.desc_strid == "xxx":
 		return ""
 	var text := _object_names.get_text(item.desc_strid)
-	return "" if text == item.desc_strid else text
+	return "" if text == item.desc_strid or text.strip_edges() == "0" else text
 
 ## The player's level, Str, Int, gender (0 woman, 1 man) and country (0
 ## Chinese, 1 European) for the requirement lines' colours; -1 where unknown
@@ -6157,6 +6569,11 @@ static func bag_pages(size: int) -> int:
 
 func _bag_size_shown() -> int:
 	return _bag_size if _bag_size > 0 else BAG_PAGE_SLOTS * BAG_MAX_PAGES
+
+## The bag's entries as the server last sent them (round 838: Magic POP's
+## inventory pane reads them).
+func bag_entries() -> Array:
+	return _bag_slots
 
 ## The page shown (a test hook and the QA log).
 func bag_page() -> int:
@@ -6425,12 +6842,17 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	if _repair_mode and mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
 		_repair_click("bag", slot)
 		return
-	# Round 838: during a tool's pick a left click names the target
-	# (ItemTargetPick).
-	if item_target_mode() and mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed \
-			and (not icon.is_inside_tree() or icon.get_global_rect().has_point(mb.global_position)):
-		item_target_click(ItemTargetPick.KIND_BAG, slot, item_id)
-		return
+	# Round 838: the use-on mode's target click (_use_on_target); the press
+	# is swallowed so nothing is picked up. A right click on any slot ends
+	# the mode (c:0x682040's first test).
+	if _use_on_slot >= 0:
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if not mb.pressed:
+				_use_on_target(slot)
+			return
+		if mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed:
+			end_use_on("a right click on a slot")
+			return
 	# Used on the right RELEASE, over the slot: CIFSlotWithHelp's right press
 	# (vslot 32, 0x6665b0) only captures the mouse and its release (vslot 33,
 	# 0x685ee0) uses (READ) -- the same as the quick slots.
@@ -6438,16 +6860,6 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			and (not icon.is_inside_tree() or icon.get_global_rect().has_point(mb.global_position)):
 		if player_dead:
 			system_notice.emit(DEAD_INPUT_LINE)
-			return
-		# Round 838: the release of the right press that ended a pick.
-		if _item_target_rmb_cancel:
-			_item_target_rmb_cancel = false
-			return
-		# Round 838: a tool used on another item picks its target first
-		# (IFSlotWithHelp::FUN_00676570 0x6769a5, ItemTargetPick).
-		_load_items()
-		if ItemTargetPick.is_pick_tool(_items.get(item_id)):
-			begin_item_target(slot)
 			return
 		if is_global_chat_item(item_types(item_id)):
 			global_chat_requested.emit(slot, qty)
@@ -6463,9 +6875,26 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		if crest_kind != 0:
 			open_crest_box(slot, crest_kind)
 			return
+		# Round 838: an item used ON another item enters the use-on mode.
+		if is_use_on_item(item_types(item_id)):
+			_begin_use_on(slot)
+			return
+		# Round 838 (OURS): the Custom Title Scroll opens its box ("A window
+		# will open where you can enter your custom title").
+		if item_code_for_id(item_id) == TitleNet.CUSTOM_ITEM_CODE:
+			open_custom_title_box(slot)
+			return
 		# Round 805: a pet's potion, food or cure names the current COS.
 		if is_cos_target_item(item_types(item_id)):
 			cos_item_requested.emit(slot)
+			return
+		# Round 838: the repair hammer asks first (open_hammer_confirm).
+		if is_repair_hammer(item_types(item_id)):
+			open_hammer_confirm(slot)
+			return
+		# Round 838: the skin change scroll opens its window.
+		if is_skin_change_item(item_types(item_id)):
+			skin_change_requested.emit(slot)
 			return
 		if NetClient.current_character_name != "":
 			UiSounds.expect_use(item_types(item_id))
@@ -6580,23 +7009,17 @@ func _is_pick_click_on(event: InputEvent, control: Control) -> bool:
 func _input(event: InputEvent) -> void:
 	# Before anything else, and without consuming the press (see the function).
 	release_text_focus_on_press(event)
-	# Round 838: the right button going down ends a tool's pick (READ,
-	# CGInterface::vslot_017 WM_RBUTTONDOWN 0x77c733), not consumed; its
-	# release over a bag slot is then no use (_item_target_rmb_cancel).
-	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
-		if (event as InputEventMouseButton).pressed:
-			if item_target_mode():
-				end_item_target("the right button")
-				_item_target_rmb_cancel = true
-		elif _item_target_rmb_cancel:
-			set_deferred("_item_target_rmb_cancel", false)
-	# Round 838: Escape with a tool's pick up ends it and is spent (READ,
-	# FUN_0078b660 0x1b -> FUN_0079d620), before any window's Escape.
-	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo \
-			and (event as InputEventKey).keycode == KEY_ESCAPE and item_target_mode():
-		end_item_target("Escape")
-		get_viewport().set_input_as_handled()
-		return
+	# Round 838: Escape, or a right press over the world, ends the use-on
+	# mode (CURSOR.md; the slot's own right click is _on_inventory_cell_input's).
+	if _use_on_slot >= 0:
+		var esc := event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE
+		var rpress := event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT \
+			and not _over_any_window((event as InputEventMouseButton).position)
+		if esc or rpress:
+			end_use_on("Escape" if esc else "a right press over the world")
+			if esc:
+				get_viewport().set_input_as_handled()
 	if held_icon != null and held_icon.handle(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -6957,16 +7380,6 @@ func qa_worn_icon(slot: int) -> Control:
 	var window: HudWindow = _windows.get("inventory")
 	var holder := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + slot)) as Control if window != null else null
 	return holder.get_node_or_null("ItemIcon") as Control if holder != null else null
-
-## Round 838 (QA_INPUT's bagtip): the tooltip of the bag item `item_id` as
-## one line, or "" when it is not in the bag.
-func qa_bag_tip(item_id: int) -> String:
-	for entry in _bag_slots:
-		var index = _first_field(entry, ["slot", "slot_index", "index"])
-		var id = _first_field(entry, ["item_id", "id"])
-		if index != null and id != null and int(id) == item_id:
-			return ItemTooltipLines.as_text(item_tip_lines(item_id, "bag", int(index))).replace("\n", " | ")
-	return ""
 
 ## Round 824 (QA): the bag slot holding an item with code name `code`, or -1.
 func bag_slot_of_code(code: String) -> int:
@@ -8233,6 +8646,9 @@ func _fill_equipment_slots(items: Array) -> void:
 				_set_item_tip(icon, -1)
 				_set_item_seal_edge(icon, -1)
 				DurabilityMark.apply(icon, DurabilityMark.State.NONE, null, null)
+			var count_clear := slot.get_node_or_null("CountLabel") as Label
+			if count_clear != null:
+				count_clear.text = ""
 	var durability := _durability_map(NetClient.last_equipment_durabilities)
 	for entry in items:
 		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
@@ -8262,6 +8678,11 @@ func _fill_equipment_slots(items: Array) -> void:
 			# (playtest 2026-09-20, item 7).
 			icon.set_meta("worn_slot", int(slot_index))
 			icon.set_meta("worn_item_id", int(item_id))
+			# Round 838: the ammunition in slot 7 shows its count, the bag's
+			# rule (an equipment slot is kind 0x47, whose case in
+			# FUN_00680da0 tests the same expendable type word, READ); the
+			# count is the worn record's (NetClient.last_equipment_instances).
+			_set_worn_count(slot, int(item_id), int(slot_index))
 			if not icon.has_meta("worn_click_wired"):
 				icon.set_meta("worn_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void:
@@ -8270,21 +8691,64 @@ func _fill_equipment_slots(items: Array) -> void:
 							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot"):
 						_repair_click("worn", int(icon.get_meta("worn_slot")))
 						return
-					# Round 838: a worn target during a tool's pick (its box's
-					# Yes then refuses it, 0x1882; ItemTargetPick).
-					if item_target_mode() and ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
-							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot"):
-						item_target_click(ItemTargetPick.KIND_WORN, int(icon.get_meta("worn_slot")), int(icon.get_meta("worn_item_id", 0)))
+					# Round 838 (lane 2): a worn target during a 3/3/13/8 tool's
+					# use-on mode opens the box, whose OK refuses it with 0x1882
+					# (ItemTargetPick; READ c:0x680fa0 takes worn slots, 0x796a85
+					# case 8 refuses them).
+					if _use_on_slot >= 0 and ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
+							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot") \
+							and ItemTargetPick.is_switch_tool(bag_item_types(_use_on_slot)):
+						var src := _use_on_slot
+						end_use_on("a worn target clicked")
+						_use_on_confirm(src, int(icon.get_meta("worn_slot")), true)
 						return
 					if _is_pick_click_on(ev, icon) and icon.texture != null and icon.has_meta("worn_slot"):
 						pick_up_icon({"kind": "worn", "slot": int(icon.get_meta("worn_slot")),
 							"item_id": int(icon.get_meta("worn_item_id", 0)), "icon": icon.texture},
 							icon.texture, icon, (ev as InputEventMouseButton).global_position))
 
+## The worn slot's count label (round 838): an expendable's stack -- the
+## arrows or bolts in slot 7 -- from its worn record, else nothing.
+func _set_worn_count(slot: Control, item_id: int, slot_index: int) -> void:
+	var label := slot.get_node_or_null("CountLabel") as Label
+	if label == null:
+		return
+	var inst = NetClient.last_equipment_instances.get(slot_index)
+	var qty := int(inst.count) if inst != null else 0
+	label.text = str(qty) if qty > 0 and shows_count(item_id, qty) else ""
+
+## 0x3201 (round 838): the worn ammunition's new count (c:0x882280, READ):
+## the slot-7 count redrawn, and the slot cleared at 0 (c:0x6ae4e0) -- the
+## server's reload, when there is one, follows as the worn list.
+func _on_ammo_count(count: int) -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return
+	var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + AMMO_SLOT)) as Control
+	if slot == null:
+		return
+	var icon := slot.get_node_or_null("ItemIcon") as TextureRect
+	if count <= 0:
+		if icon != null:
+			icon.texture = null
+			_set_item_tip(icon, -1)
+			_set_item_seal_edge(icon, -1)
+			icon.remove_meta("worn_slot")
+		var label := slot.get_node_or_null("CountLabel") as Label
+		if label != null:
+			label.text = ""
+		return
+	if icon != null and icon.has_meta("worn_item_id"):
+		_set_worn_count(slot, int(icon.get_meta("worn_item_id")), AMMO_SLOT)
+
+## The worn slot ammunition is in (equipment slot 7, READ CGStorage::GetItem(7)).
+const AMMO_SLOT := 7
+
 func connect_net() -> void:
 	if _net_connected:
 		return
 	_net_connected = true
+	NetClient.ammo_count.connect(_on_ammo_count)
 	# The inventory's authored presentation is its lattice grid
 	# (GDR_INVENTORY_LATTICE), filled with item icons -- the same as the real
 	# client.

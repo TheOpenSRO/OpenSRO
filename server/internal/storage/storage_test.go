@@ -307,34 +307,36 @@ func TestExpandIsPerAccountAndCapped(t *testing.T) {
 		t.Fatalf("withdrawing from slot 50: %v", err)
 	}
 
-	for _, want := range []int{110, 140, 170, 200} {
-		if n, err := f.svc.Expand(ctx, f.aria.ID, inventory.WarehouseAdditionSlots); err != nil || n != want {
-			t.Fatalf("Expand = %d, %v; want %d", n, err, want)
+	// The second use is the account's last (round 838: "Limited to 2 times
+	// only per account."), whichever of its characters makes it.
+	if n, err := f.svc.Expand(ctx, f.bram.ID, inventory.WarehouseAdditionSlots); err != nil || n != 110 {
+		t.Fatalf("the second Expand = %d, %v; want 110", n, err)
+	}
+	for _, c := range []*character.Character{f.aria, f.bram} {
+		if _, err := f.svc.Expand(ctx, c.ID, inventory.WarehouseAdditionSlots); !errors.Is(err, ErrExpansionRefused) {
+			t.Fatalf("a third Expand by %s: got %v, want ErrExpansionRefused", c.Name, err)
 		}
 	}
-	if _, err := f.svc.Expand(ctx, f.bram.ID, inventory.WarehouseAdditionSlots); !errors.Is(err, ErrExpansionRefused) {
-		t.Fatalf("Expand from 200: got %v, want ErrExpansionRefused (230 > 210)", err)
-	}
-	if got := capacityOf(f.bram); got != 200 {
-		t.Fatalf("a refused expansion left %d, want 200", got)
+	if got := capacityOf(f.bram); got != 110 {
+		t.Fatalf("a refused expansion left %d, want 110", got)
 	}
 
-	// The bound is `size + amount < 0xd3`: 180 + 30 = 210 passes, 181 + 30 fails.
-	for _, tc := range []struct {
-		seeded int
-		want   error
-	}{{180, nil}, {181, ErrExpansionRefused}} {
-		g := expandable(newFixture(t))
-		if n, err := g.accounts.ExpandChest(ctx, g.account.ID, tc.seeded-30, 30, MaxCapacity); err != nil || n != tc.seeded {
-			t.Fatalf("seeding %d: %d, %v", tc.seeded, n, err)
-		}
-		n, err := g.svc.Expand(ctx, g.aria.ID, inventory.WarehouseAdditionSlots)
-		if !errors.Is(err, tc.want) {
-			t.Fatalf("Expand from %d: got %d, %v; want %v", tc.seeded, n, err, tc.want)
-		}
-		if tc.want == nil && n != MaxCapacity {
-			t.Fatalf("Expand from %d = %d, want %d", tc.seeded, n, MaxCapacity)
-		}
+	// The ceiling is the default plus two uses, inside the READ bound
+	// `size + amount < 0xd3`: from the original's 150 it is 210 exactly.
+	if got := AdditionCeiling(inventory.WarehouseAdditionSlots); got != DefaultCapacity+2*inventory.WarehouseAdditionSlots {
+		t.Fatalf("AdditionCeiling(30) = %d, want %d", got, DefaultCapacity+60)
+	}
+	if got := AdditionCeiling(100); got != MaxCapacity {
+		t.Fatalf("AdditionCeiling(100) = %d, want MaxCapacity %d", got, MaxCapacity)
+	}
+	// A size already past the ceiling (grown before round 838) is refused, and
+	// kept.
+	g := expandable(newFixture(t))
+	if n, err := g.accounts.ExpandChest(ctx, g.account.ID, 150, 30, MaxCapacity); err != nil || n != 180 {
+		t.Fatalf("seeding 180: %d, %v", n, err)
+	}
+	if _, err := g.svc.Expand(ctx, g.aria.ID, inventory.WarehouseAdditionSlots); !errors.Is(err, ErrExpansionRefused) {
+		t.Fatalf("Expand from 180: got %v, want ErrExpansionRefused", err)
 	}
 }
 

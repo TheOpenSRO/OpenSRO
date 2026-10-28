@@ -646,24 +646,23 @@ func TestUseWarehouseExpansionItem(t *testing.T) {
 		t.Fatalf("after one warehouse item the warehouse is %d, want 80", got)
 	}
 
-	for _, want := range []int{110, 140, 170, 200} {
-		if res := use(warehouseAddition); res.Error != "" {
-			t.Fatalf("expanding to %d: refused %q", want, res.Error)
-		}
-		if got := capacity(); got != want {
-			t.Fatalf("warehouse is %d, want %d", got, want)
-		}
+	if res := use(warehouseAddition); res.Error != "" {
+		t.Fatalf("expanding to 110: refused %q", res.Error)
+	}
+	if got := capacity(); got != 110 {
+		t.Fatalf("warehouse is %d, want 110", got)
 	}
 
-	// At 200, +30 would be 230: refused with 0x18fe, the item kept.
+	// The third use: "Limited to 2 times only per account." (round 838) --
+	// refused with 0x18fe, the item kept.
 	if res := use(warehouseAddition); res.Error != errStorageExpansionRefused {
-		t.Errorf("the warehouse item at 200: got %+v, want the 0x18fe refusal %q", res, errStorageExpansionRefused)
+		t.Errorf("a third warehouse item: got %+v, want the 0x18fe refusal %q", res, errStorageExpansionRefused)
 	}
-	if _, n := count(warehouseAddition); n != 1 {
-		t.Errorf("the refused warehouse item was consumed: %d left, want 1", n)
+	if _, n := count(warehouseAddition); n != 4 {
+		t.Errorf("the refused warehouse item was consumed: %d left, want 4", n)
 	}
-	if got := capacity(); got != 200 {
-		t.Errorf("after the refusal the warehouse is %d, want 200", got)
+	if got := capacity(); got != 110 {
+		t.Errorf("after the refusal the warehouse is %d, want 110", got)
 	}
 
 	// The bag item: refused with 0x18fe, kept, heals nothing.

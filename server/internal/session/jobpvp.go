@@ -209,13 +209,14 @@ type pvpHit struct {
 func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *refdata.Skill, terms skillBlowTerms, t pvpTarget) ([]pvpHit, error) {
 	c := newCastContext(ctx, d, attacker.CharacterID, attacker, row, terms)
 	magical := terms.attackType.IsMagical() && !terms.attackType.IsPhysical()
-	defLevel, def, defPct, block, parry := 0, 0, 0, 0, 0.0
+	defLevel, def, block, parry := 0, 0, 0, 0.0
+	defPct := 0.0
 	critEvade := 0.0
 	if t.cos != nil {
 		cosWorld.mu.Lock()
 		r := t.cos.row
 		cosWorld.mu.Unlock()
-		defLevel, def, defPct, block = r.Level, r.Defense(), r.Level, r.Block()
+		defLevel, def, defPct, block = r.Level, r.Defense(), float64(r.Level), r.Block()
 		parry = float64(combat.MonsterRate(r.Level))
 		critEvade = monsterEvasion
 	} else {
@@ -229,7 +230,7 @@ func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *re
 		if err != nil {
 			return nil, err
 		}
-		defPct = playerMitigationPercent
+		defPct = playerMitigationPercent(ctx, t.char, d.eq, d.items, magical)
 		block = defenderBlock(ctx, t.char, d.eq, d.items)
 		parry, _ = defenderParryRate(ctx, t.char, d.eq, d.items)
 		critEvade = playerEvadeCrit(ctx, t.char, d.eq)
@@ -263,6 +264,11 @@ func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *re
 			dmg := combat.ApplySkillPercent(blow.Damage, terms.damagePercent)
 			dmg = applyBuffDamage(attacker.CharacterID, magical, dmg)
 			dmg = applyGetvDamage(attacker.CharacterID, row, dmg)
+			// A player defender's damage-taken multiplier (round 838,
+			// applyPlayerTaken), where skillhit.go applies a monster's.
+			if t.cos == nil {
+				dmg = applyPlayerTaken(t.char, magical, dmg)
+			}
 			if d.zerk != nil && terms.damagePercent != combat.SkillPercentZero {
 				dmg = d.zerk.Boost(attacker.CharacterID, dmg)
 			}
@@ -424,6 +430,13 @@ func handlePvPAttack(ctx context.Context, sess *gateway.Session, d combatDeps, c
 		pvpKeepUp.cancel(characterID)
 		return refuse(pvpRefusalText(code))
 	}
+	// The ammunition (round 838, ammo.go): Tick_Attack's phase 0 gate.
+	if base, ok := baseAttackOf(ctx, characterID, d.eq, d.items); ok {
+		if r := ammoRefusal(ctx, d.chars, d.eq, d.items, characterID, base); r != "" {
+			pvpKeepUp.cancel(characterID)
+			return refuse(r)
+		}
+	}
 	if !pvpInReach(ctx, d, attacker, t, 0) {
 		return refuse(refusedTooFar)
 	}
@@ -441,6 +454,13 @@ func pvpSwing(ctx context.Context, sess *gateway.Session, d combatDeps, characte
 	hits, err := pvpStrike(ctx, d, attacker, row, skillBlowTerms{damageBonus: sw.flat, damagePercent: sw.percent, hits: sw.hits, attackType: sw.atk}, t)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
+	}
+	// The ammunition (round 838, ammo.go): spent before the blow lands; none
+	// left, no blow and the repeats end.
+	if r := spendAmmo(ctx, sess, d.chars, d.eq, d.inv, d.items, characterID, row); r != "" {
+		pvpKeepUp.cancel(characterID)
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: r, MonsterID: int64(t.uid),
+			TargetType: t.kind, HasTargetType: true}).Encode()})
 	}
 	o := pvpApply(ctx, d, attacker, t, hits)
 	wearWeapon(ctx, d.eq, characterID, sw.hits)
@@ -667,7 +687,7 @@ func giveCharacterExp(ctx context.Context, d combatDeps, e world.Entity, exp int
 		_ = d.chars.ResetHP(ctx, e.CharacterID)
 		bonus := character.BonusOf(e.CharacterID)
 		if d.mp != nil {
-			d.mp.Refill(e.CharacterID, character.MaxMPFor(newInt+bonus.Int, newLevel)+bonus.MP)
+			d.mp.Refill(e.CharacterID, character.MaxMPWith(newInt, newLevel, bonus))
 		}
 		lu = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 	}
@@ -728,6 +748,10 @@ func performSkillAttackPvP(ctx context.Context, d combatDeps, sess *gateway.Sess
 	hits, err := pvpStrike(ctx, d, attacker, row, terms, t)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "damage calculation failed"}).Encode()})
+	}
+	// The ammunition (round 838, ammo.go), as performSkillAttack spends it.
+	if r := spendAmmo(ctx, sess, d.chars, d.eq, d.inv, d.items, characterID, row); r != "" {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: r}).Encode()})
 	}
 	o := pvpApply(ctx, d, attacker, t, hits)
 	hp := 0

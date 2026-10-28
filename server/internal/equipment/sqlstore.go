@@ -26,6 +26,8 @@ ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL
 ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS opt_level SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS mag_params BYTEA NOT NULL DEFAULT ''::bytea;
 ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS adv_elixir SMALLINT NOT NULL DEFAULT 0;
+-- The worn stack's count (round 838): the ammunition in slot 7; 1 for the rest.
+ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS model_item_id BIGINT NOT NULL DEFAULT 0;
 `
 
@@ -123,7 +125,7 @@ func validSlot(slot Slot) bool {
 // Get implements Store.
 func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, error) {
 	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx,
-		`SELECT slot, item_id, variance, durability, opt_level, mag_params, adv_elixir, model_item_id FROM equipment_slots WHERE character_id = $1`, characterID)
+		`SELECT slot, item_id, variance, durability, opt_level, mag_params, adv_elixir, quantity, model_item_id FROM equipment_slots WHERE character_id = $1`, characterID)
 	if err != nil {
 		return nil, fmt.Errorf("equipment: listing equipped items: %w", err)
 	}
@@ -136,7 +138,7 @@ func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, erro
 		var variance int64
 		var opt, adv int
 		var params []byte
-		if err := rows.Scan(&slot, &e.ItemID, &variance, &e.Durability, &opt, &params, &adv, &e.Model); err != nil {
+		if err := rows.Scan(&slot, &e.ItemID, &variance, &e.Durability, &opt, &params, &adv, &e.Quantity, &e.Model); err != nil {
 			return nil, fmt.Errorf("equipment: scanning row: %w", err)
 		}
 		e.Slot = Slot(slot)
@@ -199,6 +201,10 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 		return ErrInventorySlotEmpty
 	}
 	inst := incoming.Instance()
+	// The whole stack is worn (round 838): a piece of equipment is a stack of
+	// one, and the ammunition in slot 7 goes on with its count, as the
+	// original's equip moves the bag item itself (CGStorage::SwapItem, READ).
+	count := max(1, incoming.Quantity)
 
 	// A swap, as retail's CGObjPC::AttachEquipItem (0x00524cd0) does it
 	// with CGStorage::SwapItem(bag, worn) (round 652, READ): the incoming
@@ -206,10 +212,10 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	// lost) into the bag slot it left. Taken under the bag's lock, checked to
 	// be the item just read.
 	if tk, ok := s.inv.(inventory.Taker); ok {
-		if _, inst, err = tk.TakeItem(ctx, characterID, inventorySlot, 1, incoming.ItemID); err != nil {
+		if _, inst, err = tk.TakeItem(ctx, characterID, inventorySlot, count, incoming.ItemID); err != nil {
 			return fmt.Errorf("equipment: removing item from inventory: %w", err)
 		}
-	} else if err := s.inv.RemoveItem(ctx, characterID, inventorySlot, 1); err != nil {
+	} else if err := s.inv.RemoveItem(ctx, characterID, inventorySlot, count); err != nil {
 		return fmt.Errorf("equipment: removing item from inventory: %w", err)
 	}
 	before, _ := s.inv.List(ctx, characterID)
@@ -223,11 +229,11 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO equipment_slots (character_id, slot, item_id, variance, durability, opt_level, mag_params, adv_elixir, model_item_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO equipment_slots (character_id, slot, item_id, variance, durability, opt_level, mag_params, adv_elixir, quantity, model_item_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (character_id, slot) DO UPDATE SET item_id = excluded.item_id, variance = excluded.variance, durability = excluded.durability,
-		   opt_level = excluded.opt_level, mag_params = excluded.mag_params, adv_elixir = excluded.adv_elixir, model_item_id = excluded.model_item_id`,
+		   opt_level = excluded.opt_level, mag_params = excluded.mag_params, adv_elixir = excluded.adv_elixir, quantity = excluded.quantity, model_item_id = excluded.model_item_id`,
 		characterID, int(slot), incoming.ItemID, int64(inst.Variance), inst.Durability,
-		int(inst.OptLevel), inventory.EncodeMagParams(inst.MagParams), int(inst.AdvElixir), inst.Model); err != nil {
+		int(inst.OptLevel), inventory.EncodeMagParams(inst.MagParams), int(inst.AdvElixir), count, inst.Model); err != nil {
 		return fmt.Errorf("equipment: equipping item: %w", err)
 	}
 	return tx.Commit()
@@ -248,11 +254,11 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 	ctx = tx.Ctx
 
 	var itemID, variance, model int64
-	var dura, opt, adv int
+	var dura, opt, adv, qty int
 	var params []byte
 	err = tx.QueryRowContext(ctx,
-		`SELECT item_id, variance, durability, opt_level, mag_params, adv_elixir, model_item_id FROM equipment_slots WHERE character_id = $1 AND slot = $2 FOR UPDATE`,
-		characterID, int(slot)).Scan(&itemID, &variance, &dura, &opt, &params, &adv, &model)
+		`SELECT item_id, variance, durability, opt_level, mag_params, adv_elixir, quantity, model_item_id FROM equipment_slots WHERE character_id = $1 AND slot = $2 FOR UPDATE`,
+		characterID, int(slot)).Scan(&itemID, &variance, &dura, &opt, &params, &adv, &qty, &model)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
 	}
@@ -260,7 +266,7 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 		return fmt.Errorf("equipment: reading slot: %w", err)
 	}
 
-	if err := s.inv.AddItemInstance(ctx, characterID, itemID, 1, inventory.Instance{Variance: uint64(variance), Durability: dura,
+	if err := s.inv.AddItemInstance(ctx, characterID, itemID, max(1, qty), inventory.Instance{Variance: uint64(variance), Durability: dura,
 		OptLevel: uint8(opt), MagParams: inventory.DecodeMagParams(params), AdvElixir: uint8(adv), Model: model}); err != nil {
 		return fmt.Errorf("equipment: returning item to inventory: %w", err)
 	}
@@ -306,6 +312,41 @@ func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot Slot
 		characterID, int(slot), inst.Model)
 	if err != nil {
 		return fmt.Errorf("equipment: setting the instance of slot %d: %w", slot, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrSlotEmpty
+	}
+	return nil
+}
+
+// SpendWorn implements AmmoStore: one UPDATE, so two spends never read the
+// same count.
+func (s *SQLStore) SpendWorn(ctx context.Context, characterID int64, slot Slot, n int) (int, error) {
+	if !validSlot(slot) {
+		return 0, ErrInvalidSlot
+	}
+	var left int
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
+		`UPDATE equipment_slots SET quantity = GREATEST(quantity - $1, 0) WHERE character_id = $2 AND slot = $3 RETURNING quantity`,
+		max(0, n), characterID, int(slot)).Scan(&left)
+	if err == sql.ErrNoRows {
+		return 0, ErrSlotEmpty
+	}
+	if err != nil {
+		return 0, fmt.Errorf("equipment: spending slot %d: %w", slot, err)
+	}
+	return left, nil
+}
+
+// DiscardWorn implements AmmoStore.
+func (s *SQLStore) DiscardWorn(ctx context.Context, characterID int64, slot Slot) error {
+	if !validSlot(slot) {
+		return ErrInvalidSlot
+	}
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
+		`DELETE FROM equipment_slots WHERE character_id = $1 AND slot = $2`, characterID, int(slot))
+	if err != nil {
+		return fmt.Errorf("equipment: discarding slot %d: %w", slot, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrSlotEmpty

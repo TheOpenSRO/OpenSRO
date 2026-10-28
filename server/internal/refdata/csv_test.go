@@ -733,8 +733,8 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	if got := load(append(append([]string(nil), row...), "1")).ChildItemCount; got != 1 {
 		t.Errorf("column 89 loaded ChildItemCount %d, want 1", got)
 	}
-	if ItemCSVColumnCount != 93 {
-		t.Errorf("ItemCSVColumnCount %d, want 93", ItemCSVColumnCount)
+	if ItemCSVColumnCount != 97 {
+		t.Errorf("ItemCSVColumnCount %d, want 97", ItemCSVColumnCount)
 	}
 	// Round 795: column 90 is Desc2, a ride scroll's level list.
 	withDesc := append(append([]string(nil), row...), "1", "120")
@@ -748,13 +748,21 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	if got := load(withDesc).ReviveCost; got != 0 {
 		t.Errorf("a 91-column export loaded ReviveCost %d, want 0", got)
 	}
-	// Round 838: column 92 is OrgCodeName (itemdata column 4), the gender
-	// switch tool's twin; a 92-column export reads "".
-	withRevive := append(append([]string(nil), withDesc...), "297")
+	// Round 838: columns 92..95 are the accessories' absorption ranges.
+	withAbsorb := append(append([]string(nil), withDesc...), "297", "17.4", "18", "6.6", "8.1")
+	if it := load(withAbsorb); it.PhysAbsorbMin != 17.4 || it.PhysAbsorbMax != 18 || it.MagAbsorbMin != 6.6 || it.MagAbsorbMax != 8.1 {
+		t.Errorf("columns 92..95 loaded %v %v %v %v, want 17.4 18 6.6 8.1", it.PhysAbsorbMin, it.PhysAbsorbMax, it.MagAbsorbMin, it.MagAbsorbMax)
+	}
+	if it := load(append(append([]string(nil), withDesc...), "297")); it.PhysAbsorbMax != 0 || it.MagAbsorbMax != 0 {
+		t.Errorf("a 92-column export loaded absorption %v / %v, want 0", it.PhysAbsorbMax, it.MagAbsorbMax)
+	}
+	// Round 838: column 96 is OrgCodeName (itemdata column 4), the gender
+	// switch tool's twin; a 96-column export reads "".
+	withRevive := append(append([]string(nil), withDesc...), "297", "0", "0", "0", "0")
 	if got := load(withRevive).OrgCodeName; got != "" {
-		t.Errorf("a 92-column export loaded OrgCodeName %q, want empty", got)
+		t.Errorf("a 96-column export loaded OrgCodeName %q, want empty", got)
 	}
 	if got := load(append(append([]string(nil), withRevive...), "ITEM_CH_W_HEAVY_01_BA_A_DEF")).OrgCodeName; got != "ITEM_CH_W_HEAVY_01_BA_A_DEF" {
-		t.Errorf("column 92 loaded OrgCodeName %q", got)
+		t.Errorf("column 96 loaded OrgCodeName %q", got)
 	}
 }

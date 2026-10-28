@@ -111,6 +111,44 @@ func build_name_input(builder: UiBuilder) -> bool:
 	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), NAME_CANCEL_AT, press_cancel)
 	return true
 
+## Round 838 (OURS): the Name Change Scroll's box at character select -- the
+## naming box with retail's own rename line (textuisystem
+## UIIT_MSG_ITEM_CHANGE_NAME, "Enter the new name of your character.": retail
+## has a rename item of its own, whose window was not read) over the edit.
+## False without the layout.
+func build_rename_input(builder: UiBuilder) -> bool:
+	if not build_name_input(builder):
+		return false
+	name = "RenameInput"
+	var title := node("GDR_MB_INSERT_MSG_TITLE")
+	if title != null:
+		var l := builder.set_static_text(title, text("UIIT_MSG_ITEM_CHANGE_NAME", "Enter the new name of your character."))
+		if l != null:
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			l.add_theme_color_override("font_color", NAME_TITLE_COLOUR)
+	return true
+
+## Round 838 (OURS): the Custom Title Scroll's box -- "2-A window will open
+## where you can enter your custom title" (the scroll's description; the
+## private server's window was not seen): the naming box with our own line
+## over the edit, the edit taking TitleNet.CUSTOM_MAX characters. False
+## without the layout.
+const CUSTOM_TITLE_LINE := "Enter your custom title."
+
+func build_custom_title_input(builder: UiBuilder) -> bool:
+	if not build_name_input(builder):
+		return false
+	name = "CustomTitleInput"
+	var title := node("GDR_MB_INSERT_MSG_TITLE")
+	if title != null:
+		var l := builder.set_static_text(title, CUSTOM_TITLE_LINE)
+		if l != null:
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			l.add_theme_color_override("font_color", NAME_TITLE_COLOUR)
+	if edit != null:
+		edit.max_length = TitleNet.CUSTOM_MAX
+	return true
+
 ## Builds the Add friend box, its edit holding `prefill`. False without the
 ## layout.
 func build_friend_add_input(builder: UiBuilder, prefill: String) -> bool:

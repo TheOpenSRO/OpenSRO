@@ -58,6 +58,13 @@ func _initialize() -> void:
 		_check(u != null and u.type == 6 and u.sender_name == "Aria" and u.message_text == "WTS blade",
 			"decode_update reads type, sender, text")
 		_check(net.call("decode_update", PackedByteArray([6, 9, 0])) == null, "a truncated update decodes to null")
+		_check(u != null and u.color == 0, "a plain global carries no colour")
+		# Round 838: a coloured global's u32 colour suffix.
+		var g := p.duplicate()
+		g.append_array(PackedByteArray([0x99, 0xfe, 0x71, 0xff]))
+		var ug = net.call("decode_update", g)
+		_check(ug != null and ug.message_text == "WTS blade" and ug.color == 0xff71fe99,
+			"decode_update reads a green global's colour suffix")
 	else:
 		_check(false, "ChatNet has decode_update")
 

@@ -158,7 +158,17 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 			return targetOutcome{}, err
 		}
 		base = combat.ApplyMasteryScale(base, c.terms.masteryPercent)
-		blow := resolveBlow(base+bonus, defPct, def, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
+		// Round 838: a player's p188 (a devil's spirit skill's 'msid') is
+		// the chance to skip the monster's defence: Combat_ResolveDamage
+		// rolls trunc(p188) for a PC hitting a non-PC (0x58eddb..0x58ee35)
+		// and sets hit flag 0x20, on which Formula_Mitigate* skips d / (1 +
+		// p7/100) - p5 (0x40e4f7, READ). OURS: the 0x20 is not sent (the
+		// client's reading of it is INFERRED).
+		hitDef, hitDefPct := def, defPct
+		if ignoreDefenceRoll(c.casterID) {
+			hitDef, hitDefPct = 0, 0
+		}
+		blow := resolveBlow(base+bonus, float64(hitDefPct), hitDef, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
 		dmg := 0
 		switch {
 		case blow.Blocked:
@@ -176,7 +186,9 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 				// The attacker's damage percent and debuffed multiplier
 				// (p128..131, p178/179), the target's multiplier (p174..177),
 				// inside the mitigation's tail (READ 0x40e5a4, 0x40e75b).
-				dmg = applyBuffDamage(c.casterID, magical, dmg)
+				// Round 838: against a unique (class 3) the attacker's
+				// 'umdu' percent joins them (applyBuffDamageVs).
+				dmg = applyBuffDamageVs(c.casterID, magical, m.Rarity == combat.RarityUnique, dmg)
 				// A passive's variable on the row's getv key (passives.go).
 				dmg = applyGetvDamage(c.casterID, c.row, dmg)
 				dmg = applyMonsterTaken(m.ID, magical, dmg)
@@ -383,6 +395,12 @@ func performSkillAttack(ctx context.Context, d combatDeps, sess *gateway.Session
 	}
 	if len(outcomes) == 0 {
 		return refuse("target not found")
+	}
+	// The ammunition (round 838, ammo.go): spent once a cast, after the
+	// blows are resolved and before they land (Skill_BuildUseContext_A); none
+	// in slot 7 now, no blow.
+	if r := spendAmmo(ctx, sess, chars, eq, d.inv, items, characterID, castRow); r != "" {
+		return refuse(r)
 	}
 	cc.apply(outcomes, action)
 	if report != nil && outcomes[0].before.ID == primaryID {

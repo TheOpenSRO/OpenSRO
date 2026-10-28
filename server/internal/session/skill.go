@@ -867,13 +867,19 @@ func useSkillHandler(
 		if err != nil {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
 		}
+		// Round 838: a worn, awake devil's spirit's skills are in the book
+		// while it is (spiritSkillGranted).
+		spiritGranted := false
+		if !knows && spiritSkillGranted(ctx, characterID, req.SkillID) {
+			knows, spiritGranted = true, true
+		}
 		if !knows {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill not known"}).Encode()})
 		}
 		// A known skill must also be one a player of this race may hold (the
 		// round 691 review, playerskill.go): a monster's row or another race's,
 		// learned before the learn gate refused it, is refused and dropped.
-		if castRow != nil {
+		if castRow != nil && !spiritGranted {
 			owned, err := chars.GetByID(ctx, characterID)
 			if err != nil {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
@@ -1003,17 +1009,11 @@ func useSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill on cooldown"}).Encode()})
 		}
 
-		// NOT MODELLED, disclosed: AMMUNITION. A skill carrying the `cnsm`
-		// parameter spends ammunition, and the engine refuses the cast with
-		// UIIT_SKILL_USE_FAIL_RUNOUT_AMMO when the player has none (the check at
-		// 0058e348, guarded by IsPC). 448 real skills carry it -- every
-		// SKILL_CH_BOW and SKILL_EU_ROG -- and the record is
-		// (TypeID3, TypeID4, count): one arrow for bows, one or three bolts for
-		// rogues. See docs/protocol/skill_params.md.
-		//
-		// OpenSRO neither stocks nor spends ammunition, so there is nothing to
-		// check. Written down so that adding quivers later comes with the
-		// requirement already stated.
+		// AMMUNITION (round 838, ammo.go): a row carrying `cnsm` -- 386 real
+		// rows, every SKILL_CH_BOW and SKILL_EU_ROG and the crossbow's base
+		// attack -- is refused 0x300e unless slot 7 holds ammunition of its
+		// kind (the gate's row 0x20, after the HP/MP rows below), and spends
+		// it when its blows resolve (performSkillAttack).
 
 		// THE REACH, BEFORE ANYTHING IS SPENT (round 534). The engine never
 		// pays for a cast its target is out of reach of: Tick_UseSkill
@@ -1197,6 +1197,11 @@ func useSkillHandler(
 			defer l.Unlock()
 		}
 		if refusal := skillCostRefusal(ctx, chars, mp, characterID, hpCost, mpCost); refusal != "" {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
+		}
+		// The ammunition (round 838, ammo.go): the gate's row 0x20
+		// (0x58e32d), after its HP/MP rows, at the 0x7074 accept (mask 0x37).
+		if refusal := ammoRefusal(ctx, chars, eq, items, characterID, castRow); refusal != "" {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
 		}
 		// The recast rule after the costs' test, as the gate orders them
@@ -1947,34 +1952,45 @@ func SkillStateHandlerWithRefs(chars character.Store, store skill.Store, skillRe
 		if errStr != "" {
 			return send(&SkillStateResult{Error: errStr})
 		}
-		owned, err := chars.GetByID(ctx, characterID)
-		if err != nil {
-			return send(&SkillStateResult{Error: "lookup failed"})
-		}
-		points, err := store.SkillPoints(ctx, characterID)
-		if err != nil {
-			return send(&SkillStateResult{Error: "lookup failed"})
-		}
-		levels, err := store.MasteryLevels(ctx, characterID)
-		if err != nil {
-			return send(&SkillStateResult{Error: "lookup failed"})
-		}
-		result := &SkillStateResult{Level: int32(owned.Level), SkillPoints: int32(points)}
-		// Every mastery the character HOLDS, a level-0 one included -- retail's
-		// character data carries the whole _CharSkillMastery list (seeded at
-		// level 0 by _AddNewChar), and the client's skill window lays out
-		// exactly that list (FUN_006aa3e0 walks the server's mastery map into
-		// one tab manager per TabID, READ). Round 691: the client picks the
-		// race's masteries from this; another race's stored row is not sent.
-		for _, id := range skill.DefaultMasteries(characterCountry(owned)) {
-			result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(levels[id])})
-		}
-		sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
-		if learned, err := store.KnownSkills(ctx, characterID); err == nil {
-			result.KnownSkills = purgeUnholdable(ctx, store, skillRef, characterID, characterCountry(owned), learned)
+		result, errStr := buildSkillState(ctx, chars, store, skillRef, characterID)
+		if errStr != "" {
+			return send(&SkillStateResult{Error: errStr})
 		}
 		return send(result)
 	}
+}
+
+// buildSkillState is OpSkillStateResult's content for characterID (the
+// handler's, and round 838's push after a service scroll changed the skills);
+// a non-empty string is the refusal.
+func buildSkillState(ctx context.Context, chars character.Store, store skill.Store, skillRef SkillRefStore, characterID int64) (*SkillStateResult, string) {
+	owned, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return nil, "lookup failed"
+	}
+	points, err := store.SkillPoints(ctx, characterID)
+	if err != nil {
+		return nil, "lookup failed"
+	}
+	levels, err := store.MasteryLevels(ctx, characterID)
+	if err != nil {
+		return nil, "lookup failed"
+	}
+	result := &SkillStateResult{Level: int32(owned.Level), SkillPoints: int32(points)}
+	// Every mastery the character HOLDS, a level-0 one included -- retail's
+	// character data carries the whole _CharSkillMastery list (seeded at
+	// level 0 by _AddNewChar), and the client's skill window lays out
+	// exactly that list (FUN_006aa3e0 walks the server's mastery map into
+	// one tab manager per TabID, READ). Round 691: the client picks the
+	// race's masteries from this; another race's stored row is not sent.
+	for _, id := range skill.DefaultMasteries(characterCountry(owned)) {
+		result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(levels[id])})
+	}
+	sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
+	if learned, err := store.KnownSkills(ctx, characterID); err == nil {
+		result.KnownSkills = purgeUnholdable(ctx, store, skillRef, characterID, characterCountry(owned), learned)
+	}
+	return result, ""
 }
 
 // RaiseMasteryRequest is the OpRaiseMastery payload.

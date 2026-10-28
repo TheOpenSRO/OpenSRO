@@ -1170,6 +1170,20 @@ func (b *Books) EndAll(ownerID int64) ([]Record, Speed) {
 	return append([]Record(nil), bk.records...), Speed{RunSpeed: after, Changed: after != before}
 }
 
+// EndAllBut is EndAll for the records keep does not keep (round 838: a
+// death keeps an item's skill job buffs). The owner's own link records go,
+// as EndAll's do.
+func (b *Books) EndAllBut(ownerID int64, keep func(Record) bool) ([]Record, Speed) {
+	if keep == nil {
+		return b.EndAll(ownerID)
+	}
+	ended, sp := b.endWhere(ownerID, func(r Record) bool { return !keep(r) })
+	b.mu.Lock()
+	delete(b.links, ownerID)
+	b.mu.Unlock()
+	return ended, sp
+}
+
 // Active returns ownerID's records, oldest first.
 func (b *Books) Active(ownerID int64) []Record {
 	b.mu.Lock()

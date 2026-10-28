@@ -122,7 +122,7 @@ func useCOSConsumable(ctx context.Context, sess *gateway.Session, inv inventory.
 			return cosRefusal(sess, cos.ErrCannotBeUsed, "lookup failed")
 		}
 		bonus := character.BonusOf(characterID)
-		maxHP := character.MaxHPFor(c.Str+bonus.Str, c.Level) + bonus.HP
+		maxHP := character.MaxHPWith(c.Str, c.Level, bonus)
 		hp, _ := potionRestore(it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct, c.Level, c.Str+bonus.Str, c.Int+bonus.Int, maxHP, 0)
 		if hp < 1 {
 			// FUN_0049aa70 came out below 1: result 2, nothing spent.
@@ -213,12 +213,27 @@ func useOnPetItem(ctx context.Context, sess *gateway.Session, inv inventory.Stor
 		if !ok || row.TypeID4 != cos.KindAbility {
 			return cosRefusal(sess, cos.ErrExtensionNotAbility, "only an ability pet's rent runs")
 		}
-		base := rec.RentEnd
-		if base.Before(now) {
-			base = now
+		// Round 838: a pet that is out keeps its record live (cosworld.go)
+		// and saves it on its own; the clock moves that record, or the live
+		// save would put the old rent back.
+		if o := cosWorld.byRecord(rec.ID); o != nil {
+			cosWorld.mu.Lock()
+			base := o.rec.RentEnd
+			if base.Before(now) {
+				base = now
+			}
+			o.rec.RentEnd = base.Add(time.Duration(int32(it.Param1)) * time.Minute)
+			o.rec.State |= cos.StateAlive
+			rec = o.rec
+			cosWorld.mu.Unlock()
+		} else {
+			base := rec.RentEnd
+			if base.Before(now) {
+				base = now
+			}
+			rec.RentEnd = base.Add(time.Duration(int32(it.Param1)) * time.Minute)
+			rec.State |= cos.StateAlive
 		}
-		rec.RentEnd = base.Add(time.Duration(int32(it.Param1)) * time.Minute)
-		rec.State |= cos.StateAlive
 	}
 	if err := d.store.Save(ctx, rec); err != nil {
 		return cosRefusal(sess, cos.ErrCannotBeUsed, "the pet could not be saved")

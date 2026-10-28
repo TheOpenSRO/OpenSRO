@@ -65,7 +65,9 @@ func (m *MemStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	// item leaves the bag first, then whatever was worn goes back into the
 	// bag slot it left. Overwriting a filled slot still never loses the item,
 	// and a full bag no longer blocks a swap.
-	if err := m.inv.RemoveItem(ctx, characterID, inventorySlot, 1); err != nil {
+	// The whole stack is worn (round 838, SQLStore.Equip).
+	count := max(1, incoming.Quantity)
+	if err := m.inv.RemoveItem(ctx, characterID, inventorySlot, count); err != nil {
 		return err
 	}
 	before, _ := m.inv.List(ctx, characterID)
@@ -80,7 +82,7 @@ func (m *MemStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 		m.worn[characterID] = make(map[Slot]Equipped)
 	}
 	// The instance moves with the item: same variance, same durability.
-	worn := Equipped{Slot: slot, ItemID: incoming.ItemID}
+	worn := Equipped{Slot: slot, ItemID: incoming.ItemID, Quantity: count}
 	worn.SetInstance(incoming.Instance())
 	m.worn[characterID][slot] = worn
 	m.mu.Unlock()
@@ -110,7 +112,7 @@ func (m *MemStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 	// Putting it back can fail on a full bag. Re-equip it rather than
 	// destroying it, and report the failure.
 	// Back to the bag as the same instance, not a fresh roll.
-	if err := m.inv.AddItemInstance(ctx, characterID, worn.ItemID, 1, worn.Instance()); err != nil {
+	if err := m.inv.AddItemInstance(ctx, characterID, worn.ItemID, worn.Count(), worn.Instance()); err != nil {
 		m.mu.Lock()
 		if m.worn[characterID] == nil {
 			m.worn[characterID] = make(map[Slot]Equipped)
@@ -151,5 +153,35 @@ func (m *MemStore) SetInstance(_ context.Context, characterID int64, slot Slot, 
 	}
 	worn.SetInstance(inst)
 	m.worn[characterID][slot] = worn
+	return nil
+}
+
+// SpendWorn implements AmmoStore.
+func (m *MemStore) SpendWorn(_ context.Context, characterID int64, slot Slot, n int) (int, error) {
+	if !validSlot(slot) {
+		return 0, ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	worn, ok := m.worn[characterID][slot]
+	if !ok {
+		return 0, ErrSlotEmpty
+	}
+	worn.Quantity = max(0, worn.Count()-max(0, n))
+	m.worn[characterID][slot] = worn
+	return worn.Quantity, nil
+}
+
+// DiscardWorn implements AmmoStore.
+func (m *MemStore) DiscardWorn(_ context.Context, characterID int64, slot Slot) error {
+	if !validSlot(slot) {
+		return ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.worn[characterID][slot]; !ok {
+		return ErrSlotEmpty
+	}
+	delete(m.worn[characterID], slot)
 	return nil
 }

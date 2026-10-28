@@ -29,6 +29,17 @@ type MemStore struct {
 	// autoPotion is each character's auto potion settings (AutoPotionStore,
 	// round 786); none is nil.
 	autoPotion map[int64][]byte
+	// service is each character's service state (ServiceStore, round 838).
+	service map[int64]*memService
+	// stallDeco is each character's stall decoration (StallDecorationStore,
+	// round 838); none is 0.
+	stallDeco map[int64]int
+	// savedLocs are each character's saved locations (SavedLocationStore,
+	// round 838), keyed by (id, slot).
+	savedLocs map[[2]int64]SavedPoint
+	// titles is each character's title (TitleStore, round 838); none is
+	// level 0.
+	titles map[int64]memTitle
 }
 
 // NewMemStore returns an empty MemStore.

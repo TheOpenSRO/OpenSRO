@@ -28,6 +28,8 @@ signal refused(text: String)
 
 const LAYOUT := "resinfo\\ifwholechat.txt"
 const REGISTRY := {"name": "GDR_WHOLE_CHAT"}
+## The edit's limit (round 838; see setup).
+const EDIT_MAX_LENGTH := 100
 
 var slot := -1
 var count := 0
@@ -39,6 +41,10 @@ func setup(builder: UiBuilder) -> bool:
 		return false
 	_edit = node("GDR_WHOLE_CHAT_EDITBOX_INPUT") as LineEdit
 	if _edit != null:
+		# Round 838: CIFWholeChat::Create (0x7ef6f0) calls 0x634f80(100) on
+		# the edit, which stores 100 at +0x3fc (READ); that it is the edit's
+		# length limit is INFERRED.
+		_edit.max_length = EDIT_MAX_LENGTH
 		_edit.text_submitted.connect(func(_t: String) -> void: use())
 	var ok := node("GDR_WHOLE_CHAT_BTN_OK") as BaseButton
 	if ok != null:

@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"math"
 	"net"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
@@ -939,35 +941,61 @@ func TestDeathPenaltyAppliedInCombat(t *testing.T) {
 	}
 }
 
-// The player's mitigation percentage is zero, and that zero is RECOVERED.
-//
-// A player's ParamKeeper param 7 has three writers and none can set it:
-// Char_PublishCombatStats publishes it from the _RefObjItem defence block,
-// where a census of all 21,560 item rows finds no percentage-reduction column
-// populated; the skill-effect applier reaches it only via the skill param code
-// 'ar', which appears on zero of 29,342 real skill rows; and
-// GObjMob_PublishStats is mobs only. Monsters DO carry one (characterdata col
-// 73 = their level), so the asymmetry is the game's.
-//
-// Pinned so a later "players should have percentage armour too" edit has to
-// delete a citation rather than quietly introduce a value the game never had.
-func TestPlayerMitigationPercentIsRecoveredZero(t *testing.T) {
-	if playerMitigationPercent != 0 {
-		t.Fatalf("player mitigation percent = %d, want 0 -- see the constant's citation",
-			playerMitigationPercent)
+// Round 838: a player's mitigation percentage is its worn accessories'
+// absorption (params 7 and 8, READ Char_BuildAggregateStats' accessory branch
+// and Char_PublishCombatStats). The zero this test used to pin came from a
+// census that missed itemdata columns 71/72 and 79/80, set on all 1,020
+// accessory rows. With nothing worn it is still 0, and the engine's shape
+// collapses to the flat subtraction.
+func TestPlayerMitigationPercentIsTheAccessories(t *testing.T) {
+	ctx := context.Background()
+	items := refdata.NewMemStore()
+	acc := func(id int64, tid4 int, parLo, parHi, parInc, marLo, marHi, marInc float64) refdata.Item {
+		return refdata.Item{ID: id, MaxStack: 1, TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment,
+			TypeID3: equipment.FamilyEuropeAccessory, TypeID4: tid4, Country: equipment.CountryEurope,
+			PhysAbsorbMin: parLo, PhysAbsorbMax: parHi, PlusIncPhysAbsorb: parInc,
+			MagAbsorbMin: marLo, MagAbsorbMax: marHi, PlusIncMagAbsorb: marInc}
 	}
-	// With a zero percentage the engine's shape collapses to the flat
-	// subtraction this code used to do by hand, which is why routing it
-	// through the shared function changes no number.
-	for _, tc := range []struct{ raw, armor, want int }{
-		{100, 30, 70},
-		{50, 0, 50},
-		{10, 9, 1},
-		{5, 100, 1}, // never below 1
-	} {
-		if got := combat.MitigateDamage(tc.raw, playerMitigationPercent, tc.armor); got != tc.want {
+	// ITEM_EU_NECKLACE_06_C_RARE's and ITEM_EU_RING_05_A's ranges (MEASURED).
+	necklace := acc(14856, equipment.PieceNecklace, 17.4, 18, 0.29, 17.4, 18, 0.29)
+	ring := acc(14671, equipment.PieceRing, 6.6, 8.1, 0.23, 6.6, 8.1, 0.23)
+	if err := items.ImportItems(ctx, []refdata.Item{necklace, ring}); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventory.NewMemStore(items)
+	eq := equipment.NewMemStore(inv)
+	if got := playerMitigationPercent(ctx, 1, eq, items, false); got != 0 {
+		t.Fatalf("nothing worn: %v, want 0", got)
+	}
+	for _, tc := range []struct{ raw, armor, want int }{{100, 30, 70}, {50, 0, 50}, {10, 9, 1}, {5, 100, 1}} {
+		if got := combat.MitigateDamage(tc.raw, 0, tc.armor); got != tc.want {
 			t.Errorf("MitigateDamage(%d, 0, %d) = %d, want %d", tc.raw, tc.armor, got, tc.want)
 		}
+	}
+	wear := func(id int64, slot equipment.Slot, plus uint8, variance uint64) {
+		t.Helper()
+		if err := inv.AddItemInstance(ctx, 1, id, 1, inventory.Instance{Durability: durability.Untracked, OptLevel: plus, Variance: variance}); err != nil {
+			t.Fatal(err)
+		}
+		if err := eq.Equip(ctx, 1, slot, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The necklace at +2 with group 0 (PAR) 31 and group 1 (MAR) 0; the ring
+	// at +0 with both groups 31.
+	wear(14856, equipment.SlotNecklace, 2, 31)
+	wear(14671, equipment.SlotRingLeft, 0, 31|31<<5)
+	wantPhys := (18 + 0.29*2) + 8.1
+	wantMag := (17.4 + 0.29*2) + 8.1
+	if got := playerMitigationPercent(ctx, 1, eq, items, false); math.Abs(got-wantPhys) > 1e-9 {
+		t.Errorf("param 7 = %v, want %v", got, wantPhys)
+	}
+	if got := playerMitigationPercent(ctx, 1, eq, items, true); math.Abs(got-wantMag) > 1e-9 {
+		t.Errorf("param 8 = %v, want %v", got, wantMag)
+	}
+	// raw 200 against PD 50 and 26.68 % absorption: 200 / 1.2668 - 50.
+	if got := combat.MitigateDamage(200, wantPhys, 50); got != int(math.Round(200/(1+wantPhys/100)))-50 {
+		t.Errorf("MitigateDamage(200, %v, 50) = %d", wantPhys, got)
 	}
 }
 

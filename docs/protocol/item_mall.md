@@ -1,5 +1,33 @@
 # The item mall window: the client (round 837)
 
+## Round 838 additions
+
+- **The icon's hover help (READ).** A cell's icon is a `CIFSlotWithHelpForPackage` of slot kind
+  **0xa7** (`c:0x7de4b7` pushes it to `+0x374` through `0x687ed0`). Its `vslot_019` (`0x68a900`)
+  answers the hover message 0x4009 with the **standard item help of the package's first item**
+  (`0x8bf090`, the scrap list's first entry, into `0x6871d0`); a bundle gets `vslot_048`
+  (`0x68c1a0`), a 200-wide text help. 0x400a hides it. The help needs the slot's `+0x39a`, set to
+  1 by the constructor (`0x68c260`) and by the cell's hover when it opens the cell menu
+  (`0x7de900` pushes 1), cleared when `0x7de110` answers 0 (`0x7debd7`). Kind 0xa7 is not the NPC
+  store's 0x0f, so no price line. The bundle help's text is the package description (INFERRED:
+  the `+0x210` text is not traced; no good of the player's archive is a bundle, MEASURED).
+- **Search matches any case (OURS).** Retail's match is `std::wstring::find` on the name
+  (`0x7e34ee` → `0x4ee310`), with no case folding before it. In English, "wings" never found
+  "Wings of Azure"; the user reported "the item mall search doesn't seem to work".
+- **The avatar tabs take the avatar store's goods (OURS).** The player's archive leaves the Avatar
+  shop's Hat, Dress and Attach tabs empty (MALL_AVATAR_HAT / _DRESS / _ATTACH) and sells 525
+  avatars, all priced in silk, at an NPC store, GROUP_STORE_AVATARS (STORE_AVATARS_TAB1..3), whose
+  tabs carry the same name keys (UIIT_STT_SILKMALL_DRESS / _HAT / _ATTACH). An empty tab of a silk
+  shop takes the silk-priced goods of the avatar store's tab of its name, at the store's
+  SlotIndex. The client (`MallData.borrowed_goods`) and the server (`mall.Build`, `export-refdata
+  -mode mall`) both do this, so a purchase's (shop, tab, slot) names the same good. MEASURED:
+  hats 187, dresses 191, attachments 147; the client's mall has 745 goods, and the server's
+  catalogue 758 (with GROUP_STORE_SD_ACCESSORY's 13). Attachments (3/1/13/3) are listed but cannot
+  be tried on (READ, §4c).
+- **A description that is the bare "0" filler draws no line (OURS).** Many avatar descriptions
+  open with an untranslated row whose every column is "0" (the client keeps a key's first row).
+  Retail draws the "0" (`0x8c6a90`).
+
 ## Corrections from the review (item_mall_verify.md)
 
 The verify pass re-read every claim below at its address. Where this list and the text further

@@ -2676,6 +2676,11 @@ func _try_initialize_pk2_ui() -> void:
 			var line := ArrivalGuard.error_line(result.error, _ui_text_table)
 			if result.error.begins_with("UIIT_"):
 				line = _resolve_any_text(result.error, result.error)
+			# Round 838: 0x300e, no ammunition in slot 7 -- the original's
+			# line by the player's race (c:0x7b98ce: UIIT_SKILL_USE_FAIL_
+			# RUNOUT_AMMO / _VOLT), in the archive's words when it has them.
+			if result.error in AMMO_REFUSALS:
+				line = _resolve_any_text(String(AMMO_REFUSALS[result.error]), result.error)
 			_log_system(line)
 			if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
@@ -2738,6 +2743,15 @@ func _try_initialize_pk2_ui() -> void:
 	# Using a potion returns the new HP/MP directly, so the bars redraw
 	# without a follow-up stats round trip, and the bag count is refreshed.
 	NetClient.use_item_result.connect(_on_use_item_result)
+	# Round 838 (OURS): the service scrolls' lines and the plate colours.
+	NetClient.service.line.connect(func(text: String) -> void:
+		print("World3D: service line: %s" % text)
+		_log_system(text))
+	NetClient.service.plate_colours_changed.connect(_on_plate_colours_changed)
+	# The own colours may have come before this was connected.
+	_own_plate_colours_told()
+	# Round 838: a title given or changed (0x30DF, the custom text).
+	NetClient.titles.changed.connect(_on_title_changed)
 	# QA: once a kill has dropped a potion into the bag, drink it, so a render
 	# can show a consumable actually working. Never fires in real play.
 	if OS.get_environment("OPENSRO_QA_USEITEM") != "":
@@ -2991,9 +3005,42 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_warning.setup(_ui_builder, HudNotice.STYLE_WARNING)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
+	# Round 838 (OURS): the Custom Title Scroll's typed title.
+	_hud_panels.custom_title_requested.connect(func(slot: int, text: String) -> void:
+		if NetClient.current_character_name != "":
+			NetClient.use_item_custom_title(NetClient.current_character_name, slot, text.strip_edges()))
 	_hud_panels.cos_item_requested.connect(_use_cos_item)
+	_hud_panels.skin_change_requested.connect(_on_skin_change_requested)
+	# Round 838: an item used on another (HudPanels' use-on mode).
+	_hud_panels.use_on_requested.connect(_on_use_on_requested)
+	# Round 838: the worn devil's spirit's skill strip (SpiritAbilities): its
+	# skills from the client's own tables, their icons from the skill rows,
+	# and a slot's use cast as a self cast (every spirit skill is a
+	# Target_Required 0 self buff, MEASURED).
+	_spirit_abilities = SpiritAbilities.from_archive(_ui_builder.media_archive() if _ui_builder != null else null)
+	print("World3D: %d devil's spirit abilities" % _spirit_abilities.size())
+	_hud_panels.spirit_skills_of = _spirit_abilities.skills_for
+	_hud_panels.skill_icon_of = func(skill_id: int) -> String:
+		if _hud_buff_board == null or _hud_buff_board.catalog == null:
+			return ""
+		var icon := String(_hud_buff_board.catalog.info(skill_id).get("icon", ""))
+		if icon == "":
+			return ""
+		return icon if icon.to_lower().begins_with("icon\\") else "icon\\" + icon
+	_hud_panels.spirit_skill_use_requested.connect(func(skill_id: int) -> void:
+		var left := _skill_cooldown_left(skill_id)
+		if left > 0:
+			_log_system(_resolve_any_text(COOLDOWN_TEXT_KEY, COOLDOWN_TEXT_FALLBACK))
+			return
+		var code := ""
+		if _hud_buff_board != null and _hud_buff_board.catalog != null:
+			code = String(_hud_buff_board.catalog.info(skill_id).get("basic_code", ""))
+		print("World3D: spirit skill %d cast on the player" % skill_id)
+		_send_self_cast(skill_id, code, SkillNet.TARGET_NONE, Vector3.ZERO))
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
+	# Round 838: the special scroll's lists name places by their zone.
+	_hud_panels.region_namer = _zone_name_for_region
 	# The return scrolls' casting bar's cancel (round 779): 0x705B.
 	_hud_panels.cast_cancel_requested.connect(_on_cast_cancel_requested)
 	_setup_console_and_help()
@@ -3074,6 +3121,9 @@ func _wire_composite_items() -> void:
 		NetClient.composite_ended.connect(_on_composite_ended)
 	if _hud_buff_board != null:
 		_hud_buff_board.item_state_clicked.connect(_on_item_state_clicked)
+		_hud_buff_board.gold_time_clicked.connect(_on_gold_time_clicked)
+	if NetClient.has_signal("gold_time"):
+		NetClient.gold_time.connect(_on_gold_time)
 	if NetClient.current_character_name != "" and NetClient.is_connected_to_server():
 		NetClient.composite_list(NetClient.current_character_name)
 
@@ -3119,6 +3169,9 @@ func _on_item_state_clicked(token: int) -> void:
 		if g.scroll_id == clicked.scroll_id:
 			var n := _hud_panels.item_name(g.item_id) if _hud_panels != null else ""
 			entries.append([g.item_id, n if n != "" else "Item %d" % g.item_id, g.remaining])
+	# Round 838: in the item ids' order (INFERRED: the board's map is keyed by
+	# them), so a premium's two fills keep their places.
+	entries.sort_custom(func(a: Array, b: Array) -> bool: return int(a[0]) < int(b[0]))
 	if _composite_window == null or not is_instance_valid(_composite_window):
 		_composite_window = CompositeItemWindow.new()
 		if not _composite_window.setup(_ui_builder):
@@ -3130,8 +3183,15 @@ func _on_item_state_clicked(token: int) -> void:
 		if reg != null:
 			_composite_window.position = Vector2(reg.rect.position)
 		_composite_window.use_requested.connect(func(item_id: int) -> void:
-			if NetClient.current_character_name != "":
-				NetClient.composite_use(NetClient.current_character_name, item_id))
+			if NetClient.current_character_name == "":
+				return
+			# Round 838: a reverse return scroll's fill asks its destination
+			# first, as the scroll does (the box's choice then sends 0x715f
+			# with the option, client 0x798951..0x79898d).
+			if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.item_types(item_id)):
+				_hud_panels.open_reverse_return_box(COMPOSITE_FILL_SLOT - item_id)
+				return
+			NetClient.composite_use(NetClient.current_character_name, item_id))
 	_composite_window.show_entries(entries)
 	_composite_window.show()
 	await get_tree().process_frame
@@ -3156,8 +3216,92 @@ func _on_composite_use_result(result: CompositeNet.UseResult) -> void:
 	if result.error != "":
 		_log_system(result.error)
 		return
+	# Round 838: a return scroll fill's casting bar, as the scroll's own.
+	if result.cast_ms > 0 and _hud_panels != null:
+		print("World3D: composite scroll fill accepted -- moving in %d ms" % result.cast_ms)
+		_hud_panels.open_cast_bar(result.item_id, result.cast_ms)
+		return
 	if _hud_player_info != null:
 		_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
+
+## Round 838: the devil's spirits' skill table, held here (a Callable to a
+## RefCounted's method does not keep it alive).
+var _spirit_abilities: SpiritAbilities = null
+
+## Round 838: a reverse return box opened for a composite grant's fill
+## carries this slot less the fill's item id (World3D's own marker; a bag
+## slot is never negative).
+const COMPOSITE_FILL_SLOT := -1000000
+
+# --- The premium Gold Time (round 838, server session/goldtime.go) -----------
+#
+# READ (sro_client.exe): 0x3206's handler (NetProcessInNavAndSkill 0x8a5360)
+# puts kind 3 on CIFMagicStateBoard through FUN_00777f20(3, ...) and removes
+# it when both words are 0; its tooltip (0x800a10) is the item's name, the
+# period left and the remaining gold time, previous day + today
+# (PARAM_PREVIOUS_DAY, PARAM_TODAY); a click on it (vslot_029, c:0x800430)
+# opens the confirm box with UIIT_STT_GOLDTIME_PAUSE_START (running) or
+# _STOP (paused), whose OK sends 0x34BF {3, pause}. The archive's texts for
+# the two questions and UIIT_STT_GOLDTIME_PAUSE_ERROR are empty: the
+# fallbacks below are OURS, as is the tooltip's line layout.
+const GOLD_TIME_TOKEN := -0x3206
+var _gold_time: CompositeNet.GoldTime = null
+
+func _on_gold_time(g: CompositeNet.GoldTime) -> void:
+	if g == null or _hud_buff_board == null:
+		return
+	if g.sub == 2:
+		var why := ""
+		match g.code:
+			0x18fb:
+				why = _resolve_any_text("UIIT_STT_GOLDTIME_PAUSE_ERROR", "")
+				if why == "" or why == "0":
+					why = "The Gold Time cannot be resumed during battle."
+			0x18fc:
+				why = "The Gold Time cannot be paused while a return scroll is working."
+			_:
+				why = "No Gold Time is left."
+		print("World3D: gold time refused, code 0x%x" % g.code)
+		_log_system(why)
+		return
+	if g.ended:
+		_gold_time = null
+		_hud_buff_board.remove_gold_time(GOLD_TIME_TOKEN)
+		print("World3D: gold time ended (item %d)" % g.ref_id)
+		return
+	_gold_time = g
+	var icon := _hud_panels.item_icon_path(g.ref_id) if _hud_panels != null else ""
+	var b := _hud_buff_board.add_gold_time(GOLD_TIME_TOKEN, icon, gold_time_tooltip(g))
+	print("QA GOLDTIME: item %d period %d s prev %d s today %d s paused %s icon '%s' at %s" % [g.ref_id, g.period_left,
+		g.prev, g.today, str(g.paused), icon, str(b.slot.global_position) if b != null and b.slot != null else "-"])
+
+## The tooltip's lines: the item's name, the period left (the board's own
+## remaining line) and "<remain> (<Previous day> h m s + <Today> h m s)".
+func gold_time_tooltip(g: CompositeNet.GoldTime) -> String:
+	var name := _hud_panels.item_name(g.ref_id) if _hud_panels != null else ""
+	var units := {"remain": _resolve_any_text("UIIT_STT_REMAIN_TIME", "Remain time"), "day": _resolve_any_text("PARAM_DAY", "Day"),
+		"hour": _resolve_any_text("PARAM_HOUR", "Hour"), "minute": _resolve_any_text("PARAM_MINUTE", "Minute"),
+		"second": _resolve_any_text("PARAM_SECOND", "Second")}
+	var hms := func(sec: int) -> String:
+		return "%d%s %d%s %d%s" % [sec / 3600, units["hour"], (sec % 3600) / 60, units["minute"], sec % 60, units["second"]]
+	var lines := PackedStringArray([name if name != "" else "Gold Time"])
+	lines.append(HudBuffBoard.remain_line(g.period_left * 1000, units))
+	lines.append("%s (%s %s + %s %s)" % [units["remain"], _resolve_any_text("PARAM_PREVIOUS_DAY", "Previous day"), hms.call(g.prev),
+		_resolve_any_text("PARAM_TODAY", "Today"), hms.call(g.today)])
+	return "\n".join(lines)
+
+func _on_gold_time_clicked(_token: int) -> void:
+	if _gold_time == null or _hud_buff_board == null:
+		return
+	var pause := not _gold_time.paused
+	var key := "UIIT_STT_GOLDTIME_PAUSE_START" if pause else "UIIT_STT_GOLDTIME_PAUSE_STOP"
+	var text := _resolve_any_text(key, "")
+	if text == "" or text == "0":
+		text = "Pause the Gold Time? It stops 20 seconds from now." if pause else "Resume the Gold Time?"
+	print("World3D: gold time clicked -- asking to %s" % ("pause" if pause else "resume"))
+	_hud_buff_board.open_confirm_box(text, func() -> void:
+		print("World3D: gold time %s requested (0x34BF)" % ("pause" if pause else "resume"))
+		NetClient.gold_time_pause(pause))
 
 ## Whether a buff's owner is this client's player (round 618's review): a
 ## character (ownerKind 0) whose id is this player's -- the one _sync_own_id
@@ -7472,6 +7616,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var dead_at_arrival := _player_dead
 	var keep_server_point := arrival_keeps_server_point(teleport_arrival, requested, dead_at_arrival)
 	if result != null and result.ok:
+		# Round 838: an accepted skin change's body goes on with the warp.
+		_apply_skin_pending()
 		# Round 795: the COS in view start over (the server sends its own
 		# again with their 0x30C8; the mount is found again by its uid).
 		_cos_clear()
@@ -7970,6 +8116,8 @@ func _exit_tree() -> void:
 	# load) must not hold the next world's effects.
 	EfpEffect.pause_world(false)
 	EfpEffect.gate_ticks(false)
+	# Round 838: the auras' models (AuraModel) and any preparation still out.
+	AuraModel.reset()
 	BerserkLook.clear()
 	StateLook.clear()
 	_fx_owner_buffs.clear()
@@ -9376,7 +9524,8 @@ func _refresh_player_name_plate() -> void:
 		who = _plate_alias
 	var plate := _name_plate(job_plate_text(who, js), top)
 	# Round 811: the original's plate (_retail_plate_look), white (c:0x9cfd50).
-	_retail_plate_look(plate, PLAYER_NAME_COLOUR)
+	# Round 838 (OURS): a Name Color scroll's colour instead.
+	_retail_plate_look(plate, _plate_name_colour(_own_id()))
 	player.add_child(plate)
 	if was_shown:
 		plate.visible = true
@@ -9562,6 +9711,10 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 	var title_text := ""
 	if titled:
 		title_text = _resolve_any_text(JobText.class_key(job_state, job_level, europe), "")
+	elif job_state == UserSpawnNet.JOB_STATE_NONE:
+		# Round 838: the hwan level's title (TitleNet; READ FUN_009ca930 ->
+		# the title slot, which a job suit empties).
+		title_text = _hwan_title_text(_own_id() if holder == label else int(holder.get_meta("character_id", -1)), europe)
 	_job_mark(label, holder, job_state, swept)
 	if title_text != "":
 		var title := _name_plate(title_text, 0.0, false)
@@ -9575,7 +9728,9 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 		# 1`), bit 1 the bold glyph set (FUN_008b39e0: +0x60 & 2 selects the
 		# font's style 2 -- INFERRED the client's weight-600 variant, MEASURED
 		# 2-px stems in the user's private-server picture).
-		_retail_plate_look(title, JOB_TITLE_COLOUR, false)
+		# Round 838 (OURS): a Title Color scroll's colour instead of the yellow.
+		var title_colour := _plate_title_colour(_own_id() if holder == label else int(holder.get_meta("character_id", -1)))
+		_retail_plate_look(title, title_colour, false)
 		var bold := _plate_bold_font()
 		if bold != null:
 			title.font = bold
@@ -9586,7 +9741,7 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 		shadow.fixed_size = true
 		shadow.no_depth_test = true
 		shadow.outline_size = 0
-		shadow.modulate = Color(0.0, 0.0, 0.0, JOB_TITLE_COLOUR.a)
+		shadow.modulate = Color(0.0, 0.0, 0.0, title_colour.a)
 		shadow.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 		shadow.render_priority = label.render_priority
 		shadow.layers = OverlayView.BIT
@@ -9738,6 +9893,100 @@ func _on_guild_grant_result(d: Dictionary) -> void:
 
 ## A character's guild line changed (NetClient.guild_line_changed): the own
 ## plate re-made, or that player's line.
+## Round 838 (OURS): a character's name colour -- a Name Color scroll's
+## (NetClient.service, 0x013B), else the plate's own white.
+func _plate_name_colour(uid: int) -> Color:
+	return NetClient.service.name_colour(uid, PLAYER_NAME_COLOUR)
+
+## Round 838 (OURS): a character's title colour -- a Title Color scroll's,
+## else the title's own yellow.
+func _plate_title_colour(uid: int) -> Color:
+	return NetClient.service.title_colour(uid, JOB_TITLE_COLOUR)
+
+## Round 838 (OURS): 0x013B changed uid's colours -- its plate's name (the
+## hostile colour of an opposed job still wins, as before) and its title.
+func _on_plate_colours_changed(uid: int) -> void:
+	print("World3D: plate colours of %d: %s" % [uid, str(NetClient.service.plate_colours.get(uid, "default"))])
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		_refresh_player_name_plate()
+		return
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) != uid:
+			continue
+		var node: Node3D = _other_bodies[id]
+		if node == null or not is_instance_valid(node):
+			continue
+		var label := node.get_node_or_null("Name") as Label3D
+		if label != null:
+			label.modulate = Color(0, 0, 0, 0) # forces _colour_enemy_plate's redraw
+			_colour_enemy_plate(node, JobPvpNet.enemy_name(_own_job_state(), _their_job_state(int(id))))
+		var title := node.get_node_or_null("JobTitle") as Label3D
+		if title != null:
+			var c := _plate_title_colour(uid)
+			title.modulate = c
+			var shadow := title.get_node_or_null("Shadow") as Label3D
+			if shadow != null:
+				shadow.modulate = Color(0.0, 0.0, 0.0, c.a)
+
+## Round 838: uid's title text (TitleNet.text_for): the hwanleveldata row's
+## key by race, the text table's line.
+func _hwan_title_text(uid: int, europe: bool) -> String:
+	if uid < 0 or NetClient.titles.level_of(uid) <= 0:
+		return ""
+	return NetClient.titles.title_text(uid, europe, _hwan_levels(), func(key: String) -> String:
+		return _resolve_any_text(key, ""))
+
+## hwanleveldata.txt (TitleNet.parse_levels), read once.
+var _hwan_level_rows = null
+
+func _hwan_levels() -> Dictionary:
+	if _hwan_level_rows != null:
+		return _hwan_level_rows
+	_hwan_level_rows = {}
+	if _media_pk2 == null:
+		return _hwan_level_rows
+	var e := ObjectLoader.find_file(_media_pk2, TitleNet.LEVEL_TABLE)
+	if e == null:
+		return _hwan_level_rows
+	var raw: PackedByteArray = _media_pk2.read_file(e)
+	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+		raw = raw.slice(2)
+	var text := TextDecode.utf16(raw)
+	if text.is_empty():
+		text = raw.get_string_from_utf8()
+	_hwan_level_rows = TitleNet.parse_levels(text)
+	print("World3D: hwanleveldata %d rows" % (_hwan_level_rows as Dictionary).size())
+	return _hwan_level_rows
+
+## Round 838: uid's title changed -- its plate's title line made again (the
+## own plate, or that player's).
+func _on_title_changed(uid: int) -> void:
+	print("World3D: title of %d: level %d '%s'" % [uid, NetClient.titles.level_of(uid), NetClient.titles.custom_of(uid)])
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		_refresh_player_name_plate()
+		return
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) != uid:
+			continue
+		var node: Node3D = _other_bodies[id]
+		if node == null or not is_instance_valid(node):
+			continue
+		var plate := node.get_node_or_null("Name") as Label3D
+		if plate == null:
+			continue
+		var job: Dictionary = NetClient.user_jobs.get(int(id), {})
+		_job_plate_decor(plate, node, int(job.get("state", UserSpawnNet.JOB_STATE_NONE)), int(job.get("level", 0)), _other_is_europe(node), true)
+
+## Round 838: redraws the own plate when 0x013B named the own id already
+## (it arrives with the world entry, which can come before the plate's
+## signal is connected or before the id is known).
+func _own_plate_colours_told() -> void:
+	var own := _own_id()
+	# Round 838: or the own title (0x30DF), which a plate built before the id
+	# came could not look up.
+	if own >= 0 and (NetClient.service.plate_colours.has(own & 0xffffffff) or NetClient.titles.level_of(own) > 0):
+		_refresh_player_name_plate()
+
 func _on_guild_line_changed(uid: int) -> void:
 	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
 		_refresh_player_name_plate()
@@ -10578,7 +10827,8 @@ func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	var js := int(job.get("state", UserSpawnNet.JOB_STATE_NONE))
 	var plate := _name_plate(job_plate_text(char_name, js), top, not batched)
 	# Round 811: the original's plate; a batched one's box is the batch's.
-	_retail_plate_look(plate, PLAYER_NAME_COLOUR, not batched)
+	# Round 838 (OURS): a Name Color scroll's colour instead of the white.
+	_retail_plate_look(plate, _plate_name_colour(int(node.get_meta("character_id", -1))), not batched)
 	# Round 802: an opposed job's name in the hostile colour (c:0x9cfd50).
 	if JobPvpNet.enemy_name(_own_job_state(), js):
 		plate.modulate = JobPvpNet.ENEMY_NAME_COLOUR
@@ -10868,6 +11118,7 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 		return {}
 	var model: String = _npc_models.get(rec.ref_id, "")
 	if model == "":
+		print("World3D: NPC ref=%d uid=%d not placed: no model in the NPC table" % [rec.ref_id, rec.uid])
 		return {}
 	var archive := _open_pk2_if_set()
 	if archive == null:
@@ -10877,8 +11128,11 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	# assembly and just copy a node (sharing its mesh/texture resources).
 	var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
 	if template == null:
-		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
+		# Round 838: a skinned object resource is an NPC body too (the Magic
+		# POP machine's type-3 .bsr; SkinnedBsrAssembler's skinned_object).
+		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true, false, 0, true)
 		if template == null:
+			print("World3D: NPC ref=%d uid=%d not placed: %s did not assemble" % [rec.ref_id, rec.uid, model])
 			return {}
 		_npc_model_cache[model] = template
 	var skeleton := template.skeleton.duplicate() as Skeleton3D
@@ -13352,10 +13606,20 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.bag_item_types(int(item["slot"]))):
 			_hud_panels.open_reverse_return_box(int(item["slot"]))
 			return
+		# Round 838: and the skin change scroll its window.
+		if _hud_panels != null and HudPanels.is_skin_change_item(_hud_panels.bag_item_types(int(item["slot"]))):
+			_on_skin_change_requested(int(item["slot"]))
+			return
 		# Round 805: a pet's potion, food or cure names the current COS, as
 		# the bag's right-click does.
 		if _hud_panels != null and HudPanels.is_cos_target_item(_hud_panels.bag_item_types(int(item["slot"]))):
 			_use_cos_item(int(item["slot"]))
+			return
+		# Round 838: the repair hammer asks first, as the bag's right-click
+		# does (INFERRED for the quick slot: its path to 0x676570 was not
+		# traced, as round 778's reverse scroll above).
+		if _hud_panels != null and HudPanels.is_repair_hammer(_hud_panels.bag_item_types(int(item["slot"]))):
+			_hud_panels.open_hammer_confirm(int(item["slot"]))
 			return
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
@@ -14698,7 +14962,7 @@ func _recolour_enemy_plates() -> void:
 func _colour_enemy_plate(body: Node3D, enemy: bool) -> void:
 	var label := body.get_node_or_null("Name") as Label3D
 	if label != null:
-		var want: Color = JobPvpNet.ENEMY_NAME_COLOUR if enemy else PLAYER_NAME_COLOUR
+		var want: Color = JobPvpNet.ENEMY_NAME_COLOUR if enemy else _plate_name_colour(int(body.get_meta("character_id", -1)))
 		if label.modulate == want:
 			return
 		label.modulate = want
@@ -17731,16 +17995,15 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   node:<name>         left click the centre of the first visible Control of
 #                       that name under the UI (find_child pattern)
 #   bagitem:<id>        left click the shown bag cell holding that item id
-#                       (round 791)
-#   rbagitem:<id>       right click it (a use; round 838)
-#   bagtip:<id>         move the mouse over it and print its tooltip
-#                       (`QA BAGTIP <id>: ...`; round 838)
+#                       (round 791); rbagitem:<id> right-clicks it, the
+#                       item's use (round 838)
+#   gachacard           left click the Magic POP pane's first card (round 838)
 #   worn:<slot>         left click that worn slot's icon (round 838)
-#   boxyes:<name>       left click the left (Yes) button of the open HUD box
-#                       of that node name, e.g. ItemTargetConfirm (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
+#   hovernode:<name>    the same over the first visible Control of that name
+#                       (round 838)
 #   census              print every visible focusable Control that is not a
 #                       button (text lines, lists, spin boxes) and its rect
 #   talk                open the NPC talk box (as a click on an NPC does)
@@ -17852,6 +18115,31 @@ func _qa_reequip_step() -> void:
 				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, s.slot_index)
 				return
 		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
+
+## OPENSRO_QA_UNEQUIP="<tick>:<slot>,<slot>..;.." (round 838; needs a server):
+## at each tick take those worn slots off through the real unequip message
+## (NetClient.unequip, the equipment window's own), one a tick from that tick
+## on -- the skin change's live run takes the armour off before a change of
+## sex. QA only; never set in real play.
+var _qa_unequip_spec := OS.get_environment("OPENSRO_QA_UNEQUIP")
+
+func _qa_unequip_step() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	for part in _qa_unequip_spec.split(";", false):
+		var bits := part.split(":", false)
+		if bits.size() != 2 or not bits[0].is_valid_int():
+			continue
+		var slots := bits[1].split(",", false)
+		var i := _qa_tick - int(bits[0])
+		if i < 0 or i >= slots.size():
+			continue
+		var slot := int(slots[i])
+		if int(_player_equipped_last.get(slot, 0)) <= 0:
+			continue
+		print("QA UNEQUIP: tick %d taking off slot %d (item %d)" % [_qa_tick, slot, int(_player_equipped_last.get(slot, 0))])
+		_awaiting_equip_ack = true
+		NetClient.unequip(NetClient.current_character_name, slot)
 
 ## OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,.." (round 789 lane E; needs a
 ## server; QA only): `show` opens the inventory in its avatar view over the
@@ -18253,6 +18541,112 @@ func _qa_job_step() -> void:
 					else:
 						NetClient.use_item(NetClient.current_character_name, k)
 					break
+		# Round 838 (QA only): bag_rclick:<ITEM_CODE> right-clicks the first
+		# bag cell holding that code, as a real mouse press and release over
+		# the cell (the inventory window open: panel:inventory first).
+		elif what.begins_with("bag_rclick:"):
+			var rcode := what.substr(11)
+			var cell: Control = null
+			var inv_win: HudWindow = _hud_panels._windows.get("inventory")
+			if inv_win != null and inv_win.visible:
+				for c in inv_win.find_children("*", "Control", true, false):
+					var cc := c as Control
+					# A number names the item id instead of its code.
+					var cid := int(cc.get_meta("inv_item_id", -1))
+					# Round 838 lane 6: a code ending in "*" matches by prefix.
+					var ccode := _hud_panels.item_code_for_id(cid)
+					if cc.has_meta("inv_slot") and cid >= 0 and cc.is_visible_in_tree() \
+							and (ccode == rcode or (rcode.ends_with("*") and ccode.begins_with(rcode.trim_suffix("*"))) \
+							or (rcode.is_valid_int() and cid == int(rcode))):
+						cell = cc
+						break
+			if cell == null:
+				print("QA SERVICE: tick %d bag_rclick %s: no visible bag cell holds it" % [_qa_tick, rcode])
+			else:
+				var rclick_at := cell.get_global_rect().get_center()
+				print("QA SERVICE: tick %d bag_rclick %s at slot %d, %s" % [_qa_tick, rcode, int(cell.get_meta("inv_slot")), str(rclick_at)])
+				_qa_push_click(rclick_at, MOUSE_BUTTON_RIGHT, true)
+		# Round 838 lane 6 (QA only): title_type:<text> types the text into the
+		# Custom Title Scroll's box as key presses, then presses Enter, as a
+		# player would (the box open: bag_rclick:ITEM_TITLE_255 first).
+		elif what.begins_with("title_type:"):
+			var tbox: HudCosBox = _hud_panels.custom_title_box
+			if tbox == null or not is_instance_valid(tbox) or tbox.edit == null:
+				print("QA TITLE: tick %d title_type: no box" % _qa_tick)
+			else:
+				tbox.edit.grab_focus()
+				for ch in what.substr(11):
+					var kev := InputEventKey.new()
+					kev.pressed = true
+					kev.unicode = ch.unicode_at(0)
+					get_viewport().push_input(kev)
+					var kup := kev.duplicate() as InputEventKey
+					kup.pressed = false
+					get_viewport().push_input(kup)
+				print("QA TITLE: tick %d typed '%s' -> edit '%s'" % [_qa_tick, what.substr(11), tbox.edit.text])
+				var kent := InputEventKey.new()
+				kent.pressed = true
+				kent.keycode = KEY_ENTER
+				get_viewport().push_input(kent)
+		# Round 838 lane 6 (QA only): chest_rows prints the open chest's rows;
+		# chest_take_all clicks its Take All button (a real press).
+		elif what == "chest_rows":
+			var ch: ItemChestWindow = _hud_panels.item_chest
+			if ch == null or not ch.is_open():
+				print("QA TITLE: tick %d chest_rows: no chest open" % _qa_tick)
+			else:
+				for k in 8:
+					var rt := ch.row_texts(k)
+					if not rt.is_empty() and "".join(PackedStringArray(rt)).strip_edges() != "":
+						print("QA TITLE: tick %d chest row %d %s" % [_qa_tick, k, str(rt)])
+		elif what == "chest_take_all":
+			var cht: ItemChestWindow = _hud_panels.item_chest
+			var tab := cht.take_all_button() if cht != null and cht.is_open() else null
+			if tab == null or not tab.is_visible_in_tree():
+				print("QA TITLE: tick %d chest_take_all: no button" % _qa_tick)
+			else:
+				print("QA TITLE: tick %d chest_take_all at %s" % [_qa_tick, str(tab.get_global_rect().get_center())])
+				_qa_push_click(tab.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+		elif what == "chest_close":
+			# The chest window's own close button (a real press): the icon
+			# under the minimap is under the window.
+			var chc: ItemChestWindow = _hud_panels.item_chest
+			var cb: BaseButton = null
+			if chc != null and chc.is_open():
+				for b in chc.find_children("*", "BaseButton", true, false):
+					if (b as BaseButton).position.is_equal_approx(chc._close_position()):
+						cb = b as BaseButton
+			if cb == null:
+				print("QA TITLE: tick %d chest_close: no button" % _qa_tick)
+			else:
+				print("QA TITLE: tick %d chest_close at %s" % [_qa_tick, str(cb.get_global_rect().get_center())])
+				_qa_push_click(cb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+		# Round 838 (QA only): chest_icon clicks the item chest's icon under
+		# the minimap (a real press), which opens the chest window.
+		# stat_plus:<n> presses the character window's Str "+" n times (real
+		# presses; the window open: panel:character first), once per process
+		# (a reconnect's second World3D replays the steps).
+		elif what.begins_with("stat_plus:"):
+			var cw: HudWindow = _hud_panels._windows.get("character")
+			var plus := cw.node("GDR_PI_BTN_ADDHP") as Control if cw != null and cw.visible else null
+			if OS.get_environment("OPENSRO_QA_STAT_PLUS_DONE") != "":
+				pass
+			elif plus == null:
+				print("QA SERVICE: tick %d stat_plus: no character window" % _qa_tick)
+			else:
+				OS.set_environment("OPENSRO_QA_STAT_PLUS_DONE", "1")
+				var plus_at := plus.get_global_rect().get_center()
+				print("QA SERVICE: tick %d stat_plus x%s at %s" % [_qa_tick, what.substr(10), str(plus_at)])
+				for i in what.substr(10).to_int():
+					_qa_push_click(plus_at, MOUSE_BUTTON_LEFT, true)
+		elif what == "chest_icon":
+			var icon: Control = _hud_panels.item_chest_icon
+			if icon == null or not icon.is_visible_in_tree():
+				print("QA SERVICE: tick %d chest icon: none shown" % _qa_tick)
+			else:
+				var icon_at := icon.get_global_rect().get_center()
+				print("QA SERVICE: tick %d chest icon click at %s" % [_qa_tick, str(icon_at)])
+				_qa_push_click(icon_at, MOUSE_BUTTON_LEFT, true)
 		elif what == "plates":
 			var holders: Array = [[player, player.get_node_or_null("Name") if player != null else null]]
 			for oid in _other_bodies:
@@ -18266,9 +18660,10 @@ func _qa_job_step() -> void:
 				var holder: Node = plate if h[0] == player else h[0]
 				var title := holder.get_node_or_null("JobTitle") as Label3D
 				var mk := holder.get_node_or_null("JobMark") as Sprite3D
-				print("QA JOB: tick %d plate '%s' title '%s' (offset %.1f) mark %s (offset %.1f)" % [_qa_tick, plate.text,
+				print("QA JOB: tick %d plate '%s' title '%s' (offset %.1f) mark %s (offset %.1f) colours name #%s title #%s" % [_qa_tick, plate.text,
 					title.text if title != null else "", title.offset.x if title != null else 0.0,
-					mk.texture.resource_path.get_file() if mk != null and mk.texture != null else "none", mk.offset.x if mk != null else 0.0])
+					mk.texture.resource_path.get_file() if mk != null and mk.texture != null else "none", mk.offset.x if mk != null else 0.0,
+					plate.modulate.to_html(), title.modulate.to_html() if title != null else "-"])
 				# Round 808: the heights over the holder's feet (a rider's plate is raised).
 				var feet := (h[0] as Node3D).global_position.y
 				var head := "-"
@@ -18456,6 +18851,23 @@ func _qa_pmi_step() -> void:
 ## Where KeyInput.dispatched stood when the current action was pushed.
 var _qa_input_keymap_mark := 0
 
+## OPENSRO_QA_STALL_BOOTH's step (round 838): the booth StallBooth chooses for
+## `decoration` and `race`, at the player's feet, facing as the player does.
+var _qa_booth: Node3D = null
+
+func _qa_stall_booth(decoration: int, race: int) -> void:
+	if is_instance_valid(_qa_booth):
+		_qa_booth.queue_free()
+	var path := StallBooth.model_path(_item_rows.get(decoration), race)
+	_qa_booth = StallBooth.build(_data_pk2, path)
+	print("QA STALL BOOTH: decoration %d race %d -> %s (%s)" % [decoration, race, path,
+		"built" if _qa_booth != null else "not found"])
+	if _qa_booth == null or player == null:
+		return
+	add_child(_qa_booth)
+	_qa_booth.global_position = player.global_position
+	_qa_booth.rotation.y = player.rotation.y
+
 func _qa_input_step() -> void:
 	var spec := OS.get_environment("OPENSRO_QA_INPUT")
 	if spec == "":
@@ -18511,42 +18923,133 @@ func _qa_input_step() -> void:
 				var centre := node.get_global_rect().get_center()
 				_qa_input_report = "%s at %s (%s)" % [action, centre, node.get_path()]
 				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
-		"bagitem", "rbagitem", "bagtip":
+		"bagitem", "rbagitem":
 			# Round 791: left click the bag cell holding that item id (the
-			# shown page), as a player picks an item up. Round 838: rbagitem
-			# right-clicks it (a use); bagtip hovers it and prints its
-			# tooltip (QA BAGTIP).
+			# shown page), as a player picks an item up; round 838: `rbagitem`
+			# right-clicks it, as a player uses it.
 			var cell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
 			if cell == null:
 				_qa_input_report = action + " (not on the shown bag page)"
 			else:
 				var centre := cell.get_global_rect().get_center()
 				_qa_input_report = "%s at %s" % [action, centre]
-				if kind == "bagtip":
-					var mv := InputEventMouseMotion.new()
-					mv.position = centre
-					mv.global_position = centre
-					get_viewport().push_input(mv)
-					print("QA BAGTIP %s: %s" % [arg, _hud_panels.qa_bag_tip(int(arg))])
-				else:
-					_qa_push_click(centre, MOUSE_BUTTON_RIGHT if kind == "rbagitem" else MOUSE_BUTTON_LEFT)
-		"boxyes":
-			# Round 838: left click the Yes of the open box named <arg>
-			# (e.g. ItemTargetConfirm), wherever the viewport put it.
-			var box := get_tree().root.find_child(arg + "*", true, false) as Control
-			var yes: BaseButton = null
-			if box != null:
-				for b in box.find_children("*", "BaseButton", true, false):
-					if (b as BaseButton).is_visible_in_tree() and (yes == null or (b as BaseButton).get_global_rect().position.x < yes.get_global_rect().position.x):
-						yes = b as BaseButton
-			if yes == null:
-				_qa_input_report = action + (" (no button)" if box != null else " (no such box)")
+				_qa_push_click(centre, MOUSE_BUTTON_RIGHT if kind == "rbagitem" else MOUSE_BUTTON_LEFT)
+		"gachacard":
+			# Round 838: left click the Magic POP window's inventory cell holding
+			# the first Magic POP card (GachaWindow.card_cell).
+			var gcell := _gacha_window.card_cell() if _gacha_window != null and _gacha_window.visible else null
+			if gcell == null:
+				_qa_input_report = action + " (no card in the Magic POP pane)"
 			else:
-				var centre := yes.get_global_rect().get_center()
-				_qa_input_report = "%s %s at %s" % [action, yes.name, centre]
-				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
+				var gc := gcell.get_global_rect().get_center()
+				_qa_input_report = "%s at %s" % [action, gc]
+				_qa_push_click(gc, MOUSE_BUTTON_LEFT)
+		"bagitemr":
+			# Round 838: right click the bag cell holding that item id.
+			var rcell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
+			if rcell == null:
+				_qa_input_report = action + " (not on the shown bag page)"
+			else:
+				_qa_input_report = "%s at %s" % [action, rcell.get_global_rect().get_center()]
+				_qa_push_click(rcell.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+		"baghover":
+			# Round 838: the pointer over the bag cell holding that item id
+			# (its tooltip).
+			var hcell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
+			if hcell == null:
+				_qa_input_report = action + " (not on the shown bag page)"
+			else:
+				var bmo := InputEventMouseMotion.new()
+				bmo.position = hcell.get_global_rect().get_center()
+				bmo.global_position = bmo.position
+				get_viewport().push_input(bmo)
+				_qa_input_report = "%s at %s" % [action, bmo.position]
+		"bagtip":
+			# Round 838: the tooltip of the bag stack holding that item id, as
+			# the cell's hover builds it (its instance: a pet's rent, a
+			# spirit's expiry), drawn beside the bag and printed.
+			var tip_slot := -1
+			for k in 96:
+				if _hud_panels != null and _hud_panels._bag_item_id_at_slot(k) == int(arg):
+					tip_slot = k
+					break
+			if tip_slot < 0:
+				_qa_input_report = action + " (not in the bag)"
+			else:
+				var tip_lines := _hud_panels.item_tip_lines(int(arg), "bag", tip_slot)
+				var bubble := ItemTooltipBubble.new(_ui_builder)
+				_hud_panels.add_child(bubble)
+				bubble.show_lines(tip_lines, Rect2())
+				bubble.position = Vector2(680, 60)
+				get_tree().create_timer(4.0).timeout.connect(bubble.queue_free)
+				_qa_input_report = "%s slot %d: %s" % [action, tip_slot, ItemTooltipLines.as_text(tip_lines).replace("\n", " | ")]
+		"spirit_slot":
+			# Round 838: right click the devil's spirit strip's slot n.
+			var sw := _hud_panels._windows.get("inventory") as HudWindow if _hud_panels != null else null
+			var strip := sw.node(HudPanels.AVATAR_SKILL_STRIP) as Control if sw != null else null
+			var ss := strip.get_node_or_null("SpiritSlot%s" % arg) as Control if strip != null else null
+			if ss == null or not ss.is_visible_in_tree():
+				_qa_input_report = action + " (no shown slot; strip %s)" % str(_hud_panels.spirit_strip_skills())
+			else:
+				_qa_input_report = "%s at %s skill %s" % [action, ss.get_global_rect().get_center(), str(ss.get_meta("skill_id", -1))]
+				_qa_push_click(ss.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT)
+		"useon_ok":
+			# Round 838: the use-on box's OK.
+			var ok_at := _hud_panels.use_on_box_ok_centre() if _hud_panels != null else Vector2(-1, -1)
+			_qa_input_report = "%s at %s" % [action, ok_at]
+			if ok_at.x >= 0:
+				_qa_push_click(ok_at, MOUSE_BUTTON_LEFT)
+		"board":
+			# Round 838: left click a buff-board icon by token (the Gold Time
+			# is GOLD_TIME_TOKEN; a composite grant -item id).
+			var bb: HudBuffBoard.Buff = _hud_buff_board.buff(int(arg)) if _hud_buff_board != null else null
+			if bb == null or bb.slot == null:
+				_qa_input_report = action + " (no such icon)"
+			else:
+				_qa_input_report = "%s at %s" % [action, bb.slot.get_global_rect().get_center()]
+				_qa_push_click(bb.slot.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"board_hover":
+			# Round 838: the pointer over a buff-board icon (its tooltip).
+			var hb: HudBuffBoard.Buff = _hud_buff_board.buff(int(arg)) if _hud_buff_board != null else null
+			if hb == null or hb.slot == null:
+				_qa_input_report = action + " (no such icon)"
+			else:
+				var hmo := InputEventMouseMotion.new()
+				hmo.position = hb.slot.get_global_rect().get_center()
+				hmo.global_position = hmo.position
+				get_viewport().push_input(hmo)
+				_qa_input_report = "%s at %s tooltip '%s'" % [action, hmo.position, _hud_buff_board.tooltip_for(int(arg)).replace("\n", " | ")]
+		"board_ok":
+			# Round 838: the board's confirm box's OK.
+			var conf := ui_control.find_child(HudBuffBoard.CONFIRM_NAME, true, false) as Control
+			var okb := conf.find_child("OK", true, false) as Control if conf != null else null
+			if okb == null:
+				_qa_input_report = action + " (no box)"
+			else:
+				_qa_input_report = "%s at %s body '%s'" % [action, okb.get_global_rect().get_center(),
+					(conf.find_child("Body", true, false) as Label).text]
+				_qa_push_click(okb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"composite_btn":
+			# Round 838: button n of the composite item window.
+			if _composite_window == null or not is_instance_valid(_composite_window):
+				_qa_input_report = action + " (no window)"
+			else:
+				var cb := _composite_window.button_screen_centre(int(arg))
+				_qa_input_report = "%s at %s" % [action, cb]
+				_qa_push_click(cb, MOUSE_BUTTON_LEFT)
+		"reverse":
+			# Round 838: the reverse return box's member button
+			# (LastReturn, LastDeath, MapPoint, Cancel).
+			var rb := _hud_panels.reverse_return_box() if _hud_panels != null else null
+			var mb2 := rb.member(arg) if rb != null else null
+			if mb2 == null:
+				_qa_input_report = action + " (no box)"
+			else:
+				_qa_input_report = "%s at %s" % [action, mb2.get_global_rect().get_center()]
+				_qa_push_click(mb2.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
 		"worn":
-			# Round 838: left click the worn slot's icon (the equipment pane).
+			# Round 838 (lane 2): left click the worn slot's icon (the
+			# equipment pane), e.g. a worn target for a switch tool.
 			var icon := _hud_panels.qa_worn_icon(int(arg)) if _hud_panels != null else null
 			if icon == null or not icon.is_visible_in_tree():
 				_qa_input_report = action + " (no worn slot shown)"
@@ -18566,6 +19069,18 @@ func _qa_input_step() -> void:
 				motion.button_mask = MOUSE_BUTTON_MASK_LEFT
 				get_viewport().push_input(motion)
 			_qa_push_mouse(to, MOUSE_BUTTON_LEFT, false)
+		"hovernode":
+			# Round 838: move the mouse to the centre of the first visible
+			# Control of that name (a worn slot's tooltip).
+			var hn := _qa_find_visible(ui_control, arg)
+			if hn == null:
+				_qa_input_report = action + " (no such visible node)"
+			else:
+				var motion := InputEventMouseMotion.new()
+				motion.position = hn.get_global_rect().get_center()
+				motion.global_position = motion.position
+				_qa_input_report = "%s at %s" % [action, motion.position]
+				get_viewport().push_input(motion)
 		"hover":
 			var hv := arg.split(",")
 			var motion := InputEventMouseMotion.new()
@@ -19028,6 +19543,17 @@ func _qa_step() -> void:
 	# (_qa_input_step has the syntax).
 	_qa_input_step()
 
+	# OPENSRO_QA_STALL_BOOTH="<tick>:<decoration item id>[:<race>],..." (round
+	# 838): at each tick, the booth a stall with that decoration (0: none)
+	# would draw (StallBooth), put at the player's feet in place of the last;
+	# race 0 China (the default), 1 Europe. QA only: OpenSRO has no stall yet.
+	var qa_booth := OS.get_environment("OPENSRO_QA_STALL_BOOTH")
+	if qa_booth != "":
+		for part in qa_booth.split(",", false):
+			var tb := String(part).split(":")
+			if tb.size() >= 2 and tb[0].is_valid_int() and int(tb[0]) == _qa_tick:
+				_qa_stall_booth(int(tb[1]), int(tb[2]) if tb.size() > 2 else 0)
+
 	# OPENSRO_QA_LEARN="<mastery>x<n>;<skill id>[;...]" raises a mastery n
 	# times and learns skills, one request after another, each waiting for
 	# its reply, starting at tick 90 (after OPENSRO_QA_COMMANDS, which can
@@ -19387,6 +19913,8 @@ func _qa_step() -> void:
 		_qa_pmi_step()
 	if _qa_reequip_spec != "":
 		_qa_reequip_step()
+	if _qa_unequip_spec != "":
+		_qa_unequip_step()
 	if _qa_equip_bag_spec != "":
 		_qa_equip_bag_step()
 	if _qa_cos_spec != "":
@@ -25260,7 +25788,7 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 		# R replies to this name (KeyMap slot 20; _key_whisper_reply).
 		_last_whisperer = u.sender_name
 	if _hud_chat != null:
-		_hud_chat.add_chat(u.type, u.sender_name, u.message_text)
+		_hud_chat.add_chat(u.type, u.sender_name, u.message_text, false, u.color)
 	if u.type == HudChat.TYPE_NOTICE:
 		_show_banner("gm_notice", u.message_text)
 	if chat_log != null:
@@ -25308,8 +25836,179 @@ func _use_cos_item(slot: int) -> void:
 		UiSounds.expect_use(_hud_panels.bag_item_types(slot))
 	NetClient.use_item_option(NetClient.current_character_name, slot, UseItemNet.OPTION_COS_TARGET, uid)
 
+## Round 838: the use-on mode's send (HudPanels.use_on_check passed): the
+## pet forms carry the target's bag index as OPTION_COS_TARGET's u32; the
+## Nasrun extension the target's wire slot (bag index + 13) as its option
+## byte (avataruse.go).
+func _on_use_on_requested(src: int, target: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	var types := _hud_panels.bag_item_types(src) if _hud_panels != null else PackedInt32Array()
+	if _hud_panels != null:
+		UiSounds.expect_use(types)
+	# The Nasrun extension (3/3/13/16) and, round 838 lane 2, the switch tools
+	# (3/3/13/8, session/switcher.go) carry the target's wire slot (bag index
+	# + 13) as the option byte, as retail's 0x704C its u8.
+	if types.size() >= 4 and types[2] == 13 and (types[3] == 16 or types[3] == 8):
+		print("World3D: bag slot %d used on bag slot %d (wire slot %d)" % [src, target, target + 13])
+		NetClient.use_item_option(NetClient.current_character_name, src, target + 13, 0)
+		return
+	print("World3D: bag slot %d used on the pet item in bag slot %d" % [src, target])
+	NetClient.use_item_option(NetClient.current_character_name, src, UseItemNet.OPTION_COS_TARGET, target)
+
 const COS_CANT_USE_ITEM_KEY := "UIIT_MSG_COSPETERR_CANT_USEITEM"
+## Round 838: the server's 0x300e lines (session/ammo.go) and their text keys.
+const AMMO_REFUSALS := {
+	"Insufficient arrows.": "UIIT_SKILL_USE_FAIL_RUNOUT_AMMO",
+	"Insufficient bolts.": "UIIT_SKILL_USE_FAIL_RUNOUT_AMMO_VOLT",
+}
 const COS_WRONG_OBJECT_KEY := "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+
+# --- The skin change scroll (round 838, SkinChangeWindow) ---------------------
+
+var _skin_window: SkinChangeWindow = null
+## The body and scale a sent skin change asked for, kept until the server's
+## answer: [ref_obj_id, scale], [] for none.
+var _skin_sent: Array = []
+## An accepted change's body, put on at the warp that follows it (retail's
+## pending teleport reason 6, Item_OnUseItemResult case 9, and the reload).
+var _skin_pending: Array = []
+
+## The scroll in bag slot `slot` was used: the window opens on the player's
+## own body (GInterfaceWndRelation::FUN_0079b790).
+func _on_skin_change_requested(slot: int) -> void:
+	if _skin_window == null:
+		_skin_window = SkinChangeWindow.new()
+		_skin_window.name = "SkinChangeWindow"
+		ui_control.add_child(_skin_window)
+		if not _skin_window.setup(_ui_builder):
+			_log_system("The skin change window is unavailable.")
+			_skin_window.queue_free()
+			_skin_window = null
+			return
+		_skin_window.preview_builder = _skin_preview_body
+		_skin_window.gear_reader = _skin_gear_held
+		_skin_window.refused.connect(func(text: String) -> void:
+			print("SKIN refused here: %s" % text)
+			_log_system(text))
+		_skin_window.confirmed.connect(_on_skin_change_confirmed)
+	var body := _skin_own_body()
+	var race := int(body[1])
+	var lists := _skin_lists(race)
+	_skin_window.model.women = lists[0]
+	_skin_window.model.men = lists[1]
+	print("SKIN window: slot %d, own body %d (race %d, sex %d, scale 0x%02x), %d women, %d men" % [
+		slot, int(body[0]), race, int(body[2]), int(body[3]), lists[0].size(), lists[1].size()])
+	_skin_window.open_for(slot, int(body[0]), int(body[2]), int(body[3]))
+	if _skin_window.doll != null and _portrait_zone_light.size() == 2:
+		_skin_window.doll.set_zone_light(_portrait_zone_light[0], _portrait_zone_light[1])
+
+## [ref_obj_id, race, sex, scale] of the player's body now.
+func _skin_own_body() -> Array:
+	var ewr = NetClient.last_enter_world_result
+	var ref := 0
+	var scale := CharacterAppearance.DEFAULT_SCALE
+	var gender := DEFAULT_GENDER
+	if ewr != null:
+		if ewr.has_model:
+			ref = ewr.ref_obj_id
+			scale = ewr.scale
+		if ewr.gender != "":
+			gender = ewr.gender
+	var race := 1 if gender.begins_with("europe") else 0
+	var sex := 0 if gender.ends_with("woman") else 1
+	var cat := _appearance.catalog() if _appearance != null else null
+	var e: CharCatalog.Entry = cat.get_entry(ref) if cat != null and ref > 0 else null
+	if e != null and e.is_body:
+		race = e.race
+		sex = e.sex
+	return [ref, race, sex, scale]
+
+## The window's two lists for `race`: usableresobjiddata.txt's ids in file
+## order (Client_LoadRefDataFile case 7), kept when the catalogue holds them as
+## a body of that race, by sex. Without the file, the catalogue's bodies in id
+## order (MEASURED: the file lists the 52 bodies in id order).
+func _skin_lists(race: int) -> Array:
+	var cat := _appearance.catalog() if _appearance != null else null
+	var ids: Array = []
+	if _media_pk2 != null:
+		var e := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\usableresobjiddata.txt")
+		if e != null:
+			var raw := _media_pk2.read_file(e)
+			var text := ""
+			if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+				text = TextDecode.utf16(raw.slice(2))
+			else:
+				text = raw.get_string_from_utf8()
+			ids = SkinChangeModel.parse_usable_ids(text)
+	if ids.is_empty() and cat != null:
+		ids = cat.all_ids()
+	var body_of := func(id: int) -> Dictionary:
+		var entry: CharCatalog.Entry = cat.get_entry(id) if cat != null else null
+		if entry == null or not entry.is_body:
+			return {}
+		return {"race": entry.race, "sex": entry.sex}
+	var m := SkinChangeModel.from_ids(ids, race, body_of)
+	return [m.women, m.men]
+
+## The preview's body (FUN_007ee450): the chosen model at `scale`, wearing the
+## weapon and shield always and the rest of the worn items and the avatars
+## only when the sex is the player's (`keep_gear`).
+func _skin_preview_body(ref_obj_id: int, scale: int, keep_gear: bool) -> Skeleton3D:
+	var equipped := {}
+	for k in _player_equipped_last:
+		var slot := int(k)
+		if keep_gear or slot == 6 or slot == 7:
+			equipped[slot] = _player_equipped_last[k]
+	if keep_gear:
+		equipped = _with_player_avatars(equipped)
+	var body := _body_key_for(ref_obj_id, "")
+	var skel := _build_assembled_character(equipped, body, scale, _player_pluses_last)
+	if skel == null:
+		return null
+	var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped, body))
+	if idle != null and _frame_count(idle) > 1:
+		Skeleton3DBuilder.apply_ban_pose_at(skel, idle, 0.0, true)
+		_animated.append([skel, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
+	print("SKIN preview: model %d (%s) scale 0x%02x, gear %s" % [ref_obj_id, body, scale, str(keep_gear)])
+	return skel
+
+## The pre-check's reading: the worn equip slots and the avatars held.
+func _skin_gear_held() -> Array:
+	var worn: Array = []
+	for k in _player_equipped_last:
+		if int(_player_equipped_last[k]) > 0:
+			worn.append(int(k))
+	return [worn, _player_avatars.size()]
+
+func _on_skin_change_confirmed(slot: int, ref_obj_id: int, scale: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	print("SKIN confirm: slot %d -> model %d scale 0x%02x" % [slot, ref_obj_id, scale])
+	_skin_sent = [ref_obj_id, scale]
+	UiSounds.expect_use(_hud_panels.bag_item_types(slot) if _hud_panels != null else PackedInt32Array())
+	NetClient.use_item_skin(NetClient.current_character_name, slot, ref_obj_id, scale)
+
+## The warp after an accepted change: the player's own body is the new one
+## (the client reloads it at the teleport; the others respawn it).
+func _apply_skin_pending() -> void:
+	if _skin_pending.is_empty():
+		return
+	var ewr = NetClient.last_enter_world_result
+	var ref := int(_skin_pending[0])
+	var scale := int(_skin_pending[1])
+	_skin_pending = []
+	if ewr == null:
+		return
+	var cat := _appearance.catalog() if _appearance != null else null
+	var e: CharCatalog.Entry = cat.get_entry(ref) if cat != null else null
+	ewr.ref_obj_id = ref
+	ewr.scale = scale
+	ewr.has_model = true
+	if e != null and e.is_body:
+		ewr.gender = ("europe" if e.race == 1 else "china") + ("_woman" if e.sex == 0 else "_man")
+	print("SKIN applied: model %d scale 0x%02x gender %s" % [ref, scale, ewr.gender])
+	_apply_player_equipment_visual(_player_equipped_last)
 
 ## The global chatting item was used from the bag: "Chat to all" opens for
 ## that slot (CIFWholeChat, round 634).
@@ -25842,6 +26541,62 @@ func _qa_mall(what: String) -> String:
 		"mall_search":
 			m.search(what.substr(12))
 			return "search"
+		"mall_type":
+			# mall_type:<text>: a real click on the search edit, the text as
+			# key presses, then Enter (round 838: what the player does).
+			var edit := m.node("GDR_RENEWAL_ITEM_MALL_SEARCH")
+			if edit == null:
+				return "no edit"
+			_qa_push_click(edit.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+			for ch in what.substr(10):
+				_qa_push_key(ch)
+			var typed := "focus %s text '%s'" % [_qa_focus_name(), (edit as LineEdit).text if edit is LineEdit else "?"]
+			_qa_push_key("Enter")
+			return "%s -> view %s cells %d" % [typed, String(m._view.get("kind", "")), m._cells.size()]
+		"mall_rows":
+			# Every menu row with its sub-tabs and their goods counts.
+			var rows := []
+			for r in m._rows:
+				var subs := []
+				for s in r["subs"]:
+					subs.append("%s(%d)" % [s["title"], (s.get("goods", []) as Array).size()])
+				rows.append("%s[%s]" % [(r["row"] as MallData.MenuRow).text_key, ", ".join(subs)])
+			return " ".join(rows)
+		"mall_pick":
+			# mall_pick:<row text key>:<sub title>: real clicks on that row,
+			# then on that sub-tab.
+			for r in m._rows:
+				if (r["row"] as MallData.MenuRow).text_key != parts[1]:
+					continue
+				if not bool(r["open"]):
+					_qa_push_click((r["node"] as Control).get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+				for s in r["subs"]:
+					if String(s["title"]) == parts[2]:
+						_qa_push_click((s["node"] as Control).get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+						return "picked -> view %s cells %d" % [String(m._view.get("kind", "")), m._cells.size()]
+				return "row open, no sub %s" % parts[2]
+			return "no row %s" % parts[1]
+		"mall_tip":
+			# mall_tip:<i>: the pointer onto cell i's icon (real motion);
+			# the tooltip it shows.
+			if int(parts[1]) >= m._cells.size():
+				return "no cell"
+			var slot := (m._cells[int(parts[1])] as Control).find_child("GDR_RENEWAL_SHOP_SLOT_ICON", true, false) as Control
+			if slot == null:
+				return "no icon"
+			var mm := InputEventMouseMotion.new()
+			mm.position = slot.get_global_rect().get_center()
+			mm.global_position = mm.position
+			get_viewport().push_input(mm, true)
+			var g: MallData.Good = (m._cells[int(parts[1])] as Control).get_meta("good")
+			return "%s: %s" % [g.package.code, ItemTooltipLines.as_text(_hud_panels.item_tip_shown()).replace("\n", " | ")]
+		"mall_findbtn":
+			# A real click on the Search button.
+			var fb := m.node("GDR_RENEWAL_ITEM_MALL_SEARCH_BTN")
+			if fb == null:
+				return "no button"
+			_qa_push_click(fb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+			return "clicked -> view %s cells %d" % [String(m._view.get("kind", "")), m._cells.size()]
 		"mall_original":
 			m.press_original()
 			return "original"
@@ -26622,6 +27377,10 @@ func _on_npc_opened(id: int) -> void:
 			# beside it (READ c:0x888e30 -> 0x79d4a0(1), 0x79af20).
 			var grant := _hud_panels.open_grant_window()
 			print("NPC grant window: %s" % ("open" if grant != null else "unavailable"))
+		0x11:
+			# Round 838: 0xB046 {1, 0x11} -> Magic POP (c:0x79c060): the
+			# select window first.
+			_open_gacha_select()
 
 ## The talk window, the store or the storage went away (HudPanels'
 ## npc_window_hidden): the end request 0x704B (READ: the NPC window's close
@@ -26637,6 +27396,157 @@ func _on_npc_window_hidden(panel_id: String) -> void:
 		return
 	if _npc_talk.end():
 		print("NPC end 0x704B: %s closed" % panel_id)
+
+# --- Magic POP (round 838, GachaWindow / GachaSelectWindow / GachaNet) --------
+
+var _gacha_tables: GachaTables = null
+var _gacha_select: GachaSelectWindow = null
+var _gacha_window: GachaWindow = null
+## The machine the select window was opened for (its uid and ref id).
+var _gacha_npc_uid := 0
+var _gacha_npc_ref := 0
+
+func _gacha_tables_loaded() -> GachaTables:
+	if _gacha_tables == null and _ui_builder != null and _ui_builder.media_archive() != null:
+		var archive := _ui_builder.media_archive()
+		_gacha_tables = GachaTables.new().load(func(path: String) -> PackedByteArray:
+			var entry := ObjectLoader.find_file(archive, path)
+			return archive.read_file(entry) if entry != null else PackedByteArray())
+		print("GACHA: tables -- %d prizes, %d machines, %d kinds" % [_gacha_tables.prizes.size(),
+			_gacha_tables.machines.size(), _gacha_tables.kinds.size()])
+	return _gacha_tables
+
+func _gacha_connect() -> void:
+	if not NetClient.gacha_play_result.is_connected(_on_gacha_play_result):
+		NetClient.gacha_play_result.connect(_on_gacha_play_result)
+		NetClient.gacha_exchange_failed.connect(_on_gacha_exchange_failed)
+		NetClient.gacha_announce.connect(_on_gacha_announce)
+		NetClient.inventory_list_result.connect(func(s: Array, e: String) -> void:
+			if e == "" and not _gacha_coupon_slots.is_empty():
+				_on_gacha_exchanged(s)
+			if _gacha_window != null:
+				_gacha_window.call_deferred("on_bag_changed"))
+
+## 0xB046 {1, 0x11}: the select window (c:0x746be0).
+func _open_gacha_select() -> void:
+	var tables := _gacha_tables_loaded()
+	if tables == null or ui_control == null:
+		_log_system("Magic POP is unavailable.")
+		return
+	_gacha_connect()
+	_gacha_npc_uid = _talk_npc_uid()
+	_gacha_npc_ref = _npc_id_for_code(_talk_npc_code)
+	if _gacha_select == null:
+		_gacha_select = GachaSelectWindow.new()
+		_gacha_select.name = "GachaSelectWindow"
+		ui_control.add_child(_gacha_select)
+		if not _gacha_select.setup(_ui_builder, tables):
+			_gacha_select.queue_free()
+			_gacha_select = null
+			_log_system("Magic POP is unavailable.")
+			return
+		_gacha_select.start_requested.connect(_on_gacha_start)
+		_gacha_select.closed.connect(func() -> void:
+			if _gacha_window == null or not _gacha_window.visible:
+				_gacha_end_talk())
+	# The talk box gives way to the game (OURS: what hides it is not read).
+	if _hud_panels != null and _hud_panels.is_open("npctalk"):
+		_npc_hide_silent += 1
+		_hud_panels.close("npctalk")
+		_npc_hide_silent -= 1
+	_gacha_select.open()
+	print("GACHA: select window open for NPC %d (ref %d)" % [_gacha_npc_uid, _gacha_npc_ref])
+
+## Start (c:0x74a2b0): the main window with the chosen kind's prizes.
+func _on_gacha_start(kind: GachaTables.Kind) -> void:
+	var tables := _gacha_tables_loaded()
+	if tables == null:
+		return
+	if _gacha_window == null:
+		_gacha_window = GachaWindow.new()
+		_gacha_window.name = "GachaWindow"
+		ui_control.add_child(_gacha_window)
+		if not _gacha_window.setup(_ui_builder):
+			_gacha_window.queue_free()
+			_gacha_window = null
+			_log_system("Magic POP is unavailable.")
+			return
+		_gacha_window.icon_of = func(ref: int) -> Texture2D: return _hud_panels._item_icon(ref) if _hud_panels != null else null
+		_gacha_window.types_of = func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array()
+		_gacha_window.bag_of = func() -> Array: return _hud_panels.bag_entries() if _hud_panels != null else []
+		_gacha_window.play_requested.connect(func(uid: int, gid: int, bag_slot: int) -> void:
+			NetClient.gacha_play(uid, gid, bag_slot))
+		_gacha_window.closed.connect(_gacha_end_talk)
+	var list := tables.prizes_for(tables.prize_set(_gacha_npc_ref), kind,
+		func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array())
+	_gacha_select.hide()
+	_gacha_window.open_for(_gacha_npc_uid, list)
+	print("GACHA: main window open, %d prize(s)" % list.size())
+
+func _gacha_end_talk() -> void:
+	if _talk_server and _npc_talk != null and _npc_talk.end():
+		print("NPC end 0x704B: Magic POP closed")
+
+func _on_gacha_play_result(result: Dictionary) -> void:
+	print("GACHA RESULT: %s" % str(result))
+	if _gacha_window != null:
+		_gacha_window.on_result(result)
+	if bool(result.get("ok", false)) and NetClient.current_character_name != "":
+		NetClient.list_inventory(NetClient.current_character_name)
+
+## The bag slots that held a coupon when 0x7119 went out (bag slot -> coupon
+## item id); emptied by the next bag list.
+var _gacha_coupon_slots: Dictionary = {}
+
+## Gori's line (c:0x7020c0 case 0x28).
+func _gacha_exchange() -> void:
+	_gacha_connect()
+	_gacha_coupon_slots.clear()
+	if _hud_panels != null:
+		for e in _hud_panels.bag_entries():
+			var id := int(GachaWindow._field(e, ["item_id", "id"]))
+			var t := _hud_panels.item_types(id)
+			if t.size() >= 4 and t[0] == 3 and t[1] == 3 and t[2] == 14 and t[3] == 2:
+				_gacha_coupon_slots[int(GachaWindow._field(e, ["slot_index", "slot", "index"]))] = id
+	if _gacha_coupon_slots.is_empty():
+		_replace_talk(_resolve_any_text("SN_TALK_CH_GACHA_OPERATOR_3",
+			"Oh. You don't have Item Exchange Coupon. Then I can't if you don't have the item exchange coupon."), [])
+		return
+	print("GACHA: exchange 0x7119 at NPC %d (%d coupon(s))" % [_talk_npc_uid(), _gacha_coupon_slots.size()])
+	NetClient.gacha_exchange(_talk_npc_uid())
+	# Retail is told each slot by 0x3040; this client asks for its bag, which
+	# the server answers after the exchange (OURS, session/gacha.go).
+	if NetClient.current_character_name != "":
+		NetClient.list_inventory(NetClient.current_character_name)
+
+## The bag after Gori's exchange: retail's 0x3040 line for each coupon slot
+## that now holds something else, UIIT_MSG_GACHA_EXCHANGE "Has been changed
+## to [%s][%d]." (c:0x88bf30), with the new item's name and count.
+func _on_gacha_exchanged(slots: Array) -> void:
+	var fmt := _resolve_any_text("UIIT_MSG_GACHA_EXCHANGE", "Has been changed to [%s][%d].")
+	for e in slots:
+		var at = GachaWindow._field(e, ["slot_index", "slot", "index"])
+		if at == null or not _gacha_coupon_slots.has(int(at)):
+			continue
+		var id := int(GachaWindow._field(e, ["item_id", "id"]))
+		if id == int(_gacha_coupon_slots[int(at)]):
+			continue
+		var count = GachaWindow._field(e, ["quantity", "count"])
+		var line := fmt.replace("%s", _hud_panels.item_name(id) if _hud_panels != null else str(id)) \
+			.replace("%d", str(int(count) if count != null else 1))
+		print("SYSLOG gacha: %s" % line)
+		_log_system(line, HudSystemMessage.TYPE_GAME)
+	_gacha_coupon_slots.clear()
+
+## 0xB119 {2, code}: category 1's code (c:0x88d700); this client logs it.
+func _on_gacha_exchange_failed(code: int) -> void:
+	print("GACHA: exchange refused, code %d" % code)
+
+## 0x3120: "[%s][%d]has been won from Magic POP." (c:0x88f880).
+func _on_gacha_announce(ref: int, count: int) -> void:
+	var line := _resolve_any_text("UIIT_MSG_GACHA_ANNOUNCE", "[%s][%d]has been won from Magic POP.") \
+		.replace("%s", _hud_panels.item_name(ref) if _hud_panels != null else str(ref)).replace("%d", str(count))
+	_show_banner("gm_notice", line)
 
 ## Round 819: 0xB04B's close, FUN_0079e350 (READ): the NPC talk window, the
 ## store and the storage are hidden by ShowWindow(0) -- no 0x704B goes back
@@ -26890,7 +27800,20 @@ func _resolve_any_text(key: String, fallback: String) -> String:
 		var t: String = (table as UiTextTable).get_text(key)
 		if t != "" and t != key:
 			return t
+	# Round 838: a talk line's SN_TALK_ key that the tables above lack lives in
+	# textquest_queststring.txt (MEASURED: Magic POP's SN_TALK_CH_GACHA_*),
+	# read once, on the first such miss, so the world's entry does not pay it.
+	if key.begins_with("SN_TALK_"):
+		if _quest_string_table == null and _media_pk2 != null:
+			var qs := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textquest_queststring.txt")
+			_quest_string_table = UiTextTable.parse(_media_pk2.read_file(qs)) if qs != null else UiTextTable.new()
+		if _quest_string_table != null:
+			var q: String = _quest_string_table.get_text(key)
+			if q != "" and q != key:
+				return q
 	return fallback
+
+var _quest_string_table: UiTextTable = null
 
 ## The talk box's tax line for the NPC or gate `code`, or "" (round 725;
 ## NpcTalkView.fortress_strid_for has what is READ and what is ours): the
@@ -26918,6 +27841,12 @@ func _npc_greeting_text(code: String) -> String:
 			var resolved := _npc_text_table.get_text(s)
 			if resolved != "" and resolved != s:
 				return resolved
+			# Round 838: Magic POP's greetings (SN_TALK_CH_GACHA_*_1) are in
+			# textquest_queststring.txt (_resolve_any_text's SN_TALK_ branch).
+			if s.begins_with("SN_TALK_"):
+				resolved = _resolve_any_text(s, "")
+				if resolved != "":
+					return resolved
 	return ""
 
 ## The talk window's lines (round 727): the interaction-id set `ids` -- the
@@ -27198,6 +28127,16 @@ func _on_npc_service_selected(key: String) -> void:
 			return
 		if key == "talk":
 			_npc_talk.open(2)
+			return
+		# Round 838: Magic POP. The machine's line 0x27 opens 0x11; Gori's
+		# line 0x28 sends the exchange 0x7119 when the bag holds a coupon
+		# (3/3/14/2, c:0x745ab0), else his talk says he cannot
+		# (SN_TALK_CH_GACHA_OPERATOR_3) -- c:0x7020c0, READ.
+		if key == "gacha_machine":
+			_npc_talk.open(0x11)
+			return
+		if key == "gacha_operator":
+			_gacha_exchange()
 			return
 	# A tab group's store line (round 725): that group's tabs.
 	if key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):
@@ -31335,6 +32274,8 @@ func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 	# The buff's remaining time bounds the aura in case its end never
 	# arrives (SkillEffects.AURA_GRACE_MS, OURS).
 	var remaining := start.remaining_ms if start.remaining_ms > 0 else start.duration_ms
+	# Round 838: an aura's .bsr models (AuraModel) load from Data.pk2.
+	_deco_archive()
 	# A re-sent start of a buff whose aura already draws on this body keeps it
 	# (round 646, SkillEffects.ensure_aura).
 	SkillEffects.ensure_aura(_fx_owner_key(owner_id, kind), start.token, start.skill_id, body, remaining)
@@ -31357,6 +32298,7 @@ func _fx_resync_owner(key: String, why: String) -> int:
 	var starts := roster.starts_of(key, Time.get_ticks_msec())
 	if starts.is_empty():
 		return 0
+	_deco_archive() # round 838: the auras' .bsr models (AuraModel)
 	var n := 0
 	for bs in starts:
 		var start: SkillNet.BuffStart = bs
@@ -32949,6 +33891,9 @@ func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 ## and move handlers and the sit state alike.
 func _on_self_id_received(_character_id: int) -> void:
 	_sync_own_id()
+	# Round 838: a plate built before the id came was drawn in the default
+	# colours; the own 0x013B may already be in.
+	_own_plate_colours_told()
 	# This player selected before its id came (round 638 review): the target
 	# window's owner "character:-1" becomes the real id's key.
 	if _hud_target != null and _hud_target.buff_owner() == _fx_owner_key(-1, SkillNet.OWNER_CHARACTER) and _own_id() >= 0:
@@ -35821,17 +36766,37 @@ func _on_use_item_result(result) -> void:
 	if result.error != "":
 		# Logged, so a tester's log shows every refusal (composite review).
 		print("World3D: use item refused: %s (code 0x%x)" % [result.error, result.code])
+		_skin_sent = []
 		# A refusal with an engine code (round 778: the scrolls') is the
 		# archive's own category-1 message (ErrorText.scroll_line).
 		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
 		return
 	# Round 826: its re-use timers.
 	_arm_item_cooldowns(result)
+	# Round 838: an accepted skin change puts the body on at the warp.
+	if not _skin_sent.is_empty() and _hud_panels != null and result.item_id != 0 \
+			and HudPanels.is_skin_change_item(_hud_panels.item_types(result.item_id)):
+		_skin_pending = _skin_sent
+		_skin_sent = []
+		print("SKIN accepted: model %d at the warp" % int(_skin_pending[0]))
+	# Round 838: the Nasrun extension's accepted use (Item_OnUseItemResult
+	# case 0x10, c:0x87b047) prints UIIT_MSG_NASRUN_AWAKE_RENEW.
+	if result.item_id != 0 and _hud_panels != null:
+		var ut := _hud_panels.item_types(result.item_id)
+		if ut.size() >= 4 and ut[0] == 3 and ut[1] == 3 and ut[2] == 13 and ut[3] == 16:
+			_log_system(_resolve_any_text("UIIT_MSG_NASRUN_AWAKE_RENEW", "Awaken period is extended."), HudSystemMessage.TYPE_GAME)
 	# Round 824: a crest item's accepted use opens its result box.
 	if result.item_id != 0 and _hud_panels != null:
 		var code := _hud_panels.item_code_for_id(result.item_id)
 		if HudPanels.CREST_ITEM_BOXES.has(code):
 			_hud_panels.crest_used(code)
+		# Round 838: the repair hammer's mended items arrive as 0x3052s; a
+		# piece mended from broken counts again, so the doll and the stats
+		# are asked for (OURS: retail's ChangeItemDurability pushes them).
+		if HudPanels.is_repair_hammer(_hud_panels.item_types(result.item_id)) and NetClient.current_character_name != "":
+			print("World3D: the repair hammer mended the worn and carried items")
+			NetClient.list_equipment(NetClient.current_character_name)
+			NetClient.character_stats(NetClient.current_character_name)
 	# Round 786: every accepted use is logged with what it left, so a run
 	# (the auto potion's QA) reads the count and the pools from the log.
 	print("World3D: use item ok: %d left, HP %d/%d, MP %d/%d, restored %d HP %d MP" % [result.remaining,
@@ -35872,6 +36837,12 @@ func _on_use_item_result(result) -> void:
 ## and, for the map option, the refoptionalteleport id.
 func _on_reverse_return_requested(slot: int, option: int, target: int) -> void:
 	if NetClient.current_character_name == "" or _player_dead:
+		return
+	# Round 838: a composite grant's reverse return fill (COMPOSITE_FILL_SLOT).
+	if slot <= COMPOSITE_FILL_SLOT:
+		var fill := COMPOSITE_FILL_SLOT - slot
+		print("World3D: reverse return fill %d, option %d, point %d" % [fill, option, target])
+		NetClient.composite_use(NetClient.current_character_name, fill, option, target)
 		return
 	print("World3D: reverse return scroll at bag slot %d, option %d, point %d" % [slot, option, target])
 	UiSounds.expect_use(_hud_panels.bag_item_types(slot) if _hud_panels != null else PackedInt32Array())

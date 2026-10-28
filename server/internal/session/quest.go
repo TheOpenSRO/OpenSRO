@@ -1039,7 +1039,7 @@ func (rt *questRuntime) payExp(ctx context.Context, sess *gateway.Session, e wor
 		rt.deps.Chars.ResetHP(ctx, id)
 		bonus := character.BonusOf(id)
 		if rt.deps.MP != nil {
-			rt.deps.MP.Refill(id, character.MaxMPFor(newInt+bonus.Int, newLevel)+bonus.MP)
+			rt.deps.MP.Refill(id, character.MaxMPWith(newInt, newLevel, bonus))
 		}
 		lu = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 	}

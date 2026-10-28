@@ -254,6 +254,13 @@ func playLink(sess *gateway.Session, d combatDeps, casterID, target int64, link 
 	if len(outcomes) == 0 {
 		return false
 	}
+	// A link carrying `cnsm` spends its own ammunition (round 838,
+	// ammo.go); it has no gate before (Tick_UseSkill's masks 0x17 / 0x91
+	// skip row 0x20), so an empty slot 7 ends the chain here, with no blow.
+	if r := spendAmmo(ctx, sess, d.chars, d.eq, d.inv, d.items, casterID, link); r != "" {
+		_ = sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: r, MonsterID: m.ID}).Encode()})
+		return false
+	}
 	cc.apply(outcomes, action)
 	wearWeapon(ctx, d.eq, casterID, cc.terms.hits)
 	addSkillHate(cc, outcomes)

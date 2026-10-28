@@ -541,12 +541,19 @@ func sendSpeed(zone []world.Entity, ownerID int64, runSpeed uint32) {
 	sendAboutOwner(zone, ownerID, OpBuffEnd, msg.Encode())
 }
 
-// endBuffsOf clears ownerID's whole book and tells its zone (a death).
+// endBuffsOf clears ownerID's whole book and tells its zone (a death). An
+// item's running skill job keeps its buff (round 838, OURS: the engine's
+// timed job outlives the book's records -- itemskill.go -- and what a death
+// does to it was not read; a 28-day mall visual ending at the first death
+// would also come back at the next entry).
 func endBuffsOf(hub *world.Hub, ownerID int64) {
 	l := buffLock(ownerID)
 	l.Lock()
 	defer l.Unlock()
-	ended, sp := buffBooks.EndAll(ownerID)
+	now := time.Now()
+	ended, sp := buffBooks.EndAllBut(ownerID, func(r buff.Record) bool {
+		return isSkillJobBuff(context.Background(), r, now)
+	})
 	broadcastBuffEnd(zoneOf(hub, ownerID), ownerID, ended, sp)
 }
 
@@ -629,6 +636,9 @@ func BuffHandler(chars character.Store, hub *world.Hub) gateway.Handler {
 		if res != buff.Cancelled {
 			return nil
 		}
+		// Round 838: a cancelled item skill job does not come back at the
+		// next entry (OURS).
+		forgetSkillJob(characterID, rec.SkillID)
 		broadcastBuffEnd(zoneOf(hub, characterID), characterID, []buff.Record{rec}, sp)
 		return nil
 	}

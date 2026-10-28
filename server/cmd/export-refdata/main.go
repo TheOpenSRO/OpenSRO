@@ -124,6 +124,14 @@ const (
 	// fReviveCost is _RefObjCommon's CostRevive (+0xa8), column 28 (round 829;
 	// refdata.Item.ReviveCost).
 	fReviveCost = 28
+	// The accessories' absorption ranges (round 838; refdata.Item.PhysAbsorbMin):
+	// PAR low/high and MAR low/high, RefObjItem::ExtractData's +0x1d4/+0x1d8
+	// and +0x1f8/+0x1fc (READ s:0x6a3d50). Set on the 1,020 accessory rows only
+	// (MEASURED).
+	fPhysAbsorbMin = 71
+	fPhysAbsorbMax = 72
+	fMagAbsorbMin  = 79
+	fMagAbsorbMax  = 80
 	// fOrgCodeName is OrgObjCodeName (round 838): RefObjCommon_ExtractData's
 	// third string, into ref+0x48, cleared when it reads "xxx" (gs:0x6a3162..
 	// 0x6a318c) -- deserializer field 5, text column 4 (refdata.Item.OrgCodeName).
@@ -554,7 +562,7 @@ func main() {
 		}
 		return
 	}
-	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "specialty" && *mode != "mall" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
+	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "specialty" && *mode != "mall" && *mode != "gacha" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign" && *mode != "itemoptlevel") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
@@ -562,9 +570,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode npcs -out npcs.csv characterdata_*.txt refshopgroup.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode specialty -out specialty_shops.csv refshopgroup.txt refmappingshopgroup.txt refmappingshopwithtab.txt refshoptab.txt refshopgoods.txt refscrapofpackageitem.txt itemdata_*.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode mall -out mall.csv refshopgroup.txt refmappingshopgroup.txt refmappingshopwithtab.txt refshoptabgroup.txt refshoptab.txt refshopgoods.txt refpackageitem.txt refscrapofpackageitem.txt refpricepolicyofitem.txt itemdata_*.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode gacha -out gacha.csv gachaitemset.txt gachanpcmap.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptions -out magicoptions.csv magicoption.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptassign -out magicoptassign.csv magicoptionassign.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode itemoptlevel -out itemoptlevel.csv refabilitybyitemoptleveldata.txt refmagicoptbyitemoptleveldata.txt refskillbyitemoptleveldata.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode chargen -out chargen.csv characterdata_*.txt itemdata_*.txt   (each in its index's order)")
 		os.Exit(2)
 	}
@@ -604,6 +614,14 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case "gacha":
+		// Round 838: the Magic POP machine's tables (internal/gacha): what
+		// cmd/server's -gacha-csv loads.
+		if err := exportGacha(*out, inputArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	case "mall":
 		// Round 837: the item mall's catalogue (internal/mall): what
 		// cmd/server's -mall-csv loads.
@@ -618,6 +636,14 @@ func main() {
 		// (round 708, internal/npcspawn) -- the code names the NPC spawn
 		// record's interaction list is built from.
 		if err := exportNpcs(*out, inputArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "itemoptlevel":
+		// Round 838: the devil's spirits' plus-level options and skills
+		// (itemoptlevel.go), what cmd/server's -item-opt-level-csv loads.
+		if err := exportItemOptLevel(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -993,9 +1019,15 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 91: ReviveCost, itemdata column 28 (round 829, see
 		// refdata.Item.ReviveCost).
 		num(fReviveCost),
-		// 92: OrgCodeName, itemdata column 4 (round 838, see fOrgCodeName),
+		// 92..95: the accessories' absorption ranges (round 838, see
+		// refdata.Item.PhysAbsorbMin).
+		num(fPhysAbsorbMin), // 92 PhysAbsorbMin (col 71)
+		num(fPhysAbsorbMax), // 93 PhysAbsorbMax (col 72)
+		num(fMagAbsorbMin),  // 94 MagAbsorbMin (col 79)
+		num(fMagAbsorbMax),  // 95 MagAbsorbMax (col 80)
+		// 96: OrgCodeName, itemdata column 4 (round 838, see fOrgCodeName),
 		// "" for the table's `xxx`, as the server's parser stores it.
-		orgName(str(fOrgCodeName)), // 92 OrgObjCodeName (col 4)
+		orgName(str(fOrgCodeName)), // 96 OrgObjCodeName (col 4)
 	}, true
 }
 

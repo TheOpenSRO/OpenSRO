@@ -264,6 +264,14 @@ func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, b
 	}
 	// Its COS follow it (round 795, cosworld.go).
 	after = append(after, cosSpawnFrames(cur.CharacterID, now)...)
+	// Its plate colours (round 838, servicescroll.go, OURS).
+	if f := plateColourFrame(cur.CharacterID); f != nil {
+		after = append(after, f)
+	}
+	// Its custom title's text (round 838, titlescroll.go, OURS).
+	if f := customTitleFrame(cur.CharacterID); f != nil {
+		after = append(after, f)
+	}
 	return playerSpawn{e: cur, record: rec, after: after, version: version}, true
 }
 
@@ -547,6 +555,10 @@ func arrivePlayer(d viewDeps, arrived world.Entity) {
 	// Its COS arrive with it (round 795, cossummon.go): before the spawns
 	// both ways, so the players it meets get them with its own.
 	cosArrived(d.ctx, arrived)
+	// Round 838: its premium Gold Time and composite grants (goldtime.go,
+	// composite.go), kept across a restart.
+	goldTimeArrived(d.ctx, arrived)
+	compositeArrived(d.ctx, arrived)
 	others := othersInView(d.hub, arrived)
 	spawnPlayersTo(d, arrived, others)
 	spawnPlayerToOthersAs(d, arrived, others, true, zoneNoticeFrame(zoneNoticeEntered, arrived))

@@ -798,7 +798,7 @@ func make_cell(good: MallData.Good) -> Control:
 					icon.texture = package_icon(pkg)
 					icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				if slot != null:
-					slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					_icon_help(slot, good)
 			var root: Control = b.build_section(layout, "Create")
 			if root != null:
 				root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -808,6 +808,35 @@ func make_cell(good: MallData.Good) -> Control:
 	_badges(cell, pkg)
 	cell.mouse_entered.connect(func() -> void: _hover_cell(cell))
 	return cell
+
+## The icon's hover help (round 838). The icon is a CIFSlotWithHelpForPackage
+## of slot kind 0xa7 (c:0x7de4b7 pushes it into +0x374, 0x687ed0); its
+## vslot_019 (0x68a900) answers the hover message 0x4009 with the standard
+## item help of the package's FIRST item (0x8bf090 -> the scrap list's
+## first, 0x6871d0), or, for a bundle, vslot_048 (0x68c1a0): a 200-wide text
+## help. The leave message 0x400a hides it. The help shows only while the
+## slot's +0x39a is set, which the cell's hover sets as it opens the cell
+## menu (0x7deb80 -> 0x7de900 pushes 1) -- so whenever the cell can be
+## hovered at all here. Kind 0xa7 is not the NPC store's 0x0f, so no price
+## line (ItemTooltipLines' price is the store kind's). The bundle's text is
+## the package's description (INFERRED: the slot's +0x210 text is not
+## traced; no good of the player's archive is a bundle, MEASURED: 758 goods,
+## 758 scrap rows).
+func _icon_help(slot: Control, good: MallData.Good) -> void:
+	slot.mouse_filter = Control.MOUSE_FILTER_PASS
+	var pkg := good.package
+	if pkg.is_bundle():
+		var rows := func() -> Array:
+			var out: Array = [{"text": package_name(pkg), "color": ItemTooltipLines.WHITE, "bold": true, "icon": false}]
+			var desc: String = panels.mall_text(pkg.desc_strid) if pkg.desc_strid != "" else ""
+			if desc != "":
+				out.append_array(ItemTooltipLines.sml2_rows(desc, ItemTooltipLines.WHITE))
+			return out
+		panels.set_bubble_tip(slot, rows, 200.0)
+		return
+	var ref := first_item_id(good)
+	if ref > 0:
+		panels._set_item_tip(slot, ref, "store")
 
 ## 0x7df6c0 -> 0x7de530 / 0x7de0d0 / 0x7df1f0 / 0x7dec60.
 func _fill_cell(root: Control, good: MallData.Good) -> void:

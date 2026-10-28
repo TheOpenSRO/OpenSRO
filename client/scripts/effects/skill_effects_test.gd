@@ -81,6 +81,7 @@ func _run() -> void:
 	sd += _skill_row(3, "TEST_SMASH_A_01", "TEST_SMASH_A", 0)
 	sd += _skill_row(4, "TEST_BOLT_A_01", "TEST_BOLT_A", 0)
 	sd += _skill_row(5, "TEST_STUN_A_01", "TEST_STUN_A", 0)
+	sd += _skill_row(91, "TEST_WINGS_A_01", "TEST_WINGS_A", 0)
 	skills = SkillAudio.parse_skills(_utf16(sd))
 	var header := "//SkillName11\tSkillEffectID\tAniType\tStartEvent\tDMG Event\tDamageType\tScale\tID\tAttach\tTrade\tKill\tCreateCnt\tFade\tActType\tMovTypeSpeed\tParam\tAct Option\tObj Path\tObjName\tStartBone\tStartOffset\tTargetBone\tTargetOffset\tObjName2\tRotate\tScript\tSndBegin\tSndEnd\r\n"
 	var text := "#section characterInfo\r\n" + _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "x\\", "wrong.efp", "none", "0,0,0")
@@ -94,6 +95,10 @@ func _run() -> void:
 	text += _row("TEST_BOLT_A", "SHOT", 1, "AT_MOV_1TAR", "skill\\china\\", "bolt.efp", "none", "0,9,-14", true, "MOV_STRAIGHT,0,200,200")
 	text += _row("PARAM_TEST", "ACT_L", 0, "AT_LOOP", "battle\\", "status.efp", "Bip01", "0,0,0")
 	text += _row("TEST_STUN_A", "SHOT", 1, "AT_STOP", "monster\\", "stun.efp", "none", "0,0,0")
+	# Round 838: a buff whose aura is a model on the bone and an effect at a
+	# '#' bone (the archive's horn scrolls' shape, synthetic here).
+	text += _row("TEST_WINGS_A", "ACT_L", 0, "AT_LOOP", "res\\item\\", "wings.bsr", "Bip01 R Finger2", "0,0,0")
+	text += _row("TEST_WINGS_A", "ACT_L", 0, "AT_LOOP", "system\\", "tip.efp", "#Bip01 R Finger2", "0,0,1")
 	rows = se.parse_rows(_utf16(text))
 	_check(rows.has("TEST_IMBUE_A") and (rows["TEST_IMBUE_A"] as Array).size() == 4,
 		"only skilleffectset rows that name an .efp are kept (4 for the imbue)")
@@ -245,6 +250,9 @@ func _run() -> void:
 	gone.free()
 	se.process(1)
 	_check(se.tracked_count() == before - 1, "a freed body's auras are pruned (%d -> %d)" % [before, se.tracked_count()])
+	# Round 838: an aura's .bsr row is a model kept on the bone (AuraModel),
+	# ended with its token; its '#' effect sits at the bone's point.
+	_aura_models(caster)
 	# Round 785: an effect id's own rows (a PARAM_ state).
 	var st: Array = se.play_named("PARAM_TEST", SkillAudio.ACT_L, caster, "character:4", -1003)
 	_check(st.size() == 1 and (st[0] as EfpEffect).loop and se.has_aura_on("character:4", -1003, -1, caster),
@@ -307,11 +315,57 @@ func _bone_turns() -> void:
 		_check(fx.sim._root.rot.is_equal_approx(want) and at_ok,
 			"%s (%s, at %s)" % [String(c[3]), str(fx.sim._root.rot), str(fx.placed_at())])
 		fx.stop()
+	# Round 838 (READ, IDecoSkill::FUN_00a4ddc0 with flag 4): '#' turns the
+	# offset by the bone's matrix, then the body's; the world's axes; no
+	# Rotate.
+	var hx := _effect("x.efp")
+	se.attach(hx, body, "#Bip01 R Finger2", Vector3(0, 0, 1), 450)
+	hx._process(0.0)
+	var want_at: Vector3 = body.global_transform * (Vector3(1, 2, 3) + bone_turn * Vector3(0, 0, 1))
+	_check(hx.sim._root.rot.is_equal_approx(Basis.IDENTITY) and hx.placed_at().is_equal_approx(want_at),
+		"'#': the offset in the bone's frame, the world's axes, no Rotate (%s, at %s, want %s)" % [
+			str(hx.sim._root.rot), str(hx.placed_at()), str(want_at)])
+	_check(se.bone_point(body, "#Bip01 R Finger2", Vector3(0, 0, 1)).is_equal_approx(want_at),
+		"bone_point: the same point for a '#' bone")
+	hx.stop()
 	_check(se.rotate_basis(990).is_equal_approx(Basis(Vector3(0, -1, 0), Vector3(1, 0, 0), Vector3(0, 0, 1)))
 		and se.rotate_basis(180).is_equal_approx(Basis(Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, -1)))
 		and se.rotate_basis(0) == Basis.IDENTITY,
 		"Rotate 990 is 270 degrees about Z, 180 is 180 about Y, 0 none")
 	body.free()
+
+func _aura_models(caster: Node3D) -> void:
+	var built := [0]
+	AuraModel.builder = func(_p: String) -> Node3D:
+		built[0] += 1
+		var t := Node3D.new()
+		var mi := MeshInstance3D.new()
+		mi.mesh = BoxMesh.new()
+		t.add_child(mi)
+		return t
+	var fx: Array = se.attach_aura("character:11", 7, 91, caster)
+	var a: Dictionary = se._auras.get("character:11|7", {})
+	var models: Array = a.get("models", [])
+	_check(fx.size() == 1 and models.size() == 1 and built[0] == 1,
+		"attach_aura: the .bsr row is a model, the '#' row an effect (%d effect(s), %d model(s))" % [fx.size(), models.size()])
+	if models.size() == 1:
+		var m := models[0] as AuraModel
+		_check(m.model != null and m.get_parent() == caster, "... the model is built under the body")
+		var sk := se.skeleton_of(caster) as Skeleton3D
+		var want: Vector3 = sk.global_transform * sk.get_bone_global_pose(sk.find_bone("Bip01 R Finger2")).origin
+		m._place()
+		_check(m.global_position.is_equal_approx(want), "... at the bone (%s, want %s)" % [str(m.global_position), str(want)])
+		_check(se.has_aura_on("character:11", 7, 91, caster), "... and the aura counts as drawn")
+		var n: int = se.detach_aura("character:11", 7)
+		_check(n == 2 and m.is_queued_for_deletion(), "detach_aura ends the effect and removes the model (%d)" % n)
+	# A model-only aura is kept by process() until its end.
+	var only: Array = se.attach_aura("character:12", 8, 91, caster)
+	for f in only:
+		(f as EfpEffect).stop()
+	se.process(1)
+	_check(se._auras.has("character:12|8"), "an aura whose effects are gone keeps its model")
+	se.detach_aura("character:12", 8)
+	AuraModel.reset()
 
 func _skeleton(at: Vector3) -> Skeleton3D:
 	var sk := Skeleton3D.new()

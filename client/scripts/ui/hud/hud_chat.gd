@@ -798,11 +798,16 @@ func format_line(type: int, name: String, message: String, sent: bool = false) -
 
 ## Adds one message of `type` from `name` to the lists 0x7aca30 files it in.
 ## `sent` marks the sender's own echo (a whisper then reads "(TO)").
-func add_chat(type: int, name: String, message: String, sent: bool = false) -> void:
+## `color_argb` (round 838) overrides the type's colour: a coloured global
+## chatting item's line (ChatNet.Update.color, OURS); 0 keeps the type's.
+func add_chat(type: int, name: String, message: String, sent: bool = false, color_argb: int = 0) -> void:
 	var line := format_line(type, name, message, sent)
 	if int(line["type"]) == TYPE_INCOMPLETE:
 		return
-	_add_to(lists_for(int(line["type"])), String(line["text"]), line["color"])
+	var color: Color = line["color"]
+	if color_argb != 0:
+		color = argb(color_argb)
+	_add_to(lists_for(int(line["type"])), String(line["text"]), color)
 
 ## Adds one line to the All list only, the way CIFChatViewer's vslot 49
 ## (0x7aaa50) does. `speaker` empty makes it a speakerless line; this

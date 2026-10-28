@@ -129,6 +129,10 @@ var _dim: ColorRect = null
 var _message: Label = null
 ## The account PIN, "Character Lock" (round 788, CharSelectLock; OURS).
 var _lock: CharSelectLock = null
+## The Name Change Scroll's rename (round 838, CharSelectRename; OURS), and
+## the renamed character to select when the list comes back.
+var _rename: CharSelectRename = null
+var _renamed_to := ""
 
 func _ready() -> void:
 	_started_ms = Time.get_ticks_msec()
@@ -147,6 +151,7 @@ func _ready() -> void:
 	_level_exp = _load_level_exp()
 	_build_ui()
 	_setup_lock()
+	_setup_rename()
 	_begin_stage()
 	# QA render hook: with no logged-in session this screen would list
 	# nothing, so a render can inject clearly-fake sample characters.
@@ -172,6 +177,21 @@ func _setup_lock() -> void:
 	# through.
 	if not _fake and not NetClient.is_retail():
 		_lock.query()
+
+## Round 838 (OURS, CharSelectRename): a Start refused for a waiting rename
+## asks for the new name; on the server's yes the list is asked again and the
+## renamed character selected.
+func _setup_rename() -> void:
+	_rename = CharSelectRename.new()
+	add_child(_rename)
+	_rename.setup(self, UiBuilder.new(_media, _text), _media, func(line: String) -> void: _message.text = line)
+	_rename.name_changed.connect(func(new_name: String) -> void:
+		_renamed_to = new_name
+		NetClient.list_characters())
+
+## The selected character's name, "" with none (CharSelectRename's).
+func selected_name() -> String:
+	return String(_slots[selected].char_name) if selected >= 0 and selected < _slots.size() else ""
 
 func _section(name: String) -> UiLayoutParser.SectionDef:
 	return _layout.sections.get(name) if _layout != null else null
@@ -748,6 +768,16 @@ func _on_list_result(characters: Array, error: String) -> void:
 				else:
 					stage.play_restored(k)
 			_select(k, true)
+		return
+	# Round 838: the renamed character, selected again (its slot is its own:
+	# the list is in creation order).
+	if _renamed_to != "":
+		var renamed := _slot_of(_renamed_to)
+		_renamed_to = ""
+		if renamed >= 0:
+			_select(renamed, true)
+			if OS.get_environment("OPENSRO_QA_RENAME") != "":
+				_qa_start.call_deferred(_slots[renamed].char_name)
 		return
 	if OS.get_environment("OPENSRO_QA_RECONNECT_VIA_LOGIN") != "" and not _slots.is_empty():
 		if _qa_hold_s > 0.0:

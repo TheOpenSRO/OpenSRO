@@ -21,6 +21,35 @@ func (m *MemStore) DurabilityRange(_ context.Context, itemID int64) (durMin, dur
 	return it.DurabilityMin, it.DurabilityMax, true, nil
 }
 
+// IsAccessory answers inventory.AccessoryLookup (round 838): an earring,
+// necklace or ring, TypeID 3/1/5 (China) or 3/1/12 (Europe). An unknown id
+// is not one.
+func (m *MemStore) IsAccessory(_ context.Context, itemID int64) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	it, found := m.items[itemID]
+	return found && it.IsAccessory(), nil
+}
+
+// IsAccessory answers inventory.AccessoryLookup from PostgreSQL; see the
+// MemStore method.
+func (s *SQLStore) IsAccessory(ctx context.Context, itemID int64) (bool, error) {
+	it, err := s.GetItem(ctx, itemID)
+	if errors.Is(err, ErrItemNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("refdata: querying item %d: %w", itemID, err)
+	}
+	return it.IsAccessory(), nil
+}
+
+// IsAccessory reports an earring, necklace or ring: TypeID 3/1/5 or 3/1/12
+// (the creation dispatcher's FUN_00488f20 test, gs 0x727590; READ).
+func (it *Item) IsAccessory() bool {
+	return it.TypeID1 == 3 && it.TypeID2 == 1 && (it.TypeID3 == 5 || it.TypeID3 == 12)
+}
+
 // DurabilityRange answers inventory.DurabilityLookup from PostgreSQL; see the
 // MemStore method for the semantics.
 func (s *SQLStore) DurabilityRange(ctx context.Context, itemID int64) (durMin, durMax float64, ok bool, err error) {

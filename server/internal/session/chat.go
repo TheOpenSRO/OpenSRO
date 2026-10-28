@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
@@ -117,21 +118,36 @@ type ChatUpdate struct {
 	Type    byte
 	Sender  string
 	Message string
+	// Color is a coloured global's colour, 0xAARRGGBB (round 838, OURS:
+	// GlobalChatColor); 0 -- and absent on the wire -- draws the type's own.
+	Color uint32
 }
 
 func (r *ChatUpdate) Encode() []byte {
-	return append([]byte{r.Type}, encodeStrings(r.Sender, r.Message)...)
+	out := append([]byte{r.Type}, encodeStrings(r.Sender, r.Message)...)
+	if r.Color != 0 {
+		out = binary.LittleEndian.AppendUint32(out, r.Color)
+	}
+	return out
 }
 
 func DecodeChatUpdate(data []byte) (*ChatUpdate, error) {
 	if len(data) < 1 {
 		return nil, fmt.Errorf("session: decoding ChatUpdate: empty")
 	}
-	fields, err := decodeStrings(data[1:], 2)
+	fields, rest, err := decodeStringsPrefix(data[1:], 2)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding ChatUpdate: %w", err)
 	}
-	return &ChatUpdate{Type: data[0], Sender: fields[0], Message: fields[1]}, nil
+	u := &ChatUpdate{Type: data[0], Sender: fields[0], Message: fields[1]}
+	switch len(rest) {
+	case 0:
+	case 4:
+		u.Color = binary.LittleEndian.Uint32(rest)
+	default:
+		return nil, fmt.Errorf("session: decoding ChatUpdate: %d unexpected trailing byte(s)", len(rest))
+	}
+	return u, nil
 }
 
 // ChatResult is OpChatResult: 0xB025's answer to the sender. On OK the client
@@ -162,6 +178,49 @@ func DecodeChatResult(data []byte) (*ChatResult, error) {
 	}
 	return &ChatResult{OK: data[0] != 0, Type: data[1], Index: data[2],
 		Code: binary.LittleEndian.Uint16(data[3:5]), Target: fields[0]}, nil
+}
+
+// globalChatMaxLen is case 5's cut (round 838, READ 0x49c0ea..: a line longer
+// than 0x80 characters is cut to 0x80 and "..." appended, 0xae687c; that the
+// helpers are substr / append is INFERRED). Counted in characters here; the
+// original counts its ANSI bytes.
+const globalChatMaxLen = 0x80
+
+// globalChatText is the line case 5 broadcasts.
+func globalChatText(s string) string {
+	r := []rune(s)
+	if len(r) <= globalChatMaxLen {
+		return s
+	}
+	return string(r[:globalChatMaxLen]) + "..."
+}
+
+// GlobalChatColor is the colour a coloured global chatting item's line is
+// drawn in, 0xAARRGGBB, or 0 for the original's yellow (round 838).
+//
+// OURS. The archive sells ITEM_MALL_GLOBAL_CHATTING_GREEN (and carries
+// _WHITE, _BLUE, _RED, _PINK and _ORANGE rows): a private server's add-on
+// (vsroplus, packed; nothing in sro_client.exe or SR_GameServer.exe reads the
+// item past its type word, and 0x3026 has no colour field -- READ: case 5 and
+// the chat's colour switch 0x876810, type 6 -> 0xffffff00). Its colours are
+// not readable, so each is MEASURED from the item's own 64-px icon: the mean
+// of the orb's brightest 15 % (icon64\item\etc\mall_global_chatting_<c>.ddj).
+func GlobalChatColor(code string) uint32 {
+	switch {
+	case strings.HasSuffix(code, "_GLOBAL_CHATTING_GREEN"):
+		return 0xff71fe99
+	case strings.HasSuffix(code, "_GLOBAL_CHATTING_WHITE"):
+		return 0xfffffeff
+	case strings.HasSuffix(code, "_GLOBAL_CHATTING_BLUE"):
+		return 0xff7e9bfe
+	case strings.HasSuffix(code, "_GLOBAL_CHATTING_RED"):
+		return 0xfffe6d7a
+	case strings.HasSuffix(code, "_GLOBAL_CHATTING_PINK"):
+		return 0xfffc77f5
+	case strings.HasSuffix(code, "_GLOBAL_CHATTING_ORANGE"):
+		return 0xfffeae72
+	}
+	return 0
 }
 
 // ChatGlobalRequest is OpChatGlobal: 0x704c's slot and text (the type word it
@@ -377,13 +436,14 @@ func handleChatGlobal(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		it.TypeID3 != globalItemTID3 || it.TypeID4 != globalItemTID4 {
 		return fail(ChatErrNoGlobalItem)
 	}
-	// One use per line (OURS: the server's own accounting of 0x704c for this
-	// kind was not read; the window's "Remaining turns" is the stack count,
-	// 0x7ef400 reading it off the slot).
+	// One use per line (round 838, READ: CGItemExpendable::vslot_307 case 5,
+	// 0x49c0ea..0x49c1e5, answers 1 and DoJob spends one; the window's
+	// "Remaining turns" is the stack count, 0x7ef400 reading it off the slot).
 	if err := d.Inv.RemoveItem(ctx, sender.CharacterID, held.Index, 1); err != nil {
 		return fail(ChatErrNoGlobalItem)
 	}
-	BroadcastChatAll(d.Hub, &ChatUpdate{Type: ChatGlobal, Sender: sender.Name, Message: req.Message})
+	BroadcastChatAll(d.Hub, &ChatUpdate{Type: ChatGlobal, Sender: sender.Name, Message: globalChatText(req.Message),
+		Color: GlobalChatColor(it.CodeName)})
 	return sendChatResult(sess, &ChatResult{OK: true, Type: ChatGlobal})
 }
 

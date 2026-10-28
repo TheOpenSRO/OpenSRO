@@ -513,12 +513,37 @@ func (c *Character) MaxMP() int { return MaxMPWith(c.Int, c.Level, BonusOf(c.ID)
 // Round 785: a buff's percent (param 3 slot 1, 'hpi' value[1]) scales the
 // whole: EvaluateParam's S0 x (1 + S1/100), READ 0x4b3740.
 func MaxHPWith(str, level int, b Bonus) int {
-	return scalePct(MaxHPFor(str+b.Str, level)+b.HP, b.HPPct)
+	base := MaxHPFor(str+b.Str, level)
+	if b.StrHPPct != 0 {
+		base = chainPct(str+b.Str, HPPerStr, level, b.StrHPPct)
+	}
+	return scalePct(base+b.HP, b.HPPct)
 }
 
 // MaxMPWith is MaxMP for a base Int, a level and a bonus.
 func MaxMPWith(intel, level int, b Bonus) int {
-	return scalePct(MaxMPFor(intel+b.Int, level)+b.MP, b.MPPct)
+	base := MaxMPFor(intel+b.Int, level)
+	if b.IntMPPct != 0 {
+		base = chainPct(intel+b.Int, MPPerInt, level, b.IntMPPct)
+	}
+	return scalePct(base+b.MP, b.MPPct)
+}
+
+// chainPct is the stat chain with a percent on its middle param (round 838:
+// a devil's spirit's 'hpna' / 'mpna', p52 / p53 slot 1): p52 = Str x 10 x
+// (1 + pct/100), then p54 = p52 x 1.02^(level-1), unrounded (READ
+// GObjPC_InitStats 0x4e3294..0x4e3664 binds Str -> p52 -> p54 -> p3;
+// EvaluateParam 0x4b3210 applies S0 x (S1 + 100) / 100, then slot 3's
+// scale). Without one it is derivedStat as before.
+func chainPct(stat, perPoint, level int, pct float64) int {
+	if pct == 0 {
+		return derivedStat(stat, perPoint, level)
+	}
+	if level < 1 {
+		level = 1
+	}
+	v := float64(stat*perPoint) * (pct + 100) / 100 * math.Pow(StatGrowth, float64(level-1))
+	return int(v)
 }
 
 // scalePct is v x (1 + pct/100), truncated; v itself for no percent.
@@ -553,6 +578,10 @@ type Bonus struct {
 	// HPPct and MPPct are the buffs' percent entries of params 3 and 4
 	// (round 785); the gear writes none.
 	HPPct, MPPct float64
+	// StrHPPct and IntMPPct are params 52 and 53's percent entries (round
+	// 838: a devil's spirit's 'hpna' / 'mpna'), which scale the Str / Int
+	// chain before the level growth (chainPct).
+	StrHPPct, IntMPPct float64
 }
 
 // add is b with o's entries summed in.
@@ -565,6 +594,8 @@ func (b Bonus) add(o Bonus) Bonus {
 	b.EvadeCrit += o.EvadeCrit
 	b.HPPct += o.HPPct
 	b.MPPct += o.MPPct
+	b.StrHPPct += o.StrHPPct
+	b.IntMPPct += o.IntMPPct
 	return b
 }
 

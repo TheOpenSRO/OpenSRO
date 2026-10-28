@@ -37,6 +37,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/magicopt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
@@ -50,12 +51,13 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/shop"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/skill"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skilljob"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
-	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/specialty"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/storage"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/timedjob"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
@@ -941,6 +943,10 @@ func main() {
 	mallCSV := flag.String("mall-csv", os.Getenv("OPENSRO_MALL_CSV"),
 		"path to the item mall's catalogue (from cmd/export-refdata -mode mall on a client's own shop tables and "+
 			"itemdata parts; round 837): the silk shops a 0x7034 type 0x18 buy names. Without it every buy is refused 2")
+	// Round 838: the Magic POP machine's tables.
+	gachaCSV := flag.String("gacha-csv", os.Getenv("OPENSRO_GACHA_CSV"),
+		"path to the Magic POP tables (from cmd/export-refdata -mode gacha on a client's own gachaitemset.txt and "+
+			"gachanpcmap.txt; round 838): which NPCs are machines and what they draw. Without it no NPC offers the game")
 	startingSilkEnv, startingSilkEnvErr := envInt("OPENSRO_STARTING_SILK", 0)
 	startingSilk := flag.Int64("starting-silk", int64(startingSilkEnv),
 		"own silk an account is given once, the first time its balances are read (round 837, OURS; 0 gives none)")
@@ -986,6 +992,11 @@ func main() {
 			"alchemy window's magic stones write their blue options from it, and a failed reinforce its durability "+
 			"flaw. Without it every magic stone is refused and a flaw writes nothing; elixirs and attribute stones "+
 			"still work. A configured path that does not load is fatal.")
+	itemOptLevelCSV := flag.String("item-opt-level-csv", os.Getenv("OPENSRO_ITEM_OPT_LEVEL_CSV"),
+		"path to the devil's spirits' plus-level table as CSV (env OPENSRO_ITEM_OPT_LEVEL_CSV; from cmd/export-refdata "+
+			"-mode itemoptlevel on the client's refabilitybyitemoptleveldata.txt, refmagicoptbyitemoptleveldata.txt and "+
+			"refskillbyitemoptleveldata.txt, round 838): an awake spirit's HP / MP percent, block rate and skills by its "+
+			"plus level. Without it a spirit gives only its own blue options. A configured path that does not load is fatal.")
 	magicOptAssignCSV := flag.String("magic-option-assign-csv", os.Getenv("OPENSRO_MAGIC_OPTION_ASSIGN_CSV"),
 		"path to the game's magic option assign table as CSV (env OPENSRO_MAGIC_OPTION_ASSIGN_CSV; from "+
 			"cmd/export-refdata -mode magicoptassign on a client's own server_dep\\silkroad\\textdata\\"+
@@ -1455,6 +1466,9 @@ func main() {
 		// internal/cos): _CHARCOS and _INVCOS.
 		cosStore cos.Store
 		cosBags  inventory.Store
+		// The timed jobs kept across a restart (round 838, internal/timedjob):
+		// the premium Gold Time and the composite items' grants.
+		timedJobs timedjob.Store
 		// The job records (round 799, internal/jobs): _CharTrijob and its
 		// tables.
 		jobStore jobs.Store
@@ -1524,6 +1538,7 @@ func main() {
 		eq = equipment.NewMemStore(memInv)
 		avatars = avatar.NewMem(memRef)
 		cosStore = cos.NewMemStore()
+		timedJobs = timedjob.NewMemStore()
 		jobStore = jobs.NewMemStore()
 		memBags := inventory.NewMemStore(memRef)
 		memBags.SetDurabilityLookup(memRef)
@@ -1704,6 +1719,14 @@ func main() {
 		sqlBags.SetCapacityFunc(cosBagCapacity(cosStore))
 		cosBags = sqlBags
 
+		// The timed jobs (round 838): their table migrates itself.
+		sqlTimed, err := timedjob.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening timed job store", "error", err)
+			os.Exit(1)
+		}
+		timedJobs = sqlTimed
+
 		// The job records (round 799): their tables migrate themselves.
 		sqlJobs, err := jobs.NewSQLStore(storePool)
 		if err != nil {
@@ -1745,6 +1768,15 @@ func main() {
 		}
 		mallStore = sqlMall
 
+		// The item-started skill jobs (round 838, session/itemskill.go): a
+		// mall visual's or a scroll's buff outlives a restart too.
+		sqlSkillJobs, err := skilljob.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening skill job store", "error", err)
+			os.Exit(1)
+		}
+		session.SetSkillJobStore(sqlSkillJobs)
+
 		accounts, registerer = sqlAccounts, sqlAccounts
 		chars, refItems = sqlChars, sqlRef
 		dropSrc = sqlRef
@@ -1778,6 +1810,10 @@ func main() {
 	zerkTracker := berserk.NewTracker()
 	// The Energy of life scroll's grants (round 632 review, session/composite.go).
 	compositeKeeper := session.NewCompositeKeeper()
+	// Round 838: the grants are kept across a restart, and the world entry
+	// loads them.
+	compositeKeeper.SetStore(timedJobs)
+	session.SetCompositeKeeper(compositeKeeper)
 	manaTracker := mana.NewTracker()
 
 	hub := world.NewHub()
@@ -2040,6 +2076,18 @@ func main() {
 	} else {
 		logger.Info("no magic option table (-magic-options-csv / OPENSRO_MAGIC_OPTIONS_CSV): every magic stone is refused")
 	}
+	// The devil's spirits' plus-level table (round 838, avatarstats.go).
+	if *itemOptLevelCSV != "" {
+		t, err := avatar.LoadOptLevelCSV(*itemOptLevelCSV)
+		if err != nil {
+			logger.Error("loading the item opt level table", "path", *itemOptLevelCSV, "err", err)
+			os.Exit(1)
+		}
+		session.SetSpiritAbilities(t)
+		logger.Info("item opt level table loaded: devil's spirits give their plus-level abilities", "path", *itemOptLevelCSV, "keys", t.Len())
+	} else {
+		logger.Info("no item opt level table (-item-opt-level-csv / OPENSRO_ITEM_OPT_LEVEL_CSV): a devil's spirit gives only its own blue options")
+	}
 	// The magic option assign table (round 770): what equipment drops roll.
 	if *magicOptAssignCSV != "" {
 		a, err := magicopt.LoadAssignCSVFile(*magicOptAssignCSV)
@@ -2070,6 +2118,8 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("creatable catalogue loaded: characters can be created", "path", *chargenCSV, "ids", chargen.Len())
+		// Round 838: the skin change scroll picks among the same bodies.
+		session.SetSkinCatalogue(chargen)
 	} else {
 		logger.Warn("no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}
@@ -2277,7 +2327,8 @@ func main() {
 	if *testItemsNPC {
 		testItems = resolveTestItemsNPC(ctx, logger, refItems)
 	}
-	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems, specialtyShops)
+	gachaTable := loadGacha(logger, *gachaCSV)
+	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems, specialtyShops, gachaTable)
 	// The monsters' area of interest (round 656): each player hears about the
 	// monsters of the 3x3 message blocks around it (retail's, READ in round
 	// 664: 320-unit blocks and their 8 neighbours), and is told as they come
@@ -2499,6 +2550,7 @@ func main() {
 	// Round 769: a character's Str, Int and max HP/MP count its worn items'
 	// blue options (character.BonusOf), read from the equipment store.
 	session.SetEquipBonusSource(eq)
+	session.SetUseItemEquipment(eq) // round 838: the repair hammer mends the worn items
 	// The quest catalogue (round 785, internal/quest): exported from the
 	// operator's own archives and game server scripts; without it no quest is
 	// offered and the NPCs keep their static talk stand-in.
@@ -2544,6 +2596,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The return scrolls' caster (round 778), shared by the scrolls' own use
+	// and, from round 838, a composite grant's return scroll fill; and the
+	// premium Gold Time's tick (session/goldtime.go).
+	scrollCaster := session.NewScrollCaster(chars, eq, hub, zerkTracker, logger).SetParties(parties)
+	compositeKeeper.SetScrolls(scrollCaster)
+	session.StartGoldTime(ctx, timedJobs, refItems, hub)
 	handle := gateway.Chain(
 		// The COS requests (round 795, internal/session/coscommand.go).
 		session.COSHandler(hub, chars),
@@ -2621,8 +2679,12 @@ func main() {
 		// (session/scroll.go), the map option's points from -teleport-dir's
 		// optionalteleport.csv (SetRecallNetwork's table).
 		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper,
-			session.NewScrollCaster(chars, eq, hub, zerkTracker, logger)),
+			scrollCaster),
 		session.CompositeHandler(chars, refItems, compositeKeeper, zerkTracker, gmGate, hub),
+		// Round 838: the premium Gold Time's pause (0x34BF, goldtime.go) and
+		// a BFI1 grant's stall decoration (0x7160, compositeextra.go).
+		session.GoldTimePauseHandler(hub, scrollCaster),
+		session.AvatarStallHandler(hub, refItems),
 		// Round 768: the alchemy window's elixirs and stones (session/alchemy.go).
 		session.AlchemyHandler(session.AlchemyDeps{Hub: hub, Inv: inv, Items: refItems, Options: magicOptions, Logger: logger}),
 		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, gpSkills, zerkTracker, manaTracker, parties, ground, dropSrc, potions),
@@ -2658,6 +2720,12 @@ func main() {
 		// the item operation's 0x7034 type 0x18.
 		session.MallHandler(session.MallDeps{Catalogue: mallCatalogue, Store: mallStore, Silk: silkStore, Chars: chars,
 			Inv: inv, Items: refItems, Hub: hub, Trades: trades, Logger: logger}),
+		// The private server's service scrolls (round 838,
+		// session/servicescroll.go, OURS): their stores, and the rename a
+		// character select sends (0x0139).
+		session.ServiceHandler(session.ServiceDeps{Chars: chars, Inv: inv, Items: refItems, Refs: refItems,
+			Skills: skills, Equip: eq, Hub: hub, Keeper: compositeKeeper, Zerk: zerkTracker, Options: magicOptions,
+			Parties: parties, Friends: friends, Logger: logger}),
 		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
 		session.MotionHandler(hub),
@@ -2672,6 +2740,9 @@ func main() {
 		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
 		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
 		session.NPCTalkHandler(hub, trades),
+		// Magic POP (round 838, session/gacha.go): the draw 0x7118 -> 0xB118
+		// and Gori's exchange 0x7119.
+		session.GachaHandler(session.GachaDeps{Table: gachaTable, Inv: inv, Items: refItems, Hub: hub, Logger: logger}),
 		// The Auto potion window's settings (round 786): retail's 0x7158 type
 		// 2, stored per character and sent back after the world entry.
 		session.AutoPotionHandler(autoPotionStoreOf(chars), hub, logger),

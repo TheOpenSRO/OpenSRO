@@ -554,10 +554,14 @@ static func skeleton_of(host: Node) -> Skeleton3D:
 static func attach(fx: EfpEffect, host: Node3D, bone: String, offset: Vector3, rotate: int = 0) -> void:
 	host.add_child(fx)
 	var b := bone.strip_edges()
-	var named := b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#")
-	fx.follow_bone_turn = named and not b.begins_with("@")
+	var named := b != "" and b.to_lower() != "none" and b != "*"
+	# Round 838 (READ, EfpEffect.follow_bone_point): '#' places the offset in
+	# the bone's frame along the world's axes, and skips the Rotate.
+	var point := named and b.begins_with("#")
+	fx.follow_bone_point = point
+	fx.follow_bone_turn = named and not point and not b.begins_with("@")
 	fx.follow_world_turn = named and b.begins_with("@")
-	fx.follow_basis = rotate_basis(rotate)
+	fx.follow_basis = Basis.IDENTITY if point else rotate_basis(rotate)
 	fx.follow_host(host, bone, offset)
 
 ## The row's Rotate as the turn it gives the effect (READ, see the header):
@@ -774,8 +778,14 @@ static func bone_point(body: Node3D, bone: String, offset: Vector3) -> Vector3:
 		return body.global_transform * offset
 	var at := offset
 	var b := bone.strip_edges()
-	if b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#"):
-		var i := skel.find_bone(b)
+	if b.begins_with("#") and b.length() > 1:
+		# Round 838 (READ, EfpEffect.follow_bone_point): the offset in the
+		# bone's frame.
+		var j := skel.find_bone(b.substr(1))
+		if j >= 0:
+			return skel.global_transform * (skel.get_bone_global_pose(j) * offset)
+	elif b != "" and b.to_lower() != "none" and b != "*":
+		var i := skel.find_bone(b.trim_prefix("@"))
 		if i >= 0:
 			at += skel.get_bone_global_pose(i).origin
 	return skel.global_transform * at
@@ -1138,14 +1148,30 @@ static func process(now_ms: int = -1) -> void:
 		for fx in a["fx"]:
 			if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion():
 				alive.append(fx)
-		if alive.is_empty():
+		var models := _alive_models(a)
+		if alive.is_empty() and models.is_empty():
 			_auras.erase(key)
 		elif int(a["expires"]) >= 0 and now >= int(a["expires"]):
 			print("EFFECTS aura %s: no end arrived %d ms after its time -- ending it" % [key, AURA_GRACE_MS])
 			_release_all(alive)
+			_release_models(models)
 			_auras.erase(key)
 		else:
 			a["fx"] = alive
+			a["models"] = models
+
+## Round 838: an aura's .bsr models (AuraModel) still drawing.
+static func _alive_models(a: Dictionary) -> Array:
+	var out: Array = []
+	for m in a.get("models", []):
+		if is_instance_valid(m) and not (m as Node).is_queued_for_deletion():
+			out.append(m)
+	return out
+
+static func _release_models(models: Array) -> void:
+	for m in models:
+		if is_instance_valid(m):
+			(m as AuraModel).release()
 
 static func _aura_key(owner_key: String, token: int) -> String:
 	return "%s|%d" % [owner_key, token]
@@ -1158,11 +1184,19 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		remaining_ms: int = -1, now_ms: int = -1) -> Array:
 	detach_aura(owner_key, token)
 	var started: Array = []
+	var models: Array = []
 	if not _valid(host) or not wants_effect(null, null, host):
 		return started
 	for r in rows_for(skill_id, SkillAudio.ACT_L, -1):
-		# Round 809: an aura's .bsr rows (the mall balloons, 65 AT_LOOP rows,
-		# MEASURED) are not drawn (OPEN).
+		# Round 838: an aura's .bsr rows (the mall balloons, 65 AT_LOOP rows,
+		# and the archive's mall visuals, MEASURED) are models kept on the
+		# bone until the buff ends (AuraModel; round 809 drew none).
+		if int(r.get("kind", KIND_EFP)) == KIND_BSR:
+			if kept_act(int(r["act"])):
+				var m := AuraModel.spawn(String(r["path"]), host, String(r["bone"]), r["offset"])
+				if m != null:
+					models.append(m)
+			continue
 		if int(r.get("kind", KIND_EFP)) != KIND_EFP:
 			continue
 		var fx := _make(String(r["path"]))
@@ -1176,11 +1210,12 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		fx.reserved = own_body != null and host == own_body
 		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
-	if not started.is_empty():
+	if not started.is_empty() or not models.is_empty():
 		var now := now_ms if now_ms >= 0 else _now()
-		_auras[_aura_key(owner_key, token)] = {"fx": started, "host": host, "skill": skill_id,
+		_auras[_aura_key(owner_key, token)] = {"fx": started, "models": models, "host": host, "skill": skill_id,
 			"expires": now + remaining_ms + AURA_GRACE_MS if remaining_ms > 0 else -1}
-		print("EFFECTS aura on %s token %d: skill %d, %d effect(s)" % [owner_key, token, skill_id, started.size()])
+		print("EFFECTS aura on %s token %d: skill %d, %d effect(s), %d model(s)" % [owner_key, token, skill_id,
+			started.size(), models.size()])
 	return started
 
 ## The rows of an effect id that is no skill's (a SYSTEM_ or PARAM_ decoration,
@@ -1236,6 +1271,9 @@ static func has_aura_on(owner_key: String, token: int, skill_id: int, host: Node
 	for fx in a["fx"]:
 		if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion() and host.is_ancestor_of(fx):
 			return true
+	for m in _alive_models(a):
+		if host.is_ancestor_of(m):
+			return true
 	return false
 
 ## attach_aura, unless the same buff's aura already draws on this body
@@ -1262,6 +1300,10 @@ static func detach_aura(owner_key: String, token: int) -> int:
 				# the buff's end lets its aura go; it fades over its last cycle.
 				(fx as EfpEffect).release()
 				n += 1
+		# Round 838: its models go with it (AuraModel).
+		var models := _alive_models(_auras[key])
+		_release_models(models)
+		n += models.size()
 	_auras.erase(key)
 	return n
 
@@ -1286,6 +1328,8 @@ static func tracked_count() -> int:
 static func clear_live() -> void:
 	for key in _auras.keys():
 		_stop_all(_auras[key]["fx"])
+		for m in _alive_models(_auras[key]):
+			(m as Node).queue_free()
 	_auras.clear()
 	for f in _flights:
 		if is_instance_valid(f["fx"]):

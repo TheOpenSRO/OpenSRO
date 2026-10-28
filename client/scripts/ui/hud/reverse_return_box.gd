@@ -78,6 +78,29 @@ const BUTTON_FONT_COLOR := Color8(254, 251, 216)
 const OPTION_RECALL := 2
 const OPTION_DEATH := 3
 const OPTION_MAP := 7
+## Round 838, OURS: the special scroll's add-on options (the server's
+## ReverseOptionParty / ReverseOptionSaved), each opening its own window
+## first (the buttons' -2 and -3).
+const OPTION_PARTY := 4
+const OPTION_SAVED := 5
+
+## Round 838, OURS: ITEM_MALL_REVERSE_RETURN_SCROLL_SPECIAL's box -- the
+## archive's add-on (vsroplus, packed) draws five destinations; its texts are
+## the archive's VPLUS_UI_REVERSE_* (MEASURED, textuisystem's English column),
+## its geometry is not readable. So the retail box grows by two buttons at the
+## same 31-pixel pitch, Cancel last.
+const SPECIAL_SIZE := Vector2(300, 266)
+const SPECIAL_TITLE_KEY := "VPLUS_UI_REVERSE_MAIN_OPTIONS_CAPTION_TEXT"
+const SPECIAL_MESSAGE_KEY := "VPLUS_UI_REVERSE_MAIN_OPTIONS_DESC_TEXT"
+const SPECIAL_MESSAGE_FALLBACK := "Select the location used by the reverse return scroll"
+const SPECIAL_BUTTONS := [
+	[200, "LastReturn", 76, "VPLUS_UI_REVERSE_BUTTON_LAST_RECALL_TEXT", "Move to the last recall point.", 2],
+	[202, "LastDeath", 107, "VPLUS_UI_REVERSE_BUTTON_DEATH_POINT_TEXT", "Move to the place where you died.", 3],
+	[203, "MapPoint", 138, "VPLUS_UI_REVERSE_BUTTON_MAP_LOCATION_TEXT", "Move to certain location on the map.", -1],
+	[204, "PartyMember", 169, "VPLUS_UI_REVERSE_BUTTON_PARTY_MEMBER_TEXT", "Move to a party member.", -2],
+	[205, "SavedLocation", 200, "VPLUS_UI_REVERSE_BUTTON_SAVED_LOCATION_TEXT", "Move to a saved location.", -3],
+	[201, "Cancel", 231, "UIO_COMMON_CTL_CANCEL", "Cancel", 0],
+]
 
 ## A destination button: 2 the recall point, 3 the death point.
 signal option_chosen(option: int)
@@ -85,19 +108,28 @@ signal option_chosen(option: int)
 signal map_requested
 ## Cancel (result 0).
 signal cancelled
+## Round 838: the special box's party button (-2) and saved-location button
+## (-3).
+signal party_requested
+signal saved_requested
 
 ## The bag slot of the scroll the box was opened for.
 var slot := -1
+## Whether this is the special scroll's box (round 838).
+var special := false
+var box_size := SIZE
 var _builder: UiBuilder
 
 ## Builds the box for the scroll in bag slot `bag_slot`. Without a layout
 ## (a test's bare builder) the controls are built from the values above.
-func build(builder: UiBuilder, bag_slot: int) -> bool:
+func build(builder: UiBuilder, bag_slot: int, special_scroll: bool = false) -> bool:
 	_builder = builder
 	slot = bag_slot
+	special = special_scroll
+	box_size = SPECIAL_SIZE if special else SIZE
 	name = "ReverseReturnBox"
-	size = SIZE
-	custom_minimum_size = SIZE
+	size = box_size
+	custom_minimum_size = box_size
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	var layout: UiLayoutParser.LayoutDef = null
 	if _builder != null:
@@ -107,7 +139,7 @@ func build(builder: UiBuilder, bag_slot: int) -> bool:
 	_add_title()
 	var section: UiLayoutParser.SectionDef = layout.sections.get(SECTION) if layout != null else null
 	_add_message(section)
-	for b in BUTTONS:
+	for b in (SPECIAL_BUTTONS if special else BUTTONS):
 		_add_button(section, b)
 	if _builder != null:
 		UiBuilder.settle_authored_rects(self)
@@ -118,7 +150,7 @@ func _add_frame() -> void:
 	def.name = "Frame"
 	def.type = "CIFFrame"
 	def.ddj = FRAME
-	def.rect = Rect2i(Vector2i.ZERO, Vector2i(SIZE))
+	def.rect = Rect2i(Vector2i.ZERO, Vector2i(box_size))
 	var frame := _builder.build_control(def)
 	if frame != null:
 		frame.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -136,7 +168,7 @@ func _add_base(layout: UiLayoutParser.LayoutDef) -> void:
 	add_child(base)
 	var tile := base.get_node_or_null("GDR_MSGBOX_BG") as Control
 	if tile != null:
-		var r := Rect2(16, 40, SIZE.x - 32, SIZE.y - 56)
+		var r := Rect2(16, 40, box_size.x - 32, box_size.y - 56)
 		tile.set_meta(UiBuilder.AUTHORED_RECT_META, r)
 		tile.position = r.position
 		tile.size = r.size
@@ -147,10 +179,10 @@ func _add_title() -> void:
 	def.name = "Title"
 	def.type = "CIFStatic"
 	def.halign = 1
-	def.rect = Rect2i(10, 11, int(SIZE.x) - 21, 12)
+	def.rect = Rect2i(10, 11, int(box_size.x) - 21, 12)
 	var title := _control(def)
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_set_text(title, _text(TITLE_KEY, TITLE_FALLBACK), false)
+	_set_text(title, _text(SPECIAL_TITLE_KEY if special else TITLE_KEY, TITLE_FALLBACK), false)
 
 func _add_message(section: UiLayoutParser.SectionDef) -> void:
 	var def: UiLayoutParser.ControlDef = null
@@ -165,7 +197,7 @@ func _add_message(section: UiLayoutParser.SectionDef) -> void:
 	def.text = ""
 	var msg := _control(def)
 	msg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_set_text(msg, _text(MESSAGE_KEY, MESSAGE_FALLBACK), false)
+	_set_text(msg, _text(SPECIAL_MESSAGE_KEY, SPECIAL_MESSAGE_FALLBACK) if special else _text(MESSAGE_KEY, MESSAGE_FALLBACK), false)
 
 func _add_button(section: UiLayoutParser.SectionDef, spec: Array) -> void:
 	var rect := Rect2i(BUTTON_X, int(spec[2]), int(BUTTON_SIZE.x), int(BUTTON_SIZE.y))
@@ -238,6 +270,10 @@ func _on_pressed(option: int) -> void:
 			close()
 		-1:
 			map_requested.emit()
+		-2:
+			party_requested.emit()
+		-3:
+			saved_requested.emit()
 		_:
 			option_chosen.emit(option)
 			close()
@@ -270,7 +306,7 @@ func caption_of(member_name: String) -> String:
 
 ## Centred on a `screen`-sized display at its own size (OURS, see the top).
 func screen_position(screen: Vector2) -> Vector2:
-	return Vector2(int(screen.x) / 2 - int(SIZE.x) / 2, int(screen.y) / 2 - int(SIZE.y) / 2)
+	return Vector2(int(screen.x) / 2 - int(box_size.x) / 2, int(screen.y) / 2 - int(box_size.y) / 2)
 
 ## Hidden now, freed at the end of the frame (the box is an ancestor of the
 ## pressed button, round 631).

@@ -387,6 +387,14 @@ type DurabilityLookup interface {
 	DurabilityRange(ctx context.Context, itemID int64) (durMin, durMax float64, ok bool, err error)
 }
 
+// AccessoryLookup is an optional extension of a DurabilityLookup (round 838):
+// whether itemID is an earring, necklace or ring (TypeID 3/1/5 or 3/1/12),
+// which has no durability but rolls a variance for its absorptions
+// (FreshInstance). A lookup without it leaves accessories at variance 0.
+type AccessoryLookup interface {
+	IsAccessory(ctx context.Context, itemID int64) (bool, error)
+}
+
 // MaxStackLookup resolves an item's max stack size, so Store.AddItem knows
 // how many can go in one slot before it needs a new one. Satisfied by
 // refdata.SQLStore in production; tests can use a trivial stub.

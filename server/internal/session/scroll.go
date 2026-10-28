@@ -120,6 +120,7 @@ package session
 //     walk-in refusals; it has no pets, logout, guild summon or thieves.
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -133,6 +134,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
@@ -156,7 +158,31 @@ const (
 	// ScrollOptionThiefDen is the option FUN_004a0380 starts the state with
 	// for a thief den scroll (round 801: uVar5 = 1 on that branch, READ).
 	ScrollOptionThiefDen byte = 1
+	// Round 838, OURS: ITEM_MALL_REVERSE_RETURN_SCROLL_SPECIAL's "4. Move to
+	// a party member" (+ u32 the member's party JID) and "5. Move to a
+	// previously saved location" (+ u32 the slot). A private server's
+	// add-on (vsroplus, packed): FUN_004a00c0 answers 2 for both, as it
+	// still does here for every other 3/3/3/3 row. Their texts are the
+	// archive's VPLUS_UI_REVERSE_* (the client's ReverseReturnBox).
+	ReverseOptionParty byte = 4
+	ReverseOptionSaved byte = 5
 )
+
+// The add-on's own refusal texts (MEASURED, textuisystem: the server side's
+// REVERSE_INVALID_TARGET_AREA_ERROR), and OpenSRO's words for the others.
+const (
+	reverseInvalidTargetArea = "Invalid target area."
+	reverseNoPartyMember     = "That character is not in your party."
+	reverseEmptySlot         = "There is no location saved in that slot."
+)
+
+// IsSpecialReverseReturnScroll reports the special reverse return scroll
+// (round 838): a 3/3/3/3 row whose code ends _REVERSE_RETURN_SCROLL_SPECIAL --
+// its row differs from the plain scroll's only in id, code and icon
+// (MEASURED), so the add-on can only have told it by those.
+func IsSpecialReverseReturnScroll(it *refdata.Item) bool {
+	return IsReverseReturnScroll(it) && strings.HasSuffix(strings.ToUpper(it.CodeName), "_REVERSE_RETURN_SCROLL_SPECIAL")
+}
 
 // The refusal codes (READ; names from the client's category-1 table).
 const (
@@ -289,9 +315,18 @@ type ScrollCaster struct {
 	network *teleport.Table
 	// after schedules a cast's end; time.AfterFunc unless a test replaces it.
 	after func(time.Duration, func())
+	// parties finds a party member for the special scroll's option 4 (round
+	// 838, SetParties); nil refuses it.
+	parties *party.Hub
 
 	mu      sync.Mutex
 	casting map[int64]*scrollCast
+}
+
+// SetParties gives the casts the party hub (round 838, option 4).
+func (s *ScrollCaster) SetParties(h *party.Hub) *ScrollCaster {
+	s.parties = h
+	return s
 }
 
 // scrollCast is one running scroll state.
@@ -303,6 +338,9 @@ type scrollCast struct {
 	den teleport.Point
 	// value is the state's value, (Param2 == 0) + 1 (round 779).
 	value byte
+	// target is option 4's party member (its JID) or option 5's slot (round
+	// 838).
+	target uint32
 }
 
 // NewScrollCaster builds the casts' state and makes it the server's
@@ -481,11 +519,43 @@ func scrollReason(code uint16) string {
 // id; it is ignored for the return scroll.
 func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inventory.Store, characterID int64,
 	it *refdata.Item, held inventory.Slot, have int, req *UseItemRequest) error {
-	refuse := func(code uint16) error {
-		if s.logger != nil {
-			s.logger.Debug("scroll refused", "character_id", characterID, "item", it.CodeName, "option", req.Option, "code", fmt.Sprintf("0x%x", code))
-		}
+	spend := func() error { return inv.RemoveItem(ctx, characterID, held.Index, 1) }
+	delay, code, err := s.begin(ctx, sess, characterID, it, req.Option, req.Target, spend)
+	var refused scrollRefusedText
+	if errors.As(err, &refused) {
+		return scrollRefusal(sess, 0, refused.why)
+	}
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Error: "using failed"}).Encode()})
+	}
+	if code != 0 {
 		return scrollRefusal(sess, code, scrollReason(code))
+	}
+	return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
+		Remaining: int32(have - 1), CastMs: uint32(delay / time.Millisecond), ItemID: uint32(it.ID),
+	}).Encode()})
+}
+
+// scrollRefusedText is begin's refusal with a text of its own and no retail
+// code (round 838: the special scroll's options 4 and 5, OURS); the caller
+// answers it.
+type scrollRefusedText struct{ why string }
+
+func (r scrollRefusedText) Error() string { return r.why }
+
+// begin is FUN_004a0380 / FUN_004a00c0 for the scroll it with the request's
+// option and target: the refusals (a non-zero code, nothing done), then
+// spend (the item's count, or a composite grant's use -- round 838: a UIL1
+// fill of a return scroll runs this same routine, CUsedItemLimit::vslot_007
+// 0x654258 / 0x65423b, READ), the recall point, the stop, the state and the
+// timer. err is spend's failure, after which nothing is started.
+func (s *ScrollCaster) begin(ctx context.Context, sess *gateway.Session, characterID int64,
+	it *refdata.Item, option byte, target uint32, spend func() error) (time.Duration, uint16, error) {
+	refuse := func(code uint16) (time.Duration, uint16, error) {
+		if s.logger != nil {
+			s.logger.Debug("scroll refused", "character_id", characterID, "item", it.CodeName, "option", option, "code", fmt.Sprintf("0x%x", code))
+		}
+		return 0, code, nil
 	}
 	reverse := IsReverseReturnScroll(it)
 	thiefDen := !reverse && strings.Contains(strings.ToUpper(it.CodeName), "THIEFDEN")
@@ -541,11 +611,11 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 		cast.option, cast.den = ScrollOptionThiefDen, den
 	}
 	if reverse {
-		cast.option = req.Option
-		switch req.Option {
+		cast.option = option
+		switch option {
 		case ReverseOptionRecall, ReverseOptionDeath:
 			kind, code := character.RecallPoint, ScrollErrNoRecallPoint
-			if req.Option == ReverseOptionDeath {
+			if option == ReverseOptionDeath {
 				kind, code = character.DeathPoint, ScrollErrNoDeathPoint
 			}
 			p, ok := s.storedPoint(ctx, characterID, kind)
@@ -556,7 +626,7 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 				return refuse(ScrollErrArea)
 			}
 		case ReverseOptionMap:
-			p, ok := s.table().OptionalByID(int(req.Target))
+			p, ok := s.table().OptionalByID(int(target))
 			if !ok || p.Region == 0 {
 				return refuse(ScrollErrUnknownOption)
 			}
@@ -571,6 +641,20 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 				return refuse(ScrollErrArea)
 			}
 			cast.point = p
+		case ReverseOptionParty, ReverseOptionSaved:
+			// Round 838, OURS: the special scroll's options 4 and 5, checked
+			// now and resolved again when the cast runs out, as options 2
+			// and 3 are (the job reads the point at expiry).
+			if !IsSpecialReverseReturnScroll(it) {
+				return refuse(ScrollErrUnknownOption)
+			}
+			cast.target = target
+			if _, ok, why := s.addOnPoint(ctx, characterID, option, target); !ok {
+				if s.logger != nil {
+					s.logger.Debug("scroll refused", "character_id", characterID, "item", it.CodeName, "option", option, "why", why)
+				}
+				return 0, 0, scrollRefusedText{why}
+			}
 		default:
 			return refuse(ScrollErrUnknownOption)
 		}
@@ -584,11 +668,11 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 	}
 	s.casting[characterID] = cast
 	s.mu.Unlock()
-	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
+	if err := spend(); err != nil {
 		s.mu.Lock()
 		delete(s.casting, characterID)
 		s.mu.Unlock()
-		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Error: "using failed"}).Encode()})
+		return 0, 0, err
 	}
 	if !reverse {
 		// SaveCurPosAsLastTelPosition (0x4a055d): the return scroll's use
@@ -612,9 +696,7 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 			"point", cast.point.ID, "delay", delay, "state", cast.value)
 	}
 	s.after(delay, func() { s.complete(characterID, cast) })
-	return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
-		Remaining: int32(have - 1), CastMs: uint32(delay / time.Millisecond), ItemID: uint32(it.ID),
-	}).Encode()})
+	return delay, 0, nil
 }
 
 // storedPoint reads characterID's recall or death point; ok is false when none
@@ -682,6 +764,19 @@ func (s *ScrollCaster) complete(characterID int64, cast *scrollCast) {
 	case ScrollOptionThiefDen:
 		p := cast.den
 		zone, bucket, pos, frame, placed = placeArrival(p.Region, float64(p.X), float64(p.Y), float64(p.Z), p.WorldID)
+	case ReverseOptionParty, ReverseOptionSaved:
+		p, ok, why := s.addOnPoint(ctx, characterID, cast.option, cast.target)
+		if !ok {
+			if s.logger != nil {
+				s.logger.Info("scroll cast ended without a move", "character_id", characterID, "option", cast.option, "why", why)
+			}
+			return
+		}
+		zone, bucket, pos, frame, placed = placeArrival(p.Region, p.X, p.Y, p.Z, p.WorldID)
+	case skinOptionInPlace:
+		// Round 838 (skinchange.go): the skin change's warp to where the
+		// character stands, which respawns it with its new body.
+		zone, bucket, pos, frame, placed = s.inPlaceArrival(characterID)
 	}
 	if !placed {
 		return

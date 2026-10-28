@@ -412,7 +412,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	var wallCrit bool
 	if buffBooks.HoldsWall(characterID) {
 		hit, ok := buffBooks.HitWall(characterID, monsterBlowType(ctx, monster, skill), func(w buff.Wall) int {
-			b := resolveBlow(raw, w.DefPct, w.Def,
+			b := resolveBlow(raw, float64(w.DefPct), w.Def,
 				combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq)), 0,
 				monster.Level, playerLevel, monster.ID, characterID)
 			wallCrit = b.Critical
@@ -437,11 +437,16 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 			return out, nil
 		}
 	}
-	counter := resolveBlow(raw, playerMitigationPercent, armor,
+	counter := resolveBlow(raw, playerMitigationPercent(ctx, characterID, eq, items, false), armor,
 		combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq)),
 		combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
 		monster.Level, playerLevel, monster.ID, characterID)
 	incoming := counter.Damage
+	// The defender's damage-taken multiplier (round 838, applyPlayerTaken):
+	// a monster's blow is physical here, p174 (defenderBlock's p136 too).
+	if !counter.Blocked {
+		incoming = applyPlayerTaken(characterID, false, incoming)
+	}
 	out.critical = counter.Critical
 	out.blocked = counter.Blocked
 	// A rider's blow lands on its mount (round 795: a single-target blow at

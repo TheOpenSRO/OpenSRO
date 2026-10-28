@@ -253,7 +253,10 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 		ctx = context.Background()
 	}
 	r := pcspawn.Record{
-		HwanLevel: 0, PVPCape: 0, AutoInvestExp: 0, // OURS: none modelled
+		// Round 838 (titlescroll.go): the title byte, _CHAR.HwanLevel (READ:
+		// the client's slot 27 0x9dbcc0 hands it to FUN_009ca930, the title).
+		HwanLevel: hwanLevelOf(e.CharacterID),
+		PVPCape:   0, AutoInvestExp: 0, // OURS: none modelled
 		InventorySize: pcInventorySize,
 		AvatarSize:    pcAvatarSize,
 		UID:           uint32(e.CharacterID), // the low 32 bits of the character id, as every retail message OpenSRO sends (round 710)

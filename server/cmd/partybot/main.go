@@ -168,6 +168,7 @@ func (b *bot) note(p *proto.Packet) {
 	b.noteGuild(p)
 	b.noteSocial(p.Opcode, p.Data)
 	b.noteMall(p.Opcode, p.Data)
+	b.noteUse(p.Opcode, p.Data)
 	switch p.Opcode {
 	case session.OpSelfID:
 		if s, err := session.DecodeSelfID(p.Data); err == nil {
@@ -262,6 +263,8 @@ func (b *bot) saw(rec pcspawn.Record) {
 	if watchViews {
 		fmt.Printf("%s [%s] WATCH spawn %s uid %d body mode %d\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.BodyMode)
 	}
+	// Round 838: the body each spawn carries (a skin change respawns it).
+	fmt.Printf("%s [%s] MODEL spawn %s uid %d ref %d scale 0x%02x\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.RefObjID, rec.Scale)
 	// Round 814: a player's guild line as its spawn carries it.
 	if rec.GuildName != "" {
 		fmt.Printf("[%s] GUILD spawn %s uid %d guild %d %q grant %q\n", b.name, rec.Name, rec.UID, rec.GuildID, rec.GuildName, rec.Nickname)
@@ -903,8 +906,16 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	// The GM /tp only tells a client where to stand; the client then sends
 	// the move (session/gm.go), so the bot sends it too, as a relocation.
 	gmTP := func(at string) {
+		// Round 838 (QA aid): "x y z" stands the bot at that height too (the
+		// GM /tp takes x z; the relocation carries the height).
+		var x, y, z float32
+		if _, err := fmt.Sscanf(at, "%f %f %f", &x, &y, &z); err == nil {
+			b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: fmt.Sprintf("/tp %g %g", x, z)}).Encode())
+			b.moveTo(x, y, z)
+			fmt.Printf("[%s] -> /tp %s and a relocated move there\n", name, at)
+			return
+		}
 		b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: "/tp " + at}).Encode())
-		var x, z float32
 		if _, err := fmt.Sscanf(at, "%f %f", &x, &z); err == nil {
 			b.mu.Lock()
 			y := b.y
@@ -922,6 +933,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	}
 	b.guildSteps(name)
 	b.mallSteps()
+	b.useSteps()
 	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
 	// can invite it beside the leader first and then move it away.
 	var tp2C <-chan time.Time
@@ -1099,8 +1111,13 @@ func main() {
 	flag.StringVar(&botMall.chest, "mall-chest", "", "bot (round 837): after the buy, list the item chest (\"list\"), take all (\"all\") or take one entry id")
 	flag.StringVar(&botMall.history, "mall-history", "", "bot (round 837): ask the silk history \"<kind>,<period>\" (0x711a), e.g. 1,4")
 	flag.IntVar(&botMall.open, "mall-open", 0, "bot (round 837): send 0x7121 with this shop group first")
+	flag.StringVar(&botMall.use, "use-slots", "", "bot (round 838): bag slots to use (0x008a) once in the world, \"0,1\", after the mall steps")
 	flag.DurationVar(&botMall.delay, "mall-delay", 2*time.Second, "bot (round 837): the wait before each mall step")
 	flag.DurationVar(&botSocial.delay, "social-delay", 2*time.Second, "bot (round 834): the wait before each friend or exchange step")
+	flag.StringVar(&botUse.items, "use-items", "", "bot (round 838): use these items from the bag once in the world, \"<item id>,...\" (after -gm-lines)")
+	flag.DurationVar(&botUse.every, "use-items-every", 3*time.Second, "bot (round 838): the wait before each -use-items use")
+	flag.BoolVar(&botUse.watchBuffs, "watch-buffs", false, "bot (round 838): print every buff start and end the bot is sent")
+	flag.StringVar(&botUse.text, "use-text", "", "bot (round 838): send each -use-items use with this custom title (the Custom Title Scroll)")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")

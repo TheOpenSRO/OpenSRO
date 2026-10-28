@@ -7483,6 +7483,253 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-eighth round, lane 6: the title scrolls are the hwan level, and the Random Wing Scroll
+
+The user: "let's make all the items in the item mall functional ... Make no mistakes." This lane:
+ITEM_TITLE_1 .. ITEM_TITLE_255 (3/3/13/14, no Param block) and ITEM_RANDOM_WING (3/3/13/1). Both are the
+private server's rows; what they do is OURS (`session/titlescroll.go`), how a title is carried and drawn
+is the original's.
+
+**What a title is (READ).** Retail's _CHAR.HwanLevel (charData +0xf2). Server: CGObjChar::UpdateHwanLevel
+(0x004a9f40) keeps it (+0x1c58), GObjPC::FUN_004a9e20 asserts it is within the table and writes the row
+(dirty bit 0x2000), FUN_004a9f70 sends 0x30DF {u32 object id, u8 level} to the view. Client: 0x30DF
+(FUN_008a7630) and the spawn record's byte (slot 22 -> DAT_00ef1bb8 -> slot 27 0x9dbcc0; 0x3013 reads it
+too) both call FUN_009ca930(level): +0x764 = level, then FUN_00941000 -- hwanleveldata.txt's row, its
+Title_CH70 / Title_EU70 key by the body's race (ref +0x9d), the text table's line ("" on a miss) -- into
+the title slot (vslot 30, c:0x9c28a0): left of the name, #FFE65B, emptied while a job suit is worn. The
+private server's own _RefHWANLevel.csv (the box's /opt/sro-files/db/csv) and the archive's
+hwanleveldata.txt have rows 0..255, row N naming UIO_SECOND_HWAN_CH_NAME_LEVEL_N; textuisystem's FIRST row
+for each key is that server's title (MEASURED: 1 "Ambassador" .. 97 "YouTuber", 196 "SRO Lover", 200-204,
+232-239, 246-255 "Custom"), and ITEM_TITLE_N's name is that title + " Title". So ITEM_TITLE_N gives hwan
+level N. The procs in /opt/sro-files/db/procs hold nothing about titles.
+
+**Built.**
+- Server: `character.TitleStore` (characters.hwan_level, custom_title; Mem and SQL), the spawn record's
+  HwanLevel from a cache filled at entry, 0x30DF to everyone in view on a use, and to the arrival after
+  OpSelfID (OURS: OpenSRO has no 0x3013). The title scrolls go through the service-scroll dispatch.
+- OURS, the use: the title is given and the scroll spent; a new one REPLACES the old (the custom scroll's
+  text: "the old one will be lost"); the same title again is refused and the scroll kept.
+- OURS, ITEM_TITLE_255 "Custom Title Scroll" ("A window will open where you can enter your custom
+  title"): the bag right-click opens the naming box with "Enter your custom title." (20 characters),
+  the use carries the text (option 0xC7, u16 + UTF-8), the server keeps 1..20 characters of ASCII
+  letters, digits, single spaces and `-_.'!#&+?:()`, stores level 255 + the text and sends it as 0x01A8
+  {u32 uid, str} before the 0x30DF, and on every spawn. A use without the text is refused, kept.
+- Client: `TitleNet` (0x30DF, 0x01A8, the spawn byte), `_job_plate_decor` draws the title in the title
+  line for job state 4 (the OURS class title keeps the suited line), lane 3's title colour applies.
+  `UiTextTable.keeps_first_row` now covers UIO_SECOND_HWAN_*: the joined-table rule (round 725) had drawn
+  the stock "Captain" for level 1, while the client's TextStringManager keeps the first row (READ
+  0x8ca120) and the scroll is the "Ambassador Title".
+- OURS, the Random Wing Scroll: claimed before the skill item path -- its Desc128_1,
+  SKILL_CELESTIUS_SILK_SCROLL_10, is a placeholder (cbuf, dura 1000 ms, no effect; MEASURED) that lane 1's
+  path would have cast. One of 20 wing visuals, evenly, goes to the item chest: VSROEDITORCOM_VISUAL_09,
+  10, 12 and 17..33 (the mall's Wings tab); 11 "Wings of Blood" is out, its USU1 casts VISUAL_01's horns.
+- The same placeholder is named by ITEM_ACCESSORY_UPGRADE, ITEM_RACE_CHANGE, ITEM_SANTA_BOX,
+  ITEM_SET_UPGRADE, the four ITEM_ELIXIR_COUPON_* (SILK_SCROLL_2500), the five ITEM_CRATE_* and
+  ITEM_SILK_LOTTERY / ITEM_NAME_CHANGE (lane 3's). `isSkillItem` now leaves those skills out, so an
+  unclaimed one is refused and kept instead of spent for a second of nothing. None is in the mall.
+
+**Live (box, lane server 16860, in memory; real right-clicks, the typed box).** Bots Lover (ITEM_TITLE_196)
+and Custom (ITEM_TITLE_255, "Bot Custom") titled before the client came; the client then drew "SRO Lover
+Lover", "Bot Custom Custom" (spawn path). The client's own right-click of ITEM_TITLE_196 drew "SRO Lover
+Titania", the 255 box typed "Lane Six" drew "Lane Six Titania", a bot in view logged both 0x30DFs and the
+0x01A8. A bot using ITEM_TITLE_1 while in view turned its plate live (first "Captain", then "Ambassador"
+after the text rule). After a relog the own "Lane Six" came back from the store, the bots' too. The Random
+Wing Scroll put "Graceful Wings (Type G)" (VISUAL_30) in the chest, Take All moved it to the bag, its
+right-click started the 28-day buff and drew the wings. Tests: `go test ./...` passes
+(TestRound838TitleScroll, TestRound838RandomWing, TestTitleStores with Postgres); client `title_net_test`,
+`ui_text_table_test`, `service_net_test`, `useitem_test`, `item_chest_test`, `crest_test`. No perf gate:
+plates are built as before, one text lookup more.
+
+**OPEN.** Retail drives more off the hwan level than the title, none of it built: the berserk look
+SYSTEM_CH_HWAN2MODE for level > 0 (berserk_look.md), the player block's pmi_jahwan_02 art (FUN_007b5f40),
+the server's hwan-level row params during berserk (UDPS speed, DABR -> p174..177, GObjPC::FUN_004aaf80;
+the box's rows give every title DABR 15), a party "link" berserk when both members have a level
+(CGObjPC::PeriodicUpdate 0x0052aa90), and the equip requirement type 0x301 (CGItemEquip::
+CheckEquipRequirements 0x004919e0, 0x18f7). A titled character in the private server's retail
+client got all of these; they wait for the user's call.
+
+## Eight-hundred-and-thirty-eighth round, lane 3: the private-server service scrolls
+
+The user: "let's make all the items in the item mall functional ... Make no mistakes." This lane took
+the archive's service scrolls. Every one is the private server's own item (a Pandora/vPlus archive:
+ITEM_ANTHEIA_*, ITEM_NAME_COLOR_*, ITEM_TITLE_COLOR_*, the starter packages, the removers, the
+lottery tickets). Its filter is in no binary here, so each is OURS, built to its full in-game
+description (textdata_object, read on the render box). `session/servicescroll.go` holds every rule
+and every choice.
+
+**The bug first (MEASURED).** Eight of them are typed 3/3/3/1, the return scroll's kind:
+JOB_REMOVER, GUILD_REMOVER, REMOVEPREM, DURABILITY_REMOVER, ANTHEIA_SKILLRESET, ANTHEIA_MASTERY,
+STARTER_PACKAGE and PET_LEVEL. Each carries the return scroll's Param block (1000 / 1 / RESURRECT).
+The dispatch cast them as return scrolls (`IsReturnScroll`) and sent the player home. They are now
+caught by code name, after the CanUse test and before every kind dispatch. Only the Skill Reset
+Scroll goes home, because its description says "you will get teleported back to your appointed
+teleport area".
+
+**What each does now (OURS).** Refusals keep the item. A store-backed effect is spent in the same
+transaction as the scroll. Every accepted use answers with OpServiceLine.
+- Silk scrolls (10 ... 10000, and the unsold 250): the amount goes into **own** silk, the only
+  currency they are priced in. 0x3153 updates the mall's info block.
+- Lucky Dice: 0..500 own silk, evenly.
+- Lottery tickets (CanUse 0): "registers you ... upon purchase". The purchase records one entry
+  per ticket, weighted by the silk it cost. `/lottery` shows the entries; `/lottery draw [prize]`
+  picks a weighted winner, pays the pot (or the given prize) as own silk, closes the entries and
+  sends a notice.
+- Job Penalty Remover: the 7-day rejoin bar (round 799) ends.
+- Guild Penalty Remover: "You must have left your guild already" is refused while in a guild.
+  Otherwise the 72-hour bar (round 822) ends.
+- Premium Remover: the SKILL_MALL_PRE_* buff and the timed grants of the ITEM_MALL_PREMIUM_*
+  composites end.
+- Red Stats Remover: the red stats are the two options whose magicoption AttrType is not '+'
+  (MEASURED): MATTR_DEC_MAXDUR, the failed elixir's flaw, and MATTR_NOT_REPARABLE. They come off the
+  item in the first bag slot, the archive's own rule for its item scrolls ("The item has to be
+  located in the first slot of your inventory").
+- Skill Reset: every learned row with a learn cost is forgotten and its ReqLearn_SP refunded. The
+  masteries stay. Then the character goes home (warpHome, no casting bar).
+- Stat Reset, and Skill & Stat Reset: the reset is stored and runs at the next entry. Stats go to
+  Str = Int = 20 + (L-1) with 3(L-1) points, the level-up rule.
+- Skill Leveler: learns every row the mastery levels open, for free, under the learn handler's
+  filter.
+- Name Change: the flag is stored and the session ends. Start is refused 0x04F0, and the select
+  screen's input box asks for the name (retail's own UIIT_MSG_ITEM_CHANGE_NAME line). The name
+  passes creation's rules and uniqueness (0x0139/0x013A). The guild member row and friend rows
+  follow it, and the PIN gate covers it.
+- Name and Title colours: stored on the character and sent as 0x013B to everyone in view, on every
+  spawn as well. The plates draw them; an opposed job's hostile name colour still wins. Title Reset
+  goes back to yellow #FFE65B (READ).
+- Starter packages: the listed contents, mapped to archive codes, are delivered by gender to the
+  item chest.
+- Pet Level Up: the summoned growth pet goes to the character's level along its rows.
+
+**Live (render box, real client and server; real right-clicks via the new `bag_rclick:` QA step).**
+- The silk went 5000 -> 5599 (scroll 100, dice 499).
+- A sword with options 1/65/68 lost the two red ones.
+- The Elite Angel package's 14 lines appeared in the Chest window, the man's pieces.
+- Premium was refused with none running, then removed after a GoldTime PLUS.
+- The Leveler opened 58 skill levels at blade 30. The Skill Reset returned 3784 SP and moved the
+  character home.
+- Pet Level Up took a wolf to 60.
+- Str 89 / 167 points became Str 79 / 177 after the relog.
+- Lanthe became Lanara through the real select screen and the typed box, and kept her red name.
+- A bot's sky-blue name was drawn on the client, and the bot logged the client's red one.
+- "Amateur Trader" turned from sky blue to red live.
+- The Guild Penalty Remover was refused in the guild, then worked after a bot expelled the
+  character.
+- The Job Penalty Remover worked: join, withdraw, remover, join again.
+- A bot bought two gold tickets, the GM drew, and the bot was paid 600 with a notice.
+
+**OPEN.**
+- ITEM_RANDOM_WING ("grant you a random wing effect in your Item Chest") is delivered by the elite
+  packages but has no use yet.
+- ITEM_TITLE_196 (the "SRO Lover Title") has none either. A non-job title line would have to read
+  `NetClient.service.title_colour`.
+- Fixed after the merge (OURS): the Skill Leveler records the SP it waived (`characters.waived_sp`)
+  and a skill reset refunds only what remains, so the two scrolls cannot turn silk into SP
+  (TestRound838SkillResetRefundsNoLevelerSP; the memory and Postgres stores in TestServiceStores).
+- A buff from a forgotten skill runs out on its own.
+- OpenSRO's QaSignIn does not answer a pending rename; the select screen does.
+
+## Eight-hundred-and-thirty-eighth round, lane 1: the mall's character visuals and skill items do what their descriptions say
+
+The user: "let's make all the items in the item mall functional. Make sure you read your descriptions
+so you know how to implement them. Make no mistakes." This lane: the VSROEDITORCOM visual and trail
+scrolls (3/3/13/14, `[USU1:SKILL_VSROEDITORCOM_*]`) and the 3/3/13/1 skill items (the 24 Godbless
+wings, the Boots of Speed, the damage absorption scrolls, the movement-speed drugs).
+
+**What the rows are (MEASURED, the player's archive).** Every skill these items name is an
+action-kind-3 buff with `cbuf` and `dura`: the visuals and wings 2,419,200 s (the signed column's
+-1875767296), the boots 604,800 s with `hste` 115, the absorption scrolls 1,800 s with `odar` 15,10 /
+15,20, the drug 3977 1,800 s `hste` 100 and 3975 (duplicated: skilldata_4000 1,800 s `hste` 50,
+skilldata_5000 604,800 s `hste` 100; the export keeps the later, which is what the item's name
+"Drug of typoon (1 week)" says). None carries an effect reference: the look is retail's own
+mechanism, the skill's `skilleffect.txt` ACT_L AT_LOOP rows -- .efp rows (wings 17-33, the Godbless
+wings `system\wings\hwanlook_c_penguin1_*`, the trails at both feet) and .bsr rows (horns, crowns,
+wings 09-12 and capes: `res\item\electus\electus_m_visual_NN.bsr` at `Bip01 Head` / `Bip01 Spine1`).
+Action_Overlap bytes per family: horns 0x31/0x9b/0x94, crowns 0x6d, capes 0x55, every wing (VSRO and
+Godbless) 'rcur' 0x72/0x75/0x63, trails 0x57/0xb3/0xe2, speed 6, absorption 0x0a/0x09.
+
+**The server (READ, SR_GameServer.exe).** The item loader (0x6a4b00 region) binds a 3/3/13/1..3
+row's Desc128_1 skill code into Param1 -- the file's own Param1 (0, 5, 11) is overwritten and never
+read. UseByKind (0x0049c2b0) cases 1-3 call FUN_0059b8d0: a `cbuf` + `dura` row queues a type-0
+CTJ_SkillKeeper job for dura/1000 s (unsigned), whose start (0x650e70) registers the skill, broadcasts
+0xB0BD, sets the overlap bits and engages -- the composite USU1 path's job. `session/itemskill.go`
+does that; the overlap is checked BEFORE the spend (INFERRED: the job's start does not test, the
+description says "cannot be used with another item or skill that has a similar effect", and a start
+after the spend ate the item on the engage refusal -- the USU1 path had that bug too, fixed). OURS: one
+character visual at a time, refused with 0x1894's text (the descriptions' "cannot be used with other
+character effect scrolls"; the bytes alone allow one per kind). The job is persisted (`skilljob`,
+table `skill_jobs`) and restored at world entry with its remaining time -- the engine's timed jobs
+outlive the object -- and kept through a death (OURS). Damage absorption: Formula_Mitigate*
+(0x40e450) multiplies by the DEFENDER's p174..177 (SelectDaraParamForDamageType) for any defender;
+OpenSRO applied it to monsters only. `applyPlayerTaken` now applies it to a player hit by a monster,
+a job PvP hit and a duel hit (a worn avatar's `dara` with it).
+
+**The client.** An aura's .bsr row is now drawn (`AuraModel`: the model on its bone in the bone's
+frame -- READ FUN_00a4a680; the meshes MEASURED authored in that frame, the horns at x 1.1..4.6,
+y +-2.3), and a '#' StartBone places the offset in the bone's frame along the world's axes (READ
+FUN_00a4ddc0 flag 4; the 26 rows are a head attachment's eyes or horn tips). Two reader fixes the
+models needed: a .bmt layer name NUL-padded inside its length was skipped (its piece drew white), and
+a .bms whose hdr[1] disagrees with the client's sequential read (READ CPrimMesh::FUN_00c1bb20; the
+capes' 3-bone mesh points 16 bytes short) is read where the sequence ends.
+
+**Live (box, lane server 16810, frames in /var/tmp/r8381/keep).** Four bots each used a visual
+before the client arrived: the client drew the textured wings, the lava cape, the flame crown and
+the flaming horns on them (spawn path); the client's own right-clicked trail, Godbless wings and
+graceful wings drew with their buff icons. A second visual was refused; after an in-process relog
+the server logged `skill job: restored at entry` and the client drew the crown again. Boots: run
+speed 50 -> 108 broadcast; a drug then refused (byte 6). Absorption: two bots under three Mangyang
+each, mean blow 8.76 (42 hits, scroll) against 9.89 (62 hits). No perf gate: the drawing added runs
+only for an aura with .bsr rows.
+
+## Eight-hundred-and-thirty-eighth round, lane 5: the mall's remaining retail-kind items
+
+The user: "let's make all the items in the item mall functional. Make sure you read your descriptions
+so you know how to implement them. Make no mistakes." Lane 5 took the stall decorations, the skin
+change scroll, the Magic POP card, the global chatting items, the repair hammer, the warehouse
+addition, the quivers and potion bags, the reverse and return scrolls and the Europe accessories.
+Each was read against its full description (the round's catalogue) and the decompiled originals.
+
+**Built (READ unless marked).**
+- Repair hammer (3/3/13/7): UseByKind case 7 mends every worn and carried equip item below its max to
+  max, free, one 0x3052 each, and spends one hammer; none mended answers 0x1888 and keeps it; Param1 is
+  never read. The client asks box 0x1f "Will you use the selected item?" first (OURS geometry) and
+  checks the repair quote before sending.
+- Warehouse addition: "Limited to 2 times only per account" -- storage.AdditionCeiling. OURS: the
+  original gets the limit from a 150-slot start and the READ 210 bound; ours starts at 50.
+- Europe accessories: PAR/MAR (itemdata 71/72 and 79/80) were never exported. They are now, rolled
+  from variance groups 0 and 1 at creation (FUN_00728d50), summed into params 7/8
+  (Char_BuildAggregateStats' accessory branch, Char_PublishCombatStats), and divide a blow on the
+  wearer: raw / (1 + p/100) - flat. The old constant zero ("a player never has a percentage
+  reduction") came from a census that missed the accessory columns.
+- Global chatting: one item a line, a line past 128 characters cut with "..." (case 5), the edit's
+  100. GREEN (and WHITE/BLUE/RED/PINK/ORANGE) belong to the private server's packed add-on; 0x3026 has
+  no colour field. OURS: a u32 colour suffix on OpChatUpdate, each colour MEASURED from the item's own
+  icon.
+- Stall decorations (3/3/3/4): case 4 stores the item's RefObjID as _STATICAVATAR.Param1
+  (characters.stall_decoration) and spends the item; FUN_004f0f00's BFI1 override is
+  session.GrantStallDecoration (for the premium packages); the client's booth choice (c:0x9dd040) is
+  StallBooth. OPEN: OpenSRO has no player stall, so nothing in the world draws it yet; the QA hook
+  OPENSRO_QA_STALL_BOOTH draws the booth at the player.
+- Special reverse return scroll: options 4 (a party member) and 5 (saved locations) belong to the
+  add-on. OURS, built to its VPLUS_UI_REVERSE_* texts: OpUseItem options 4/5 + u32, OpReverseSaved
+  0x00FE/0x00FF, character_saved_locations (5 slots, registering keeps the scroll).
+- Skin change scroll (3/3/13/9): CIFChangePlayerModel and UpdateCharRefObjIDAndScale, with the
+  in-place warp a second later (OpUseItem option 0xFC).
+- Ammunition: worn stacks, `cnsm` spent once a cast, 0x300e at none, AutoReloadMagazine, 0x3201.
+  ITEM_MALL_QUIVER / _BOLT now behave as ordinary arrows do.
+- Magic POP: the machine's 0x11 from the gacha NPC map, the draw 0x7118/0xB118 (rand() % 10000 <
+  Ratio, else the normalised consolation set), the card turned in place into its coupon, Gori's
+  exchange 0x7119; docs/protocol/magic_pop.md.
+- Checked, unchanged: the mall delivers the package's Data (quiver and potion bags 10,000 in one
+  stack); the X-large potions restore as 3/3/1 (820); return scrolls 01/02 and the instant one
+  (Param1 / 1000 s, round 779).
+
+**Live (real server, real client, real input).** The hammer's box and its Yes turned a broken mail and
+a worn sword white; the green line was drawn green; the stall decoration was spent; the warehouse took
+two additions and refused the third; the special box showed five destinations, a location saved into
+slot 3 ("3. Jangan") and the move back to it; the mall sold a quiver and a potion bag of 10000 each;
+the four decorations' booths and the two default stalls were drawn; a European wore the Jade Necklace
+("Phy. absorption 17.6 (+35%)"); the instant return scroll moved the character to the town gate; the
+skin change, ammunition and Magic POP runs are in their own sections of the lane report.
 ## Eight-hundred-and-thirty-eighth round, lane 2: the tools used on another item (3/3/13/8)
 
 The user: "let's make all the items in the item mall functional ... Make no mistakes." This lane:
