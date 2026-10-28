@@ -1138,6 +1138,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			username, _ := AuthenticatedUsername(sess)
 			return useCompositeScroll(ctx, sess, fail, inv, items, keeper, zerk, hub, gate.Allows(username), characterID, it, held, have)
 		}
+		// Round 838 (stalldeco.go): a stall decoration, DoJob's TypeID3 3
+		// case 4.
+		if isStallDecoration(it) {
+			return useStallDecoration(ctx, sess, chars, inv, characterID, it, held, have)
+		}
 		// The return scroll and the reverse return scroll (round 778,
 		// scroll.go): DoJob's TypeID3 3 cases 1 and 3.
 		if scrolls != nil && (IsReturnScroll(it) || IsReverseReturnScroll(it)) {

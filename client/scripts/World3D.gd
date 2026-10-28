@@ -18427,6 +18427,23 @@ func _qa_pmi_step() -> void:
 ## Where KeyInput.dispatched stood when the current action was pushed.
 var _qa_input_keymap_mark := 0
 
+## OPENSRO_QA_STALL_BOOTH's step (round 838): the booth StallBooth chooses for
+## `decoration` and `race`, at the player's feet, facing as the player does.
+var _qa_booth: Node3D = null
+
+func _qa_stall_booth(decoration: int, race: int) -> void:
+	if is_instance_valid(_qa_booth):
+		_qa_booth.queue_free()
+	var path := StallBooth.model_path(_item_rows.get(decoration), race)
+	_qa_booth = StallBooth.build(_data_pk2, path)
+	print("QA STALL BOOTH: decoration %d race %d -> %s (%s)" % [decoration, race, path,
+		"built" if _qa_booth != null else "not found"])
+	if _qa_booth == null or player == null:
+		return
+	add_child(_qa_booth)
+	_qa_booth.global_position = player.global_position
+	_qa_booth.rotation.y = player.rotation.y
+
 func _qa_input_step() -> void:
 	var spec := OS.get_environment("OPENSRO_QA_INPUT")
 	if spec == "":
@@ -18966,6 +18983,17 @@ func _qa_step() -> void:
 	# OPENSRO_QA_INPUT: a player's clicks and keys, through push_input
 	# (_qa_input_step has the syntax).
 	_qa_input_step()
+
+	# OPENSRO_QA_STALL_BOOTH="<tick>:<decoration item id>[:<race>],..." (round
+	# 838): at each tick, the booth a stall with that decoration (0: none)
+	# would draw (StallBooth), put at the player's feet in place of the last;
+	# race 0 China (the default), 1 Europe. QA only: OpenSRO has no stall yet.
+	var qa_booth := OS.get_environment("OPENSRO_QA_STALL_BOOTH")
+	if qa_booth != "":
+		for part in qa_booth.split(",", false):
+			var tb := String(part).split(":")
+			if tb.size() >= 2 and tb[0].is_valid_int() and int(tb[0]) == _qa_tick:
+				_qa_stall_booth(int(tb[1]), int(tb[2]) if tb.size() > 2 else 0)
 
 	# OPENSRO_QA_LEARN="<mastery>x<n>;<skill id>[;...]" raises a mastery n
 	# times and learns skills, one request after another, each waiting for
