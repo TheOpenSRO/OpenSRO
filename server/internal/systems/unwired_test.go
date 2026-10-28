@@ -57,7 +57,6 @@ var parked = map[string]string{
 	"arena":       "recovered battle-arena shape; its own doc opens 'OpenSRO has no arena'",
 	"persistence": "the recovered DB surface of the real server, a specification rather than a store",
 	"siege":       "recovered fortress-war rules; its own doc says OpenSRO 'is not about to grow one'",
-	"timedjob":    "recovered expiry machinery; OpenSRO has no timed jobs to expire",
 
 	// "ai" left this map in round 537: session/monsterai.go imports it and
 	// drives the state machine behind cmd/server's -monster-ai (off by
