@@ -1315,7 +1315,8 @@ var bagExpansionCeiling = min(inventory.MaxSlotsDefault-equipment.MaxEquipSlots,
 //
 //   - The warehouse (ITEM_MALL_WAREHOUSE_ADDITION, +30) grows the ACCOUNT's
 //     warehouse through storage.Service.Expand, refused with 0x18fe once the
-//     size would pass 210. The size is checked first so a refusal keeps the
+//     size would pass 210 -- and, from round 838, storage.AdditionCeiling:
+//     two uses per account, as the item's description says. The size is checked first so a refusal keeps the
 //     item untouched; the item is then taken and the size grown atomically,
 //     and a refusal there (a second use racing this one) gives it back.
 //   - The bag (ITEM_MALL_INVENTORY_ADDITION, +32) runs the engine's kind-0
@@ -1371,7 +1372,7 @@ func useExpansion(ctx context.Context, sess *gateway.Session, fail func(string) 
 	if err != nil {
 		return fail("lookup failed")
 	}
-	if cur+slots > storage.MaxCapacity {
+	if cur+slots > storage.AdditionCeiling(slots) {
 		return fail(errStorageExpansionRefused)
 	}
 	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {

@@ -17701,7 +17701,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   node:<name>         left click the centre of the first visible Control of
 #                       that name under the UI (find_child pattern)
 #   bagitem:<id>        left click the shown bag cell holding that item id
-#                       (round 791)
+#                       (round 791); rbagitem:<id> right-clicks it, the
+#                       item's use (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
@@ -18475,16 +18476,17 @@ func _qa_input_step() -> void:
 				var centre := node.get_global_rect().get_center()
 				_qa_input_report = "%s at %s (%s)" % [action, centre, node.get_path()]
 				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
-		"bagitem":
+		"bagitem", "rbagitem":
 			# Round 791: left click the bag cell holding that item id (the
-			# shown page), as a player picks an item up.
+			# shown page), as a player picks an item up; round 838: `rbagitem`
+			# right-clicks it, as a player uses it.
 			var cell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
 			if cell == null:
 				_qa_input_report = action + " (not on the shown bag page)"
 			else:
 				var centre := cell.get_global_rect().get_center()
 				_qa_input_report = "%s at %s" % [action, centre]
-				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
+				_qa_push_click(centre, MOUSE_BUTTON_RIGHT if kind == "rbagitem" else MOUSE_BUTTON_LEFT)
 		"drag":
 			var v := arg.split(",")
 			var from := Vector2(float(v[0]), float(v[1]))

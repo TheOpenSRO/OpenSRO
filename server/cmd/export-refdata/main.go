@@ -124,6 +124,14 @@ const (
 	// fReviveCost is _RefObjCommon's CostRevive (+0xa8), column 28 (round 829;
 	// refdata.Item.ReviveCost).
 	fReviveCost = 28
+	// The accessories' absorption ranges (round 838; refdata.Item.PhysAbsorbMin):
+	// PAR low/high and MAR low/high, RefObjItem::ExtractData's +0x1d4/+0x1d8
+	// and +0x1f8/+0x1fc (READ s:0x6a3d50). Set on the 1,020 accessory rows only
+	// (MEASURED).
+	fPhysAbsorbMin = 71
+	fPhysAbsorbMax = 72
+	fMagAbsorbMin  = 79
+	fMagAbsorbMax  = 80
 	// The alchemy columns (round 768; refdata.Item.CashItem): _RefObjCommon's
 	// CashItem (column 7, the TypeID word's bit 0 IsCashItem tests), the
 	// Param block's Param1/Param5 (118/126) and Desc128_1/Desc128_4
@@ -989,6 +997,12 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 91: ReviveCost, itemdata column 28 (round 829, see
 		// refdata.Item.ReviveCost).
 		num(fReviveCost),
+		// 92..95: the accessories' absorption ranges (round 838, see
+		// refdata.Item.PhysAbsorbMin).
+		num(fPhysAbsorbMin), // 92 PhysAbsorbMin (col 71)
+		num(fPhysAbsorbMax), // 93 PhysAbsorbMax (col 72)
+		num(fMagAbsorbMin),  // 94 MagAbsorbMin (col 79)
+		num(fMagAbsorbMax),  // 95 MagAbsorbMax (col 80)
 	}, true
 }
 
