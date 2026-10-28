@@ -60,3 +60,14 @@ func TestRawParamsColumn(t *testing.T) {
 		t.Fatalf("rawParams = %q", got)
 	}
 }
+
+// Round 838: a table re-saved as UTF-8 keeps its first row (the BOM went
+// into the Service column, and a one-row gachanpcmap.txt lost its NPC).
+func TestDecodeDropsUTF8BOM(t *testing.T) {
+	if got := decode([]byte("\xef\xbb\xbf1\t9251\t1\t2")); got != "1\t9251\t1\t2" {
+		t.Fatalf("decode %q", got)
+	}
+	if got := decode([]byte("1\tA")); got != "1\tA" {
+		t.Fatalf("plain %q", got)
+	}
+}

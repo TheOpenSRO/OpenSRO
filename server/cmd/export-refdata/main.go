@@ -37,6 +37,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/csv"
 	"flag"
 	"fmt"
@@ -2268,7 +2269,9 @@ func readTable(path string) ([][]string, error) {
 }
 
 // decode turns raw bytes into a string, honouring a UTF-16LE BOM (the form
-// the Media text tables use) and falling back to UTF-8.
+// the Media text tables use) and falling back to UTF-8, less a UTF-8 BOM (a
+// table re-saved as UTF-8 carries one; kept, it hid the first row's
+// Service column).
 func decode(raw []byte) string {
 	if len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE {
 		u16 := make([]uint16, 0, (len(raw)-2)/2)
@@ -2277,7 +2280,7 @@ func decode(raw []byte) string {
 		}
 		return string(utf16.Decode(u16))
 	}
-	return string(raw)
+	return string(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf")))
 }
 
 // exportNpcPos writes the client's npcpos.txt (5 tab-separated columns:
