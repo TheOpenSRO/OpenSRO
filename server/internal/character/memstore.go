@@ -31,6 +31,9 @@ type MemStore struct {
 	autoPotion map[int64][]byte
 	// service is each character's service state (ServiceStore, round 838).
 	service map[int64]*memService
+	// titles is each character's title (TitleStore, round 838); none is
+	// level 0.
+	titles map[int64]memTitle
 }
 
 // NewMemStore returns an empty MemStore.

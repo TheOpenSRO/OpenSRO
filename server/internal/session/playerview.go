@@ -268,6 +268,10 @@ func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, b
 	if f := plateColourFrame(cur.CharacterID); f != nil {
 		after = append(after, f)
 	}
+	// Its custom title's text (round 838, titlescroll.go, OURS).
+	if f := customTitleFrame(cur.CharacterID); f != nil {
+		after = append(after, f)
+	}
 	return playerSpawn{e: cur, record: rec, after: after, version: version}, true
 }
 

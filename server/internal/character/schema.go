@@ -144,5 +144,5 @@ var EngineOnlyColumns = map[string]string{
 	"WorldID":           "which game world the character is in",
 	"TelWorldID":        "the return point's world",
 	"DiedWorldID":       "the death point's world",
-	"HwanLevel":         "the berserk level, persisted",
+	"HwanLevel":         "kept per character since round 838, but not on Character: the characters table's hwan_level (and custom_title) through TitleStore -- the title byte the spawn record carries, not a berserk count (that is RemainHwanCount)",
 }

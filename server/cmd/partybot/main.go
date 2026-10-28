@@ -1115,6 +1115,7 @@ func main() {
 	flag.StringVar(&botUse.items, "use-items", "", "bot (round 838): use these items from the bag once in the world, \"<item id>,...\" (after -gm-lines)")
 	flag.DurationVar(&botUse.every, "use-items-every", 3*time.Second, "bot (round 838): the wait before each -use-items use")
 	flag.BoolVar(&botUse.watchBuffs, "watch-buffs", false, "bot (round 838): print every buff start and end the bot is sent")
+	flag.StringVar(&botUse.text, "use-text", "", "bot (round 838): send each -use-items use with this custom title (the Custom Title Scroll)")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")

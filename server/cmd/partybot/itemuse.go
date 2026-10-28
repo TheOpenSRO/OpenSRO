@@ -7,8 +7,12 @@ package main
 // sent -- its own and, with a spawn's buff frames, the other players' -- and
 // the monster blows it takes, so a live run sees what everyone in view is
 // told about a visual or a scroll, and what a scroll does to the damage.
+// Round 838 lane 6: -use-text sends each use with that custom title
+// (session.UseOptionCustomTitle), and the bot logs every title it is told of
+// (0x30DF, 0x01A8).
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,7 +25,8 @@ import (
 var botUse struct {
 	items      string // -use-items
 	every      time.Duration
-	watchBuffs bool // -watch-buffs
+	watchBuffs bool   // -watch-buffs
+	text       string // -use-text
 	mu         sync.Mutex
 	pending    []int64 // the items still to use, in order
 }
@@ -75,7 +80,11 @@ func (b *bot) noteUse(op uint16, data []byte) {
 		for _, s := range list.Slots {
 			if s.ItemID == id {
 				useLog(b, "-> use item %d at bag slot %d", id, s.Slot)
-				_ = b.send(session.OpUseItem, (&session.UseItemRequest{CharacterName: b.name, InventorySlot: int32(s.Slot)}).Encode())
+				req := &session.UseItemRequest{CharacterName: b.name, InventorySlot: int32(s.Slot)}
+				if botUse.text != "" {
+					req.Option, req.Text = session.UseOptionCustomTitle, botUse.text
+				}
+				_ = b.send(session.OpUseItem, req.Encode())
 				return
 			}
 		}
@@ -83,6 +92,14 @@ func (b *bot) noteUse(op uint16, data []byte) {
 	case session.OpUseItemResult:
 		if r, err := session.DecodeUseItemResult(data); err == nil {
 			useLog(b, "<- use result error=%q remaining %d", r.Error, r.Remaining)
+		}
+	case session.OpHwanLevel:
+		if len(data) >= 5 {
+			useLog(b, "<- TITLE uid %d level %d", binary.LittleEndian.Uint32(data), data[4])
+		}
+	case session.OpCustomTitle:
+		if len(data) >= 6 && len(data) >= 6+int(binary.LittleEndian.Uint16(data[4:])) {
+			useLog(b, "<- CUSTOM TITLE uid %d %q", binary.LittleEndian.Uint32(data), data[6:6+int(binary.LittleEndian.Uint16(data[4:]))])
 		}
 	case session.OpBuffStart:
 		if botUse.watchBuffs {

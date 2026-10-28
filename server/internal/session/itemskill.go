@@ -116,7 +116,30 @@ func noteSkillJobRefs(items combat.ItemLookup) {
 // 3/3/13 with TypeID4 1, 2 or 3, its Desc128_1 a skill code.
 func isSkillItem(it *refdata.Item) bool {
 	return it.TypeID1 == equipment.TypeItem && it.TypeID2 == equipment.TypeExpendable && it.TypeID3 == 13 &&
-		it.TypeID4 >= 1 && it.TypeID4 <= 3 && boundSkillCode(it) != ""
+		it.TypeID4 >= 1 && it.TypeID4 <= 3 && boundSkillCode(it) != "" && !isPlaceholderSkill(boundSkillCode(it))
+}
+
+// placeholderSkillPrefixes are the private server's stand-in skills (round
+// 838 lane 6, MEASURED in the player's archive): rows with 'cbuf' and a
+// 'dura' of 1000 ms and no effect at all, named by the Desc128_1 of rows
+// whose use was that server's filter -- SKILL_CELESTIUS_SILK_SCROLL_10
+// (ITEM_ACCESSORY_UPGRADE, ITEM_NAME_CHANGE, ITEM_RACE_CHANGE,
+// ITEM_RANDOM_WING, ITEM_SANTA_BOX, ITEM_SET_UPGRADE),
+// SKILL_CELESTIUS_SILK_SCROLL_2500 (the four ITEM_ELIXIR_COUPON_*),
+// SKILL_CRATE_* (the five ITEM_CRATE_*) and SKILL_SILK_LOTTERY. Casting one
+// would spend the item for a second of nothing, so such an item is no skill
+// item (OURS): a path above claims it (the service scrolls), or it is refused
+// and kept.
+var placeholderSkillPrefixes = []string{"SKILL_CELESTIUS_SILK_SCROLL_", "SKILL_CRATE_", "SKILL_SILK_LOTTERY"}
+
+// isPlaceholderSkill reports whether a skill code is one of those.
+func isPlaceholderSkill(code string) bool {
+	for _, p := range placeholderSkillPrefixes {
+		if strings.HasPrefix(code, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // boundSkillCode is the row's Desc128_1, the skill the loader binds (READ,
