@@ -513,12 +513,20 @@ func (c *Character) MaxMP() int { return MaxMPWith(c.Int, c.Level, BonusOf(c.ID)
 // Round 785: a buff's percent (param 3 slot 1, 'hpi' value[1]) scales the
 // whole: EvaluateParam's S0 x (1 + S1/100), READ 0x4b3740.
 func MaxHPWith(str, level int, b Bonus) int {
-	return scalePct(chainPct(str+b.Str, HPPerStr, level, b.StrHPPct)+b.HP, b.HPPct)
+	base := MaxHPFor(str+b.Str, level)
+	if b.StrHPPct != 0 {
+		base = chainPct(str+b.Str, HPPerStr, level, b.StrHPPct)
+	}
+	return scalePct(base+b.HP, b.HPPct)
 }
 
 // MaxMPWith is MaxMP for a base Int, a level and a bonus.
 func MaxMPWith(intel, level int, b Bonus) int {
-	return scalePct(chainPct(intel+b.Int, MPPerInt, level, b.IntMPPct)+b.MP, b.MPPct)
+	base := MaxMPFor(intel+b.Int, level)
+	if b.IntMPPct != 0 {
+		base = chainPct(intel+b.Int, MPPerInt, level, b.IntMPPct)
+	}
+	return scalePct(base+b.MP, b.MPPct)
 }
 
 // chainPct is the stat chain with a percent on its middle param (round 838:
