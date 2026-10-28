@@ -410,12 +410,15 @@ type EquippedType struct{ TypeID3, TypeID4 int }
 
 // Satisfied reports whether worn equipment meets this requirement.
 //
-// KIND 14 IS ALWAYS SATISFIED, and that is a disclosed gap rather than a
-// reading of the engine. Its case tests a character flag through vtable +0x584
-// and FUN_00498610, not equipment at all; 23 records carry it, all on item-mall
-// and event skills (SKILL_MALL_NASRUN, SKILL_EVENT_NASRUN). Modelling it would
-// need the flag, which is not recovered -- so it passes rather than refusing a
-// cast on a condition this project cannot evaluate.
+// KIND 14 IS ALWAYS SATISFIED here. Its case is not about equipment: round
+// 839 read it (FUN_0059f0e0 s:0x59f276..0x59f297, the same test as the cast
+// gate's) as the avatar storage's item at index 4 (vtable +0x584(4), CGObjChar
+// 0x4a6910 -> CGStorage::GetItem on pc+0x1c34) that is not a devil's spirit
+// whose time is over (FUN_00498610). 23 records carry it, all the spirits'
+// skills (SKILL_MALL_NASRUN, SKILL_MALL_AMALRUN, SKILL_EVENT_NASRUN). The cast
+// needs no test of it here: those skills are only in the book while the spirit
+// is worn and awake (session.spiritSkillGranted). The running buffs' re-check
+// evaluates it (session/buffreqs.go).
 //
 // A BROKEN ITEM SATISFIES NOTHING, and the caller models it by leaving the item
 // out of worn (session.equippedTypes, round 486). Skill_CheckCastRequirement

@@ -205,6 +205,9 @@ func handleAvatarMove(ctx context.Context, sess *gateway.Session, data []byte, d
 	}
 	clampHP(ctx, d.Chars, cid)
 	avatarStatsPush(cid)
+	// Round 839: the running buffs' requirement re-check (s:0x50f53f ->
+	// FUN_0059f0e0, buffreqs.go): a spirit taken off ends its skills' buffs.
+	recheckSpiritBuffsAfterMove(ctx, d, cid)
 	return sess.Send(&proto.Packet{Opcode: OpItemMoveResult, Data: res.Encode()})
 }
 
