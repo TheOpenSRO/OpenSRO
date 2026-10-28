@@ -264,3 +264,4 @@ ref's AssocFileObj128 (`item\Avatar\booth_*.bsr`, ItemData 3847..3850), else by 
 6. The creator of the type-1001 box (0x8077: an open with net 1).
 7. 0x5417's text key (INFERRED UIIT_MSG_REINFORCERR_CANNOT_JOIN_FLEAMARKET).
 8. The decoration booths' own animation (`booth_*.ban`) is not played (ObjectLoader draws the pieces).
+9. The owner's summoned pet keeps its own pose; the original may give its vendor animation to the owner's pets too (INFERRED from c:0x9dd040, round 839 merged QA). Not built.
