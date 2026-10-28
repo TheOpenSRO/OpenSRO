@@ -43,17 +43,14 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
-	// Round 838: the stall decorations (session/stalldeco.go). OpenSRO has no
-	// player stall yet; the premium packages' BFI1 entry (lane 4) grants
-	// through GrantStallDecoration, and the stall's open will read
-	// StallDecorationOf.
-	"GrantStallDecoration": "round 838: the BFI1 composite entry's grant (pc+0x21d4), for the premium packages; called by the composite use once BFI1 is built.",
-	"StallDecorationOf":    "round 838: FUN_004f0f00, the booth a stall shows; for the 0x30B8 stall open and a stalling player's spawn, which OpenSRO does not build yet.",
-	// Round 838: the BFI1 grant's stall decoration (session/compositeextra.go)
-	// for the stall code to read and clear, and the UQL1 grant's completion
-	// count for quest 224 -- OpenSRO has no stalls and does not run that quest.
-	"ClearStallDecoration": "round 838: the stall close's reset of the BFI1 override (FUN_00472cf0); OpenSRO has no stalls yet.",
-	"UseQuestGrant":        "round 838: UseQuestByCompositeItem (0x4f0f70) for quest 224, CQSP_ALL_POTION_3, which OpenSRO does not run.",
+	// Round 838: the stall decorations (session/stalldeco.go). The premium
+	// packages' BFI1 entry reaches the stall through 0x7160's override
+	// (round 839 reads it at the open); GrantStallDecoration is kept for a
+	// grant without that question.
+	"GrantStallDecoration": "round 838: the BFI1 composite entry's grant (pc+0x21d4), for the premium packages; the 0x7160 override serves the stall (round 839).",
+	// Round 838: the UQL1 grant's completion count for quest 224 -- OpenSRO
+	// does not run that quest.
+	"UseQuestGrant": "round 838: UseQuestByCompositeItem (0x4f0f70) for quest 224, CQSP_ALL_POTION_3, which OpenSRO does not run.",
 	// The timed-job package's recovered layout (round 274), wired from round
 	// 838 for its Store only; the getter map and the countdown are knowledge.
 	"Countdown":     "round 274: CTJ_PenaltyKeeper's countdown expiry (timedjob); the penalty jobs are not modelled.",

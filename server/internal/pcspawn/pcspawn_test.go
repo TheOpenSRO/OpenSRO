@@ -115,7 +115,6 @@ func TestAppendRefusesUnreadableForms(t *testing.T) {
 		"inventory size 0": func(r *Record) { r.InventorySize = 0 },
 		"avatar size 0":    func(r *Record) { r.AvatarSize = 0 },
 		"ride":             func(r *Record) { r.RideState = 1 },
-		"stall":            func(r *Record) { r.InteractMode = 4 },
 	} {
 		r := plain()
 		mut(&r)
@@ -165,5 +164,37 @@ func TestGuildBlockRoundTrip(t *testing.T) {
 	d2, _, err := Decode(sb, suit{2})
 	if err != nil || d2.GuildName != "Verizon" || d2.GuildID != 0 || d2.Nickname != "" {
 		t.Fatalf("suit record %+v err %v", d2, err)
+	}
+}
+
+// Round 839: a stalling owner's record carries the stall block after the
+// guild block and before the timer byte (READ s:0x4e5ee6..0x4e5f4f,
+// c:0x9de103..0x9de1bd), and decodes back; a guild-less owner's too.
+func TestStallBlockRoundTrip(t *testing.T) {
+	r := plain()
+	r.InteractMode = 4
+	r.StallName = "Bram's stall"
+	r.StallDecoration = 3847
+	r.Timer, r.Team = 7, 9
+	b, err := Append(nil, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail := []byte{0x0c, 0, 'B', 'r', 'a', 'm', '\'', 's', ' ', 's', 't', 'a', 'l', 'l', 0x07, 0x0f, 0, 0, 7, 9}
+	if len(b) < len(tail) || string(b[len(b)-len(tail):]) != string(tail) {
+		t.Fatalf("tail % x, want % x", b[len(b)-len(tail):], tail)
+	}
+	d, rest, err := Decode(b, nil)
+	if err != nil || len(rest) != 0 {
+		t.Fatalf("decode: %v rest %d", err, len(rest))
+	}
+	if d.InteractMode != 4 || d.StallName != "Bram's stall" || d.StallDecoration != 3847 || d.Timer != 7 || d.Team != 9 {
+		t.Fatalf("decoded %+v", d)
+	}
+	// Not stalling: no block.
+	r.InteractMode = 0
+	b2, _ := Append(nil, r)
+	if len(b2) != len(b)-len(tail)+2 {
+		t.Fatalf("a record without a stall is %d bytes, want %d", len(b2), len(b)-len(tail)+2)
 	}
 }

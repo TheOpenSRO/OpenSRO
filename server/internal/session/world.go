@@ -1885,6 +1885,9 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 	cancelActions(old.CharacterID)
 	// Round 834: a warp closes the exchange 0x182b (s:FUN_004def00).
 	exchangeEnd(old.CharacterID, ExchangeErrCancel)
+	// Round 839: a warp closes an owner's stall 0x3c15 and takes a visitor
+	// out (s:FUN_004def00, 0x4def5a / 0x4def68).
+	stallEnd(old.CharacterID, StallErrHostLeft)
 	// A quest talk opened before the warp answers nothing after it (round
 	// 785 review).
 	forgetQuestTalk(sess.ID(), false)

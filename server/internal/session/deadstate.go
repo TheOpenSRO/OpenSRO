@@ -386,6 +386,9 @@ func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 	// Round 834: a death closes the exchange 0x182b (CGObjPC::vslot_306 /
 	// 307, s:0x529ce0 / 0x52cf41).
 	exchangeEnd(characterID, ExchangeErrCancel)
+	// Round 839: a death closes an owner's stall 0x3c0e and takes a visitor
+	// out (CGObjPC::vslot_306 / 307, s:0x529ca4 / 0x52cf05).
+	stallEnd(characterID, StallErrClosedDeath)
 	// A death ends every buff (round 616). OURS, disclosed: the retail
 	// death path was not traced to a book clear -- GObjPC_OnDeath (0x4e6980)
 	// holds none, and CGObjChar::SetLifeState (0x4a9c80) on state 2 calls an
