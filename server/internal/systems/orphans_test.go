@@ -43,6 +43,12 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 838: the stall decorations (session/stalldeco.go). OpenSRO has no
+	// player stall yet; the premium packages' BFI1 entry (lane 4) grants
+	// through GrantStallDecoration, and the stall's open will read
+	// StallDecorationOf.
+	"GrantStallDecoration": "round 838: the BFI1 composite entry's grant (pc+0x21d4), for the premium packages; called by the composite use once BFI1 is built.",
+	"StallDecorationOf":    "round 838: FUN_004f0f00, the booth a stall shows; for the 0x30B8 stall open and a stalling player's spawn, which OpenSRO does not build yet.",
 	// Round 812: the navigation mesh's in-memory constructor.
 	"NewWorld": "round 812: navmesh.NewWorld builds a World from regions already in memory for the tests (the server opens an export with navmesh.Open).",
 	// Round 799: the job formulas the trade (round 801) and the job death
