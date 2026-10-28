@@ -552,7 +552,9 @@ func (d *StallDeps) update(ctx context.Context, sess *gateway.Session, data []by
 	// Type 2 reads the bag before the lock.
 	var bag *inventory.Slot
 	var ref *refdata.Item
+	petOut := false
 	if kind == StallUpdateAdd && len(body) >= 2 && int(body[1]) >= ItemWireBagOffset {
+		petOut = cosItemOut(ctx, me.CharacterID, int(body[1])-ItemWireBagOffset)
 		slots, err := d.Inv.List(ctx, me.CharacterID)
 		if err == nil {
 			for i := range slots {
@@ -570,7 +572,7 @@ func (d *StallDeps) update(ctx context.Context, sess *gateway.Session, data []by
 	var members []stall.Member
 	var renamed string
 	d.Stalls.Do(me.CharacterID, func(s *stall.Stall) {
-		code, reply = d.applyUpdate(ctx, me.CharacterID, s, kind, body, bag, ref)
+		code, reply = d.applyUpdate(ctx, s, kind, body, bag, ref, petOut)
 		if code == 1 {
 			members = s.Members()
 			if kind == StallUpdateRename {
@@ -589,9 +591,10 @@ func (d *StallDeps) update(ctx context.Context, sess *gateway.Session, data []by
 }
 
 // applyUpdate is FUN_00472e20's body, under the hub's lock: the code and,
-// on success, the reply.
-func (d *StallDeps) applyUpdate(ctx context.Context, owner int64, s *stall.Stall, kind byte, b []byte,
-	bag *inventory.Slot, ref *refdata.Item) (uint16, []byte) {
+// on success, the reply. What it needs from the stores (the bag slot, its
+// row, whether its pet is out) is read before the lock.
+func (d *StallDeps) applyUpdate(ctx context.Context, s *stall.Stall, kind byte, b []byte,
+	bag *inventory.Slot, ref *refdata.Item, petOut bool) (uint16, []byte) {
 	if kind != StallUpdateValue4 && kind != StallUpdateOpen && kind != StallUpdateWelcome && s.Open {
 		return StallErrHostState, nil
 	}
@@ -644,7 +647,7 @@ func (d *StallDeps) applyUpdate(ctx context.Context, owner int64, s *stall.Stall
 		switch {
 		case s.ListedBagSlot(slot):
 			return StallErrListed, nil
-		case cosItemOut(ctx, owner, slot):
+		case petOut:
 			return StallErrPetOut, nil
 		case ref != nil && avatar.IsDevilSpirit(ref) && avatar.Awake(bag.Durability, time.Now()):
 			return StallErrSpirit, nil
