@@ -5377,11 +5377,7 @@ var _use_on_slot := -1
 
 ## Whether TypeIDs enter the use-on mode (above).
 static func is_use_on_item(types: PackedInt32Array) -> bool:
-	if types.size() < 4 or types[0] != 3 or types[1] != 3:
-		return false
-	if types[2] == 1 and types[3] == 6:
-		return true
-	return types[2] == 13 and types[3] in [8, 12, 15, 16]
+	return UseItemNet.is_use_on_item(types)
 
 func _begin_use_on(slot: int) -> void:
 	if player_dead:
