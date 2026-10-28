@@ -27,6 +27,9 @@ const GENDER_EUROPE_WOMAN := "europe_woman"
 const INTERIM_KIT := {
 	"china_man": {"model": 1909, "chest": 3643, "legs": 3644, "feet": 3645, "weapon": 3632},
 	"china_woman": {"model": 1923, "chest": 3652, "legs": 3653, "feet": 3654, "weapon": 3632},
+	# Round 838 (QA sign-in only, OPENSRO_QA_GENDER=europe_man): CHAR_EU_MAN_NOBLE,
+	# the Europe clothes set and the sword, all creatable (the chargen table).
+	"europe_man": {"model": 14875, "chest": 11623, "legs": 11624, "feet": 11625, "weapon": 10888},
 }
 const DEFAULT_SCALE := 0x22
 
