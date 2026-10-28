@@ -200,6 +200,10 @@ const COL_KEEPING_FEE := 30
 ## item_capability_flags.md; the client's SOItem::FUN_008baf10 reads ref
 ## +0xa4 before an exchange offer).
 const COL_CAN_TRADE := 16
+## Round 838: CanUse, the byte at ref +0xac (READ, GlobalDataManager::
+## FUN_00972910 0x972b76). A right-click on a 3/3/13 tool whose byte has 0x81
+## set picks a target item first (IFSlotWithHelp::FUN_00676570, 0x6769a5).
+const COL_CAN_USE := 24
 ## MaxStack (column 57): 1 for equipment, the real per-item cap for stackables
 ## (a potion 5000, arrows 2500) -- so the shop can offer buying a stack.
 const COL_MAX_STACK := 57
@@ -446,6 +450,8 @@ class Item:
 	var keeping_fee: int = 0
 	## Round 834: column 16 (COL_CAN_TRADE); true when the table has none.
 	var can_trade := true
+	## Round 838: column 24 (COL_CAN_USE), the whole byte; 0 when none.
+	var can_use: int = 0
 	## Archive path of the inventory icon, ICON_PREFIX already applied.
 	var icon_path: String
 	## The `.bsr` the item is worn as, as the table writes it (no `res\`
@@ -666,6 +672,7 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.keeping_fee = _int_at(cols, COL_KEEPING_FEE)
 		if cols.size() > COL_CAN_TRADE:
 			item.can_trade = _int_at(cols, COL_CAN_TRADE) != 0
+		item.can_use = _int_at(cols, COL_CAN_USE)
 		var icon := _find_icon_path(cols)
 		if icon != "":
 			item.icon_path = ICON_PREFIX + icon
@@ -762,6 +769,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	# Round 834: a library from before this column has none (all tradeable;
 	# the server still refuses).
 	var can_trades: PackedInt64Array = rows.get("can_trades", PackedInt64Array())
+	# Round 838: a library from before this column has none (no tool picks a
+	# target; build the library).
+	var can_uses: PackedInt64Array = rows.get("can_uses", PackedInt64Array())
 	var countries: PackedInt64Array = rows["countries"]
 	var req_genders: PackedInt64Array = rows["req_genders"]
 	var durabilities: PackedInt64Array = rows["durabilities"]
@@ -810,6 +820,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 			item.keeping_fee = keeping_fees[i]
 		if i < can_trades.size():
 			item.can_trade = can_trades[i] != 0
+		if i < can_uses.size():
+			item.can_use = can_uses[i]
 		item.icon_path = icon_paths[i]
 		var count: int = model_counts[i]
 		item.model_paths = models.slice(m, m + count)

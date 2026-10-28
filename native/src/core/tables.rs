@@ -727,6 +727,9 @@ const ITEM_COL_SELL_PRICE: usize = 31;
 const ITEM_COL_KEEPING_FEE: usize = 30;
 /// Round 834: CanTrade, a permission (0 forbids; docs/protocol/item_capability_flags.md).
 const ITEM_COL_CAN_TRADE: usize = 16;
+/// Round 838: CanUse, the byte at ref +0xac (READ, GlobalDataManager::FUN_00972910 0x972b76); the
+/// right-click picks a target for a 3/3/13 tool whose byte has 0x81 set (0x6769a5..0x6769dc).
+const ITEM_COL_CAN_USE: usize = 24;
 const ITEM_COL_MAX_STACK: usize = 57;
 const ITEM_COL_TYPE_ID1: usize = 9;
 /// CashItem and Bionic, the type word's bits 0 and 1 (characterdata.md, cols 7-12).
@@ -807,6 +810,8 @@ pub struct Items {
     pub sell_prices: Vec<i64>,
     pub keeping_fees: Vec<i64>,
     pub can_trades: Vec<i64>,
+    /// Round 838: the CanUse byte, 0 for a short row.
+    pub can_uses: Vec<i64>,
     pub countries: Vec<i64>,
     pub req_genders: Vec<i64>,
     pub durabilities: Vec<i64>,
@@ -944,6 +949,7 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.sell_prices.push(int_at(cols, ITEM_COL_SELL_PRICE));
         o.keeping_fees.push(int_at(cols, ITEM_COL_KEEPING_FEE));
         o.can_trades.push(if cols.len() > ITEM_COL_CAN_TRADE { int_at(cols, ITEM_COL_CAN_TRADE) } else { 1 });
+        o.can_uses.push(int_at(cols, ITEM_COL_CAN_USE));
         o.type_ids.extend((ITEM_COL_TYPE_ID1..=ITEM_COL_TYPE_ID4).map(|c| int_at(cols, c)));
         o.cash_items.push(int_at(cols, ITEM_COL_CASH_ITEM));
         o.bionics.push(int_at(cols, ITEM_COL_BIONIC));
@@ -1381,6 +1387,7 @@ mod tests {
         cols[22] = "1".into();
         cols[27] = "198".into();
         cols[28] = "297".into();
+        cols[24] = "129".into();
         let row = cols.join("\t");
         let nameless = "1\t5\tCODE\t\tx";
         let short = "1\t6\tCODE";
@@ -1424,6 +1431,8 @@ mod tests {
         assert_eq!(it.cool_ints, vec![30, 16, 20000, 0, 0, 0]);
         // Round 829: CanRepair, CostRepair, CostRevive.
         assert_eq!(it.repair_ints, vec![1, 198, 297, 0, 0, 0]);
+        // Round 838: the CanUse byte, kept whole (0x81 on a 3/3/13/8 tool).
+        assert_eq!(it.can_uses, vec![129, 0]);
     }
 
     #[test]

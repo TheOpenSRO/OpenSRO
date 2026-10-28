@@ -360,8 +360,8 @@ func TestItemInfoModelsBlock(t *testing.T) {
 // The gender tokens.
 func TestGenderTwinCodes(t *testing.T) {
 	for code, want := range map[string]string{
-		"ITEM_MALL_AVATAR_M_CH_WEDDING":     "ITEM_MALL_AVATAR_W_CH_WEDDING",
-		"ITEM_ETC_E060529_GOLDDRAGONFLAG_F": "ITEM_ETC_E060529_GOLDDRAGONFLAG_M",
+		"ITEM_MALL_AVATAR_M_CH_WEDDING":      "ITEM_MALL_AVATAR_W_CH_WEDDING",
+		"ITEM_ETC_E060529_GOLDDRAGONFLAG_F":  "ITEM_ETC_E060529_GOLDDRAGONFLAG_M",
 		"ITEM_EVENT_E081126_SILKROAD_PLAG_W": "ITEM_EVENT_E081126_SILKROAD_PLAG_M",
 	} {
 		found := false

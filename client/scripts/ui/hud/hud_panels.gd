@@ -2645,6 +2645,85 @@ func _end_repair_mode(why: String) -> void:
 func repair_mode() -> bool:
 	return _repair_mode
 
+# --- A tool used on another item (round 838, ItemTargetPick) -----------------
+
+## The tool's bag slot while its pick is up (the inventory's +0x380), -1 none.
+var _item_target_tool := -1
+## A right press ended the pick: its release over a bag slot is not a use
+## (OURS, conservative: retail's right press clears the forced cursor in
+## CGInterface before any slot sees the release).
+var _item_target_rmb_cancel := false
+var _item_target_box: PartyMatchConfirm = null
+
+## Whether the pick is up: the tool's slot is held and the 0xa6 arrow shows.
+func item_target_mode() -> bool:
+	return _item_target_tool >= 0 and GameCursor.forced_id == CursorSet.ID_ITEM_USE
+
+## The right-click on a tool (ItemTargetPick.is_tool): its slot is held and
+## the cursor forced to 0xa6 (READ, 0x6769ef / 0x6769ff).
+func begin_item_target(slot: int) -> void:
+	_item_target_tool = slot
+	GameCursor.force(CursorSet.ID_ITEM_USE, get_window())
+	print("HudPanels: item target pick on (tool in bag slot %d, cursor 0x%x)" % [slot, CursorSet.ID_ITEM_USE])
+
+## Ends the pick: the cursor back (0x777e70(-1)) and the slot dropped.
+func end_item_target(why: String) -> void:
+	if _item_target_tool < 0:
+		return
+	_item_target_tool = -1
+	if GameCursor.forced_id == CursorSet.ID_ITEM_USE:
+		GameCursor.force(-1, get_window())
+	print("HudPanels: item target pick off (%s)" % why)
+
+## A left click on a slot during the pick (CIFSlotWithHelp::vslot_029's 0xa6
+## branch, READ): an empty slot does nothing and the pick stays; a slot with
+## an item opens the question box and ends the pick. `kind` is the window
+## (ItemTargetPick.KIND_*), `slot` the bag index or the worn slot.
+func item_target_click(kind: int, slot: int, item_id: int) -> void:
+	if not item_target_mode() or item_id <= 0:
+		return
+	var tool := _item_target_tool
+	end_item_target("a target clicked")
+	if is_instance_valid(_item_target_box):
+		_item_target_box.close()
+	if _builder == null:
+		return
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _ui_line(ItemTargetPick.CONFIRM_KEY, ItemTargetPick.CONFIRM_FALLBACK)):
+		box.queue_free()
+		return
+	box.name = "ItemTargetConfirm"
+	box.confirmed.connect(func() -> void: _send_item_target(tool, kind, slot, item_id))
+	box.centre_on(get_viewport_rect().size)
+	add_child(box)
+	_item_target_box = box
+	print("HudPanels: ItemTargetConfirm opened: tool bag slot %d on %s slot %d (item %d)" % [tool, "bag" if kind == ItemTargetPick.KIND_BAG else "worn", slot, item_id])
+	_qa_print_buttons(box, str(box.name))
+
+## The box's Yes (FUN_00797d90 case 0x1f -> SendItem_HandleUseItem case 8):
+## the tool must still be in its slot; the client's own refusals are shown as
+## the server's would be; otherwise the use goes with the target's wire slot.
+func _send_item_target(tool_slot: int, kind: int, slot: int, item_id: int) -> void:
+	var tool_id := _bag_item_id_at_slot(tool_slot)
+	_load_items()
+	var tool: ItemTableReader.Item = _items.get(tool_id)
+	if not ItemTargetPick.is_pick_tool(tool):
+		print("HudPanels: item target not sent -- bag slot %d no longer holds the tool" % tool_slot)
+		return
+	if kind == ItemTargetPick.KIND_BAG and _bag_item_id_at_slot(slot) != item_id:
+		print("HudPanels: item target not sent -- bag slot %d changed" % slot)
+		return
+	var code := ItemTargetPick.check(tool.code_name, kind, item_types(item_id))
+	if code > 0:
+		print("HudPanels: item target refused here, code 0x%x" % code)
+		system_notice.emit(ErrorText.scroll_line(code, _text_table(), ""))
+		return
+	if code < 0 or NetClient.current_character_name == "":
+		return
+	print("HudPanels: item target use: tool bag slot %d (%s) on bag slot %d (item %d)" % [tool_slot, tool.code_name, slot, item_id])
+	UiSounds.expect_use(tool.type_ids)
+	NetClient.use_item_option(NetClient.current_character_name, tool_slot, slot + REPAIR_BAG_BASE)
+
 ## Round 829: a slot clicked under the hammer (CIFSlotWithHelp::vslot_029,
 ## branch 0x6811e9, READ): a worn or bag slot holding an item; CanRepair
 ## (column 22) 0 does nothing; an item that cannot be repaired
@@ -5174,6 +5253,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key.keycode == KEY_ESCAPE:
 		if key.ctrl_pressed or key.alt_pressed:
 			return
+		# Round 838: with a tool's pick up, Escape ends it and does nothing
+		# else (READ, FUN_0078b660 0x1b -> FUN_0079d620: a forced cursor is
+		# cleared and the key is spent).
+		if item_target_mode():
+			end_item_target("Escape")
+			get_viewport().set_input_as_handled()
+			return
 		# Escape closes one window (_escape_close); with nothing open it
 		# raises the System menu, the way the original does.
 		if not _escape_close():
@@ -5807,7 +5893,7 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		"player": _tip_player(),
 		"instance": instance,
 		"price": price,
-		"description": _item_description(item),
+		"description": _item_description(_described_row(item, where, slot)),
 	}
 	# Round 789: a devil's spirit's ability lines (AvatarTables, READ
 	# c:0x67b460) at its plus.
@@ -5915,6 +6001,20 @@ func _tip_text(key: String, fallback: String) -> String:
 	if text == "" and _type_names != null:
 		text = String(_type_names.equip_texts.get(key, ""))
 	return text if text != "" else fallback
+
+## Round 838 (OURS): the row whose description an owned item's tooltip shows
+## -- its model's row when a model switcher gave it one (the archive's
+## _SWITCHnn twin, whose own description reads "Model Switched Item / Model:
+## Degree N / Glow: Default"), else the item's own.
+func _described_row(item: ItemTableReader.Item, where: String, slot: int) -> ItemTableReader.Item:
+	if where == "store" or where == "":
+		return item
+	var inst := _item_instance(where, slot)
+	if inst == null or not ("model" in inst) or int(inst.get("model")) <= 0 \
+			or int(inst.get("ref_item_id")) != item.id:
+		return item
+	var row: ItemTableReader.Item = _items.get(int(inst.get("model")))
+	return row if row != null else item
 
 ## Column 6's description through the object text table (0x66f850 prints
 ## it when it resolves), or "".
@@ -6325,6 +6425,12 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	if _repair_mode and mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
 		_repair_click("bag", slot)
 		return
+	# Round 838: during a tool's pick a left click names the target
+	# (ItemTargetPick).
+	if item_target_mode() and mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed \
+			and (not icon.is_inside_tree() or icon.get_global_rect().has_point(mb.global_position)):
+		item_target_click(ItemTargetPick.KIND_BAG, slot, item_id)
+		return
 	# Used on the right RELEASE, over the slot: CIFSlotWithHelp's right press
 	# (vslot 32, 0x6665b0) only captures the mouse and its release (vslot 33,
 	# 0x685ee0) uses (READ) -- the same as the quick slots.
@@ -6332,6 +6438,16 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			and (not icon.is_inside_tree() or icon.get_global_rect().has_point(mb.global_position)):
 		if player_dead:
 			system_notice.emit(DEAD_INPUT_LINE)
+			return
+		# Round 838: the release of the right press that ended a pick.
+		if _item_target_rmb_cancel:
+			_item_target_rmb_cancel = false
+			return
+		# Round 838: a tool used on another item picks its target first
+		# (IFSlotWithHelp::FUN_00676570 0x6769a5, ItemTargetPick).
+		_load_items()
+		if ItemTargetPick.is_pick_tool(_items.get(item_id)):
+			begin_item_target(slot)
 			return
 		if is_global_chat_item(item_types(item_id)):
 			global_chat_requested.emit(slot, qty)
@@ -6464,6 +6580,16 @@ func _is_pick_click_on(event: InputEvent, control: Control) -> bool:
 func _input(event: InputEvent) -> void:
 	# Before anything else, and without consuming the press (see the function).
 	release_text_focus_on_press(event)
+	# Round 838: the right button going down ends a tool's pick (READ,
+	# CGInterface::vslot_017 WM_RBUTTONDOWN 0x77c733), not consumed; its
+	# release over a bag slot is then no use (_item_target_rmb_cancel).
+	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
+		if (event as InputEventMouseButton).pressed:
+			if item_target_mode():
+				end_item_target("the right button")
+				_item_target_rmb_cancel = true
+		elif _item_target_rmb_cancel:
+			set_deferred("_item_target_rmb_cancel", false)
 	if held_icon != null and held_icon.handle(event):
 		get_viewport().set_input_as_handled()
 		return
@@ -6818,6 +6944,22 @@ func _bag_cell_of_item(item_id: int) -> Control:
 		if _bag_item_id_at_slot(_bag_page * BAG_PAGE_SLOTS + i) == item_id:
 			return grid.get_child(i) as Control
 	return null
+
+## Round 838 (QA_INPUT's worn): the worn slot's icon, or null.
+func qa_worn_icon(slot: int) -> Control:
+	var window: HudWindow = _windows.get("inventory")
+	var holder := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + slot)) as Control if window != null else null
+	return holder.get_node_or_null("ItemIcon") as Control if holder != null else null
+
+## Round 838 (QA_INPUT's bagtip): the tooltip of the bag item `item_id` as
+## one line, or "" when it is not in the bag.
+func qa_bag_tip(item_id: int) -> String:
+	for entry in _bag_slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		var id = _first_field(entry, ["item_id", "id"])
+		if index != null and id != null and int(id) == item_id:
+			return ItemTooltipLines.as_text(item_tip_lines(item_id, "bag", int(index))).replace("\n", " | ")
+	return ""
 
 ## Round 824 (QA): the bag slot holding an item with code name `code`, or -1.
 func bag_slot_of_code(code: String) -> int:
@@ -8120,6 +8262,12 @@ func _fill_equipment_slots(items: Array) -> void:
 					if _repair_mode and ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
 							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot"):
 						_repair_click("worn", int(icon.get_meta("worn_slot")))
+						return
+					# Round 838: a worn target during a tool's pick (its box's
+					# Yes then refuses it, 0x1882; ItemTargetPick).
+					if item_target_mode() and ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
+							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot"):
+						item_target_click(ItemTargetPick.KIND_WORN, int(icon.get_meta("worn_slot")), int(icon.get_meta("worn_item_id", 0)))
 						return
 					if _is_pick_click_on(ev, icon) and icon.texture != null and icon.has_meta("worn_slot"):
 						pick_up_icon({"kind": "worn", "slot": int(icon.get_meta("worn_slot")),

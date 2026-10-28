@@ -19,6 +19,10 @@ class_name ItemInstance
 ##   plus (a u8 add, c:0x8bb070).
 ## The CONTAINER is OpenSRO's own (OURS): a trailing block, u16 count, then
 ## per entry a u32 container slot and the record. Only equipment is listed.
+## Round 838 (OURS): the models block may follow the entries -- u16 count,
+## then per entry a u32 slot and the u32 ref id of the row the item there is
+## drawn with (a model switcher's choice; server iteminfo.go) -- written only
+## when some entry has one, and always the message's last field.
 ##
 ## For the tooltip (lane A): ListResult.instances / Result.instances map a
 ## slot to its ItemInstance; the fields below plus effective_plus(),
@@ -61,6 +65,13 @@ var cos_ref: int = 0
 var cos_name := ""
 var cos_rent_secs: int = 0
 var rent_read_msec: int = 0
+## Round 838 (OURS): the ref id of the row whose model this item is drawn
+## with (an archive _SWITCHnn twin), 0 for its own. Visual only.
+var model: int = 0
+
+## The id the item is drawn as: its model's row when it has one.
+func display_ref() -> int:
+	return model if model > 0 else ref_item_id
 
 ## Round 795: the item table the reader dispatches on (RefItemID ->
 ## PackedInt32Array [TypeID1..4], empty when unknown), and the COS table
@@ -107,6 +118,8 @@ func log_line(container: String) -> String:
 		groups.append(str(variance_group(k)))
 	var out := "[item] %s %s groups [%s] durability (+%d%%)" % [container, describe(), " ".join(groups),
 		ItemQuality.durability_pct(variance_group(0))]
+	if model > 0:
+		out += " model %d" % model
 	for i in option_count():
 		var id := option_id(i)
 		var value := option_value(i)
@@ -299,4 +312,16 @@ static func decode_block(data: PackedByteArray, offset: int) -> Dictionary:
 		it.slot = at
 		out[at] = it
 		offset = rec[1]
+	# Round 838: the models block, when the sender wrote one.
+	if offset + 2 <= data.size():
+		var models := data.decode_u16(offset)
+		offset += 2
+		for k in models:
+			if offset + 8 > data.size():
+				push_warning("item instance block: models entry %d truncated" % k)
+				break
+			var it: ItemInstance = out.get(data.decode_u32(offset))
+			if it != null:
+				it.model = data.decode_u32(offset + 4)
+			offset += 8
 	return out
