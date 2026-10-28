@@ -65,6 +65,6 @@ static func from_archive(archive: Pk2Reader) -> SpiritAbilities:
 			return ""
 		var bytes := archive.read_file(entry)
 		if bytes.size() >= 2 and bytes[0] == 0xff and bytes[1] == 0xfe:
-			return bytes.slice(2).get_string_from_utf16()
+			return TextDecode.utf16(bytes.slice(2))
 		return bytes.get_string_from_utf8()
 	return t.parse(read.call(ABILITY_PATH), read.call(SKILL_PATH))
