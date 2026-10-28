@@ -167,6 +167,7 @@ func (b *bot) readSync(op uint16) (*proto.Packet, error) {
 func (b *bot) note(p *proto.Packet) {
 	b.noteGuild(p)
 	b.noteSocial(p.Opcode, p.Data)
+	b.noteStall(p.Opcode, p.Data)
 	b.noteMall(p.Opcode, p.Data)
 	b.noteUse(p.Opcode, p.Data)
 	switch p.Opcode {
@@ -260,6 +261,7 @@ func (b *bot) saw(rec pcspawn.Record) {
 	b.seen[rec.Name] = int64(rec.UID)
 	b.mu.Unlock()
 	b.socialSteps(rec.Name, int64(rec.UID))
+	b.stallSaw(rec)
 	if watchViews {
 		fmt.Printf("%s [%s] WATCH spawn %s uid %d body mode %d\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.BodyMode)
 	}
@@ -888,7 +890,12 @@ var botKill struct {
 
 func botMode(addr, name string, level int, accept bool, inviteName string, registerEntry bool, requestName string,
 	tp, tp2 string, tp2After time.Duration) error {
-	b, err := connect(addr, strings.ToLower(name), name, level)
+	kit := chinaKit
+	if botRace == "europe" {
+		// Round 839 (QA aid): a European bot (its race's default booth).
+		kit = europeKit
+	}
+	b, err := connectAs(addr, strings.ToLower(name), name, level, kit)
 	if err != nil {
 		return err
 	}
@@ -934,6 +941,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	b.guildSteps(name)
 	b.mallSteps()
 	b.useSteps()
+	b.stallSteps()
 	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
 	// can invite it beside the leader first and then move it away.
 	var tp2C <-chan time.Time
@@ -1118,6 +1126,18 @@ func main() {
 	flag.DurationVar(&botUse.every, "use-items-every", 3*time.Second, "bot (round 838): the wait before each -use-items use")
 	flag.BoolVar(&botUse.watchBuffs, "watch-buffs", false, "bot (round 838): print every buff start and end the bot is sent")
 	flag.StringVar(&botUse.text, "use-text", "", "bot (round 838): send each -use-items use with this custom title (the Custom Title Scroll)")
+	flag.StringVar(&botStall.open, "stall-open", "", "bot (round 839): open a stall with this title once in the world")
+	flag.StringVar(&botStall.items, "stall-items", "", "bot (round 839): what -stall-open lists, \"i<item id>:<price>,...\" or \"<bag index>:<price>\"")
+	flag.StringVar(&botStall.greeting, "stall-greeting", "", "bot (round 839): -stall-open's greeting")
+	flag.BoolVar(&botStall.modify, "stall-modify", false, "bot (round 839): leave -stall-open's stall in the modify state")
+	flag.UintVar(&botStall.group, "stall-group", 1, "bot (round 839): the u32 group 0x70BA type 2 carries (the server refuses 0)")
+	flag.DurationVar(&botStall.closeAfter, "stall-close-after", 0, "bot (round 839): close -stall-open's stall after this long")
+	flag.StringVar(&botStall.visit, "stall-visit", "", "bot (round 839): enter this character's stall once it is seen stalling")
+	flag.StringVar(&botStall.buy, "stall-buy", "", "bot (round 839): the stall slots -stall-visit buys, \"0,1\"")
+	flag.DurationVar(&botStall.buyAfter, "stall-buy-after", 0, "bot (round 839): wait this long after entering before -stall-buy")
+	flag.DurationVar(&botStall.leaveAfter, "stall-leave-after", 0, "bot (round 839): leave the visited stall after this long")
+	flag.StringVar(&botStall.chat, "stall-chat", "", "bot (round 839): a stall chat line once open or inside")
+	flag.DurationVar(&botStall.delay, "stall-delay", 2*time.Second, "bot (round 839): the wait before each stall step")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")
@@ -1134,6 +1154,7 @@ func main() {
 	flag.DurationVar(&latOpts.crowdPace, "crowd-pace", 150*time.Millisecond, "latency: the time between two crowd bots' logins")
 	flag.DurationVar(&latOpts.attackTo, "attack-timeout", 5*time.Second, "latency: how long to wait for an attack's result")
 	questRace := flag.String("race", "china", "quest: the character's race, china or europe")
+	flag.StringVar(&botRace, "bot-race", "china", "bot (round 839): the bot's race, china or europe")
 	questsDir := flag.String("quests-dir", "", "quest: the catalogue directory (export-refdata -mode quests)")
 	npcsCSV := flag.String("npcs-csv", "", "quest: the NPC table (export-refdata -mode npcs)")
 	npcposCSV := flag.String("npcpos-csv", "", "quest: the NPC placements (export-refdata -mode npcpos)")

@@ -341,6 +341,13 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	// Round 801: the trade scale (row 28, pc_spawn.md), the last one its
 	// owner was told (0x30E8).
 	r.TradeRank = lastTradeScale(e.CharacterID)
+	// Round 839: a stalling owner -- INTERACTMODE 4, the stall's name and
+	// booth after the guild block (s:0x4e5ee6..0x4e5f4f); the client spawns
+	// it at its booth (c:0x9ca3d9). A visitor's 2 is not written (OURS: the
+	// record's byte stays 0 for every other mode, as before).
+	if name, deco, ok := stallOf(e.CharacterID); ok {
+		r.InteractMode, r.StallName, r.StallDecoration = 4, name, deco
+	}
 	r.Avatars = lk.avatars
 	// The frame's region and the local position in it (worldmap.FromWorld,
 	// as teleport's reach and the party record do). A zone with no frame --

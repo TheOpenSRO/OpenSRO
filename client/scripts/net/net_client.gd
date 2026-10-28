@@ -511,6 +511,21 @@ signal exchange_result(op: int, code: int)
 signal exchange_moved(result: Dictionary)
 ## 0x3087 / 0x3088 (1 for done, else the code).
 signal exchange_closed(code: int)
+## Round 839: the players' stalls (StallNet). The answers to this client's
+## requests -- 0xB0B1 / 0xB0B2 / 0xB0B5 as a code (1 or the refusal), 0xB0B3,
+## 0xB0B4 and 0xB0BA as StallNet's dictionaries -- and the stall messages
+## about anyone: 0x30B7 (to a stall's participants), 0x30B8 / 0x30B9 /
+## 0x30BB (to the owner's view).
+signal stall_open_result(code: int)
+signal stall_close_result(code: int)
+signal stall_leave_result(code: int)
+signal stall_entered(d: Dictionary)
+signal stall_buy_result(d: Dictionary)
+signal stall_updated(d: Dictionary)
+signal stall_event(d: Dictionary)
+signal stall_appeared(d: Dictionary)
+signal stall_gone(d: Dictionary)
+signal stall_renamed(d: Dictionary)
 ## Round 837: the item mall (MallNet). 0xB121's result; a mall buy's 0xB034
 ## (MallNet.decode_buy_result's dictionary, or {"ok": false, "code"}); the
 ## silk balances (0x3153) and an outside change (0x3154); the silk history
@@ -577,6 +592,10 @@ signal buff_item(info: Dictionary)
 ## recorded only, no icon; the stall's "Establish as an avatar stall?" reads
 ## it).
 var buff_items := {}
+## Round 839: the stalls this client was told of (0x30B8 / 0x30BB, removed
+## by 0x30B9), by owner uid: StallNet.decode_appear's dictionary. A stall
+## that arrived in a spawn record is the world's (World3D).
+var stalls := {}
 
 ## The GM console's reply (GmNet.Result): whether this account is a GM, the
 ## text to print, and any place to move to / views to refresh.
@@ -902,7 +921,9 @@ func _passes_group(p: Packet) -> bool:
 				QuestNet.OP_CLAIM_RESULT, QuestNet.OP_UNMARK, FriendNet.OP_ASK, FriendNet.OP_ASK_FAILED, ExchangeNet.OP_REQUEST_RESULT, \
 				ExchangeNet.OP_STARTED, ExchangeNet.OP_OFFER, ExchangeNet.OP_UPDATE, ExchangeNet.OP_CONFIRMED, \
 				ExchangeNet.OP_CONFIRM_RESULT, ExchangeNet.OP_APPROVE_RESULT, ExchangeNet.OP_CANCEL_RESULT, \
-				ExchangeNet.OP_DONE, ExchangeNet.OP_CLOSED, \
+				ExchangeNet.OP_DONE, ExchangeNet.OP_CLOSED, StallNet.OP_OPEN_RESULT, StallNet.OP_CLOSE_RESULT, \
+				StallNet.OP_ENTER_RESULT, StallNet.OP_BUY_RESULT, StallNet.OP_LEAVE_RESULT, StallNet.OP_UPDATE_RESULT, \
+				StallNet.OP_EVENT, \
 				FriendNet.OP_DELETE_RESULT, FriendNet.OP_LIST, FriendNet.OP_PUSH, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
 				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE, \
@@ -1984,6 +2005,31 @@ func report_ready_to_play() -> void:
 	_send(WorldNet.OP_READY_TO_PLAY)
 	print("NetClient: ready to play sent (0x3012)")
 
+## Round 839: the stalls' requests (StallNet).
+func stall_open(title: String) -> void:
+	_send(StallNet.OP_OPEN, StallNet.encode_open(title))
+
+func stall_close() -> void:
+	_send(StallNet.OP_CLOSE)
+
+func stall_enter(owner: int) -> void:
+	_send(StallNet.OP_ENTER, StallNet.encode_enter(owner))
+
+func stall_buy(slot: int) -> void:
+	_send(StallNet.OP_BUY, StallNet.encode_buy(slot))
+
+func stall_leave() -> void:
+	_send(StallNet.OP_LEAVE)
+
+## 0x7160: a BFI1 decoration for the stall about to open (the avatar
+## stall's Yes).
+func stall_avatar(key: int, decoration: int) -> void:
+	_send(StallNet.OP_AVATAR_STALL, StallNet.encode_avatar_stall(key, decoration))
+
+## 0x70BA with one of StallNet's encode_* bodies.
+func stall_update(body: PackedByteArray) -> void:
+	_send(StallNet.OP_UPDATE, body)
+
 ## Round 834: the exchange's requests (ExchangeNet).
 func exchange_request(target_id: int) -> void:
 	_send(ExchangeNet.OP_REQUEST, ExchangeNet.encode_request(target_id))
@@ -2405,6 +2451,12 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	# Round 838: its title as the record carries it (slot 27 -> FUN_009ca930).
 	titles.note_level(rec.uid, rec.hwan_level, false)
 	crest_cache.note_guild(rec.guild_name, rec.guild_id, rec.crest_rev)
+	# Round 839: a stalling owner (+0x471 == 4): its stall as 0x30B8 would
+	# have told it (c:0x9ca3d9 spawns it at its booth).
+	if rec.interact == 4:
+		stalls[rec.uid] = {"owner": rec.uid, "name": rec.stall_name, "decoration": rec.stall_decoration}
+	else:
+		stalls.erase(rec.uid)
 	var mode := WorldNet.StateChange.new()
 	mode.object_id = rec.uid
 	mode.kind = WorldNet.STATE_KIND_BODY_MODE
@@ -2481,6 +2533,7 @@ func send_guild_grant_name(nickname: String) -> void:
 
 func _user_left(uid: int) -> void:
 	user_roster.erase(uid)
+	stalls.erase(uid)
 	user_jobs.erase(uid)
 	user_guilds.erase(uid)
 	titles.forget(uid)
@@ -3188,6 +3241,50 @@ func _dispatch(p: Packet) -> void:
 		ExchangeNet.OP_CLOSED:
 			if p.data.size() >= 2:
 				exchange_closed.emit(p.data.decode_u16(0))
+		StallNet.OP_OPEN_RESULT:
+			stall_open_result.emit(StallNet.decode_result(p.data))
+		StallNet.OP_CLOSE_RESULT:
+			stall_close_result.emit(StallNet.decode_result(p.data))
+		StallNet.OP_LEAVE_RESULT:
+			stall_leave_result.emit(StallNet.decode_result(p.data))
+		StallNet.OP_ENTER_RESULT:
+			var se := StallNet.decode_enter(p.data)
+			if se.is_empty():
+				push_warning("NetClient: 0xB0B3 did not parse (%d bytes)" % p.data.size())
+			else:
+				stall_entered.emit(se)
+		StallNet.OP_BUY_RESULT:
+			var sb := StallNet.decode_buy(p.data)
+			if not sb.is_empty():
+				stall_buy_result.emit(sb)
+		StallNet.OP_UPDATE_RESULT:
+			var su := StallNet.decode_update(p.data)
+			if su.is_empty():
+				push_warning("NetClient: 0xB0BA did not parse (%d bytes)" % p.data.size())
+			else:
+				stall_updated.emit(su)
+		StallNet.OP_EVENT:
+			var sv := StallNet.decode_event(p.data)
+			if sv.is_empty():
+				push_warning("NetClient: 0x30B7 did not parse (%d bytes)" % p.data.size())
+			else:
+				stall_event.emit(sv)
+		StallNet.OP_APPEAR:
+			var sa := StallNet.decode_appear(p.data)
+			if not sa.is_empty():
+				stalls[int(sa["owner"])] = sa
+				stall_appeared.emit(sa)
+		StallNet.OP_GONE:
+			var sg := StallNet.decode_gone(p.data)
+			if not sg.is_empty():
+				stalls.erase(int(sg["owner"]))
+				stall_gone.emit(sg)
+		StallNet.OP_RENAMED:
+			var sr := StallNet.decode_renamed(p.data)
+			if not sr.is_empty():
+				if stalls.has(int(sr["owner"])):
+					(stalls[int(sr["owner"])] as Dictionary)["name"] = sr["name"]
+				stall_renamed.emit(sr)
 		FriendNet.OP_LIST:
 			last_friend_list = FriendNet.decode_list(p.data)
 			has_friend_list = true

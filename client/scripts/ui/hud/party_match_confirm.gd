@@ -16,6 +16,8 @@ const SIZE := Vector2(360, 151)
 const LAYOUT := "resinfo\\ifmessagebox.txt"
 
 signal confirmed
+## No pressed (round 839: the avatar stall's question goes on either way).
+signal declined
 
 ## `box` is 0x643e50's size (round 822: the guild window's ban question
 ## passes 280x144); the party match's is 360x151.
@@ -63,7 +65,9 @@ func build(builder: UiBuilder, message: String, box: Vector2 = SIZE) -> bool:
 				confirmed.emit()
 				close())
 		else:
-			b.pressed.connect(close)
+			b.pressed.connect(func() -> void:
+				declined.emit()
+				close())
 	return true
 
 ## The section's OK (ID 252) / Cancel (ID 253) buttons, by their order.

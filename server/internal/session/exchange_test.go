@@ -56,6 +56,8 @@ func exchangeItems() stubCombatItems {
 		100: {ID: 100, PhysAttackMax: 30, CanTrade: true, TypeID1: 3, TypeID2: 1, TypeID3: 6},
 		200: {ID: 200, PhysAttackMax: 10, CanTrade: true, TypeID1: 3, TypeID2: 3, TypeID3: 1},
 		300: {ID: 300, CanTrade: false, TypeID1: 3, TypeID2: 3, TypeID3: 1},
+		// Round 839: a trade good (3/3/8), which a stall refuses.
+		400: {ID: 400, CanTrade: true, TypeID1: 3, TypeID2: 3, TypeID3: 8},
 	}
 }
 

@@ -120,14 +120,19 @@ type Record struct {
 	// written only for JobStateNone. 0, the zero value, is no job state the
 	// engine has and is written as JobStateNone (round 737's review).
 	JobState byte
-	Timer    byte
-	Team     byte
+	// StallName and StallDecoration are the stall block (round 839, READ
+	// s:0x4e5ee6..0x4e5f4f, c:0x9de103..0x9de1bd): written after the guild
+	// block, before the timer byte, when InteractMode is 4 -- the stall's
+	// name (u16 + bytes) and its booth (u32, FUN_004f0f00).
+	StallName       string
+	StallDecoration uint32
+	Timer           byte
+	Team            byte
 }
 
 // Append appends r's bytes in wire order. It refuses what the reader could
 // not take back: an inventory size of 0, a ride state of 1 with no ridden
-// object's id, an interact mode of 4 (the stall block is not modelled), more
-// than 255 items.
+// object's id, more than 255 items.
 func Append(out []byte, r Record) ([]byte, error) {
 	if r.InventorySize == 0 || r.AvatarSize == 0 {
 		return out, fmt.Errorf("pcspawn: a storage size of 0 drops the count byte the client reads")
@@ -140,9 +145,6 @@ func Append(out []byte, r Record) ([]byte, error) {
 	}
 	if r.RideState == 1 && r.MountUID == 0 {
 		return out, fmt.Errorf("pcspawn: ride state 1 needs the ridden object's id")
-	}
-	if r.InteractMode == 4 {
-		return out, fmt.Errorf("pcspawn: interact mode 4 needs the stall block")
 	}
 	// CInstancePC::vslot_010 0x8412b0 mode 2; the client's 0x8a6bd0 and slot
 	// 22 0x9dbc30.
@@ -214,6 +216,10 @@ func Append(out []byte, r Record) ([]byte, error) {
 		out = binary.LittleEndian.AppendUint32(out, 0)
 		out = binary.LittleEndian.AppendUint32(out, 0)
 		out = append(out, 0, 0)
+	}
+	if r.InteractMode == 4 {
+		out = appendString(out, r.StallName)
+		out = binary.LittleEndian.AppendUint32(out, r.StallDecoration)
 	}
 	out = append(out, r.Timer, r.Team)
 	return out, nil
@@ -379,8 +385,9 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 			}
 		}
 	}
-	if d.InteractMode == 4 && r.err == nil {
-		return d, nil, fmt.Errorf("pcspawn: a stall is not OpenSRO's")
+	if d.InteractMode == 4 {
+		d.StallName = r.str()
+		d.StallDecoration = r.u32()
 	}
 	d.Timer, d.Team = r.u8(), r.u8()
 	if r.err != nil {

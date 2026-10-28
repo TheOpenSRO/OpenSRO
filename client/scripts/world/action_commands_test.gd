@@ -31,12 +31,12 @@ func _initialize() -> void:
 
 func _test_plan() -> void:
 	for pair in [[1000, "sit"], [1001, "walk_run"], [1002, "auto_attack"], [1005, "auto_select"],
-			[1006, "exchange"], [1007, "party"], [1008, "auto_get"], [1003, "trace"]]:
+			[1006, "exchange"], [1007, "party"], [1008, "auto_get"], [1003, "trace"], [1009, "stall"]]:
 		_check(String(ActionCommands.plan(pair[0])["kind"]) == pair[1], "action %d is %s" % pair)
 	for pair in [[1010, "alchemy"], [1012, "autopotion"], [1014, "academy"], [1016, "partymatch"]]:
 		var p := ActionCommands.plan(pair[0])
 		_check(String(p["kind"]) == "panel" and String(p["panel"]) == pair[1], "action %d opens %s" % pair)
-	for id in [1004, 1009, 1011, 1015, 1017, 5000]:
+	for id in [1004, 1011, 1015, 1017, 5000]:
 		var p := ActionCommands.plan(id)
 		_check(String(p["kind"]) == "unsupported" and String(p.get("line", "")) != "",
 			"action %d says why it does nothing (OURS)" % id)

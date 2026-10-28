@@ -47,6 +47,7 @@ const (
 	ChatGuild   byte = 0x05 // "@"
 	ChatGlobal  byte = 0x06 // the global chatting item
 	ChatNotice  byte = 0x07 // the text only; 0x876810 also raises GDR_NOTICE
+	ChatStall   byte = 0x09 // the stall window's chat module (round 839)
 	ChatUnion   byte = 0x0b // "%"
 	ChatAcademy byte = 0x10 // "&"
 )
@@ -378,6 +379,27 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 			}
 			if e, ok := d.Hub.EntityByCharacterID(m.CharacterID); ok {
 				sendChatUpdate(e.Session, line)
+			}
+		}
+		return okResult()
+
+	case ChatStall:
+		// Round 839, READ (the chat handler GObjPC::FUN_004b1750 case 9): no
+		// stall (pc+0x1cc4 0) answers 5; otherwise 0x3026 {9, name, text}
+		// goes to every participant of the stall, the sender included
+		// (GObjPC::FUN_00473bf0 -> CFleaMarket::BroadcastToParticipants).
+		d := stallRT.Load()
+		if d == nil {
+			return fail(StallErrOperation, "")
+		}
+		owner := d.Stalls.StallOf(sender.CharacterID)
+		s, ok := d.Stalls.Get(owner)
+		if owner == 0 || !ok {
+			return fail(StallErrOperation, "")
+		}
+		for _, m := range s.Members() {
+			if m.Session != nil {
+				sendChatUpdate(m.Session, line)
 			}
 		}
 		return okResult()

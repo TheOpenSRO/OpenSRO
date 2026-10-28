@@ -83,6 +83,12 @@ class Record:
 	## Round 824: the guild's crest revision (the guild block's first u32
 	## after the grant name; GlobalDataManager::FUN_009ddc40 0x9de0fe).
 	var crest_rev := 0
+	## Round 839: the interaction byte (+0x471, c:0x9ddee9) and, when it is 4,
+	## the stall block after the guild block (c:0x9de103..0x9de1bd): the
+	## stall's name (kept as "[name]" at +0x798) and its booth (+0x790).
+	var interact := 0
+	var stall_name := ""
+	var stall_decoration := 0
 
 ## The item table the reader asks (World3D's own: RefItemID ->
 ## ItemTableReader.Item).
@@ -158,8 +164,8 @@ static func peek_ref(r: NpcSpawnNet.Reader) -> int:
 
 ## One record from r, read as the client reads it. null with r.error set on a
 ## bad record, or on a form OpenSRO's server never sends (a mask, a
-## destination, buffs, a ride, a stall: their widths depend on more than
-## this reader models).
+## destination, buffs, a ride: their widths depend on more than this reader
+## models).
 static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 	var rec := Record.new()
 	rec.ref_id = r.u32()
@@ -244,9 +250,10 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 		r.bytes(8) # union id, union crest revision (no unions in OpenSRO)
 		r.u8() # membership
 		r.u8() # fortress role
-	if interact == 4 and r.error == "":
-		r.error = "a stall in a player record"
-		return null
+	rec.interact = interact
+	if interact == 4:
+		rec.stall_name = r.bytes(r.u16()).get_string_from_utf8()
+		rec.stall_decoration = r.u32()
 	r.u8() # timer byte
 	r.u8() # team byte
 	if r.error != "":

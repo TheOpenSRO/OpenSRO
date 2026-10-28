@@ -15,6 +15,7 @@ package trade
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
@@ -124,6 +125,34 @@ type Hub struct {
 	next   uint32
 	byID   map[uint32]*Session
 	byChar map[int64]*Session
+	// modes is the rest of INTERACTMODE (round 839): the stalls' 4 (owner)
+	// and 2 (visitor), which the same gates read (SetModes).
+	modes atomic.Pointer[func(characterID int64) byte]
+}
+
+// SetModes installs the other holders of INTERACTMODE (round 839: the
+// stalls, chardata+6 = 4 for an owner and 2 for a visitor, FUN_00515e90).
+// Busy then also answers a non-zero mode, and Established a 2 or a 4:
+// StorageOperation refuses every item operation at 4 and all but the
+// exchange's at 2 with 0x1834 (s:0x50f7c0..0x50f7e0, READ), and the move
+// handler drops a move at any INTERACTMODE but 0 and 1 (s:0x4b0ea0).
+func (h *Hub) SetModes(f func(characterID int64) byte) {
+	if h == nil {
+		return
+	}
+	if f == nil {
+		h.modes.Store(nil)
+		return
+	}
+	h.modes.Store(&f)
+}
+
+// mode is characterID's INTERACTMODE from the other holders, 0 for none.
+func (h *Hub) mode(characterID int64) byte {
+	if f := h.modes.Load(); f != nil {
+		return (*f)(characterID)
+	}
+	return 0
 }
 
 // NewHub returns an empty Hub.
@@ -136,6 +165,9 @@ func NewHub() *Hub {
 // INTERACTMODEs to 1). onTimeout runs once after Timeout unless the
 // session is gone or established by then.
 func (h *Hub) Open(requester, target Party, onTimeout func(id uint32)) (uint32, error) {
+	if h.mode(requester.CharacterID) != 0 || h.mode(target.CharacterID) != 0 {
+		return 0, ErrBusy
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.byChar[requester.CharacterID] != nil || h.byChar[target.CharacterID] != nil {
@@ -241,6 +273,9 @@ func (h *Hub) Busy(characterID int64) bool {
 	if h == nil {
 		return false
 	}
+	if h.mode(characterID) != 0 {
+		return true
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.byChar[characterID] != nil
@@ -251,6 +286,9 @@ func (h *Hub) Busy(characterID int64) bool {
 func (h *Hub) Established(characterID int64) bool {
 	if h == nil {
 		return false
+	}
+	if m := h.mode(characterID); m == 2 || m == 4 {
+		return true
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()

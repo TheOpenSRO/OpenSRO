@@ -7596,6 +7596,89 @@ this lane traced each in SR_GameServer.exe / sro_client.exe before changing anyt
   `-item-opt-level-csv` (`OPENSRO_ITEM_OPT_LEVEL_CSV`); `-item-opt-level-inferred=false` drops the
   inferred rows. Round-838 Gold Time rows need nothing.
 
+## Eight-hundred-and-thirty-ninth round, lane S: player stalls
+
+The user's ask for round 839: close round 838's known gaps. This lane: retail's player stalls, so a
+player opens a stall, lists items with prices, others see the booth and the stall's name, enter it, buy,
+and the owner closes it -- and round 838's stall decorations (stored, never drawn) now draw as the booth.
+The Stall Network is out of scope. `docs/protocol/stall.md` has the whole reading with every address;
+the labels are its own (READ s: SR_GameServer.exe / c: sro_client.exe and the archive on the box,
+MEASURED, INFERRED, OURS, OPEN).
+
+**What retail does (READ).**
+- **Wire:** 0x70B1 open {str}, 0x70B2 close, 0x70B3 enter {u32}, 0x70B4 buy {u8}, 0x70B5 leave, 0x70BA
+  the owner's update (types 1 price, 2 add, 3 remove, 4 a byte with no client sender, 5 open/modify, 6
+  greeting, 7 rename); 0xB0Bx the answers, 0xB0BA's success to every participant; 0x30B7 to the
+  participants (1 left, 2 came, 3 sold with the list), 0x30B8 / 0x30B9 / 0x30BB to the owner's view
+  (opened with the booth's u32, closed with the reason, renamed). A list is slot, the item record, bag
+  slot + 13, count, price, then 0xFF. The spawn record carries `str name, u32 decoration` after the guild
+  block when the interaction byte is 4 (s:0x4e5ee6, c:0x9de103). 0x30BA and 0xB0B6..0xB0B9 do not exist.
+- **Rules:** no zone or distance test at the open (only the arena / flag world refuse, 0x3c16); the
+  world check (alive, INTERACTMODE 0, not in a stall, no party being set up), riding 0x3c34, murderer
+  0x3c39, a job suit 0x3c3b; INTERACTMODE 4 for the owner, 2 for a visitor; ten slots, seven visitors;
+  whole stacks only; price 0..9,999,999,999 (the client's box 1..); not tradable / trade goods 0x3c2d, a
+  summoned pet's item 0x3c3a, an awake spirit 0x3c55, the item's group from `fmntidgroupmapdata.txt`
+  (c:0x938370, 0 refused 0x3c3c); edits only while modifying (0x3c2b), buying only while open (0x3c2e);
+  nobody moves; every item operation refused at INTERACTMODE 4 (s:0x50f7c0, 0x1834).
+- **The sale:** no tax; the stack to the buyer's first empty slot; 0x304E to both; 0xB0B4 {1, slot},
+  0x30B7 kind 3; **no 0xB034** (the clients move their own copies); the DB job `_STRG_MOVEITEM_NEW` and
+  both golds; a failed job closes the stall 0x3c2f and logs both out.
+- **Lifecycle:** 0x3c17 by the owner, 0x3c15 warp / logout / disconnect, 0x3c0e death; a visitor's is a
+  leave without 0xB0B5; nothing closes it on an attack. The BFI1 override is cleared at every close; the
+  booth is the decoration item's `.bsr` or the race's default (round 838's StallBooth).
+- **The client:** one window for owner and visitor (CIFStall, GDR_STALL 467x490, ifstall.txt + ten
+  CIFStallSlots + the chat module, chat type 9), its title / greeting boxes and register / price / buy
+  boxes; the title "[name]" in 0xFFFEB5FF over the head, the vendor loop (state 0xF, type 80), the 0xa3
+  cursor, a click within 100.0 enters; the owner's client closes an emptied stall itself.
+
+**What we built.**
+- Server: `internal/stall` (the hub: stalls, members, modes; the `stall_sales` record, its own
+  idempotent DDL, SQL and memory stores), `session/stall.go` (every handler and refusal in retail's
+  order, the close paths on death / zone change / disconnect, the spawn record's block, chat type 9),
+  the trade hub's gates fed the stalls' INTERACTMODE (`trade.Hub.SetModes`). The sale is one transaction
+  with a ledger claim (OURS): the stack, both golds and the sale row, or nothing.
+- Client: `StallNet`, the spawn block (`UserSpawnNet`), `StallWorld` (booth, title, vendor loop, click,
+  approach), `StallController` + `StallWindowView` (the window from the archive), the boxes
+  (`HudCosBox.build_stall_input`, `StoreMessageBox` STALL_*), the Stall action (1009) with the avatar
+  stall's question and 0x7160. A stalling owner is never a GPU ghost (OURS). QA steps playerclick,
+  stallicon / stallmodify / stallslot, bagempty, actionslot, stallclose; partybot -stall-open / -items /
+  -visit / -buy / -chat and -bot-race.
+
+**Live (render box, lane server 16880 in memory; real clicks and keys through OPENSRO_QA_INPUT,
+partybot as the other players; evidence in `/var/tmp/r839s/keep`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| A bot's stall seen: booth, stall cursor 0xa3, the click enters (0x70B3) | PASS | visitor_booth_f255.png, visitor_run_client.txt ("CURSOR: stall (0xa3)", "stall: enter") |
+| The visitor's window from the archive, buy box, two purchases (20 potions for 50, a sword for 300; gold 1000 -> 650) | PASS | visitor_buybox_f400.png, visitor_after_sales_f600.png, visitor_run_server.txt |
+| "[QaStall]bought item [..]." lines; the visitor's X leaves (0x30B7 kind 1 to the owner) | PASS | visitor_after_sales_f600.png, visitor_run_bot.txt |
+| The client opens its own stall from the action window: title box, greeting, register box, Open | PASS | owner_open_f640.png, owner_run_client.txt, own_window_chat_f1000.png |
+| A bot buys the client's only item (a sword for 120); the owner's client then closes the emptied stall itself (0x30B9 0x3c17, c:0x87a6f0); the bot's next buy refused 0x3c0f | PASS | owner_run_server.txt, owner_run_bot.txt, owner_closed_f1100.png |
+| The bot's stall chat line in the owner's window | PASS | own_window_chat_f1000.png |
+| The own booth (Big Eye Ghost decoration used first), the title "[my stall]", the vendor pose | PASS | own_booth_bigeye_title_f760.png, own_vendor_pose_title_f390.png |
+| The four decoration booths and their titles on four bots | PASS | decorations_titles_f380.png |
+| The European default booth (euro_streetstall01) | PASS (far) | euro_default_booth_f380.png |
+| A buy of an emptied slot refused 0x3c10 (the bot's) | PASS | the own run's bot log |
+| The X closes the stall (0x30B9 0x3c17 to the visitor) | PASS | the own runs' bot logs |
+| The HUD unchanged against dev (frame 290, inventory open) | PASS: 0 px differ > 16 | hud_head_f290.png / hud_base_f290.png |
+
+**Perf gate** (`--base 71cd8ab9 --sites jangan --frames 20000`, median of 3): frame 0.86 -> 0.87 ms,
+entry 8816 -> 8836 ms, freeze 2764 -> 2756 ms, hitches 5 -> 5 -- SAME on all four. A body that does not
+stall costs the spawn one dictionary look-up (`_stall_refresh`).
+
+**Tests.** `go test ./...` passes: `stall839_test.go` (the codecs; the full flow; every 0x70B1, 0x70B3,
+0x70B4 and 0x70BA refusal; a sale race -- one sale of one listing, two buyers --; the owner leaving
+mid-sale; a failed and a lost commit; a seller's gold overflow; the lifecycle; the spawn record and the
+stall chat), `stall/stall_test.go` (the hub; both sale stores with Postgres, a rollback included),
+`trade_test.go` (the modes), `pcspawn` (the block round-trips). Client: `remote_godot.sh check` ALL LOAD
+(1023 scripts), `tests` "ran 384 suite(s), 0 failing" (`stall_net_test`, `stall839_test` on the real
+Media.pk2, `action_commands_test`).
+
+**OPEN.** S+0x49 (type 4); whether an owner can be attacked; how retail stacks the title against the
+name and guild lines (ours 22 px over the name); the decoration booths' own animation; the title's name
+filter (0x3c38); 0x5417's key (INFERRED); not made for want of state: the trade / chat bans, the quest
+block, the murderer state, the arena / flag world.
+
 ## Eight-hundred-and-thirty-eighth round, lane 6: the title scrolls are the hwan level, and the Random Wing Scroll
 
 The user: "let's make all the items in the item mall functional ... Make no mistakes." This lane:

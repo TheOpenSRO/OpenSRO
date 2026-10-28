@@ -76,7 +76,8 @@ class_name StoreMessageBox
 ## OURS (not read): that a box is not modal; an item count typed below 1 is
 ## held to 1.
 
-enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW, DIVIDE, EXCHANGE_ITEM, EXCHANGE_GOLD }
+enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW, DIVIDE, EXCHANGE_ITEM, EXCHANGE_GOLD,
+	STALL_REGISTER, STALL_PRICE, STALL_BUY }
 
 const MSGBOX_LAYOUT := "resinfo\\ifmessagebox.txt"
 const CONFIRM_BUY_LAYOUT := "resinfo\\ifitemmallconfirmbuy.txt"
@@ -167,6 +168,10 @@ func build(builder: UiBuilder, box_kind: int, opts: Dictionary = {}) -> bool:
 			ok = _build_exchange_item(opts)
 		Kind.DIVIDE:
 			ok = _build_divide(opts)
+		Kind.STALL_REGISTER, Kind.STALL_PRICE, Kind.STALL_BUY:
+			ok = _build_stall(opts)
+	if kind == Kind.STALL_REGISTER or kind == Kind.STALL_PRICE or kind == Kind.STALL_BUY:
+		return ok
 	_refresh_price()
 	return ok
 
@@ -386,6 +391,91 @@ func _build_exchange_item(opts: Dictionary) -> bool:
 	_wire_cancel(_root.get_node_or_null("GDR_MBS_BTN_CANCEL"), Vector2(-1, -1), _text("UIIT_CTL_CANCEL", "Cancel"))
 	UiBuilder.settle_authored_rects(_root)
 	return true
+
+# --- CIFMessageBox mode 3, MsgBoxStoreMoney: the stall's boxes (round 839) ---
+## The stall's register, price and buy boxes (READ, docs/protocol/stall.md
+## "The windows"): mode 3 MsgBoxStoreMoney in the inventory's 308x148 box.
+## - Register (c:0x6b1ce0, purpose 10): title UIIT_STT_CONFIRM_BOX, OK
+##   UIIT_CTL_STALL_REGISTER, Cancel; NAME2 (+0x81c) and the price static
+##   (ID 9) hidden, the price edit (11) shown; the icon and the name; the
+##   count "%d" of the stack, held to it (1 for one that does not stack);
+##   the price "1", at least 1, at most 9,999,999,999 (c:0x634f20
+##   (0x2540BE3FF)), focused. OK sends 0x70BA type 2.
+## - Price (c:0x6ba440, purpose 10 on the stall window): the same, the count
+##   and the price prefilled with the slot's (plain digits, 0x64db50(p, 0)).
+##   OK sends 0x70BA type 1.
+## - Buy (c:0x6b2070, purpose 11): title UIIT_STT_AGREEMENT_BOX, OK
+##   UIIT_STT_BUY; the count the stack, the price the slot's, shown and
+##   focused. OK sends 0x70B4. OURS: the buy box's price edit is not typed in
+##   (the price is the seller's; what the original does with an edited one
+##   is not read).
+## `opts`: "icon", "name", "stack", "price".
+## The price the box holds when OK is pressed (the stall's boxes).
+var price_value := 1
+const STALL_MAX_PRICE := 9999999999
+
+func _build_stall(opts: Dictionary) -> bool:
+	_set_box_size(STORE_MONEY_SIZE)
+	_add_frame(STORE_MONEY_SIZE)
+	var buy := kind == Kind.STALL_BUY
+	var layout := _message_box_base(STORE_MONEY_SIZE, "UIIT_STT_AGREEMENT_BOX" if buy else "UIIT_STT_CONFIRM_BOX",
+		"Agreement window" if buy else "Confirmation window")
+	if layout == null:
+		return false
+	_root = _builder.build_section(layout, "MsgBoxStoreMoney")
+	if _root == null:
+		return false
+	add_child(_root)
+	_icon(_root.get_node_or_null("GDR_MBS_STATIC_ICON"), opts.get("icon"))
+	_static_text(_root.get_node_or_null("GDR_MBS_STATIC_NAME1"), String(opts.get("name", "")))
+	for hidden in ["GDR_MBS_STATIC_NAME2", "GDR_MBS_STATIC_PRICE"]:
+		var n := _root.get_node_or_null(hidden) as CanvasItem
+		if n != null:
+			n.visible = false
+	var stack := maxi(1, int(opts.get("stack", 1)))
+	min_count = 1
+	max_count = stack
+	count = stack
+	_count_edit = _root.get_node_or_null("GDR_MBS_EDIT_AMOUNT") as LineEdit
+	_wire_count(_count_edit)
+	if buy and _count_edit != null:
+		_readonly(_count_edit)
+	_price_edit = _root.get_node_or_null("GDR_MBS_EDIT_PRICE") as LineEdit
+	price_value = clampi(int(opts.get("price", 1)), 0 if buy else 1, STALL_MAX_PRICE)
+	if _price_edit != null:
+		_price_edit.visible = true
+		_price_edit.text = str(price_value)
+		if buy:
+			_price_edit.editable = false
+			_price_edit.add_theme_color_override("font_uneditable_color", _price_edit.get_theme_color("font_color"))
+		else:
+			_price_edit.text_changed.connect(_on_price_typed)
+		if not buy:
+			_focus_later(_price_edit)
+	var ok_caption := _text("UIIT_STT_BUY", "Buy") if buy else _text("UIIT_CTL_STALL_REGISTER", "Register")
+	_wire_ok(_root.get_node_or_null("GDR_MBS_BTN_OK"), Vector2(-1, -1), ok_caption)
+	_wire_cancel(_root.get_node_or_null("GDR_MBS_BTN_CANCEL"), Vector2(-1, -1), _text("UIIT_CTL_CANCEL", "Cancel"))
+	UiBuilder.settle_authored_rects(_root)
+	return true
+
+## The price edit: digits only, held to 1..9,999,999,999 (the original's
+## edit clamps with its bounds, c:0x634f20 / 0x634ff0).
+func _on_price_typed(text: String) -> void:
+	var digits := ""
+	for ch in text:
+		if ch >= "0" and ch <= "9":
+			digits += ch
+	if digits.length() > 10:
+		digits = digits.substr(0, 10)
+	if digits != text:
+		_price_edit.text = digits
+		_price_edit.caret_column = digits.length()
+	if digits == "":
+		return
+	price_value = clampi(int(digits), 1, STALL_MAX_PRICE)
+	if str(price_value) != digits:
+		_price_edit.text = str(price_value)
+		_price_edit.caret_column = _price_edit.text.length()
 
 # --- CIFMessageBox mode 5, MsgBoxDivideCount (round 728) ---------------------
 ## Splitting a stack, opened by Shift+click on a bag stack (0x681903 ->
@@ -623,6 +713,8 @@ func _on_ok() -> void:
 		count = clampi(int(_count_edit.text), min_count, max_count)
 	elif kind == Kind.DIVIDE and _count_edit != null:
 		count = 0  # an empty edit posts the 0 flag (0x63d920, READ)
+	if (kind == Kind.STALL_REGISTER or kind == Kind.STALL_PRICE) and _price_edit != null and _price_edit.text.is_valid_int():
+		price_value = clampi(int(_price_edit.text), 1, STALL_MAX_PRICE)
 	confirmed.emit(count)
 	close()
 

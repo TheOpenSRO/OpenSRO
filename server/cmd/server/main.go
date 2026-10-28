@@ -55,6 +55,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/specialty"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/stall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/storage"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/teleport"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/timedjob"
@@ -1482,6 +1483,8 @@ func main() {
 		// The item mall's purchase log and item chest (round 837,
 		// internal/mall).
 		mallStore mall.Store
+		// The stall sales' record (round 839, internal/stall).
+		stallSales stall.SaleStore
 	)
 
 	if *inMemory {
@@ -1557,6 +1560,7 @@ func main() {
 		quests = quest.NewMemStore()
 		friends = friend.NewMemStore()
 		mallStore = mall.NewMemStore()
+		stallSales = stall.NewMemStore()
 		logger.Warn("in-memory storage ready -- nothing will be persisted")
 		{
 			n, err := memRef.CountSkills(context.Background())
@@ -1774,6 +1778,15 @@ func main() {
 			os.Exit(1)
 		}
 		mallStore = sqlMall
+
+		// The stall sales (round 839): one row a sale, in the sale's own
+		// transaction.
+		sqlStallSales, err := stall.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening stall sale store", "error", err)
+			os.Exit(1)
+		}
+		stallSales = sqlStallSales
 
 		// The item-started skill jobs (round 838, session/itemskill.go): a
 		// mall visual's or a scroll's buff outlives a restart too.
@@ -2727,6 +2740,11 @@ func main() {
 		// operation's 0x7034 types 4, 5 and 0xd.
 		session.ExchangeHandler(session.ExchangeDeps{Chars: chars, Inv: inv, Items: refItems, Hub: hub, Trades: trades, Parties: parties}),
 		session.FriendHandler(chars, friends, hub),
+		// The players' stalls (round 839, stall.go): retail's 0x70B1..0x70BA,
+		// their 0x30B7/0x30B8/0x30B9/0x30BB broadcasts, and the stalls'
+		// INTERACTMODE in the trade hub's gates.
+		session.StallHandler(session.StallDeps{Chars: chars, Inv: inv, Items: refItems, Hub: hub,
+			Stalls: stall.NewHub(), Trades: trades, Parties: parties, Sales: stallSales}),
 		// The item mall (round 837, session/mall.go): 0x7121, the silk
 		// history 0x711a and the item chest (OURS 0x00D0..0x00D4); the buy is
 		// the item operation's 0x7034 type 0x18.
@@ -2777,6 +2795,7 @@ func main() {
 	partyMatchDisconnect := session.PartyMatchDisconnectHandler(partyMatchDeps)
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 	tradeDisconnect := session.ExchangeDisconnectHandler(hub)
+	stallDisconnect := session.StallDisconnectHandler(hub)
 	guildPointsDisconnect := session.GuildPointsDisconnectHandler(hub, gpSkills)
 	friendDisconnect := session.FriendDisconnectHandler(hub)
 
@@ -2827,6 +2846,7 @@ func main() {
 			}
 			step("duel", func() { duelDisconnect(sess) })
 			step("trade", func() { tradeDisconnect(sess) })
+			step("stall", func() { stallDisconnect(sess) })
 			step("npc", func() { session.ForgetNPCInteraction(sess.ID()) })
 			step("quest", func() { session.ForgetQuestSession(sess.ID()) })
 			step("guild points", func() { guildPointsDisconnect(sess) })

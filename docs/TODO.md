@@ -64,6 +64,16 @@ Find all the effects this applies to and what exact times they trigger."
       night lighting (no night-lit layer reaches it), the far crowd's GPU twins (no worn item
       carries the bit).
 
+## Round 839 lane S follow-ups (player stalls; docs/protocol/stall.md)
+
+- [ ] OPEN: S+0x49 (0x70BA type 4, no client sender); whether a stall owner can be attacked; how
+      retail stacks the stall title against the name and guild lines (ours: 22 px over the name).
+- [ ] Not made (no OpenSRO state): the trade ban 0x3405 and the chat-ban rename at the open, the
+      quest block 0x3c32 / 0x3c33, the murderer refusal 0x3c39, the arena / flag world refusal.
+- [ ] The decoration booths' own animation (`booth_*.ban`) is not played; the title's name filter
+      (c:0x8c3f10, 0x3c38) is not run.
+- [ ] The Stall Network (`CIFStallNetwork`, the ware-network kind of 0x30B7, 0x3c41..0x3c53).
+
 ## Round 834 follow-ups (friends, the exchange, the target menu; docs/protocol/friends.md, exchange.md)
 
 - [ ] **Letters (the Community window's third tab)**: `0x730B` / `0x7308` / `0x7309` / `0x730A` /
@@ -1235,8 +1245,8 @@ touches this file.
       3 x 3 message blocks of 320 the server sends, now applied to every hover class here
       (CURSOR.md, "How far the hover reaches"; the gate is a spawned object, READ in the review).
       Left: the click (round 701) still reaches NPCs and gates outside the window.
-- [ ] **Stall (0xa3)** is wired (`GameCursor.KIND_IDS`, `player_kind`'s `stalling`) and
-      unreachable: no other player's stall state (the 0x30b8 broadcast) reaches this client.
+- [x] **Stall (0xa3)** (round 839): a stalling player (0x30B8, the spawn record's stall block)
+      shows the pouch; `World3D._cursor_kind_at` passes `StallWorld.stalling`.
 - [ ] **Hostile players** show 0xa0 with Alt held or, since round 802, for an opposed job
       (World3D._player_is_enemy): teams (+0x81d), fortress war,
       the murder state and the list `0x992a90` reads are not in this client. Each plugs into
@@ -2671,8 +2681,8 @@ census of its texture writes).
       player against the NPC (`IsWithinInteractionRange`, 300); OpenSRO's shop and storage
       requests carry no NPC, so the server cannot (round 701). A select or talk request naming the
       NPC would let it. The teleport request has applied the range since round 642.
-- [ ] **A stall's approach** (100 / 80, arrival flag 2 -> `FUN_0081e170`) is read, not built: no
-      stalls yet.
+- [x] **A stall's approach** (round 839, StallWorld): a click within 100.0 sends 0x70B3, farther
+      walks there and sends it in reach (OURS: the 80 / 20 pending target is INFERRED, not built).
 - [ ] **Who walks a monster attack into reach.** READ: the server (attack tick 0x4ad8e0 ->
       `GObjPC::MoveTowardObject`; the client sends 0x7074 with no walk). OpenSRO's client walks
       (OURS) because OpenSRO's server does not chase.
@@ -2759,9 +2769,9 @@ is in `docs/protocol/target_window_buffs.md`. Left open:
   - the skill gate 0x58d8f0 that 0x650d40 runs;
   - the buff's params (dru, odar, hr, luck, alcu, inti, stri): the book models only run speed;
   - round 838 modelled the premium's other entries: the UIU1 premium time (3/3/13/4, the
-    Gold Time, `session/goldtime.go`), BFI1 and UQL1 (`session/compositeextra.go`). Left open:
-    no stalls exist to read the BFI1 override, and quest 224 (CQSP_ALL_POTION_3, the UQL1
-    grant's quest) is not run.
+    Gold Time, `session/goldtime.go`), BFI1 and UQL1 (`session/compositeextra.go`). Round 839's
+    stalls read the BFI1 override at the open (the avatar stall's question, 0x7160). Left open:
+    quest 224 (CQSP_ALL_POTION_3, the UQL1 grant's quest) is not run.
 - [ ] **What `+0x21c == -1` means** for an owner whose 0xB0BD object is destroyed, not attached
       (0x8a5d58).
 - [ ] **Pets** (the CICCos branch shows the viewer too). From round 795 a pet can be selected
