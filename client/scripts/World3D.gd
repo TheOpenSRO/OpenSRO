@@ -27233,7 +27233,20 @@ func _resolve_any_text(key: String, fallback: String) -> String:
 		var t: String = (table as UiTextTable).get_text(key)
 		if t != "" and t != key:
 			return t
+	# Round 838: a talk line's SN_TALK_ key that the tables above lack lives in
+	# textquest_queststring.txt (MEASURED: Magic POP's SN_TALK_CH_GACHA_*),
+	# read once, on the first such miss, so the world's entry does not pay it.
+	if key.begins_with("SN_TALK_"):
+		if _quest_string_table == null and _media_pk2 != null:
+			var qs := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textquest_queststring.txt")
+			_quest_string_table = UiTextTable.parse(_media_pk2.read_file(qs)) if qs != null else UiTextTable.new()
+		if _quest_string_table != null:
+			var q: String = _quest_string_table.get_text(key)
+			if q != "" and q != key:
+				return q
 	return fallback
+
+var _quest_string_table: UiTextTable = null
 
 ## The talk box's tax line for the NPC or gate `code`, or "" (round 725;
 ## NpcTalkView.fortress_strid_for has what is READ and what is ours): the
@@ -27261,6 +27274,12 @@ func _npc_greeting_text(code: String) -> String:
 			var resolved := _npc_text_table.get_text(s)
 			if resolved != "" and resolved != s:
 				return resolved
+			# Round 838: Magic POP's greetings (SN_TALK_CH_GACHA_*_1) are in
+			# textquest_queststring.txt (_resolve_any_text's SN_TALK_ branch).
+			if s.begins_with("SN_TALK_"):
+				resolved = _resolve_any_text(s, "")
+				if resolved != "":
+					return resolved
 	return ""
 
 ## The talk window's lines (round 727): the interaction-id set `ids` -- the
