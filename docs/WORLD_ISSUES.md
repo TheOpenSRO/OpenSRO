@@ -7563,6 +7563,58 @@ transaction as the scroll. Every accepted use answers with OpServiceLine.
 - A buff from a forgotten skill runs out on its own.
 - OpenSRO's QaSignIn does not answer a pending rename; the select screen does.
 
+## Eight-hundred-and-thirty-eighth round, lane 1: the mall's character visuals and skill items do what their descriptions say
+
+The user: "let's make all the items in the item mall functional. Make sure you read your descriptions
+so you know how to implement them. Make no mistakes." This lane: the VSROEDITORCOM visual and trail
+scrolls (3/3/13/14, `[USU1:SKILL_VSROEDITORCOM_*]`) and the 3/3/13/1 skill items (the 24 Godbless
+wings, the Boots of Speed, the damage absorption scrolls, the movement-speed drugs).
+
+**What the rows are (MEASURED, the player's archive).** Every skill these items name is an
+action-kind-3 buff with `cbuf` and `dura`: the visuals and wings 2,419,200 s (the signed column's
+-1875767296), the boots 604,800 s with `hste` 115, the absorption scrolls 1,800 s with `odar` 15,10 /
+15,20, the drug 3977 1,800 s `hste` 100 and 3975 (duplicated: skilldata_4000 1,800 s `hste` 50,
+skilldata_5000 604,800 s `hste` 100; the export keeps the later, which is what the item's name
+"Drug of typoon (1 week)" says). None carries an effect reference: the look is retail's own
+mechanism, the skill's `skilleffect.txt` ACT_L AT_LOOP rows -- .efp rows (wings 17-33, the Godbless
+wings `system\wings\hwanlook_c_penguin1_*`, the trails at both feet) and .bsr rows (horns, crowns,
+wings 09-12 and capes: `res\item\electus\electus_m_visual_NN.bsr` at `Bip01 Head` / `Bip01 Spine1`).
+Action_Overlap bytes per family: horns 0x31/0x9b/0x94, crowns 0x6d, capes 0x55, every wing (VSRO and
+Godbless) 'rcur' 0x72/0x75/0x63, trails 0x57/0xb3/0xe2, speed 6, absorption 0x0a/0x09.
+
+**The server (READ, SR_GameServer.exe).** The item loader (0x6a4b00 region) binds a 3/3/13/1..3
+row's Desc128_1 skill code into Param1 -- the file's own Param1 (0, 5, 11) is overwritten and never
+read. UseByKind (0x0049c2b0) cases 1-3 call FUN_0059b8d0: a `cbuf` + `dura` row queues a type-0
+CTJ_SkillKeeper job for dura/1000 s (unsigned), whose start (0x650e70) registers the skill, broadcasts
+0xB0BD, sets the overlap bits and engages -- the composite USU1 path's job. `session/itemskill.go`
+does that; the overlap is checked BEFORE the spend (INFERRED: the job's start does not test, the
+description says "cannot be used with another item or skill that has a similar effect", and a start
+after the spend ate the item on the engage refusal -- the USU1 path had that bug too, fixed). OURS: one
+character visual at a time, refused with 0x1894's text (the descriptions' "cannot be used with other
+character effect scrolls"; the bytes alone allow one per kind). The job is persisted (`skilljob`,
+table `skill_jobs`) and restored at world entry with its remaining time -- the engine's timed jobs
+outlive the object -- and kept through a death (OURS). Damage absorption: Formula_Mitigate*
+(0x40e450) multiplies by the DEFENDER's p174..177 (SelectDaraParamForDamageType) for any defender;
+OpenSRO applied it to monsters only. `applyPlayerTaken` now applies it to a player hit by a monster,
+a job PvP hit and a duel hit (a worn avatar's `dara` with it).
+
+**The client.** An aura's .bsr row is now drawn (`AuraModel`: the model on its bone in the bone's
+frame -- READ FUN_00a4a680; the meshes MEASURED authored in that frame, the horns at x 1.1..4.6,
+y +-2.3), and a '#' StartBone places the offset in the bone's frame along the world's axes (READ
+FUN_00a4ddc0 flag 4; the 26 rows are a head attachment's eyes or horn tips). Two reader fixes the
+models needed: a .bmt layer name NUL-padded inside its length was skipped (its piece drew white), and
+a .bms whose hdr[1] disagrees with the client's sequential read (READ CPrimMesh::FUN_00c1bb20; the
+capes' 3-bone mesh points 16 bytes short) is read where the sequence ends.
+
+**Live (box, lane server 16810, frames in /var/tmp/r8381/keep).** Four bots each used a visual
+before the client arrived: the client drew the textured wings, the lava cape, the flame crown and
+the flaming horns on them (spawn path); the client's own right-clicked trail, Godbless wings and
+graceful wings drew with their buff icons. A second visual was refused; after an in-process relog
+the server logged `skill job: restored at entry` and the client drew the crown again. Boots: run
+speed 50 -> 108 broadcast; a drug then refused (byte 6). Absorption: two bots under three Mangyang
+each, mean blow 8.76 (42 hits, scroll) against 9.89 (62 hits). No perf gate: the drawing added runs
+only for an aura with .bsr rows.
+
 ## Eight-hundred-and-thirty-seventh round: the item mall, with the try-on, silk and an item chest
 
 The user: "let's get the item mall fully working", with screenshots of a private server's in-game

@@ -94,7 +94,37 @@ func _check_layer_trailer() -> void:
 	_check(word == 3 and bytes is PackedByteArray and (bytes as PackedByteArray).get_string_from_ascii() == "xyz",
 		"r625: the trailer is kept -- word 3, bytes 'xyz' (got %s, %s)" % [word, bytes])
 
+## Round 838: a layer name with NUL padding inside its declared length (the
+## archive's electussimvisual01.bmt writes "electusimvisual01m2" + 8 NULs)
+## is a layer like any other; the forward scan used to skip it.
+func _append_padded(b: PackedByteArray, s: String, pad: int) -> void:
+	var bytes := s.to_ascii_buffer()
+	for i in pad:
+		bytes.append(0)
+	_append_u32(b, bytes.size())
+	b.append_array(bytes)
+
+func _check_padded_name() -> void:
+	var dec := PackedByteArray()
+	dec.append_array("JMXVBMT 0102".to_ascii_buffer())
+	_append_u32(dec, 3)
+	for layer in [["first", 0, "first.ddj", 0], ["padded", 8, "padded.ddj", 8], ["last", 0, "last.ddj", 0]]:
+		_append_padded(dec, layer[0], layer[1])
+		for i in range(16): _append_f32(dec, 1.0)
+		_append_f32(dec, 0.0) # power
+		_append_u32(dec, 0x140) # the flag word
+		_append_padded(dec, layer[2], layer[3])
+		_append_u32(dec, 0) # the trailer's uint32
+		dec.append_array(PackedByteArray([0, 0, 0]))
+	var m := BmtReader.parse(dec)
+	_check(m != null and m.layers.size() == 3, "r838: a NUL-padded layer name is read, not skipped (got %s layers)" % (m.layers.size() if m != null else "null"))
+	if m != null and m.layers.size() == 3:
+		_check(m.layers[1].layer_name == "padded" and m.layers[1].texture_path == "padded.ddj" and m.layers[2].layer_name == "last",
+			"r838: ... its name and texture stop at the first NUL (got '%s', '%s', then '%s')" % [m.layers[1].layer_name,
+				m.layers[1].texture_path, m.layers[2].layer_name])
+
 func _init() -> void:
+	_check_padded_name()
 	var data := FIXTURE_HEX.hex_decode()
 
 	var m := BmtReader.parse(data)

@@ -1749,6 +1749,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// is sent theirs as group spawns, each followed by its buffs, and they
 	// are sent its 0x3015 -- the record carries the heading, the model, the
 	// worn items with their pluses, the motion and the body mode.
+	// The item-started skill jobs (round 838, itemskill.go) put their buffs
+	// back first, so the spawns below and the own buffs carry them.
+	restoreSkillJobs(ctx, owned.ID, time.Now())
 	arrived, inWorld := hub.EntityBySession(sess.ID())
 	if inWorld && guard {
 		holdArrival(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived, "enter world", nil)

@@ -359,9 +359,20 @@ static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 	# finding no room left in it -- which is true, and irrelevant, because
 	# the weights are not in the vertex record. They are in their own
 	# section, and hdr[0] points at it. See docs/protocol/BMS_FORMAT.md.
-	_parse_skin(data, hdr[0], hdr[1], vertex_count, mesh)
-
 	var index_off := hdr[1]
+	# Round 838: the client reads the mesh body in sequence (READ,
+	# CPrimMesh::FUN_00c1bb20: the vertices, the bone count and names, one
+	# 6-byte weight per vertex, then the triangle count -- it never seeks to
+	# hdr[1]). A file whose hdr[1] disagrees with that sequence (MEASURED:
+	# the archive's electussimvisual13m_2.bms, a 3-bone cape, points 16 bytes
+	# short, at a weight record) is read where the sequence ends instead,
+	# when hdr[1]'s triangle count does not fit and the sequence's does.
+	if not _index_fits(data, index_off):
+		var seq := _skin_section_end(data, hdr[0], vertex_count)
+		if seq > 0 and _index_fits(data, seq):
+			index_off = seq
+	_parse_skin(data, hdr[0], index_off, vertex_count, mesh)
+
 	if index_off + 4 > data.size():
 		push_error("bms: index section offset (hdr[1]) out of range")
 		return null
@@ -558,6 +569,35 @@ static func _parse_vertex_motion(data: PackedByteArray, mesh: ParsedMesh) -> voi
 		var rec := start + 4 + i * VERTEX_MOTION_REC_SIZE
 		mesh.vertex_motion[i] = _le_f32(data, rec)
 		mesh.vertex_pinned[i] = 1 if _le_u32(data, rec + 4) != 0 else 0
+
+## Round 838: whether a triangle count at `at` and its index array fit in
+## the file.
+static func _index_fits(data: PackedByteArray, at: int) -> bool:
+	if at <= 0 or at + 4 > data.size():
+		return false
+	return at + 4 + _le_u32(data, at) * INDEX_REC_SIZE <= data.size()
+
+## Round 838: where the skin section starting at `section_start` ends when
+## read in sequence (the bone count, its length-prefixed names, a weight
+## record per vertex) -- the triangle count's place in the client's own read
+## (CPrimMesh::FUN_00c1bb20, READ). -1 when it does not read.
+static func _skin_section_end(data: PackedByteArray, section_start: int, vertex_count: int) -> int:
+	if section_start <= 0 or section_start + 4 > data.size():
+		return -1
+	var bone_count := _le_u32(data, section_start)
+	if bone_count < 0 or bone_count > 512:
+		return -1
+	var off := section_start + 4
+	for i in range(bone_count):
+		if off + 4 > data.size():
+			return -1
+		var n := _le_u32(data, off)
+		if n <= 0 or n > 128:
+			return -1
+		off += 4 + n
+	if bone_count > 0:
+		off += vertex_count * SKIN_REC_SIZE
+	return off if off <= data.size() else -1
 
 ## Reads the bone palette and per-vertex weights between section_start and
 ## section_end. Leaves the mesh unskinned, without erroring, whenever the

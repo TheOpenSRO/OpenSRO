@@ -263,6 +263,11 @@ func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *re
 			dmg := combat.ApplySkillPercent(blow.Damage, terms.damagePercent)
 			dmg = applyBuffDamage(attacker.CharacterID, magical, dmg)
 			dmg = applyGetvDamage(attacker.CharacterID, row, dmg)
+			// A player defender's damage-taken multiplier (round 838,
+			// applyPlayerTaken), where skillhit.go applies a monster's.
+			if t.cos == nil {
+				dmg = applyPlayerTaken(t.char, magical, dmg)
+			}
 			if d.zerk != nil && terms.damagePercent != combat.SkillPercentZero {
 				dmg = d.zerk.Boost(attacker.CharacterID, dmg)
 			}

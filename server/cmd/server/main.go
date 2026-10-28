@@ -50,6 +50,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/shop"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/skill"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/skilljob"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/specialty"
@@ -1744,6 +1745,15 @@ func main() {
 			os.Exit(1)
 		}
 		mallStore = sqlMall
+
+		// The item-started skill jobs (round 838, session/itemskill.go): a
+		// mall visual's or a scroll's buff outlives a restart too.
+		sqlSkillJobs, err := skilljob.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening skill job store", "error", err)
+			os.Exit(1)
+		}
+		session.SetSkillJobStore(sqlSkillJobs)
 
 		accounts, registerer = sqlAccounts, sqlAccounts
 		chars, refItems = sqlChars, sqlRef

@@ -132,6 +132,34 @@ func applyBuffDamage(characterID int64, magical bool, dmg int) int {
 	return out
 }
 
+// applyPlayerTaken is a player defender's damage-taken multiplier (round
+// 838): p174 (physical) or p176 (magical), which 'odar' writes at slot 2 --
+// the damage absorption scrolls' 15,10 and 15,20 make it x0.9 and x0.8 -- and
+// a worn avatar's 'dara' too (avatarstats.go). READ:
+// Formula_MitigatePhysicalDamage (0x40e450) multiplies the mitigated blow by
+// the DEFENDER's Formulae::SelectDaraParamForDamageType value when it is not
+// 0, right after the attacker's damage percent (p128/129) and before the
+// level advantage; the defender is any object, a player as a monster
+// (applyMonsterTaken). Truncated, at least 1, as applyMonsterTaken does.
+func applyPlayerTaken(characterID int64, magical bool, dmg int) int {
+	if dmg <= 0 {
+		return dmg
+	}
+	p := buff.ParamDefenderMult
+	if magical {
+		p += 2
+	}
+	f := buffFactor(characterID, p)
+	if f == 1 {
+		return dmg
+	}
+	out := int(float64(dmg) * f)
+	if out < 1 {
+		out = 1
+	}
+	return out
+}
+
 // buffBonus is the character.Bonus the buffs give (round 785): Str and Int
 // (p1/p2 slot 0), max HP and MP flat and percent (p3/p4 slots 0 and 1),
 // evade-critical (p57).

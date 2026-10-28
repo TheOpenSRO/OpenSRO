@@ -70,7 +70,7 @@ periodic effect.
 | 33 | `equippedWeaponRange` |
 | 1, 2, 3, 4, 57 | `character.BonusOf` (a live, uncached part: `buffBonus`) |
 | 128..131, 178/179 | a skill's hits (`applyBuffDamage`, skillhit.go) |
-| 174..177 | a monster's debuffs (`monsterbuffs.go`) |
+| 174..177 | a monster's debuffs (`monsterbuffs.go`); a player's damage taken (`applyPlayerTaken`, round 838) |
 
 OPEN: 25/26 (regeneration), 27..32 and 145..150 (status resists), 170/171 (heal received), 187
 (threat, with the hate list), the `defp` cap.

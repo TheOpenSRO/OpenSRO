@@ -181,9 +181,18 @@ static func _scan_for_name_string(data: PackedByteArray, off: int) -> int:
 	return -1
 
 static func _is_plausible_name(b: PackedByteArray) -> bool:
-	if b.size() == 0:
+	# Round 838: a name may carry NUL padding inside its declared length, as
+	# a texture path does (MEASURED: electussimvisual01.bmt's
+	# "electusimvisual01m2" + 8 NULs, 27 bytes); the read stops at the first
+	# NUL (_read_len_prefixed_string). Before, the layer failed this test and
+	# the forward scan skipped it -- its mesh drew untextured.
+	var n := b.size()
+	while n > 0 and b[n - 1] == 0:
+		n -= 1
+	if n == 0:
 		return false
-	for c in b:
+	for i in n:
+		var c := b[i]
 		var is_alnum := (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57)
 		var is_extra := c == 95 or c == 45 or c == 32 or c == 46 or c == 35 # _ - space . #
 		if not (is_alnum or is_extra):

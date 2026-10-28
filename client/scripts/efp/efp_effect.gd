@@ -995,6 +995,15 @@ var follow_bone_full := false
 ## the effect's frame after it (the row's Rotate, FUN_00a4ddc0).
 var follow_bone_turn := false
 var follow_world_turn := false
+## Round 838: a '#' StartBone (placement flags 6). READ, IDecoSkill::
+## FUN_00a4ddc0: with flag 4 set it skips FUN_00a4a680 and the Rotate; it
+## finds the bone on the object (its renderer's +0x44 by the row's bone),
+## turns the OFFSET by the bone's matrix (FUN_00410c30), that point by the
+## object's world matrix (FUN_00854e30), and places the effect there with an
+## identity turn. So the offset is in the bone's own frame and the effect is
+## along the world's axes: the 26 rows that use it are a head attachment's
+## two eyes or horn tips (MEASURED, skilleffect.txt).
+var follow_bone_point := false
 ## The effect's own uniform scale on top of its host's (round 734): an
 ## equipment glow's particle row asks for col 3 / 100 (READ: CRTModParticle
 ## +0xc0, handed each placement to CEFEffect::vslot_010, which sets the
@@ -1015,12 +1024,19 @@ func _skeleton() -> Skeleton3D:
 		return _follow_skel
 	_follow_skel = SkillEffects.skeleton_of(_follow_host)
 	_follow_bone = -1
-	var b := _follow_bone_name.strip_edges()
-	if b.begins_with("@"):
-		b = b.substr(1) # round 785: '@' names the bone, at the world's axes (READ)
-	if _follow_skel != null and b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#"):
+	var b := _bone_name()
+	if _follow_skel != null and b != "" and b.to_lower() != "none" and b != "*":
 		_follow_bone = _follow_skel.find_bone(b)
 	return _follow_skel
+
+## The row's bone name without its '@' (round 785: the bone at the world's
+## axes, READ) or '#' (round 838: the offset in the bone's frame, READ)
+## prefix.
+func _bone_name() -> String:
+	var b := _follow_bone_name.strip_edges()
+	if b.begins_with("@") or b.begins_with("#"):
+		b = b.substr(1)
+	return b
 
 ## The mount the host rides, or null (round 796, `mounts`).
 func _mount() -> Node3D:
@@ -1041,10 +1057,7 @@ func _no_bone() -> bool:
 func _mount_bone_of(mskel: Skeleton3D) -> int:
 	if _mount_skel != mskel:
 		_mount_skel = mskel
-		var b := _follow_bone_name.strip_edges()
-		if b.begins_with("@"):
-			b = b.substr(1)
-		_mount_bone = -1 if b.begins_with("#") else mskel.find_bone(b)
+		_mount_bone = mskel.find_bone(_bone_name())
 	return _mount_bone
 
 ## Places the effect on its host and hands the placement to the
@@ -1086,7 +1099,10 @@ func _place(step_due: bool = false) -> bool:
 		# A bone the rider lacks, on the mount (the same three cases below).
 		var at := _follow_offset
 		var pose := mskel.get_bone_global_pose(_mount_bone)
-		if follow_bone_full:
+		if follow_bone_point:
+			var gm := mskel.global_transform
+			placed = Transform3D(scale_basis(gm.basis), gm * (pose * at))
+		elif follow_bone_full:
 			placed = mskel.global_transform * pose * Transform3D(follow_basis, at)
 		elif follow_bone_turn or follow_world_turn:
 			var g := mskel.global_transform
@@ -1096,7 +1112,12 @@ func _place(step_due: bool = false) -> bool:
 			placed = mskel.global_transform * Transform3D(follow_basis, at + pose.origin)
 	elif skel != null and skel.is_inside_tree():
 		var at := _follow_offset
-		if follow_bone_full and _follow_bone >= 0:
+		if follow_bone_point and _follow_bone >= 0:
+			# Round 838 (READ, see follow_bone_point): the offset through the
+			# bone's matrix, then the body's; the world's axes.
+			var gp := skel.global_transform
+			placed = Transform3D(scale_basis(gp.basis), gp * (skel.get_bone_global_pose(_follow_bone) * at))
+		elif follow_bone_full and _follow_bone >= 0:
 			placed = skel.global_transform * skel.get_bone_global_pose(_follow_bone) * Transform3D(follow_basis, at)
 		elif (follow_bone_turn or follow_world_turn) and _follow_bone >= 0:
 			# Round 785 (READ, see follow_bone_turn): the bone's position plus

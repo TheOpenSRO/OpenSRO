@@ -1029,6 +1029,9 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 	// potionReuseBit. The handler is built once per server (cmd/server), so
 	// this is process-wide there, as the item cooldowns are.
 	potionLocks := newItemCooldownTracker()
+	// Round 838: the skill lookup the world entry restores item skill jobs
+	// through (itemskill.go).
+	noteSkillJobRefs(items)
 	if potions == nil {
 		potions = NewPotionQueue()
 	}
@@ -1154,6 +1157,13 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// TypeID3-2 branch -- the universal and purification pills.
 		if isCurePill(it) {
 			return useCurePill(ctx, sess, fail, inv, hub, potionLocks, characterID, it, held, have, useItemClock())
+		}
+		// The skill items (round 838, itemskill.go): UseByKind cases 1-3, an
+		// item that casts the skill its Desc128_1 names. Last of the kinds, so
+		// an item a path above claims (the archive's own 3/3/13/1 rows) keeps
+		// that path.
+		if isSkillItem(it) {
+			return useSkillItem(ctx, sess, fail, inv, items, hub, characterID, it, held, have)
 		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.
