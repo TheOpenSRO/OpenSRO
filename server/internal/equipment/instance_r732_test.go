@@ -13,7 +13,8 @@ func testWornInstance(t *testing.T, eq Store, inv inventory.Store) {
 	t.Helper()
 	ctx := context.Background()
 	inst := inventory.Instance{Variance: 0x3ff, Durability: 33, OptLevel: 5,
-		MagParams: []uint64{inventory.MagParam(1, 7), inventory.MagParam(16, 100)}, AdvElixir: 2}
+		MagParams: []uint64{inventory.MagParam(1, 7), inventory.MagParam(16, 100)}, AdvElixir: 2,
+		Model: 62515} // round 838: a model switcher's choice travels too
 	if err := inv.AddItemInstance(ctx, 1, 100, 1, inst); err != nil {
 		t.Fatal(err)
 	}

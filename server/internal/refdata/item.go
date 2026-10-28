@@ -456,6 +456,16 @@ type Item struct {
 	PhysAbsorbMin, PhysAbsorbMax float64
 	MagAbsorbMin, MagAbsorbMax   float64
 
+	// OrgCodeName is the row's OrgObjCodeName, itemdata column 4 (round 838),
+	// "" for the table's `xxx`. RefObjCommon_ExtractData (gs:0x6a3090) reads
+	// it as the record's third string into the std::string at ref+0x48 and
+	// clears it when it is "xxx" (0x6a3162..0x6a318c, the stricmp against
+	// 0xae8110). The gender switch tool (3/3/13/8, CGItemExpendable::UseByKind
+	// case 8, gs:0x49c2b0) mutates its target into the row this names: on
+	// armour it is the opposite-gender twin (docs/protocol/item_switchers.md).
+	// "" on an older export.
+	OrgCodeName string
+
 	// The alchemy columns (round 768), which the enchant operations read off
 	// the elixirs, powders and stones and the equipment they work on
 	// (docs/protocol/alchemy.md, "Round 768"). All 0 / empty / false on an

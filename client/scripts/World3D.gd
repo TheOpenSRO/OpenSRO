@@ -2593,7 +2593,7 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 635: a body dressed before the block existed gets its portrait now
 	# (retail's block is created dirty: +0x38c = 1 in its constructor).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
-		_refresh_player_portrait(_player_skeleton, _with_player_avatars(_player_equipped_last), _player_body)
+		_refresh_player_portrait(_player_skeleton, _with_player_avatars(_display_equipped(_player_equipped_last)), _player_body)
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -2779,7 +2779,7 @@ func _try_initialize_pk2_ui() -> void:
 	# the portrait does above (round 695: a QA run's loadout dresses before
 	# the HUD is built, and _refresh_paper_doll returns without panels).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton) and _paper_doll == null:
-		_refresh_paper_doll(_with_player_avatars(_player_equipped_last), _player_body)
+		_refresh_paper_doll(_with_player_avatars(_display_equipped(_player_equipped_last)), _player_body)
 	# QA: rearrange the bag once (OPENSRO_QA_MOVE="from,to") so a render's
 ##   OPENSRO_QA_STORAGE_ITEM=1 (needs --server) unequip the boots into the bag, open the
 ##                          warehouse, the quantity dialog, and deposit 1 of the
@@ -13003,7 +13003,10 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# (CharacterAppearance.AVATAR_KEY_BASE); the body, the paper doll and the
 	# portrait are built from both, and the visual arbitration decides what
 	# shows (READ AVATAR_RESEARCH.md 6.3: one CObjCharacter path for all).
-	equipped = _with_player_avatars(equipped)
+	# Round 838: a worn item with a model switcher's choice is drawn as that
+	# row (_display_equipped); _player_equipped_last keeps the true ids.
+	_player_models_last = _equipment_models()
+	equipped = _with_player_avatars(_display_equipped(equipped))
 	var pluses := _player_pluses()
 	_player_pluses_last = pluses
 	var gender := DEFAULT_GENDER
@@ -13097,6 +13100,33 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 		_body_animation_path(body, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)])
 	_refresh_paper_doll(equipped, body)
 	_refresh_player_portrait(skeleton, equipped, body)
+
+## Round 838 (OURS): the worn slots' model switcher choices, {slot: the row
+## the item is drawn as} (ItemInstance.model, the worn list's models block).
+var _player_models_last: Dictionary = {}
+
+func _equipment_models() -> Dictionary:
+	var out := {}
+	for slot in NetClient.last_equipment_instances:
+		var it: ItemInstance = NetClient.last_equipment_instances[slot]
+		if it != null and it.model > 0:
+			out[int(slot)] = it.model
+	return out
+
+## The worn map as it is drawn: a slot whose item carries a model is drawn as
+## the model's row (the server tells other players the same, displayRef).
+## The row is the item's own _SWITCHnn twin, so its TypeIDs -- the visual
+## slot and the weapon's animation group -- are the item's.
+func _display_equipped(equipped: Dictionary) -> Dictionary:
+	var models := _equipment_models()
+	if models.is_empty():
+		return equipped
+	var out := equipped.duplicate()
+	for slot in models:
+		var it: ItemInstance = NetClient.last_equipment_instances[slot]
+		if out.has(slot) and int(out[slot]) == it.ref_item_id:
+			out[slot] = int(models[slot])
+	return out
 
 ## Builds a fresh dressed character (a second copy, not the one on the
 ## player) into the PaperDoll so the equipment window can show it, the way
@@ -17968,6 +17998,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       (round 791); rbagitem:<id> right-clicks it, the
 #                       item's use (round 838)
 #   gachacard           left click the Magic POP pane's first card (round 838)
+#   worn:<slot>         left click that worn slot's icon (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
@@ -19016,6 +19047,16 @@ func _qa_input_step() -> void:
 			else:
 				_qa_input_report = "%s at %s" % [action, mb2.get_global_rect().get_center()]
 				_qa_push_click(mb2.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"worn":
+			# Round 838 (lane 2): left click the worn slot's icon (the
+			# equipment pane), e.g. a worn target for a switch tool.
+			var icon := _hud_panels.qa_worn_icon(int(arg)) if _hud_panels != null else null
+			if icon == null or not icon.is_visible_in_tree():
+				_qa_input_report = action + " (no worn slot shown)"
+			else:
+				var centre := icon.get_global_rect().get_center()
+				_qa_input_report = "%s at %s" % [action, centre]
+				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
 		"drag":
 			var v := arg.split(",")
 			var from := Vector2(float(v[0]), float(v[1]))
@@ -25805,7 +25846,10 @@ func _on_use_on_requested(src: int, target: int) -> void:
 	var types := _hud_panels.bag_item_types(src) if _hud_panels != null else PackedInt32Array()
 	if _hud_panels != null:
 		UiSounds.expect_use(types)
-	if types.size() >= 4 and types[2] == 13 and types[3] == 16:
+	# The Nasrun extension (3/3/13/16) and, round 838 lane 2, the switch tools
+	# (3/3/13/8, session/switcher.go) carry the target's wire slot (bag index
+	# + 13) as the option byte, as retail's 0x704C its u8.
+	if types.size() >= 4 and types[2] == 13 and (types[3] == 16 or types[3] == 8):
 		print("World3D: bag slot %d used on bag slot %d (wire slot %d)" % [src, target, target + 13])
 		NetClient.use_item_option(NetClient.current_character_name, src, target + 13, 0)
 		return
@@ -35357,7 +35401,8 @@ func _on_equipment_result(items: Array, error: String) -> void:
 	# REDRESS THE CHARACTER. This list is the server's word on what is worn, and
 	# until now only a text widget listened to it -- the 3D body kept whatever
 	# it was built with at login, so taking a sword off left it in the hand.
-	if _player_skeleton != null and (equipped != _player_equipped_last or _player_pluses() != _player_pluses_last):
+	if _player_skeleton != null and (equipped != _player_equipped_last or _player_pluses() != _player_pluses_last \
+			or _equipment_models() != _player_models_last):
 		_apply_player_equipment_visual(equipped)
 
 func _on_unequip_pressed(slot: int) -> void:

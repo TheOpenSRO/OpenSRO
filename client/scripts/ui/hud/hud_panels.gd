@@ -2741,6 +2741,7 @@ func _end_repair_mode(why: String) -> void:
 func repair_mode() -> bool:
 	return _repair_mode
 
+
 ## Round 829: a slot clicked under the hammer (CIFSlotWithHelp::vslot_029,
 ## branch 0x6811e9, READ): a worn or bag slot holding an item; CanRepair
 ## (column 22) 0 does nothing; an item that cannot be repaired
@@ -5545,13 +5546,14 @@ func _use_on_target(target: int) -> void:
 	_use_on_confirm(src, target)
 
 ## Message box 0x1f, then the sender's checks (use_on_check) and the send.
-func _use_on_confirm(src: int, target: int) -> void:
+## `worn`: the target is a worn slot (lane 2's 3/3/13/8 tools only).
+func _use_on_confirm(src: int, target: int, worn: bool = false) -> void:
 	var title := _builder.resolve_text("UIIT_STT_CONFIRM_BOX") if _builder != null else "Confirm"
 	var body := _builder.resolve_text("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE") if _builder != null else ""
 	if body == "" or body == "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE":
 		body = "Will you use the selected item?"
 	_open_simple_confirm(title, body, func() -> void:
-		var why := use_on_check(src, target)
+		var why := use_on_check(src, target, worn)
 		if why != "":
 			print("HudPanels: use-on refused locally: %s" % why)
 			var line := _builder.resolve_text(why) if _builder != null else why
@@ -5562,11 +5564,16 @@ func _use_on_confirm(src: int, target: int) -> void:
 
 ## The sender's checks for the item in `src` used on `target`: "" to send, or
 ## the text key it prints.
-func use_on_check(src: int, target: int) -> String:
+func use_on_check(src: int, target: int, worn: bool = false) -> String:
 	var types := bag_item_types(src)
 	var ttypes := bag_item_types(target)
 	if types.size() < 4:
 		return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+	# Round 838 (lane 2): the switch tools, 3/3/13/8 (SendItem_HandleUseItem
+	# case 8, ItemTargetPick.check): a worn target 0x1882, retail's gender
+	# tool on a bag item that is not armour 0x1884.
+	if ItemTargetPick.is_switch_tool(types):
+		return ItemTargetPick.refusal_key(item_code_for_id(_bag_item_id_at_slot(src)), worn, ttypes)
 	var inst := _item_instance("bag", target) as ItemInstance
 	var is_pet_item := ttypes.size() >= 4 and ttypes[0] == 3 and ttypes[1] == 2 and ttypes[2] == 1
 	var pet_kind := 0
@@ -6287,7 +6294,7 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		"player": _tip_player(),
 		"instance": instance,
 		"price": price,
-		"description": _item_description(item),
+		"description": _item_description(_described_row(item, where, slot)),
 	}
 	# Round 789: a devil's spirit's ability lines (AvatarTables, READ
 	# c:0x67b460) at its plus.
@@ -6395,6 +6402,20 @@ func _tip_text(key: String, fallback: String) -> String:
 	if text == "" and _type_names != null:
 		text = String(_type_names.equip_texts.get(key, ""))
 	return text if text != "" else fallback
+
+## Round 838 (OURS): the row whose description an owned item's tooltip shows
+## -- its model's row when a model switcher gave it one (the archive's
+## _SWITCHnn twin, whose own description reads "Model Switched Item / Model:
+## Degree N / Glow: Default"), else the item's own.
+func _described_row(item: ItemTableReader.Item, where: String, slot: int) -> ItemTableReader.Item:
+	if where == "store" or where == "":
+		return item
+	var inst := _item_instance(where, slot)
+	if inst == null or not ("model" in inst) or int(inst.get("model")) <= 0 \
+			or int(inst.get("ref_item_id")) != item.id:
+		return item
+	var row: ItemTableReader.Item = _items.get(int(inst.get("model")))
+	return row if row != null else item
 
 ## Column 6's description through the object text table (0x66f850 prints
 ## it when it resolves), or "".
@@ -7351,6 +7372,12 @@ func _bag_cell_of_item(item_id: int) -> Control:
 		if _bag_item_id_at_slot(_bag_page * BAG_PAGE_SLOTS + i) == item_id:
 			return grid.get_child(i) as Control
 	return null
+
+## Round 838 (QA_INPUT's worn): the worn slot's icon, or null.
+func qa_worn_icon(slot: int) -> Control:
+	var window: HudWindow = _windows.get("inventory")
+	var holder := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + slot)) as Control if window != null else null
+	return holder.get_node_or_null("ItemIcon") as Control if holder != null else null
 
 ## Round 824 (QA): the bag slot holding an item with code name `code`, or -1.
 func bag_slot_of_code(code: String) -> int:
@@ -8661,6 +8688,17 @@ func _fill_equipment_slots(items: Array) -> void:
 					if _repair_mode and ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
 							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot"):
 						_repair_click("worn", int(icon.get_meta("worn_slot")))
+						return
+					# Round 838 (lane 2): a worn target during a 3/3/13/8 tool's
+					# use-on mode opens the box, whose OK refuses it with 0x1882
+					# (ItemTargetPick; READ c:0x680fa0 takes worn slots, 0x796a85
+					# case 8 refuses them).
+					if _use_on_slot >= 0 and ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
+							and not (ev as InputEventMouseButton).pressed and icon.texture != null and icon.has_meta("worn_slot") \
+							and ItemTargetPick.is_switch_tool(bag_item_types(_use_on_slot)):
+						var src := _use_on_slot
+						end_use_on("a worn target clicked")
+						_use_on_confirm(src, int(icon.get_meta("worn_slot")), true)
 						return
 					if _is_pick_click_on(ev, icon) and icon.texture != null and icon.has_meta("worn_slot"):
 						pick_up_icon({"kind": "worn", "slot": int(icon.get_meta("worn_slot")),

@@ -599,6 +599,45 @@ func TestCodeNameReadsColumn2(t *testing.T) {
 	}
 }
 
+// OrgObjCodeName is itemdata column 4 (round 838): RefObjCommon_ExtractData's
+// third string read, into ref+0x48, cleared when it reads "xxx" in any case
+// (gs:0x6a3162..0x6a318c). Columns 3 and 5 hold other strings, so a read one
+// column off shows; the value comes back through the importer.
+func TestOrgCodeNameReadsColumn4(t *testing.T) {
+	for _, tc := range []struct {
+		name, c4, want string
+	}{
+		{"a gender twin", "ITEM_CH_W_HEAVY_01_BA_A_DEF", "ITEM_CH_W_HEAVY_01_BA_A_DEF"},
+		{"none", "xxx", ""},
+		{"none, upper case", "XXX", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := make([]string, 200)
+			for i := range cols {
+				cols[i] = "0"
+			}
+			cols[0], cols[1], cols[2], cols[3], cols[4], cols[5] = "1", "3637", "ITEM_CH_M_HEAVY_01_BA_A_DEF", "OBJNAME_PROBE", tc.c4, "SN_PROBE"
+			rec, ok := itemRecord(cols)
+			if !ok {
+				t.Fatal("itemRecord rejected a valid row")
+			}
+			if len(rec) <= 96 {
+				t.Fatalf("record has %d fields, want OrgCodeName at index 96", len(rec))
+			}
+			if got := rec[96]; got != tc.want {
+				t.Errorf("record[96] = %q, want %q", got, tc.want)
+			}
+			items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if items[0].OrgCodeName != tc.want {
+				t.Errorf("OrgCodeName = %q, want %q", items[0].OrgCodeName, tc.want)
+			}
+		})
+	}
+}
+
 // CanDrop is itemdata column 20 (round 494), not 19. RefObjCommon_ExtractData
 // (0x006a3090) consumes column 18 without a load (0x6a33f0/0x6a33f6), stores
 // column 19 at esp+0x12 and tests it only `& 0x80`/`& 0x40` (flags bits 12

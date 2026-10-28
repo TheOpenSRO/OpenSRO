@@ -249,7 +249,7 @@ func equippedItems(ctx context.Context, eq equipment.Store, characterID int64) [
 	}
 	var out []EquippedSnapshot
 	for _, it := range items {
-		out = append(out, EquippedSnapshot{Slot: int(it.Slot), ItemID: it.ItemID, Plus: it.EffectivePlus()})
+		out = append(out, EquippedSnapshot{Slot: int(it.Slot), ItemID: it.ItemID, Plus: it.EffectivePlus(), Model: it.Model})
 	}
 	return out
 }

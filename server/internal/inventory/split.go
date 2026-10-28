@@ -92,9 +92,10 @@ func (s *SQLStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 	var opt, adv int
 	var params []byte
 	var creator string
+	var model int64
 	err = tx.QueryRowContext(ctx,
-		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
-		characterID, from).Scan(&itemID, &qty, &variance, &durability, &opt, &params, &adv, &creator)
+		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator, model_item_id FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
+		characterID, from).Scan(&itemID, &qty, &variance, &durability, &opt, &params, &adv, &creator, &model)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
 	}
@@ -118,8 +119,8 @@ func (s *SQLStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 		return fmt.Errorf("inventory: decrementing slot %d: %w", from, err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`),
-		characterID, to, itemID, count, variance, durability, opt, params, adv, creator); err != nil {
+		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator, model_item_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`),
+		characterID, to, itemID, count, variance, durability, opt, params, adv, creator, model); err != nil {
 		return fmt.Errorf("inventory: filling slot %d: %w", to, err)
 	}
 	return tx.Commit()

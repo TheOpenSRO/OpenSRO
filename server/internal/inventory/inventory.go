@@ -216,6 +216,8 @@ type Slot struct {
 	AdvElixir uint8
 	// Creator is the instance's name string (round 801; see Instance).
 	Creator string
+	// Model is the instance's drawn model (round 838; see Instance).
+	Model int64
 	// serial is MemStore's copy of a stack's identity (the SQL store keeps
 	// it in its `serial` column): set when a whole stack moved in with one
 	// (Instance.Serial), handed back by TakeItem.
@@ -249,6 +251,12 @@ type Instance struct {
 	// good, READ). Empty for every other item. Goods with different creators
 	// never merge (Equal compares it).
 	Creator string
+	// Model (round 838, OURS) is the ref id of the archive row whose model
+	// this instance is drawn with, 0 for its own: a model switcher's choice
+	// (session/switcher.go). Visual only -- every stat, the name and the
+	// price stay the item's own. The row is one of the archive's _SWITCHnn
+	// twins of this item's own row (docs/protocol/item_switchers.md).
+	Model int64
 	// Serial is the stack's identity (round 743; the SQL store's `serial`
 	// column), set only by TakeItem when a WHOLE stack left its slot. A store
 	// that places it as a new row keeps it; zero means a new serial. It is
@@ -271,6 +279,18 @@ type Taker interface {
 	TakeItem(ctx context.Context, owner int64, slot, quantity int, wantItem int64) (itemID int64, inst Instance, err error)
 }
 
+// Mutator is a Store that can turn the item in one slot into another item
+// in place, keeping the row -- its slot and its serial -- and writing inst as
+// its instance (round 838). It is retail's CGObjPC::MutateItemAt (gs:0x4efb60,
+// IGObj slot 141), which the gender switch tool reaches: the item object
+// keeps its ID64 and only its reference changes (`UPDATE _ITEMS SET
+// REFITEMID = %d WHERE ID64 = %I64d`). The slot must hold wantItem
+// (ErrItemChanged otherwise; ErrSlotEmpty when it is empty). Implemented by
+// MemStore and SQLStore.
+type Mutator interface {
+	MutateItem(ctx context.Context, owner int64, slot int, wantItem, newItem int64, inst Instance) error
+}
+
 // Take is TakeItem on a store that has it, and RemoveItem answering seen --
 // the instance the caller read -- on one that does not.
 func Take(ctx context.Context, st Store, owner int64, slot, quantity int, wantItem int64, seen Instance) (Instance, error) {
@@ -288,13 +308,13 @@ const MaxMagParams = 12
 // Instance returns the slot's per-instance fields.
 func (s Slot) Instance() Instance {
 	return Instance{Variance: s.Variance, Durability: s.Durability, OptLevel: s.OptLevel,
-		MagParams: cloneParams(s.MagParams), AdvElixir: s.AdvElixir, Creator: s.Creator}
+		MagParams: cloneParams(s.MagParams), AdvElixir: s.AdvElixir, Creator: s.Creator, Model: s.Model}
 }
 
 // Equal reports whether two instances are the same in every field.
 func (i Instance) Equal(o Instance) bool {
 	if i.Variance != o.Variance || i.Durability != o.Durability || i.OptLevel != o.OptLevel ||
-		i.AdvElixir != o.AdvElixir || i.Creator != o.Creator || len(i.MagParams) != len(o.MagParams) {
+		i.AdvElixir != o.AdvElixir || i.Creator != o.Creator || i.Model != o.Model || len(i.MagParams) != len(o.MagParams) {
 		return false
 	}
 	for k := range i.MagParams {
@@ -309,7 +329,7 @@ func (i Instance) Equal(o Instance) bool {
 func (s *Slot) SetInstance(inst Instance) {
 	s.Variance, s.Durability = inst.Variance, inst.Durability
 	s.OptLevel, s.MagParams, s.AdvElixir = inst.OptLevel, cloneParams(inst.MagParams), inst.AdvElixir
-	s.Creator = inst.Creator
+	s.Creator, s.Model = inst.Creator, inst.Model
 }
 
 func cloneParams(p []uint64) []uint64 {

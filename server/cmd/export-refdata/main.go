@@ -132,6 +132,10 @@ const (
 	fPhysAbsorbMax = 72
 	fMagAbsorbMin  = 79
 	fMagAbsorbMax  = 80
+	// fOrgCodeName is OrgObjCodeName (round 838): RefObjCommon_ExtractData's
+	// third string, into ref+0x48, cleared when it reads "xxx" (gs:0x6a3162..
+	// 0x6a318c) -- deserializer field 5, text column 4 (refdata.Item.OrgCodeName).
+	fOrgCodeName = 4
 	// The alchemy columns (round 768; refdata.Item.CashItem): _RefObjCommon's
 	// CashItem (column 7, the TypeID word's bit 0 IsCashItem tests), the
 	// Param block's Param1/Param5 (118/126) and Desc128_1/Desc128_4
@@ -1021,7 +1025,20 @@ func itemRecord(cols []string) ([]string, bool) {
 		num(fPhysAbsorbMax), // 93 PhysAbsorbMax (col 72)
 		num(fMagAbsorbMin),  // 94 MagAbsorbMin (col 79)
 		num(fMagAbsorbMax),  // 95 MagAbsorbMax (col 80)
+		// 96: OrgCodeName, itemdata column 4 (round 838, see fOrgCodeName),
+		// "" for the table's `xxx`, as the server's parser stores it.
+		orgName(str(fOrgCodeName)), // 96 OrgObjCodeName (col 4)
 	}, true
+}
+
+// orgName is an OrgObjCodeName cell as RefObjCommon_ExtractData keeps it:
+// "xxx" (any case: `__stricmp`, gs:0x6a3179) is the table's "none" and is
+// stored empty.
+func orgName(s string) string {
+	if strings.EqualFold(strings.TrimSpace(s), "xxx") {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }
 
 // nonZero emits a flag column the way RefObjCommon_ExtractData (0x006a3090)

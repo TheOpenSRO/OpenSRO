@@ -1167,6 +1167,12 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if isNasrunExtension(it) {
 			return useNasrunExtension(ctx, sess, inv, items, characterID, held, have, it, req.Option)
 		}
+		// Round 838 (switcher.go): a tool used on another item, 3/3/13/8
+		// (UseByKind case 8 and the private server's own), with the target's
+		// wire slot in the Option byte.
+		if isSwitchTool(it) {
+			return useSwitchTool(ctx, sess, inv, items, characterID, held, have, it, req.Option)
+		}
 		// Round 824 (crest.go): a guild or union crest's register or delete.
 		if _, _, ok := crestItem(it); ok {
 			return useCrestItem(ctx, sess, inv, characterID, it, held, have, req)

@@ -146,6 +146,10 @@ var itemCSVColumns = []string{
 	// itemdata columns 71/72 and 79/80 (see Item.PhysAbsorbMin). A strict
 	// suffix; an older export reads 0, and a worn accessory absorbs nothing.
 	"PhysAbsorbMin", "PhysAbsorbMax", "MagAbsorbMin", "MagAbsorbMax",
+	// Appended later still (round 838): OrgCodeName, itemdata column 4 (see
+	// Item.OrgCodeName). A strict suffix; an older export reads "", and the
+	// gender switch tool finds no twin.
+	"OrgCodeName",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -464,6 +468,9 @@ func parseItemRow(f []string) (Item, error) {
 	if len(f) > 95 {
 		it.PhysAbsorbMin, it.PhysAbsorbMax = parseFloat(f[92]), parseFloat(f[93])
 		it.MagAbsorbMin, it.MagAbsorbMax = parseFloat(f[94]), parseFloat(f[95])
+	}
+	if len(f) > 96 {
+		it.OrgCodeName = strings.TrimSpace(f[96])
 	}
 
 	if err != nil {

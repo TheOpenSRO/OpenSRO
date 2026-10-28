@@ -47,6 +47,15 @@ import (
 // after everything those lists already carried, where an older client has
 // stopped reading. The block lists only equipment (TypeID 3/1).
 //
+// The MODELS block (round 838, OURS) follows the entries: u16 count, then
+// per entry a u32 container slot and the u32 ref id of the row whose model
+// the item there is drawn with (inventory.Instance.Model, a model switcher's
+// choice). It lists only the entries carrying one, and is written only when
+// some entry does, so every other block is byte for byte what it was; it is
+// the LAST field of every message the block ends (the bag, warehouse and worn
+// lists, OpItemInfoMore, the test shop's gear), so an older decoder stops
+// before it.
+//
 // Values that are OURS, the layout being READ: the rent word is 0 (OpenSRO
 // has no rentals); a time-limited item's period word is its expiry's (round
 // 789, avatar.PeriodWord); the advanced elixir's nSlot,
@@ -65,6 +74,9 @@ type ItemInfo struct {
 	// equipment (round 795, retailItemTail): a COS summon item's state and
 	// pet, an expendable's u16 count. nil writes the equipment form.
 	Tail []byte
+	// Model is the drawn model's ref id (round 838, OURS; the models block),
+	// 0 for the item's own. Not part of the record.
+	Model uint32
 }
 
 // Binding-option block types (READ, gs:0x846280, c:0x8bb070).
@@ -185,6 +197,9 @@ func itemInfoEntrySize(ii ItemInfo) int {
 	return size
 }
 
+// modelEntrySize is one models-block entry: the u32 slot and the u32 model.
+const modelEntrySize = 8
+
 // fitItemInfos keeps the entries that fit one frame after `used` bytes
 // (proto.MaxPayload; the gateway refuses a larger send whole). The worst
 // warehouse -- 210 slots, every one equipment with 12 options and an
@@ -194,8 +209,16 @@ func itemInfoEntrySize(ii ItemInfo) int {
 // the list itself.
 func fitItemInfos(used int, infos []ItemInfo) []ItemInfo {
 	used += 2
+	models := 0
 	for i, ii := range infos {
 		used += itemInfoEntrySize(ii)
+		if ii.Model != 0 {
+			if models == 0 {
+				used += 2
+			}
+			models++
+			used += modelEntrySize
+		}
 		if used > proto.MaxPayload {
 			return infos[:i]
 		}
@@ -207,9 +230,23 @@ func fitItemInfos(used int, infos []ItemInfo) []ItemInfo {
 // u32 slot and the record.
 func encodeItemInfoBlock(out []byte, infos []ItemInfo) []byte {
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(infos)))
+	models := 0
 	for _, ii := range infos {
 		out = binary.LittleEndian.AppendUint32(out, uint32(ii.Slot))
 		out = AppendItemRecord(out, ii)
+		if ii.Model != 0 {
+			models++
+		}
+	}
+	if models == 0 {
+		return out
+	}
+	out = binary.LittleEndian.AppendUint16(out, uint16(models))
+	for _, ii := range infos {
+		if ii.Model != 0 {
+			out = binary.LittleEndian.AppendUint32(out, uint32(ii.Slot))
+			out = binary.LittleEndian.AppendUint32(out, ii.Model)
+		}
 	}
 	return out
 }
@@ -235,6 +272,24 @@ func decodeItemInfoBlock(rest []byte) ([]ItemInfo, error) {
 		ii.Slot = slot
 		out = append(out, ii)
 		rest = r
+	}
+	// The models block (round 838), when the sender wrote one.
+	if len(rest) < 2 {
+		return out, nil
+	}
+	m := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	if len(rest) < modelEntrySize*m {
+		return out, errors.New("item info block: truncated models")
+	}
+	for k := 0; k < m; k++ {
+		slot := int(binary.LittleEndian.Uint32(rest[modelEntrySize*k:]))
+		model := binary.LittleEndian.Uint32(rest[modelEntrySize*k+4:])
+		for i := range out {
+			if out[i].Slot == slot {
+				out[i].Model = model
+			}
+		}
 	}
 	return out, nil
 }
@@ -273,7 +328,8 @@ func itemInfoFor(ctx context.Context, items ItemLookup, slot int, itemID int64, 
 		// where retail keeps it, the instance's Data word -- OpenSRO's
 		// Durability (internal/avatar) -- 0 or -1 until it is awakened.
 		return ItemInfo{Slot: slot, RefItemID: uint32(itemID), OptLevel: inst.OptLevel, Variance: inst.Variance,
-			Durability: avatar.PeriodWord(inst.Durability, time.Now()), MagParams: inst.MagParams, AdvElixir: inst.AdvElixir}, true
+			Durability: avatar.PeriodWord(inst.Durability, time.Now()), MagParams: inst.MagParams, AdvElixir: inst.AdvElixir,
+			Model: uint32(inst.Model)}, true
 	} else if dur == durability.Untracked {
 		dur = 0
 		if item.DurabilityMax > 0 {
@@ -284,7 +340,7 @@ func itemInfoFor(ctx context.Context, items ItemLookup, slot int, itemID int64, 
 		dur = 0
 	}
 	return ItemInfo{Slot: slot, RefItemID: uint32(itemID), OptLevel: inst.OptLevel, Variance: inst.Variance,
-		Durability: uint32(dur), MagParams: inst.MagParams, AdvElixir: inst.AdvElixir}, true
+		Durability: uint32(dur), MagParams: inst.MagParams, AdvElixir: inst.AdvElixir, Model: uint32(inst.Model)}, true
 }
 
 // slotItemInfos is the block for a bag or a warehouse.
