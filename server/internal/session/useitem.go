@@ -65,14 +65,21 @@ type UseItemRequest struct {
 	// Pixels are a crest register's 256 palette indices (round 824,
 	// UseOptionCrest).
 	Pixels []byte
+	// Scale is a skin change's scale byte (round 838, UseOptionSkinChange,
+	// after the u32 RefObjID in Target).
+	Scale byte
 }
 
 func (r *UseItemRequest) Encode() []byte {
 	out := append(encodeStrings(r.CharacterName), encodeInt64(int64(r.InventorySlot))...)
 	if r.Option != 0 {
 		out = append(out, r.Option)
-		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget {
+		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget || r.Option == ReverseOptionParty ||
+			r.Option == ReverseOptionSaved || r.Option == UseOptionSkinChange {
 			out = binary.LittleEndian.AppendUint32(out, r.Target)
+		}
+		if r.Option == UseOptionSkinChange {
+			out = append(out, r.Scale)
 		}
 		if r.Option == UseOptionCrest {
 			out = append(out, r.Pixels...)
@@ -97,6 +104,9 @@ func DecodeUseItemRequest(data []byte) (*UseItemRequest, error) {
 			req.Pixels = append([]byte(nil), rest[1:]...)
 		} else if len(rest) >= 5 {
 			req.Target = binary.LittleEndian.Uint32(rest[1:5])
+			if req.Option == UseOptionSkinChange && len(rest) >= 6 {
+				req.Scale = rest[5]
+			}
 		}
 	}
 	return req, nil
@@ -1040,6 +1050,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if p.Opcode == OpScrollCancel && scrolls != nil {
 			return scrolls.cancelRequest(sess)
 		}
+		// Round 838 (scroll838.go): the special reverse return scroll's saved
+		// locations.
+		if p.Opcode == OpReverseSaved && scrolls != nil {
+			return scrolls.savedRequest(ctx, sess, inv, items, p)
+		}
 		if p.Opcode != OpUseItem {
 			return nil
 		}
@@ -1148,15 +1163,29 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			username, _ := AuthenticatedUsername(sess)
 			return useCompositeScroll(ctx, sess, fail, inv, items, keeper, zerk, hub, gate.Allows(username), characterID, it, held, have)
 		}
+		// Round 838 (stalldeco.go): a stall decoration, DoJob's TypeID3 3
+		// case 4.
+		if isStallDecoration(it) {
+			return useStallDecoration(ctx, sess, chars, inv, characterID, it, held, have)
+		}
 		// The return scroll and the reverse return scroll (round 778,
 		// scroll.go): DoJob's TypeID3 3 cases 1 and 3.
 		if scrolls != nil && (IsReturnScroll(it) || IsReverseReturnScroll(it)) {
 			return scrolls.use(ctx, sess, inv, characterID, it, held, have, req)
 		}
+		// The skin change scroll (round 838, skinchange.go): UseByKind case 9.
+		if scrolls != nil && isSkinChangeScroll(it) {
+			return scrolls.skinChange(ctx, sess, inv, characterID, it, held, have, req)
+		}
 		// The cure pills (round 786, curepill.go): DoJob's case 2, slot 308's
 		// TypeID3-2 branch -- the universal and purification pills.
 		if isCurePill(it) {
 			return useCurePill(ctx, sess, fail, inv, hub, potionLocks, characterID, it, held, have, useItemClock())
+		}
+		// Round 838 (repair.go): the repair hammer, UseByKind case 7 -- every
+		// worn and carried item mended for free.
+		if isRepairHammer(it) {
+			return useRepairHammer(ctx, sess, useItemEquipment, inv, items, characterID, it, held, have)
 		}
 		// The skill items (round 838, itemskill.go): UseByKind cases 1-3, an
 		// item that casts the skill its Desc128_1 names. Last of the kinds, so
@@ -1332,7 +1361,8 @@ var bagExpansionCeiling = min(inventory.MaxSlotsDefault-equipment.MaxEquipSlots,
 //
 //   - The warehouse (ITEM_MALL_WAREHOUSE_ADDITION, +30) grows the ACCOUNT's
 //     warehouse through storage.Service.Expand, refused with 0x18fe once the
-//     size would pass 210. The size is checked first so a refusal keeps the
+//     size would pass 210 -- and, from round 838, storage.AdditionCeiling:
+//     two uses per account, as the item's description says. The size is checked first so a refusal keeps the
 //     item untouched; the item is then taken and the size grown atomically,
 //     and a refusal there (a second use racing this one) gives it back.
 //   - The bag (ITEM_MALL_INVENTORY_ADDITION, +32) runs the engine's kind-0
@@ -1388,7 +1418,7 @@ func useExpansion(ctx context.Context, sess *gateway.Session, fail func(string) 
 	if err != nil {
 		return fail("lookup failed")
 	}
-	if cur+slots > storage.MaxCapacity {
+	if cur+slots > storage.AdditionCeiling(slots) {
 		return fail(errStorageExpansionRefused)
 	}
 	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {

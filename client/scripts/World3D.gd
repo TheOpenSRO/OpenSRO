@@ -2676,6 +2676,11 @@ func _try_initialize_pk2_ui() -> void:
 			var line := ArrivalGuard.error_line(result.error, _ui_text_table)
 			if result.error.begins_with("UIIT_"):
 				line = _resolve_any_text(result.error, result.error)
+			# Round 838: 0x300e, no ammunition in slot 7 -- the original's
+			# line by the player's race (c:0x7b98ce: UIIT_SKILL_USE_FAIL_
+			# RUNOUT_AMMO / _VOLT), in the archive's words when it has them.
+			if result.error in AMMO_REFUSALS:
+				line = _resolve_any_text(String(AMMO_REFUSALS[result.error]), result.error)
 			_log_system(line)
 			if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
@@ -2999,8 +3004,11 @@ func _try_initialize_pk2_ui() -> void:
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_hud_panels.cos_item_requested.connect(_use_cos_item)
+	_hud_panels.skin_change_requested.connect(_on_skin_change_requested)
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
+	# Round 838: the special scroll's lists name places by their zone.
+	_hud_panels.region_namer = _zone_name_for_region
 	# The return scrolls' casting bar's cancel (round 779): 0x705B.
 	_hud_panels.cast_cancel_requested.connect(_on_cast_cancel_requested)
 	_setup_console_and_help()
@@ -7479,6 +7487,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var dead_at_arrival := _player_dead
 	var keep_server_point := arrival_keeps_server_point(teleport_arrival, requested, dead_at_arrival)
 	if result != null and result.ok:
+		# Round 838: an accepted skin change's body goes on with the warp.
+		_apply_skin_pending()
 		# Round 795: the COS in view start over (the server sends its own
 		# again with their 0x30C8; the mount is found again by its uid).
 		_cos_clear()
@@ -10924,6 +10934,7 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 		return {}
 	var model: String = _npc_models.get(rec.ref_id, "")
 	if model == "":
+		print("World3D: NPC ref=%d uid=%d not placed: no model in the NPC table" % [rec.ref_id, rec.uid])
 		return {}
 	var archive := _open_pk2_if_set()
 	if archive == null:
@@ -10933,8 +10944,11 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	# assembly and just copy a node (sharing its mesh/texture resources).
 	var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
 	if template == null:
-		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
+		# Round 838: a skinned object resource is an NPC body too (the Magic
+		# POP machine's type-3 .bsr; SkinnedBsrAssembler's skinned_object).
+		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true, false, 0, true)
 		if template == null:
+			print("World3D: NPC ref=%d uid=%d not placed: %s did not assemble" % [rec.ref_id, rec.uid, model])
 			return {}
 		_npc_model_cache[model] = template
 	var skeleton := template.skeleton.duplicate() as Skeleton3D
@@ -13378,10 +13392,20 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.bag_item_types(int(item["slot"]))):
 			_hud_panels.open_reverse_return_box(int(item["slot"]))
 			return
+		# Round 838: and the skin change scroll its window.
+		if _hud_panels != null and HudPanels.is_skin_change_item(_hud_panels.bag_item_types(int(item["slot"]))):
+			_on_skin_change_requested(int(item["slot"]))
+			return
 		# Round 805: a pet's potion, food or cure names the current COS, as
 		# the bag's right-click does.
 		if _hud_panels != null and HudPanels.is_cos_target_item(_hud_panels.bag_item_types(int(item["slot"]))):
 			_use_cos_item(int(item["slot"]))
+			return
+		# Round 838: the repair hammer asks first, as the bag's right-click
+		# does (INFERRED for the quick slot: its path to 0x676570 was not
+		# traced, as round 778's reverse scroll above).
+		if _hud_panels != null and HudPanels.is_repair_hammer(_hud_panels.bag_item_types(int(item["slot"]))):
+			_hud_panels.open_hammer_confirm(int(item["slot"]))
 			return
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
@@ -17757,11 +17781,14 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   node:<name>         left click the centre of the first visible Control of
 #                       that name under the UI (find_child pattern)
 #   bagitem:<id>        left click the shown bag cell holding that item id
-#                       (round 791)
-#   rbagitem:<id>       right click it: the item's use (round 838)
+#                       (round 791); rbagitem:<id> right-clicks it, the
+#                       item's use (round 838)
+#   gachacard           left click the Magic POP pane's first card (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
+#   hovernode:<name>    the same over the first visible Control of that name
+#                       (round 838)
 #   census              print every visible focusable Control that is not a
 #                       button (text lines, lists, spin boxes) and its rect
 #   talk                open the NPC talk box (as a click on an NPC does)
@@ -17873,6 +17900,31 @@ func _qa_reequip_step() -> void:
 				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, s.slot_index)
 				return
 		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
+
+## OPENSRO_QA_UNEQUIP="<tick>:<slot>,<slot>..;.." (round 838; needs a server):
+## at each tick take those worn slots off through the real unequip message
+## (NetClient.unequip, the equipment window's own), one a tick from that tick
+## on -- the skin change's live run takes the armour off before a change of
+## sex. QA only; never set in real play.
+var _qa_unequip_spec := OS.get_environment("OPENSRO_QA_UNEQUIP")
+
+func _qa_unequip_step() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	for part in _qa_unequip_spec.split(";", false):
+		var bits := part.split(":", false)
+		if bits.size() != 2 or not bits[0].is_valid_int():
+			continue
+		var slots := bits[1].split(",", false)
+		var i := _qa_tick - int(bits[0])
+		if i < 0 or i >= slots.size():
+			continue
+		var slot := int(slots[i])
+		if int(_player_equipped_last.get(slot, 0)) <= 0:
+			continue
+		print("QA UNEQUIP: tick %d taking off slot %d (item %d)" % [_qa_tick, slot, int(_player_equipped_last.get(slot, 0))])
+		_awaiting_equip_ack = true
+		NetClient.unequip(NetClient.current_character_name, slot)
 
 ## OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,.." (round 789 lane E; needs a
 ## server; QA only): `show` opens the inventory in its avatar view over the
@@ -18526,6 +18578,23 @@ func _qa_pmi_step() -> void:
 ## Where KeyInput.dispatched stood when the current action was pushed.
 var _qa_input_keymap_mark := 0
 
+## OPENSRO_QA_STALL_BOOTH's step (round 838): the booth StallBooth chooses for
+## `decoration` and `race`, at the player's feet, facing as the player does.
+var _qa_booth: Node3D = null
+
+func _qa_stall_booth(decoration: int, race: int) -> void:
+	if is_instance_valid(_qa_booth):
+		_qa_booth.queue_free()
+	var path := StallBooth.model_path(_item_rows.get(decoration), race)
+	_qa_booth = StallBooth.build(_data_pk2, path)
+	print("QA STALL BOOTH: decoration %d race %d -> %s (%s)" % [decoration, race, path,
+		"built" if _qa_booth != null else "not found"])
+	if _qa_booth == null or player == null:
+		return
+	add_child(_qa_booth)
+	_qa_booth.global_position = player.global_position
+	_qa_booth.rotation.y = player.rotation.y
+
 func _qa_input_step() -> void:
 	var spec := OS.get_environment("OPENSRO_QA_INPUT")
 	if spec == "":
@@ -18581,26 +18650,27 @@ func _qa_input_step() -> void:
 				var centre := node.get_global_rect().get_center()
 				_qa_input_report = "%s at %s (%s)" % [action, centre, node.get_path()]
 				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
-		"bagitem":
+		"bagitem", "rbagitem":
 			# Round 791: left click the bag cell holding that item id (the
-			# shown page), as a player picks an item up.
+			# shown page), as a player picks an item up; round 838: `rbagitem`
+			# right-clicks it, as a player uses it.
 			var cell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
 			if cell == null:
 				_qa_input_report = action + " (not on the shown bag page)"
 			else:
 				var centre := cell.get_global_rect().get_center()
 				_qa_input_report = "%s at %s" % [action, centre]
-				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
-		"rbagitem":
-			# Round 838: right click the bag cell holding that item id (the
-			# shown page), as a player uses an item.
-			var rcell := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
-			if rcell == null:
-				_qa_input_report = action + " (not on the shown bag page)"
+				_qa_push_click(centre, MOUSE_BUTTON_RIGHT if kind == "rbagitem" else MOUSE_BUTTON_LEFT)
+		"gachacard":
+			# Round 838: left click the Magic POP window's inventory cell holding
+			# the first Magic POP card (GachaWindow.card_cell).
+			var gcell := _gacha_window.card_cell() if _gacha_window != null and _gacha_window.visible else null
+			if gcell == null:
+				_qa_input_report = action + " (no card in the Magic POP pane)"
 			else:
-				var rcentre := rcell.get_global_rect().get_center()
-				_qa_input_report = "%s at %s" % [action, rcentre]
-				_qa_push_click(rcentre, MOUSE_BUTTON_RIGHT)
+				var gc := gcell.get_global_rect().get_center()
+				_qa_input_report = "%s at %s" % [action, gc]
+				_qa_push_click(gc, MOUSE_BUTTON_LEFT)
 		"drag":
 			var v := arg.split(",")
 			var from := Vector2(float(v[0]), float(v[1]))
@@ -18613,6 +18683,18 @@ func _qa_input_step() -> void:
 				motion.button_mask = MOUSE_BUTTON_MASK_LEFT
 				get_viewport().push_input(motion)
 			_qa_push_mouse(to, MOUSE_BUTTON_LEFT, false)
+		"hovernode":
+			# Round 838: move the mouse to the centre of the first visible
+			# Control of that name (a worn slot's tooltip).
+			var hn := _qa_find_visible(ui_control, arg)
+			if hn == null:
+				_qa_input_report = action + " (no such visible node)"
+			else:
+				var motion := InputEventMouseMotion.new()
+				motion.position = hn.get_global_rect().get_center()
+				motion.global_position = motion.position
+				_qa_input_report = "%s at %s" % [action, motion.position]
+				get_viewport().push_input(motion)
 		"hover":
 			var hv := arg.split(",")
 			var motion := InputEventMouseMotion.new()
@@ -19075,6 +19157,17 @@ func _qa_step() -> void:
 	# (_qa_input_step has the syntax).
 	_qa_input_step()
 
+	# OPENSRO_QA_STALL_BOOTH="<tick>:<decoration item id>[:<race>],..." (round
+	# 838): at each tick, the booth a stall with that decoration (0: none)
+	# would draw (StallBooth), put at the player's feet in place of the last;
+	# race 0 China (the default), 1 Europe. QA only: OpenSRO has no stall yet.
+	var qa_booth := OS.get_environment("OPENSRO_QA_STALL_BOOTH")
+	if qa_booth != "":
+		for part in qa_booth.split(",", false):
+			var tb := String(part).split(":")
+			if tb.size() >= 2 and tb[0].is_valid_int() and int(tb[0]) == _qa_tick:
+				_qa_stall_booth(int(tb[1]), int(tb[2]) if tb.size() > 2 else 0)
+
 	# OPENSRO_QA_LEARN="<mastery>x<n>;<skill id>[;...]" raises a mastery n
 	# times and learns skills, one request after another, each waiting for
 	# its reply, starting at tick 90 (after OPENSRO_QA_COMMANDS, which can
@@ -19434,6 +19527,8 @@ func _qa_step() -> void:
 		_qa_pmi_step()
 	if _qa_reequip_spec != "":
 		_qa_reequip_step()
+	if _qa_unequip_spec != "":
+		_qa_unequip_step()
 	if _qa_equip_bag_spec != "":
 		_qa_equip_bag_step()
 	if _qa_cos_spec != "":
@@ -25307,7 +25402,7 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 		# R replies to this name (KeyMap slot 20; _key_whisper_reply).
 		_last_whisperer = u.sender_name
 	if _hud_chat != null:
-		_hud_chat.add_chat(u.type, u.sender_name, u.message_text)
+		_hud_chat.add_chat(u.type, u.sender_name, u.message_text, false, u.color)
 	if u.type == HudChat.TYPE_NOTICE:
 		_show_banner("gm_notice", u.message_text)
 	if chat_log != null:
@@ -25356,7 +25451,158 @@ func _use_cos_item(slot: int) -> void:
 	NetClient.use_item_option(NetClient.current_character_name, slot, UseItemNet.OPTION_COS_TARGET, uid)
 
 const COS_CANT_USE_ITEM_KEY := "UIIT_MSG_COSPETERR_CANT_USEITEM"
+## Round 838: the server's 0x300e lines (session/ammo.go) and their text keys.
+const AMMO_REFUSALS := {
+	"Insufficient arrows.": "UIIT_SKILL_USE_FAIL_RUNOUT_AMMO",
+	"Insufficient bolts.": "UIIT_SKILL_USE_FAIL_RUNOUT_AMMO_VOLT",
+}
 const COS_WRONG_OBJECT_KEY := "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+
+# --- The skin change scroll (round 838, SkinChangeWindow) ---------------------
+
+var _skin_window: SkinChangeWindow = null
+## The body and scale a sent skin change asked for, kept until the server's
+## answer: [ref_obj_id, scale], [] for none.
+var _skin_sent: Array = []
+## An accepted change's body, put on at the warp that follows it (retail's
+## pending teleport reason 6, Item_OnUseItemResult case 9, and the reload).
+var _skin_pending: Array = []
+
+## The scroll in bag slot `slot` was used: the window opens on the player's
+## own body (GInterfaceWndRelation::FUN_0079b790).
+func _on_skin_change_requested(slot: int) -> void:
+	if _skin_window == null:
+		_skin_window = SkinChangeWindow.new()
+		_skin_window.name = "SkinChangeWindow"
+		ui_control.add_child(_skin_window)
+		if not _skin_window.setup(_ui_builder):
+			_log_system("The skin change window is unavailable.")
+			_skin_window.queue_free()
+			_skin_window = null
+			return
+		_skin_window.preview_builder = _skin_preview_body
+		_skin_window.gear_reader = _skin_gear_held
+		_skin_window.refused.connect(func(text: String) -> void:
+			print("SKIN refused here: %s" % text)
+			_log_system(text))
+		_skin_window.confirmed.connect(_on_skin_change_confirmed)
+	var body := _skin_own_body()
+	var race := int(body[1])
+	var lists := _skin_lists(race)
+	_skin_window.model.women = lists[0]
+	_skin_window.model.men = lists[1]
+	print("SKIN window: slot %d, own body %d (race %d, sex %d, scale 0x%02x), %d women, %d men" % [
+		slot, int(body[0]), race, int(body[2]), int(body[3]), lists[0].size(), lists[1].size()])
+	_skin_window.open_for(slot, int(body[0]), int(body[2]), int(body[3]))
+	if _skin_window.doll != null and _portrait_zone_light.size() == 2:
+		_skin_window.doll.set_zone_light(_portrait_zone_light[0], _portrait_zone_light[1])
+
+## [ref_obj_id, race, sex, scale] of the player's body now.
+func _skin_own_body() -> Array:
+	var ewr = NetClient.last_enter_world_result
+	var ref := 0
+	var scale := CharacterAppearance.DEFAULT_SCALE
+	var gender := DEFAULT_GENDER
+	if ewr != null:
+		if ewr.has_model:
+			ref = ewr.ref_obj_id
+			scale = ewr.scale
+		if ewr.gender != "":
+			gender = ewr.gender
+	var race := 1 if gender.begins_with("europe") else 0
+	var sex := 0 if gender.ends_with("woman") else 1
+	var cat := _appearance.catalog() if _appearance != null else null
+	var e: CharCatalog.Entry = cat.get_entry(ref) if cat != null and ref > 0 else null
+	if e != null and e.is_body:
+		race = e.race
+		sex = e.sex
+	return [ref, race, sex, scale]
+
+## The window's two lists for `race`: usableresobjiddata.txt's ids in file
+## order (Client_LoadRefDataFile case 7), kept when the catalogue holds them as
+## a body of that race, by sex. Without the file, the catalogue's bodies in id
+## order (MEASURED: the file lists the 52 bodies in id order).
+func _skin_lists(race: int) -> Array:
+	var cat := _appearance.catalog() if _appearance != null else null
+	var ids: Array = []
+	if _media_pk2 != null:
+		var e := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\usableresobjiddata.txt")
+		if e != null:
+			var raw := _media_pk2.read_file(e)
+			var text := ""
+			if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+				text = TextDecode.utf16(raw.slice(2))
+			else:
+				text = raw.get_string_from_utf8()
+			ids = SkinChangeModel.parse_usable_ids(text)
+	if ids.is_empty() and cat != null:
+		ids = cat.all_ids()
+	var body_of := func(id: int) -> Dictionary:
+		var entry: CharCatalog.Entry = cat.get_entry(id) if cat != null else null
+		if entry == null or not entry.is_body:
+			return {}
+		return {"race": entry.race, "sex": entry.sex}
+	var m := SkinChangeModel.from_ids(ids, race, body_of)
+	return [m.women, m.men]
+
+## The preview's body (FUN_007ee450): the chosen model at `scale`, wearing the
+## weapon and shield always and the rest of the worn items and the avatars
+## only when the sex is the player's (`keep_gear`).
+func _skin_preview_body(ref_obj_id: int, scale: int, keep_gear: bool) -> Skeleton3D:
+	var equipped := {}
+	for k in _player_equipped_last:
+		var slot := int(k)
+		if keep_gear or slot == 6 or slot == 7:
+			equipped[slot] = _player_equipped_last[k]
+	if keep_gear:
+		equipped = _with_player_avatars(equipped)
+	var body := _body_key_for(ref_obj_id, "")
+	var skel := _build_assembled_character(equipped, body, scale, _player_pluses_last)
+	if skel == null:
+		return null
+	var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped, body))
+	if idle != null and _frame_count(idle) > 1:
+		Skeleton3DBuilder.apply_ban_pose_at(skel, idle, 0.0, true)
+		_animated.append([skel, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
+	print("SKIN preview: model %d (%s) scale 0x%02x, gear %s" % [ref_obj_id, body, scale, str(keep_gear)])
+	return skel
+
+## The pre-check's reading: the worn equip slots and the avatars held.
+func _skin_gear_held() -> Array:
+	var worn: Array = []
+	for k in _player_equipped_last:
+		if int(_player_equipped_last[k]) > 0:
+			worn.append(int(k))
+	return [worn, _player_avatars.size()]
+
+func _on_skin_change_confirmed(slot: int, ref_obj_id: int, scale: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	print("SKIN confirm: slot %d -> model %d scale 0x%02x" % [slot, ref_obj_id, scale])
+	_skin_sent = [ref_obj_id, scale]
+	UiSounds.expect_use(_hud_panels.bag_item_types(slot) if _hud_panels != null else PackedInt32Array())
+	NetClient.use_item_skin(NetClient.current_character_name, slot, ref_obj_id, scale)
+
+## The warp after an accepted change: the player's own body is the new one
+## (the client reloads it at the teleport; the others respawn it).
+func _apply_skin_pending() -> void:
+	if _skin_pending.is_empty():
+		return
+	var ewr = NetClient.last_enter_world_result
+	var ref := int(_skin_pending[0])
+	var scale := int(_skin_pending[1])
+	_skin_pending = []
+	if ewr == null:
+		return
+	var cat := _appearance.catalog() if _appearance != null else null
+	var e: CharCatalog.Entry = cat.get_entry(ref) if cat != null else null
+	ewr.ref_obj_id = ref
+	ewr.scale = scale
+	ewr.has_model = true
+	if e != null and e.is_body:
+		ewr.gender = ("europe" if e.race == 1 else "china") + ("_woman" if e.sex == 0 else "_man")
+	print("SKIN applied: model %d scale 0x%02x gender %s" % [ref, scale, ewr.gender])
+	_apply_player_equipment_visual(_player_equipped_last)
 
 ## The global chatting item was used from the bag: "Chat to all" opens for
 ## that slot (CIFWholeChat, round 634).
@@ -26725,6 +26971,10 @@ func _on_npc_opened(id: int) -> void:
 			# beside it (READ c:0x888e30 -> 0x79d4a0(1), 0x79af20).
 			var grant := _hud_panels.open_grant_window()
 			print("NPC grant window: %s" % ("open" if grant != null else "unavailable"))
+		0x11:
+			# Round 838: 0xB046 {1, 0x11} -> Magic POP (c:0x79c060): the
+			# select window first.
+			_open_gacha_select()
 
 ## The talk window, the store or the storage went away (HudPanels'
 ## npc_window_hidden): the end request 0x704B (READ: the NPC window's close
@@ -26740,6 +26990,157 @@ func _on_npc_window_hidden(panel_id: String) -> void:
 		return
 	if _npc_talk.end():
 		print("NPC end 0x704B: %s closed" % panel_id)
+
+# --- Magic POP (round 838, GachaWindow / GachaSelectWindow / GachaNet) --------
+
+var _gacha_tables: GachaTables = null
+var _gacha_select: GachaSelectWindow = null
+var _gacha_window: GachaWindow = null
+## The machine the select window was opened for (its uid and ref id).
+var _gacha_npc_uid := 0
+var _gacha_npc_ref := 0
+
+func _gacha_tables_loaded() -> GachaTables:
+	if _gacha_tables == null and _ui_builder != null and _ui_builder.media_archive() != null:
+		var archive := _ui_builder.media_archive()
+		_gacha_tables = GachaTables.new().load(func(path: String) -> PackedByteArray:
+			var entry := ObjectLoader.find_file(archive, path)
+			return archive.read_file(entry) if entry != null else PackedByteArray())
+		print("GACHA: tables -- %d prizes, %d machines, %d kinds" % [_gacha_tables.prizes.size(),
+			_gacha_tables.machines.size(), _gacha_tables.kinds.size()])
+	return _gacha_tables
+
+func _gacha_connect() -> void:
+	if not NetClient.gacha_play_result.is_connected(_on_gacha_play_result):
+		NetClient.gacha_play_result.connect(_on_gacha_play_result)
+		NetClient.gacha_exchange_failed.connect(_on_gacha_exchange_failed)
+		NetClient.gacha_announce.connect(_on_gacha_announce)
+		NetClient.inventory_list_result.connect(func(s: Array, e: String) -> void:
+			if e == "" and not _gacha_coupon_slots.is_empty():
+				_on_gacha_exchanged(s)
+			if _gacha_window != null:
+				_gacha_window.call_deferred("on_bag_changed"))
+
+## 0xB046 {1, 0x11}: the select window (c:0x746be0).
+func _open_gacha_select() -> void:
+	var tables := _gacha_tables_loaded()
+	if tables == null or ui_control == null:
+		_log_system("Magic POP is unavailable.")
+		return
+	_gacha_connect()
+	_gacha_npc_uid = _talk_npc_uid()
+	_gacha_npc_ref = _npc_id_for_code(_talk_npc_code)
+	if _gacha_select == null:
+		_gacha_select = GachaSelectWindow.new()
+		_gacha_select.name = "GachaSelectWindow"
+		ui_control.add_child(_gacha_select)
+		if not _gacha_select.setup(_ui_builder, tables):
+			_gacha_select.queue_free()
+			_gacha_select = null
+			_log_system("Magic POP is unavailable.")
+			return
+		_gacha_select.start_requested.connect(_on_gacha_start)
+		_gacha_select.closed.connect(func() -> void:
+			if _gacha_window == null or not _gacha_window.visible:
+				_gacha_end_talk())
+	# The talk box gives way to the game (OURS: what hides it is not read).
+	if _hud_panels != null and _hud_panels.is_open("npctalk"):
+		_npc_hide_silent += 1
+		_hud_panels.close("npctalk")
+		_npc_hide_silent -= 1
+	_gacha_select.open()
+	print("GACHA: select window open for NPC %d (ref %d)" % [_gacha_npc_uid, _gacha_npc_ref])
+
+## Start (c:0x74a2b0): the main window with the chosen kind's prizes.
+func _on_gacha_start(kind: GachaTables.Kind) -> void:
+	var tables := _gacha_tables_loaded()
+	if tables == null:
+		return
+	if _gacha_window == null:
+		_gacha_window = GachaWindow.new()
+		_gacha_window.name = "GachaWindow"
+		ui_control.add_child(_gacha_window)
+		if not _gacha_window.setup(_ui_builder):
+			_gacha_window.queue_free()
+			_gacha_window = null
+			_log_system("Magic POP is unavailable.")
+			return
+		_gacha_window.icon_of = func(ref: int) -> Texture2D: return _hud_panels._item_icon(ref) if _hud_panels != null else null
+		_gacha_window.types_of = func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array()
+		_gacha_window.bag_of = func() -> Array: return _hud_panels.bag_entries() if _hud_panels != null else []
+		_gacha_window.play_requested.connect(func(uid: int, gid: int, bag_slot: int) -> void:
+			NetClient.gacha_play(uid, gid, bag_slot))
+		_gacha_window.closed.connect(_gacha_end_talk)
+	var list := tables.prizes_for(tables.prize_set(_gacha_npc_ref), kind,
+		func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array())
+	_gacha_select.hide()
+	_gacha_window.open_for(_gacha_npc_uid, list)
+	print("GACHA: main window open, %d prize(s)" % list.size())
+
+func _gacha_end_talk() -> void:
+	if _talk_server and _npc_talk != null and _npc_talk.end():
+		print("NPC end 0x704B: Magic POP closed")
+
+func _on_gacha_play_result(result: Dictionary) -> void:
+	print("GACHA RESULT: %s" % str(result))
+	if _gacha_window != null:
+		_gacha_window.on_result(result)
+	if bool(result.get("ok", false)) and NetClient.current_character_name != "":
+		NetClient.list_inventory(NetClient.current_character_name)
+
+## The bag slots that held a coupon when 0x7119 went out (bag slot -> coupon
+## item id); emptied by the next bag list.
+var _gacha_coupon_slots: Dictionary = {}
+
+## Gori's line (c:0x7020c0 case 0x28).
+func _gacha_exchange() -> void:
+	_gacha_connect()
+	_gacha_coupon_slots.clear()
+	if _hud_panels != null:
+		for e in _hud_panels.bag_entries():
+			var id := int(GachaWindow._field(e, ["item_id", "id"]))
+			var t := _hud_panels.item_types(id)
+			if t.size() >= 4 and t[0] == 3 and t[1] == 3 and t[2] == 14 and t[3] == 2:
+				_gacha_coupon_slots[int(GachaWindow._field(e, ["slot_index", "slot", "index"]))] = id
+	if _gacha_coupon_slots.is_empty():
+		_replace_talk(_resolve_any_text("SN_TALK_CH_GACHA_OPERATOR_3",
+			"Oh. You don't have Item Exchange Coupon. Then I can't if you don't have the item exchange coupon."), [])
+		return
+	print("GACHA: exchange 0x7119 at NPC %d (%d coupon(s))" % [_talk_npc_uid(), _gacha_coupon_slots.size()])
+	NetClient.gacha_exchange(_talk_npc_uid())
+	# Retail is told each slot by 0x3040; this client asks for its bag, which
+	# the server answers after the exchange (OURS, session/gacha.go).
+	if NetClient.current_character_name != "":
+		NetClient.list_inventory(NetClient.current_character_name)
+
+## The bag after Gori's exchange: retail's 0x3040 line for each coupon slot
+## that now holds something else, UIIT_MSG_GACHA_EXCHANGE "Has been changed
+## to [%s][%d]." (c:0x88bf30), with the new item's name and count.
+func _on_gacha_exchanged(slots: Array) -> void:
+	var fmt := _resolve_any_text("UIIT_MSG_GACHA_EXCHANGE", "Has been changed to [%s][%d].")
+	for e in slots:
+		var at = GachaWindow._field(e, ["slot_index", "slot", "index"])
+		if at == null or not _gacha_coupon_slots.has(int(at)):
+			continue
+		var id := int(GachaWindow._field(e, ["item_id", "id"]))
+		if id == int(_gacha_coupon_slots[int(at)]):
+			continue
+		var count = GachaWindow._field(e, ["quantity", "count"])
+		var line := fmt.replace("%s", _hud_panels.item_name(id) if _hud_panels != null else str(id)) \
+			.replace("%d", str(int(count) if count != null else 1))
+		print("SYSLOG gacha: %s" % line)
+		_log_system(line, HudSystemMessage.TYPE_GAME)
+	_gacha_coupon_slots.clear()
+
+## 0xB119 {2, code}: category 1's code (c:0x88d700); this client logs it.
+func _on_gacha_exchange_failed(code: int) -> void:
+	print("GACHA: exchange refused, code %d" % code)
+
+## 0x3120: "[%s][%d]has been won from Magic POP." (c:0x88f880).
+func _on_gacha_announce(ref: int, count: int) -> void:
+	var line := _resolve_any_text("UIIT_MSG_GACHA_ANNOUNCE", "[%s][%d]has been won from Magic POP.") \
+		.replace("%s", _hud_panels.item_name(ref) if _hud_panels != null else str(ref)).replace("%d", str(count))
+	_show_banner("gm_notice", line)
 
 ## Round 819: 0xB04B's close, FUN_0079e350 (READ): the NPC talk window, the
 ## store and the storage are hidden by ShowWindow(0) -- no 0x704B goes back
@@ -26993,7 +27394,20 @@ func _resolve_any_text(key: String, fallback: String) -> String:
 		var t: String = (table as UiTextTable).get_text(key)
 		if t != "" and t != key:
 			return t
+	# Round 838: a talk line's SN_TALK_ key that the tables above lack lives in
+	# textquest_queststring.txt (MEASURED: Magic POP's SN_TALK_CH_GACHA_*),
+	# read once, on the first such miss, so the world's entry does not pay it.
+	if key.begins_with("SN_TALK_"):
+		if _quest_string_table == null and _media_pk2 != null:
+			var qs := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textquest_queststring.txt")
+			_quest_string_table = UiTextTable.parse(_media_pk2.read_file(qs)) if qs != null else UiTextTable.new()
+		if _quest_string_table != null:
+			var q: String = _quest_string_table.get_text(key)
+			if q != "" and q != key:
+				return q
 	return fallback
+
+var _quest_string_table: UiTextTable = null
 
 ## The talk box's tax line for the NPC or gate `code`, or "" (round 725;
 ## NpcTalkView.fortress_strid_for has what is READ and what is ours): the
@@ -27021,6 +27435,12 @@ func _npc_greeting_text(code: String) -> String:
 			var resolved := _npc_text_table.get_text(s)
 			if resolved != "" and resolved != s:
 				return resolved
+			# Round 838: Magic POP's greetings (SN_TALK_CH_GACHA_*_1) are in
+			# textquest_queststring.txt (_resolve_any_text's SN_TALK_ branch).
+			if s.begins_with("SN_TALK_"):
+				resolved = _resolve_any_text(s, "")
+				if resolved != "":
+					return resolved
 	return ""
 
 ## The talk window's lines (round 727): the interaction-id set `ids` -- the
@@ -27301,6 +27721,16 @@ func _on_npc_service_selected(key: String) -> void:
 			return
 		if key == "talk":
 			_npc_talk.open(2)
+			return
+		# Round 838: Magic POP. The machine's line 0x27 opens 0x11; Gori's
+		# line 0x28 sends the exchange 0x7119 when the bag holds a coupon
+		# (3/3/14/2, c:0x745ab0), else his talk says he cannot
+		# (SN_TALK_CH_GACHA_OPERATOR_3) -- c:0x7020c0, READ.
+		if key == "gacha_machine":
+			_npc_talk.open(0x11)
+			return
+		if key == "gacha_operator":
+			_gacha_exchange()
 			return
 	# A tab group's store line (round 725): that group's tabs.
 	if key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):
@@ -35929,17 +36359,31 @@ func _on_use_item_result(result) -> void:
 	if result.error != "":
 		# Logged, so a tester's log shows every refusal (composite review).
 		print("World3D: use item refused: %s (code 0x%x)" % [result.error, result.code])
+		_skin_sent = []
 		# A refusal with an engine code (round 778: the scrolls') is the
 		# archive's own category-1 message (ErrorText.scroll_line).
 		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
 		return
 	# Round 826: its re-use timers.
 	_arm_item_cooldowns(result)
+	# Round 838: an accepted skin change puts the body on at the warp.
+	if not _skin_sent.is_empty() and _hud_panels != null and result.item_id != 0 \
+			and HudPanels.is_skin_change_item(_hud_panels.item_types(result.item_id)):
+		_skin_pending = _skin_sent
+		_skin_sent = []
+		print("SKIN accepted: model %d at the warp" % int(_skin_pending[0]))
 	# Round 824: a crest item's accepted use opens its result box.
 	if result.item_id != 0 and _hud_panels != null:
 		var code := _hud_panels.item_code_for_id(result.item_id)
 		if HudPanels.CREST_ITEM_BOXES.has(code):
 			_hud_panels.crest_used(code)
+		# Round 838: the repair hammer's mended items arrive as 0x3052s; a
+		# piece mended from broken counts again, so the doll and the stats
+		# are asked for (OURS: retail's ChangeItemDurability pushes them).
+		if HudPanels.is_repair_hammer(_hud_panels.item_types(result.item_id)) and NetClient.current_character_name != "":
+			print("World3D: the repair hammer mended the worn and carried items")
+			NetClient.list_equipment(NetClient.current_character_name)
+			NetClient.character_stats(NetClient.current_character_name)
 	# Round 786: every accepted use is logged with what it left, so a run
 	# (the auto potion's QA) reads the count and the pools from the log.
 	print("World3D: use item ok: %d left, HP %d/%d, MP %d/%d, restored %d HP %d MP" % [result.remaining,

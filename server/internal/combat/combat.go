@@ -349,11 +349,11 @@ type Monster struct {
 // have been a wrong correction. (Params 9 and 11 carry the AVATAR variants
 // 'era'/'hra', a separate family that sits on cosmetic pieces -- see
 // paramtags.go.) Full vocabulary: docs/protocol/magic_options.md.
-func MitigateDamage(raw, reductionPercent, flat int) int {
+func MitigateDamage(raw int, reductionPercent float64, flat int) int {
 	if reductionPercent < 0 {
 		reductionPercent = 0
 	}
-	reduced := float64(raw) / (1 + float64(reductionPercent)/100)
+	reduced := float64(raw) / (1 + reductionPercent/100)
 	out := int(math.Round(reduced)) - flat
 	if out < 1 {
 		out = 1
@@ -1402,7 +1402,7 @@ type Blow struct {
 // roll is the defender's and the CRITICAL roll is the attacker's, so the two
 // draw on different actors' streaks, which is why ChanceMemory carries both
 // ids rather than one.
-func ResolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int, r *rand.Rand, mem *ChanceMemory) Blow {
+func ResolveBlow(base int, mitigationPercent float64, flat, critChance, blockChance, attackerLevel, defenderLevel int, r *rand.Rand, mem *ChanceMemory) Blow {
 	if mem.roll(blockChance, r, mem.defender(), ChanceBlock) {
 		return Blow{Blocked: true}
 	}

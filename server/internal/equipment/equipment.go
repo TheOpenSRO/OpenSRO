@@ -220,6 +220,32 @@ type Equipped struct {
 	OptLevel  uint8
 	MagParams []uint64
 	AdvElixir uint8
+	// Quantity is the worn stack's count (round 838): 1 for every piece of
+	// equipment, the whole stack for the ammunition in slot 7. The original
+	// keeps the count on the worn item (CGObjPC::ConsumeAmmo 0x4ec290 reads
+	// and writes it through the item's GetCount/SetCount, vslots +0x4e8 /
+	// +0x4ec, READ) and the equip moves the whole stack. Count reads 0 as 1.
+	Quantity int
+}
+
+// Count is the worn stack's count, at least 1.
+func (e Equipped) Count() int {
+	return max(1, e.Quantity)
+}
+
+// AmmoStore is a Store that keeps the worn ammunition's count (round 838,
+// the arrows and bolts in slot 7). Both stores implement it; it is kept out
+// of Store so the tests' small fakes need not.
+type AmmoStore interface {
+	// SpendWorn takes n from the stack worn in slot, never below 0, in one
+	// step under the character's lock, and returns what is left
+	// (ConsumeAmmo's `max(0, count - n)`, READ 0x4ec290). ErrSlotEmpty when
+	// nothing is worn there.
+	SpendWorn(ctx context.Context, characterID int64, slot Slot, n int) (left int, err error)
+	// DiscardWorn deletes the worn row without returning anything to the bag:
+	// the spent stack's end (DelItem_EXT on slot 7 when no reload is found,
+	// READ 0x4ec340). ErrSlotEmpty when nothing is worn there.
+	DiscardWorn(ctx context.Context, characterID int64, slot Slot) error
 }
 
 // Instance returns the worn item's per-instance fields.

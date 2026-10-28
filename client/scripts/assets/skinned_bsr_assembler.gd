@@ -144,7 +144,7 @@ static func still_piece_mesh(mesh: BmsReader.ParsedMesh, bone: int) -> ArrayMesh
 ## item made on one, has the same bones.
 static func assemble_from_archive(
 	archive: Pk2Reader, bsr_path: String, with_animation: bool = false, canonical: bool = false,
-	material_slot: int = 0
+	material_slot: int = 0, skinned_object: bool = false
 ) -> AssembledCharacter:
 	var bsr_data := _read(archive, bsr_path)
 	if bsr_data.is_empty():
@@ -153,7 +153,11 @@ static func assemble_from_archive(
 	var parsed := BsrReader.parse(bsr_data)
 	if parsed == null:
 		return null
-	if not parsed.is_character:
+	# Round 838: `skinned_object` also takes an object .bsr of another type
+	# that names a skeleton -- the Magic POP machine, NPC_CH_GACHA_MACHINE's
+	# npc\npc\gacha_machine.bsr, is type 3 with a .bsk, a .bms and a .bmt
+	# (MEASURED), and an NPC is drawn from its resource whatever its type.
+	if not parsed.is_character and not (skinned_object and parsed.skeleton_path != ""):
 		push_error("SkinnedBsrAssembler: %s is not a character .bsr (type %d)" % [bsr_path, parsed.object_type])
 		return null
 

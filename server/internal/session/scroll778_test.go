@@ -39,6 +39,9 @@ const (
 	// Round 779: ITEM_ETC_SCROLL_RETURN_THIEFDEN_01, 3/3/3/1, Param1 300000,
 	// Param2 0.
 	fixtureThiefDenScroll = 2128
+	// Round 838: ITEM_MALL_REVERSE_RETURN_SCROLL_SPECIAL 62530, the plain
+	// reverse scroll's row but for its id, code and icon.
+	fixtureSpecialReverse = 62530
 )
 
 // The map points: a field point in Donwhang's region (26265 = 102/153), a
@@ -86,6 +89,8 @@ func newScrollRig(t *testing.T, level int) *scrollRig {
 			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 1, RestoreHP: 30000, RestoreHPPct: 1, ReinforceRate1: 1, CanUse: true},
 		{ID: fixtureThiefDenScroll, CodeName: "ITEM_ETC_SCROLL_RETURN_THIEFDEN_01", MaxStack: 50,
 			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 1, RestoreHP: 300000, CanUse: true},
+		{ID: fixtureSpecialReverse, CodeName: "ITEM_MALL_REVERSE_RETURN_SCROLL_SPECIAL", MaxStack: 50,
+			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 3, RestoreHP: 1000, RestoreHPPct: 1, ReinforceRate1: 1, CanUse: true},
 	}); err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -103,7 +108,7 @@ func newScrollRig(t *testing.T, level int) *scrollRig {
 		t.Fatal(err)
 	}
 	rig.charID = c.ID
-	for _, id := range []int64{fixtureReverseScroll, fixtureReturnScroll, fixtureThiefDenScroll} {
+	for _, id := range []int64{fixtureReverseScroll, fixtureReturnScroll, fixtureThiefDenScroll, fixtureSpecialReverse} {
 		if err := rig.inv.AddItem(ctx, c.ID, id, 5); err != nil {
 			t.Fatalf("add %d: %v", id, err)
 		}
@@ -180,7 +185,7 @@ func clientUse(name string, slot int, option byte, target uint32) []byte {
 	out = binary.LittleEndian.AppendUint64(out, uint64(int64(slot)))
 	if option != 0 {
 		out = append(out, option)
-		if option == 7 {
+		if option == 7 || option == ReverseOptionParty || option == ReverseOptionSaved {
 			out = binary.LittleEndian.AppendUint32(out, target)
 		}
 	}

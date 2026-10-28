@@ -304,6 +304,18 @@ func wornItemInfos(ctx context.Context, worn []equipment.Equipped, items ItemLoo
 	for _, e := range worn {
 		if ii, ok := itemInfoFor(ctx, items, int(e.Slot), e.ItemID, e.Instance()); ok {
 			out = append(out, ii)
+			continue
+		}
+		// Round 838: the ammunition in slot 7 is an expendable's record, its
+		// u16 count after the RefItemID (retailItemTail; the client's
+		// SOItem::FUN_008be4f0 reads it for a worn 3/3 as for a bag one), so
+		// the equipment window has the count from the first list on.
+		if items == nil {
+			continue
+		}
+		if it, err := items.GetItem(ctx, e.ItemID); err == nil && it != nil && it.TypeID1 == 3 && it.TypeID2 == 3 {
+			tail := retailItemTail(ctx, it, inventory.Slot{ItemID: e.ItemID, Quantity: e.Count()}, time.Now())
+			out = append(out, ItemInfo{Slot: int(e.Slot), RefItemID: uint32(e.ItemID), Tail: tail})
 		}
 	}
 	return out

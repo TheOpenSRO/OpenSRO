@@ -815,6 +815,9 @@ signal global_chat_requested(slot: int, count: int)
 ## An item used on the current COS (is_cos_target_item, round 805) was used
 ## from bag slot `slot`: World3D names the pet (World3D._use_cos_item).
 signal cos_item_requested(slot: int)
+## Round 838: a character skin change scroll (is_skin_change_item) was used
+## from bag slot `slot`: World3D opens the skin change window for it.
+signal skin_change_requested(slot: int)
 ## A destination line of a gate's talk box (open_teleport_list, round 603) was
 ## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
 ## with the gate the list was opened at (NetClient.teleport_use).
@@ -5326,11 +5329,52 @@ func item_types(item_id: int) -> PackedInt32Array:
 static func is_global_chat_item(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 5
 
+## Whether TypeIDs are a character skin change scroll's, 3/3/13/9 (round 838:
+## IFSlotWithHelp::FUN_00676570's 3/3/13 test 0x5dd680 and `tid >> 11 == 9`
+## at 0x676b87, which opens CIFChangePlayerModel instead of sending).
+static func is_skin_change_item(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 9
+
 ## Whether TypeIDs are a reverse return scroll's, 3/3/3/3 (round 778: the
 ## client's own test FUN_0078e870 -- `(tid & 0x780) == 0x180` and
 ## `(tid & 0xf800) == 0x1800` over 3/3).
 static func is_reverse_return_scroll(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 3
+
+## Whether TypeIDs are a repair hammer's, 3/3/13/7 (round 838).
+static func is_repair_hammer(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 7
+
+## Round 838: the repair hammer asks first. READ (sro_client): the bag's use
+## path (IFSlotWithHelp::FUN_00676570, 0x676a09) opens message box kind 0x1f
+## for a 3/3/13 item whose CanUse byte is 129 (every hammer row's) --
+## UIIT_STT_CONFIRM_BOX, UIIT_MSG_QUESTION_SILKMALL_ITEM_USE "Will you use
+## the selected item?", OK and Cancel -- and its OK (0x797d90 case 0x1f)
+## reaches SendItem_HandleUseItem (0x796660), whose case 7 sums the repair
+## quote of the worn and carried items first and, at 0, says
+## UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR without sending.
+## OURS: the box is the generic question box (PartyMatchConfirm, Yes / No);
+## kind 0x1f's own size and button words were not read. Retail asks the same
+## box for every CanUse-129 3/3/13 item but TypeID4 8, 12, 15 and 16; only
+## the hammer is routed here.
+func open_hammer_confirm(slot: int) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _resolve_ui("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE", "Will you use the selected item?")):
+		box.free()
+		return null
+	box.name = "HammerConfirm"
+	box.confirmed.connect(func() -> void:
+		if repair_all_quote() <= 0:
+			system_notice.emit(_resolve_ui("UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR", "No item needs repairing."))
+			return
+		if NetClient.current_character_name != "":
+			print("HudPanels: the repair hammer at bag slot %d" % slot)
+			NetClient.use_item(NetClient.current_character_name, slot))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
 
 ## Whether TypeIDs are an item used on the current COS (round 805,
 ## UseItemNet.is_cos_target_item).
@@ -5415,10 +5459,14 @@ func crest_used(code_name: String) -> void:
 func open_reverse_return_box(slot: int) -> ReverseReturnBox:
 	close_reverse_return_box()
 	var box := ReverseReturnBox.new()
-	box.build(_builder, slot)
+	# Round 838: the special scroll's box has the add-on's two more buttons.
+	var special := is_special_reverse_scroll(_bag_item_id_at_slot(slot))
+	box.build(_builder, slot, special)
 	box.option_chosen.connect(func(option: int) -> void:
 		reverse_return_requested.emit(slot, option, 0))
 	box.map_requested.connect(_on_reverse_map_requested)
+	box.party_requested.connect(_open_reverse_party.bind(slot))
+	box.saved_requested.connect(_open_reverse_saved.bind(slot))
 	add_child(box)
 	if box.is_inside_tree():
 		box.position = box.screen_position(get_viewport_rect().size)
@@ -5426,6 +5474,150 @@ func open_reverse_return_box(slot: int) -> ReverseReturnBox:
 	print("REVERSEBOX opened for bag slot %d: %s" % [slot, ", ".join(
 		["LastReturn", "LastDeath", "MapPoint", "Cancel"].map(func(m): return "'%s'" % box.caption_of(m)))])
 	return box
+
+## Round 838: whether item_id is the special reverse return scroll
+## (ITEM_MALL_REVERSE_RETURN_SCROLL_SPECIAL: the plain scroll's row but its
+## id, code and icon -- the server's IsSpecialReverseReturnScroll).
+func is_special_reverse_scroll(item_id: int) -> bool:
+	return item_id >= 0 and item_code_for_id(item_id).to_upper().ends_with("_REVERSE_RETURN_SCROLL_SPECIAL")
+
+# --- The special scroll's add-on options (round 838, OURS; ReverseAddonBox) --
+
+## Injected by the world: a region id's zone name (World3D's
+## _zone_name_for_region), for the positions the lists show.
+var region_namer: Callable
+## The add-on list up, or null.
+var _reverse_addon: ReverseAddonBox = null
+## What the saved-location list asked for is wanted for: "register" or
+## "move", "" when nothing waits.
+var _reverse_saved_wanted := ""
+var _reverse_saved_bag := -1
+var _reverse_saved_slots: Array = []
+
+func reverse_addon_box() -> ReverseAddonBox:
+	if _reverse_addon != null and is_instance_valid(_reverse_addon) and not _reverse_addon.is_queued_for_deletion():
+		return _reverse_addon
+	return null
+
+func _show_reverse_addon(box: ReverseAddonBox) -> void:
+	var old := reverse_addon_box()
+	if old != null:
+		old.close()
+	add_child(box)
+	if box.is_inside_tree():
+		box.position = box.screen_position(get_viewport_rect().size)
+	_reverse_addon = box
+
+## A place's words: its zone's name, else the region id (a dungeon's too).
+func _reverse_place_text(region: int) -> String:
+	if region == 0:
+		return ""
+	var zone := ""
+	if region > 0 and (region & 0x8000) == 0 and region_namer.is_valid():
+		zone = String(region_namer.call(region >> 8, region & 0xff))
+	return zone if zone != "" else "Region %d" % region
+
+## Option 4: "Movement of Party Members" -- one Move row per other member,
+## "Character Name (Position)"; a row sends the use with the member's JID.
+func _open_reverse_party(slot: int) -> void:
+	close_reverse_return_box()
+	var party: PartyState = NetClient.party
+	var rows: Array = []
+	var jids: Array = []
+	if party != null and party.in_party:
+		for m in party.members:
+			if m.jid == party.own_jid:
+				continue
+			rows.append({"text": "%s  (%s)" % [m.member_name, _reverse_place_text(m.region)], "enabled": true})
+			jids.append(m.jid)
+	if rows.is_empty():
+		# OURS words: the add-on's own line for this is not in the archive.
+		system_notice.emit("There is no party member to move to.")
+		return
+	var box := ReverseAddonBox.new()
+	box.header = "%s / %s / %s" % [_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_CHARACTER_NAME_TEXT", "Character Name"),
+		_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_POSITION_TEXT", "Position"),
+		_resolve_ui("VPLUS_UI_REVERSE_PARTY_MEMBERS_COLUMN_MOVE_TEXT", "Move")]
+	box.build_list(_builder, slot, "VPLUS_UI_REVERSE_PARTY_MEMBERS_CAPTION_TEXT", "Movement of Party Members", "", "", rows)
+	box.name = "ReversePartyBox"
+	box.row_chosen.connect(func(i: int) -> void:
+		print("REVERSEBOX party member %d chosen for bag slot %d" % [int(jids[i]), slot])
+		reverse_return_requested.emit(slot, ReverseReturnBox.OPTION_PARTY, int(jids[i]))
+		box.close())
+	_show_reverse_addon(box)
+
+## Option 5: the "User Setting Window" -- Setting Location / Movement, each
+## asking the server for the slots first.
+func _open_reverse_saved(slot: int) -> void:
+	close_reverse_return_box()
+	if not NetClient.reverse_saved_result.is_connected(_on_reverse_saved_result):
+		NetClient.reverse_saved_result.connect(_on_reverse_saved_result)
+	var box := ReverseAddonBox.new()
+	box.build_list(_builder, slot, "VPLUS_UI_REVERSE_SAVED_LOCATION_CAPTION_TEXT", "User Setting Window",
+		"VPLUS_UI_REVERSE_SAVED_LOCATION_DESC_TEXT", "Setting Location: Register current location...", [
+			{"text": _resolve_ui("VPLUS_UI_REVERSE_SAVED_LOCATION_BUTTON_SETTING_TEXT", "Setting Location")},
+			{"text": _resolve_ui("VPLUS_UI_REVERSE_SAVED_LOCATION_BUTTON_MOVEMENT_TEXT", "Movement")}])
+	box.name = "ReverseSavedBox"
+	box.row_chosen.connect(func(i: int) -> void:
+		_reverse_saved_wanted = "register" if i == 0 else "move"
+		_reverse_saved_bag = slot
+		NetClient.reverse_saved(UseItemNet.SAVED_LIST, 0, slot))
+	_show_reverse_addon(box)
+
+## The server's slots: a refusal is said; a registration says the add-on's
+## line; then the list the player asked for is shown.
+func _on_reverse_saved_result(r: Dictionary) -> void:
+	if not bool(r.get("ok", false)):
+		system_notice.emit(String(r.get("reason", "")))
+		return
+	_reverse_saved_slots = r.get("slots", [])
+	if bool(r.get("registered", false)):
+		system_notice.emit(_resolve_ui("VPLUS_MSG_REVERSE_SCROLL_LOCATION_UPDATED", "Saved location has got updated."))
+	print("REVERSEBOX saved slots: %s" % [_reverse_saved_slots.map(func(s): return int(s["region"]))])
+	match _reverse_saved_wanted:
+		"register":
+			_open_reverse_slot_list(true)
+		"move":
+			_open_reverse_slot_list(false)
+
+func _open_reverse_slot_list(register: bool) -> void:
+	var rows: Array = []
+	for s in _reverse_saved_slots:
+		var region := int(s["region"])
+		var label := _reverse_place_text(region) if region != 0 \
+			else _resolve_ui("VPLUS_UI_REVERSE_EMPTY_SLOT_TEXT", "Empty Slot")
+		rows.append({"text": "%d. %s" % [rows.size() + 1, label], "enabled": register or region != 0})
+	var box := ReverseAddonBox.new()
+	if register:
+		box.build_list(_builder, _reverse_saved_bag, "VPLUS_UI_REVERSE_REGISTER_CAPTION_TEXT", "Location Registration Information Window",
+			"VPLUS_UI_REVERSE_REGISTER_DESC_TEXT", "Click the button to save location.", rows)
+	else:
+		box.build_list(_builder, _reverse_saved_bag, "VPLUS_UI_REVERSE_MOVE_CAPTION_TEXT", "Location Movement Information Window",
+			"VPLUS_UI_REVERSE_MOVE_DESC_TEXT", "You may move to the saved location on the button.", rows)
+	box.name = "ReverseRegisterBox" if register else "ReverseMoveBox"
+	var bag := _reverse_saved_bag
+	box.row_chosen.connect(func(i: int) -> void:
+		if not register:
+			print("REVERSEBOX saved slot %d chosen for bag slot %d" % [i, bag])
+			_reverse_saved_wanted = ""
+			reverse_return_requested.emit(bag, ReverseReturnBox.OPTION_SAVED, i)
+			box.close()
+			return
+		var send := func() -> void:
+			print("REVERSEBOX registering slot %d" % i)
+			NetClient.reverse_saved(UseItemNet.SAVED_REGISTER, i, bag)
+		if i < _reverse_saved_slots.size() and int(_reverse_saved_slots[i]["region"]) != 0:
+			var ask := PartyMatchConfirm.new()
+			if ask.build(_builder, _resolve_ui("VPLUS_UI_REVERSE_REGISTER_CONFIRMATION_DESC_TEXT", "Do you confirm updating this slot?")):
+				ask.name = "ReverseRegisterConfirm"
+				ask.confirmed.connect(send)
+				add_child(ask)
+				ask.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+				return
+			ask.free()
+		send.call())
+	box.cancelled.connect(func() -> void: _reverse_saved_wanted = "")
+	_show_reverse_addon(box)
 
 ## The box up, or null.
 func reverse_return_box() -> ReverseReturnBox:
@@ -6067,6 +6259,11 @@ static func bag_pages(size: int) -> int:
 func _bag_size_shown() -> int:
 	return _bag_size if _bag_size > 0 else BAG_PAGE_SLOTS * BAG_MAX_PAGES
 
+## The bag's entries as the server last sent them (round 838: Magic POP's
+## inventory pane reads them).
+func bag_entries() -> Array:
+	return _bag_slots
+
 ## The page shown (a test hook and the QA log).
 func bag_page() -> int:
 	return _bag_page
@@ -6359,6 +6556,14 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		# Round 805: a pet's potion, food or cure names the current COS.
 		if is_cos_target_item(item_types(item_id)):
 			cos_item_requested.emit(slot)
+			return
+		# Round 838: the repair hammer asks first (open_hammer_confirm).
+		if is_repair_hammer(item_types(item_id)):
+			open_hammer_confirm(slot)
+			return
+		# Round 838: the skin change scroll opens its window.
+		if is_skin_change_item(item_types(item_id)):
+			skin_change_requested.emit(slot)
 			return
 		if NetClient.current_character_name != "":
 			UiSounds.expect_use(item_types(item_id))
@@ -8093,6 +8298,9 @@ func _fill_equipment_slots(items: Array) -> void:
 				_set_item_tip(icon, -1)
 				_set_item_seal_edge(icon, -1)
 				DurabilityMark.apply(icon, DurabilityMark.State.NONE, null, null)
+			var count_clear := slot.get_node_or_null("CountLabel") as Label
+			if count_clear != null:
+				count_clear.text = ""
 	var durability := _durability_map(NetClient.last_equipment_durabilities)
 	for entry in items:
 		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
@@ -8122,6 +8330,11 @@ func _fill_equipment_slots(items: Array) -> void:
 			# (playtest 2026-09-20, item 7).
 			icon.set_meta("worn_slot", int(slot_index))
 			icon.set_meta("worn_item_id", int(item_id))
+			# Round 838: the ammunition in slot 7 shows its count, the bag's
+			# rule (an equipment slot is kind 0x47, whose case in
+			# FUN_00680da0 tests the same expendable type word, READ); the
+			# count is the worn record's (NetClient.last_equipment_instances).
+			_set_worn_count(slot, int(item_id), int(slot_index))
 			if not icon.has_meta("worn_click_wired"):
 				icon.set_meta("worn_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void:
@@ -8135,10 +8348,48 @@ func _fill_equipment_slots(items: Array) -> void:
 							"item_id": int(icon.get_meta("worn_item_id", 0)), "icon": icon.texture},
 							icon.texture, icon, (ev as InputEventMouseButton).global_position))
 
+## The worn slot's count label (round 838): an expendable's stack -- the
+## arrows or bolts in slot 7 -- from its worn record, else nothing.
+func _set_worn_count(slot: Control, item_id: int, slot_index: int) -> void:
+	var label := slot.get_node_or_null("CountLabel") as Label
+	if label == null:
+		return
+	var inst = NetClient.last_equipment_instances.get(slot_index)
+	var qty := int(inst.count) if inst != null else 0
+	label.text = str(qty) if qty > 0 and shows_count(item_id, qty) else ""
+
+## 0x3201 (round 838): the worn ammunition's new count (c:0x882280, READ):
+## the slot-7 count redrawn, and the slot cleared at 0 (c:0x6ae4e0) -- the
+## server's reload, when there is one, follows as the worn list.
+func _on_ammo_count(count: int) -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return
+	var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + AMMO_SLOT)) as Control
+	if slot == null:
+		return
+	var icon := slot.get_node_or_null("ItemIcon") as TextureRect
+	if count <= 0:
+		if icon != null:
+			icon.texture = null
+			_set_item_tip(icon, -1)
+			_set_item_seal_edge(icon, -1)
+			icon.remove_meta("worn_slot")
+		var label := slot.get_node_or_null("CountLabel") as Label
+		if label != null:
+			label.text = ""
+		return
+	if icon != null and icon.has_meta("worn_item_id"):
+		_set_worn_count(slot, int(icon.get_meta("worn_item_id")), AMMO_SLOT)
+
+## The worn slot ammunition is in (equipment slot 7, READ CGStorage::GetItem(7)).
+const AMMO_SLOT := 7
+
 func connect_net() -> void:
 	if _net_connected:
 		return
 	_net_connected = true
+	NetClient.ammo_count.connect(_on_ammo_count)
 	# The inventory's authored presentation is its lattice grid
 	# (GDR_INVENTORY_LATTICE), filled with item icons -- the same as the real
 	# client.

@@ -319,7 +319,13 @@ const SCROLL_UIIT_BY_CODE := {
 	0x187a: "UIIT_MSG_COSPETERR_CANT_USEITEM",
 	0x1885: "UIIT_MSG_STRGERR_CANT_FIND_LAST_TELEPOS",
 	0x1886: "UIIT_MSG_STRGERR_CANT_FIND_LAST_DIEDPOS",
+	# Round 838: the repair hammer with nothing to mend (UseByKind case 7).
+	0x1888: "UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR",
 	0x1889: "UIIT_SKILL_USE_FAIL_CHAR_DEAD",
+	# Round 838: the skin change of sex with gear on (UpdateCharRefObjIDAndScale
+	# 0x4efe50; shown under category 1 as the client's own pre-check shows it,
+	# SendItem_HandleUseItem case 9).
+	0x1892: "UIIT_MSG_CHAR_SKIN_ERR_ARMOR",
 	0x18e9: "UIIT_MSG_FORT_PORTALSTONE_FAIL_02",
 	0x18f2: "UIIT_MSG_FORT_ETC_ERROR_WRONGACTION_FORTWAR",
 	0x18f5: "UIIT_MSG_ITEM_USE_REVERSE_PORTAL_RETRUN_TO_INS",

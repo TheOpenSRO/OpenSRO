@@ -147,7 +147,7 @@ func (a *monsterAI) runCOSStrike(id int64, job strikeJob) {
 		if swung.AttackMax > 0 {
 			raw = monsterBlow(swung, row.Level, float64(combat.MonsterRate(row.Level)))
 		}
-		blow := resolveBlow(raw, row.Level, row.Defense(), combat.EvadedChance(job.m.Critical, monsterEvasion),
+		blow := resolveBlow(raw, float64(row.Level), row.Defense(), combat.EvadedChance(job.m.Critical, monsterEvasion),
 			row.Block(), job.m.Level, row.Level, job.m.ID, job.target)
 		out.critical, out.blocked = blow.Critical, blow.Blocked
 		if !blow.Blocked {

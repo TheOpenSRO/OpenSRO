@@ -412,7 +412,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	var wallCrit bool
 	if buffBooks.HoldsWall(characterID) {
 		hit, ok := buffBooks.HitWall(characterID, monsterBlowType(ctx, monster, skill), func(w buff.Wall) int {
-			b := resolveBlow(raw, w.DefPct, w.Def,
+			b := resolveBlow(raw, float64(w.DefPct), w.Def,
 				combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq)), 0,
 				monster.Level, playerLevel, monster.ID, characterID)
 			wallCrit = b.Critical
@@ -437,7 +437,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 			return out, nil
 		}
 	}
-	counter := resolveBlow(raw, playerMitigationPercent, armor,
+	counter := resolveBlow(raw, playerMitigationPercent(ctx, characterID, eq, items, false), armor,
 		combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq)),
 		combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
 		monster.Level, playerLevel, monster.ID, characterID)

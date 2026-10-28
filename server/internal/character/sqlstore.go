@@ -105,6 +105,22 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_world INTEGER NOT NULL DEFA
 -- client's 0x7158 type 2 carries -- u16 HP, u16 MP, u16 abnormal, u8 delay --
 -- which retail keeps in its _ClientConfig record. Empty is "never set".
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS auto_potion BYTEA NOT NULL DEFAULT '';
+-- Round 838: the stall decoration (StallDecorationStore), the engine's
+-- _STATICAVATAR.Param1 -- the RefObjID of the last stall decoration item
+-- used, 0 for the default stall.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS stall_decoration INTEGER NOT NULL DEFAULT 0;
+-- Round 838: the special reverse return scroll's saved locations
+-- (SavedLocationStore, OURS), one row per filled slot.
+CREATE TABLE IF NOT EXISTS character_saved_locations (
+	character_id BIGINT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+	slot SMALLINT NOT NULL,
+	region INTEGER NOT NULL,
+	x DOUBLE PRECISION NOT NULL,
+	y DOUBLE PRECISION NOT NULL,
+	z DOUBLE PRECISION NOT NULL,
+	world INTEGER NOT NULL,
+	PRIMARY KEY (character_id, slot)
+);
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver) — same

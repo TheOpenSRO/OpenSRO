@@ -942,6 +942,10 @@ func main() {
 	mallCSV := flag.String("mall-csv", os.Getenv("OPENSRO_MALL_CSV"),
 		"path to the item mall's catalogue (from cmd/export-refdata -mode mall on a client's own shop tables and "+
 			"itemdata parts; round 837): the silk shops a 0x7034 type 0x18 buy names. Without it every buy is refused 2")
+	// Round 838: the Magic POP machine's tables.
+	gachaCSV := flag.String("gacha-csv", os.Getenv("OPENSRO_GACHA_CSV"),
+		"path to the Magic POP tables (from cmd/export-refdata -mode gacha on a client's own gachaitemset.txt and "+
+			"gachanpcmap.txt; round 838): which NPCs are machines and what they draw. Without it no NPC offers the game")
 	startingSilkEnv, startingSilkEnvErr := envInt("OPENSRO_STARTING_SILK", 0)
 	startingSilk := flag.Int64("starting-silk", int64(startingSilkEnv),
 		"own silk an account is given once, the first time its balances are read (round 837, OURS; 0 gives none)")
@@ -2080,6 +2084,8 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("creatable catalogue loaded: characters can be created", "path", *chargenCSV, "ids", chargen.Len())
+		// Round 838: the skin change scroll picks among the same bodies.
+		session.SetSkinCatalogue(chargen)
 	} else {
 		logger.Warn("no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}
@@ -2287,7 +2293,8 @@ func main() {
 	if *testItemsNPC {
 		testItems = resolveTestItemsNPC(ctx, logger, refItems)
 	}
-	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems, specialtyShops)
+	gachaTable := loadGacha(logger, *gachaCSV)
+	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems, specialtyShops, gachaTable)
 	// The monsters' area of interest (round 656): each player hears about the
 	// monsters of the 3x3 message blocks around it (retail's, READ in round
 	// 664: 320-unit blocks and their 8 neighbours), and is told as they come
@@ -2509,6 +2516,7 @@ func main() {
 	// Round 769: a character's Str, Int and max HP/MP count its worn items'
 	// blue options (character.BonusOf), read from the equipment store.
 	session.SetEquipBonusSource(eq)
+	session.SetUseItemEquipment(eq) // round 838: the repair hammer mends the worn items
 	// The quest catalogue (round 785, internal/quest): exported from the
 	// operator's own archives and game server scripts; without it no quest is
 	// offered and the NPCs keep their static talk stand-in.
@@ -2631,7 +2639,7 @@ func main() {
 		// (session/scroll.go), the map option's points from -teleport-dir's
 		// optionalteleport.csv (SetRecallNetwork's table).
 		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper,
-			session.NewScrollCaster(chars, eq, hub, zerkTracker, logger)),
+			session.NewScrollCaster(chars, eq, hub, zerkTracker, logger).SetParties(parties)),
 		session.CompositeHandler(chars, refItems, compositeKeeper, zerkTracker, gmGate, hub),
 		// Round 768: the alchemy window's elixirs and stones (session/alchemy.go).
 		session.AlchemyHandler(session.AlchemyDeps{Hub: hub, Inv: inv, Items: refItems, Options: magicOptions, Logger: logger}),
@@ -2688,6 +2696,9 @@ func main() {
 		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
 		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
 		session.NPCTalkHandler(hub, trades),
+		// Magic POP (round 838, session/gacha.go): the draw 0x7118 -> 0xB118
+		// and Gori's exchange 0x7119.
+		session.GachaHandler(session.GachaDeps{Table: gachaTable, Inv: inv, Items: refItems, Hub: hub, Logger: logger}),
 		// The Auto potion window's settings (round 786): retail's 0x7158 type
 		// 2, stored per character and sent back after the world entry.
 		session.AutoPotionHandler(autoPotionStoreOf(chars), hub, logger),

@@ -593,7 +593,7 @@ func cosStrike(ctx context.Context, cd combatDeps, o *cosObj, id int64) {
 		base /= 2
 	}
 	flat, pct := monsterDefence(m)
-	blow := resolveBlow(base, pct, flat, row.Critical(), m.Block, level, m.Level, int64(o.uid), m.ID)
+	blow := resolveBlow(base, float64(pct), flat, row.Critical(), m.Block, level, m.Level, int64(o.uid), m.ID)
 	dmg := blow.Damage
 	if dmg <= 0 {
 		return

@@ -33,6 +33,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/durability"
@@ -191,4 +192,84 @@ func clampHP(ctx context.Context, chars character.Store, characterID int64) {
 	if m := c.MaxHP(); c.HP > m {
 		_, _ = chars.Heal(ctx, characterID, 0, m)
 	}
+}
+
+// Round 838: the accessories' absorption, the percentage term of a player's
+// damage mitigation. READ in SR_GameServer:
+//
+//   - Char_BuildAggregateStats (0x495d60), its accessory branch
+//     (0x49691e..0x496a26), keeps per worn earring, necklace or ring
+//     PAR = PAR_L + q0*(PAR_U-PAR_L) + PARInc*plus and the same for MAR with
+//     q1 -- q_k the instance's variance group k / 31 (Item_VarianceFactor
+//     0x495d10), plus FUN_00459c70 (wornPlus) -- as floats (fstp, no
+//     rounding);
+//   - Char_PublishCombatStats (0x497830, asm 0x49786c..0x49790f) publishes
+//     them as ParamKeeper params 7 (PAR) and 8 (MAR), one slot-0 entry per
+//     item, summed by the keeper and clamped to 0..10000 (param_registry.md);
+//   - Formula_MitigatePhysicalDamage / _MagicalDamage (0x40e450 / 0x40e830)
+//     divide the blow by 1 + param/100 before the flat defence comes off
+//     (combat.MitigateDamage).
+//
+// Accessories never break and carry no durability (AddDurability 0x496d90
+// skips them), so the other worn stats' broken test does not apply. Their
+// variance is rolled at creation (inventory.FreshInstance, groups 0 and 1).
+
+// maxDefencePercent is the clamp params 7 and 8 have (param_registry.md).
+const maxDefencePercent = 10000
+
+// accessoryAbsorb sums characterID's worn accessories' physical (or, with
+// magical, magical) absorption: Char_BuildAggregateStats' accessory branch.
+// An accessory nobody has stats for absorbs nothing.
+func accessoryAbsorb(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, magical bool) float64 {
+	if eq == nil || items == nil {
+		return 0
+	}
+	worn, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return 0
+	}
+	group := 0
+	if magical {
+		group = 1
+	}
+	total := 0.0
+	for _, e := range worn {
+		if !isAccessorySlot(e.Slot) {
+			continue
+		}
+		it, err := items.GetItem(ctx, e.ItemID)
+		if err != nil || it == nil {
+			continue
+		}
+		lo, hi, inc := it.PhysAbsorbMin, it.PhysAbsorbMax, it.PlusIncPhysAbsorb
+		if magical {
+			lo, hi, inc = it.MagAbsorbMin, it.MagAbsorbMax, it.PlusIncMagAbsorb
+		}
+		total += durability.WhiteStat(lo, hi, e.Variance, group) + inc*float64(wornPlus(e))
+	}
+	return total
+}
+
+func isAccessorySlot(s equipment.Slot) bool {
+	for _, a := range equipment.AccessorySlots {
+		if s == a {
+			return true
+		}
+	}
+	return false
+}
+
+// playerMitigationPercent is a player defender's param 7 (physical) or 8
+// (magical): the worn accessories' absorption with the buffs' 'ar' entries
+// (buff.ParamPhysDefPct / ParamMagDefPct) applied, clamped to 0..10000.
+// Until round 838 it was a constant 0, from a census of the item table that
+// missed the accessory columns (71/72 and 79/80 are set on all 1,020
+// accessory rows, MEASURED).
+func playerMitigationPercent(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, magical bool) float64 {
+	param := buff.ParamPhysDefPct
+	if magical {
+		param = buff.ParamMagDefPct
+	}
+	v := buffStat(characterID, param, accessoryAbsorb(ctx, characterID, eq, items, magical))
+	return max(0, min(maxDefencePercent, v))
 }

@@ -7615,6 +7615,57 @@ speed 50 -> 108 broadcast; a drug then refused (byte 6). Absorption: two bots un
 each, mean blow 8.76 (42 hits, scroll) against 9.89 (62 hits). No perf gate: the drawing added runs
 only for an aura with .bsr rows.
 
+## Eight-hundred-and-thirty-eighth round, lane 5: the mall's remaining retail-kind items
+
+The user: "let's make all the items in the item mall functional. Make sure you read your descriptions
+so you know how to implement them. Make no mistakes." Lane 5 took the stall decorations, the skin
+change scroll, the Magic POP card, the global chatting items, the repair hammer, the warehouse
+addition, the quivers and potion bags, the reverse and return scrolls and the Europe accessories.
+Each was read against its full description (the round's catalogue) and the decompiled originals.
+
+**Built (READ unless marked).**
+- Repair hammer (3/3/13/7): UseByKind case 7 mends every worn and carried equip item below its max to
+  max, free, one 0x3052 each, and spends one hammer; none mended answers 0x1888 and keeps it; Param1 is
+  never read. The client asks box 0x1f "Will you use the selected item?" first (OURS geometry) and
+  checks the repair quote before sending.
+- Warehouse addition: "Limited to 2 times only per account" -- storage.AdditionCeiling. OURS: the
+  original gets the limit from a 150-slot start and the READ 210 bound; ours starts at 50.
+- Europe accessories: PAR/MAR (itemdata 71/72 and 79/80) were never exported. They are now, rolled
+  from variance groups 0 and 1 at creation (FUN_00728d50), summed into params 7/8
+  (Char_BuildAggregateStats' accessory branch, Char_PublishCombatStats), and divide a blow on the
+  wearer: raw / (1 + p/100) - flat. The old constant zero ("a player never has a percentage
+  reduction") came from a census that missed the accessory columns.
+- Global chatting: one item a line, a line past 128 characters cut with "..." (case 5), the edit's
+  100. GREEN (and WHITE/BLUE/RED/PINK/ORANGE) belong to the private server's packed add-on; 0x3026 has
+  no colour field. OURS: a u32 colour suffix on OpChatUpdate, each colour MEASURED from the item's own
+  icon.
+- Stall decorations (3/3/3/4): case 4 stores the item's RefObjID as _STATICAVATAR.Param1
+  (characters.stall_decoration) and spends the item; FUN_004f0f00's BFI1 override is
+  session.GrantStallDecoration (for the premium packages); the client's booth choice (c:0x9dd040) is
+  StallBooth. OPEN: OpenSRO has no player stall, so nothing in the world draws it yet; the QA hook
+  OPENSRO_QA_STALL_BOOTH draws the booth at the player.
+- Special reverse return scroll: options 4 (a party member) and 5 (saved locations) belong to the
+  add-on. OURS, built to its VPLUS_UI_REVERSE_* texts: OpUseItem options 4/5 + u32, OpReverseSaved
+  0x00FE/0x00FF, character_saved_locations (5 slots, registering keeps the scroll).
+- Skin change scroll (3/3/13/9): CIFChangePlayerModel and UpdateCharRefObjIDAndScale, with the
+  in-place warp a second later (OpUseItem option 0xFC).
+- Ammunition: worn stacks, `cnsm` spent once a cast, 0x300e at none, AutoReloadMagazine, 0x3201.
+  ITEM_MALL_QUIVER / _BOLT now behave as ordinary arrows do.
+- Magic POP: the machine's 0x11 from the gacha NPC map, the draw 0x7118/0xB118 (rand() % 10000 <
+  Ratio, else the normalised consolation set), the card turned in place into its coupon, Gori's
+  exchange 0x7119; docs/protocol/magic_pop.md.
+- Checked, unchanged: the mall delivers the package's Data (quiver and potion bags 10,000 in one
+  stack); the X-large potions restore as 3/3/1 (820); return scrolls 01/02 and the instant one
+  (Param1 / 1000 s, round 779).
+
+**Live (real server, real client, real input).** The hammer's box and its Yes turned a broken mail and
+a worn sword white; the green line was drawn green; the stall decoration was spent; the warehouse took
+two additions and refused the third; the special box showed five destinations, a location saved into
+slot 3 ("3. Jangan") and the move back to it; the mall sold a quiver and a potion bag of 10000 each;
+the four decorations' booths and the two default stalls were drawn; a European wore the Jade Necklace
+("Phy. absorption 17.6 (+35%)"); the instant return scroll moved the character to the town gate; the
+skin change, ammunition and Magic POP runs are in their own sections of the lane report.
+
 ## Eight-hundred-and-thirty-seventh round: the item mall, with the try-on, silk and an item chest
 
 The user: "let's get the item mall fully working", with screenshots of a private server's in-game

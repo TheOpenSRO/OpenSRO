@@ -412,7 +412,7 @@ func TestMonsterDefenceIsReal(t *testing.T) {
 			continue
 		}
 		// A Copper Sword tops out around 16.
-		if got := combat.MitigateDamage(16, spec.Level, spec.Defense); got < 1 {
+		if got := combat.MitigateDamage(16, float64(spec.Level), spec.Defense); got < 1 {
 			t.Fatalf("%s (lvl %d, def %d) takes %d from a starter weapon",
 				spec.CodeName, spec.Level, spec.Defense, got)
 		}

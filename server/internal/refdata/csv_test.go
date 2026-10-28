@@ -733,8 +733,8 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	if got := load(append(append([]string(nil), row...), "1")).ChildItemCount; got != 1 {
 		t.Errorf("column 89 loaded ChildItemCount %d, want 1", got)
 	}
-	if ItemCSVColumnCount != 92 {
-		t.Errorf("ItemCSVColumnCount %d, want 92", ItemCSVColumnCount)
+	if ItemCSVColumnCount != 96 {
+		t.Errorf("ItemCSVColumnCount %d, want 96", ItemCSVColumnCount)
 	}
 	// Round 795: column 90 is Desc2, a ride scroll's level list.
 	withDesc := append(append([]string(nil), row...), "1", "120")
@@ -747,5 +747,13 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	}
 	if got := load(withDesc).ReviveCost; got != 0 {
 		t.Errorf("a 91-column export loaded ReviveCost %d, want 0", got)
+	}
+	// Round 838: columns 92..95 are the accessories' absorption ranges.
+	withAbsorb := append(append([]string(nil), withDesc...), "297", "17.4", "18", "6.6", "8.1")
+	if it := load(withAbsorb); it.PhysAbsorbMin != 17.4 || it.PhysAbsorbMax != 18 || it.MagAbsorbMin != 6.6 || it.MagAbsorbMax != 8.1 {
+		t.Errorf("columns 92..95 loaded %v %v %v %v, want 17.4 18 6.6 8.1", it.PhysAbsorbMin, it.PhysAbsorbMax, it.MagAbsorbMin, it.MagAbsorbMax)
+	}
+	if it := load(append(append([]string(nil), withDesc...), "297")); it.PhysAbsorbMax != 0 || it.MagAbsorbMax != 0 {
+		t.Errorf("a 92-column export loaded absorption %v / %v, want 0", it.PhysAbsorbMax, it.MagAbsorbMax)
 	}
 }

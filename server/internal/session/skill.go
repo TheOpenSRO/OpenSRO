@@ -1003,17 +1003,11 @@ func useSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill on cooldown"}).Encode()})
 		}
 
-		// NOT MODELLED, disclosed: AMMUNITION. A skill carrying the `cnsm`
-		// parameter spends ammunition, and the engine refuses the cast with
-		// UIIT_SKILL_USE_FAIL_RUNOUT_AMMO when the player has none (the check at
-		// 0058e348, guarded by IsPC). 448 real skills carry it -- every
-		// SKILL_CH_BOW and SKILL_EU_ROG -- and the record is
-		// (TypeID3, TypeID4, count): one arrow for bows, one or three bolts for
-		// rogues. See docs/protocol/skill_params.md.
-		//
-		// OpenSRO neither stocks nor spends ammunition, so there is nothing to
-		// check. Written down so that adding quivers later comes with the
-		// requirement already stated.
+		// AMMUNITION (round 838, ammo.go): a row carrying `cnsm` -- 386 real
+		// rows, every SKILL_CH_BOW and SKILL_EU_ROG and the crossbow's base
+		// attack -- is refused 0x300e unless slot 7 holds ammunition of its
+		// kind (the gate's row 0x20, after the HP/MP rows below), and spends
+		// it when its blows resolve (performSkillAttack).
 
 		// THE REACH, BEFORE ANYTHING IS SPENT (round 534). The engine never
 		// pays for a cast its target is out of reach of: Tick_UseSkill
@@ -1197,6 +1191,11 @@ func useSkillHandler(
 			defer l.Unlock()
 		}
 		if refusal := skillCostRefusal(ctx, chars, mp, characterID, hpCost, mpCost); refusal != "" {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
+		}
+		// The ammunition (round 838, ammo.go): the gate's row 0x20
+		// (0x58e32d), after its HP/MP rows, at the 0x7074 accept (mask 0x37).
+		if refusal := ammoRefusal(ctx, chars, eq, items, characterID, castRow); refusal != "" {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
 		}
 		// The recast rule after the costs' test, as the gate orders them

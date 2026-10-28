@@ -158,7 +158,7 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 			return targetOutcome{}, err
 		}
 		base = combat.ApplyMasteryScale(base, c.terms.masteryPercent)
-		blow := resolveBlow(base+bonus, defPct, def, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
+		blow := resolveBlow(base+bonus, float64(defPct), def, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
 		dmg := 0
 		switch {
 		case blow.Blocked:
@@ -383,6 +383,12 @@ func performSkillAttack(ctx context.Context, d combatDeps, sess *gateway.Session
 	}
 	if len(outcomes) == 0 {
 		return refuse("target not found")
+	}
+	// The ammunition (round 838, ammo.go): spent once a cast, after the
+	// blows are resolved and before they land (Skill_BuildUseContext_A); none
+	// in slot 7 now, no blow.
+	if r := spendAmmo(ctx, sess, chars, eq, d.inv, items, characterID, castRow); r != "" {
+		return refuse(r)
 	}
 	cc.apply(outcomes, action)
 	if report != nil && outcomes[0].before.ID == primaryID {

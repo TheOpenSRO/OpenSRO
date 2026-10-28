@@ -118,6 +118,9 @@ signal character_stats_result(stats: StatsNet.Stats)
 ## Callers that need to react to "my equip request succeeded" specifically
 ## should track that they're awaiting one.
 signal equipment_result(items: Array, error: String)
+## Round 838: 0x3201, the worn ammunition's count after a cast spent some
+## (READ c:0x882280: a u16, slot 7 implied).
+signal ammo_count(count: int)
 ## A repair's outcome: 0 = repaired, otherwise a refusal code; the gold spent
 ## and the worn slots' durability afterwards (EquipmentNet.RepairResult).
 signal repair_result(code: int, gold_spent: int, durabilities: Array)
@@ -520,9 +523,17 @@ signal chest_list(entries: Array)
 signal chest_take_result(result: Dictionary)
 signal chest_log(entries: Array)
 signal chest_received(entry: Dictionary)
+## Round 838: Magic POP (GachaNet). The draw's 0xB118 (decode_play_result's
+## dictionary), Gori's refusal 0xB119 (the code) and a Visible prize's
+## notice 0x3120.
+signal gacha_play_result(result: Dictionary)
+signal gacha_exchange_failed(code: int)
+signal gacha_announce(ref: int, count: int)
 ## Round 837 (OURS): the server's big notice (0x00D8 {u16 len, text}).
 signal big_notice(text: String)
 const OP_BIG_NOTICE := 0x00D8
+## Round 838: retail's 0x3201, the worn ammunition's count (ammo_count).
+const OP_AMMO_COUNT := 0x3201
 ## A big notice that arrived before anything listened (it comes with the
 ## world entry, during the loading screen): the HUD shows it when built.
 var pending_big_notice := ""
@@ -544,6 +555,9 @@ signal friend_failed(failure: FriendNet.Failure)
 signal friend_delete_result(ok: bool, value: int)
 ## Using a consumable: what it restored, and how many are left.
 signal use_item_result(result: UseItemNet.Result)
+## Round 838: the special reverse return scroll's saved locations
+## (UseItemNet.decode_reverse_saved).
+signal reverse_saved_result(result: Dictionary)
 ## The Auto potion window's saved settings (round 786, AutoPotionNet): the
 ## seven bytes retail's character data carries.
 signal auto_potion_config(settings: PackedByteArray)
@@ -859,9 +873,9 @@ static func _move_uid(p: Packet) -> int:
 ## status or a monster's blow on this player). Everything else waits.
 func _passes_group(p: Packet) -> bool:
 	match p.opcode:
-		InventoryNet.OP_LIST_RESULT, InventoryNet.OP_MOVE_RESULT, StatsNet.OP_STATS_RESULT, EquipmentNet.OP_RESULT, \
+		InventoryNet.OP_LIST_RESULT, InventoryNet.OP_MOVE_RESULT, StatsNet.OP_STATS_RESULT, EquipmentNet.OP_RESULT, OP_AMMO_COUNT, \
 				EquipmentNet.OP_REPAIR_RESULT, ShopNet.OP_BUY_RESULT, ShopNet.OP_LIST_RESULT, ShopNet.OP_SELL_RESULT, \
-				ItemOpNet.OP_MOVE_RESULT, ItemOpNet.OP_BUYBACK_FAIL, UseItemNet.OP_RESULT, CompositeNet.OP_STATE, \
+				ItemOpNet.OP_MOVE_RESULT, ItemOpNet.OP_BUYBACK_FAIL, UseItemNet.OP_RESULT, UseItemNet.OP_REVERSE_SAVED_RESULT, CompositeNet.OP_STATE, \
 				CompositeNet.OP_USE_RESULT, CompositeNet.OP_END, StorageNet.OP_LIST_RESULT, StorageNet.OP_DEPOSIT_RESULT, \
 				StorageNet.OP_WITHDRAW_RESULT, StorageNet.OP_GOLD_RESULT, CombatNet.OP_ATTACK_RESULT, CombatNet.OP_BERSERK_RESULT, \
 				CombatNet.OP_MONSTER_DAMAGED, CombatNet.OP_MONSTER_DIED, CombatNet.OP_LOOT_DROPPED, CombatNet.OP_MONSTER_LEFT, \
@@ -1455,6 +1469,11 @@ func use_item_crest(char_name: String, inventory_slot: int, pixels: PackedByteAr
 	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_crest(char_name, inventory_slot, pixels))
 
+## Round 838: the skin change scroll's use with the chosen body and scale.
+func use_item_skin(char_name: String, inventory_slot: int, ref_obj_id: int, scale: int) -> void:
+	last_use_slot = inventory_slot
+	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_skin(char_name, inventory_slot, ref_obj_id, scale))
+
 func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
 	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot, option, target))
@@ -1470,6 +1489,12 @@ func load_auto_potion() -> void:
 ## The casting bar's cancel (round 779): retail's 0x705B, no body.
 func scroll_cancel() -> void:
 	_send(UseItemNet.OP_SCROLL_CANCEL, PackedByteArray())
+
+## Round 838: list the special scroll's saved locations, or register where
+## the player stands into `saved_slot` (UseItemNet.SAVED_*), the scroll in
+## `bag_slot`.
+func reverse_saved(action: int, saved_slot: int, bag_slot: int) -> void:
+	_send(UseItemNet.OP_REVERSE_SAVED, UseItemNet.encode_reverse_saved(action, saved_slot, bag_slot))
 
 ## Spends one use of a granted item (the fill an Energy of life scroll grants).
 func composite_use(char_name: String, item_id: int) -> void:
@@ -1981,6 +2006,14 @@ func chest_take(entry: int) -> void:
 
 func chest_log_request() -> void:
 	_send(MallNet.OP_CHEST_LOG)
+
+## Round 838: Magic POP's draw (0x7118) with the card in `bag_slot`, and
+## Gori's exchange (0x7119).
+func gacha_play(npc_uid: int, gacha_id: int, bag_slot: int) -> void:
+	_send(GachaNet.OP_PLAY, GachaNet.encode_play(npc_uid, gacha_id, bag_slot))
+
+func gacha_exchange(npc_uid: int) -> void:
+	_send(GachaNet.OP_EXCHANGE, GachaNet.encode_exchange(npc_uid))
 
 ## Round 834: ask a player by name (0x7302; the Add box, the target menu,
 ## /friend and /invite).
@@ -2535,6 +2568,10 @@ func _dispatch(p: Packet) -> void:
 			var token := ActionNet.decode_ping_echo(p.data)
 			if token >= 0:
 				ping_echo.emit(token)
+		UseItemNet.OP_REVERSE_SAVED_RESULT:
+			var rs := UseItemNet.decode_reverse_saved(p.data)
+			if not rs.is_empty():
+				reverse_saved_result.emit(rs)
 		UseItemNet.OP_SCROLL_CANCEL_RESULT:
 			# READ: FUN_008727a0 shows nothing for a refusal (round 779).
 			print("NetClient: scroll cancel refused (code %d)" % UseItemNet.decode_cancel_result(p.data))
@@ -2565,6 +2602,18 @@ func _dispatch(p: Packet) -> void:
 			if _stats_requests_pending > 0:
 				_stats_requests_pending -= 1
 			character_stats_result.emit(StatsNet.decode_result(p.data))
+		OP_AMMO_COUNT:
+			# Round 838: the slot-7 stack's new count (c:0x6ab830 sets the
+			# worn item's count, READ).
+			if p.data.size() >= 2:
+				var n := p.data.decode_u16(0)
+				print("AMMO: slot 7 count %d" % n)
+				var worn = last_equipment_instances.get(7)
+				if worn != null:
+					worn.count = n
+					if n == 0:
+						last_equipment_instances.erase(7)
+				ammo_count.emit(n)
 		EquipmentNet.OP_RESULT:
 			var r := EquipmentNet.decode_result(p.data)
 			last_equipment_durabilities = r.durabilities
@@ -2744,6 +2793,14 @@ func _dispatch(p: Packet) -> void:
 			chest_log.emit(MallNet.decode_chest_log(p.data))
 		MallNet.OP_CHEST_RECEIVED:
 			chest_received.emit(MallNet.decode_chest_received(p.data))
+		GachaNet.OP_PLAY_RESULT:
+			gacha_play_result.emit(GachaNet.decode_play_result(p.data))
+		GachaNet.OP_EXCHANGE_RESULT:
+			gacha_exchange_failed.emit(GachaNet.decode_failure(p.data))
+		GachaNet.OP_ANNOUNCE:
+			var ga := GachaNet.decode_announce(p.data)
+			if not ga.is_empty():
+				gacha_announce.emit(int(ga["ref"]), int(ga["count"]))
 		OP_BIG_NOTICE:
 			if p.data.size() >= 2:
 				var bn := p.data.decode_u16(0)

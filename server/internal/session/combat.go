@@ -299,33 +299,6 @@ func DecodeLevelUp(data []byte) (*LevelUp, error) {
 // looks like a tidy 40~70 damage range, and it is not one.
 const unarmedDamage = 5
 
-// playerMitigationPercent is the percentage term of a player's damage
-// mitigation: zero, and RECOVERED as zero rather than assumed.
-//
-// The engine's mitigation is `raw / (1 + pct/100) - flat` for both sides, with
-// the percentage read as ParamKeeper param 7. A monster's is populated on every
-// characterdata row (col 73 = its level, via GObjMob_PublishStats). A player's
-// has three writers and none of them can set it:
-//
-//   - Char_PublishCombatStats (00497830) publishes it from a float field whose
-//     source is the _RefObjItem defence block -- and a census of all 21,560
-//     item rows finds no percentage-reduction column populated anywhere.
-//   - The skill-effect applier (00594ac0) reaches it only through the skill
-//     param code 'ar' (SkillGlobal::RefSkill_ParseParams, 00587630, writing
-//     skill+0x268 as a 3-word run). 'ar' appears on ZERO of the 33,632 real
-//     skill rows; the single numeric match is a skill's own id column.
-//   - GObjMob_PublishStats is mobs only.
-//
-// The two defensive skill codes that ARE live go somewhere else entirely:
-// 'defp' (273 skills) writes params 5/6 at slot 0 -- the FLAT absorb -- and
-// 'defr' (4 skills) writes them at slot 1, a percentage boost to that flat
-// term. Neither touches param 7.
-//
-// So a player never has a percentage reduction, and the asymmetry with monsters
-// is the game's, not a gap here. If buffs ever land, 'defp'/'defr' belong on the
-// flat term.
-const playerMitigationPercent = 0
-
 // AttackRequest is the OpAttack payload.
 type AttackRequest struct {
 	CharacterName   string
@@ -1201,6 +1174,15 @@ func combatHandler(
 			// all (playtest 2026-09-20, item 2). This server cannot walk the
 			// player into range the way the engine does, so it refuses and
 			// says why -- the same stated departure the keep-up carries.
+			// The ammunition (round 838, ammo.go): a bow's or a crossbow's
+			// base attack carries `cnsm`, and Tick_Attack's phase 0 tests it
+			// (mask 0x64) before the reach.
+			if base, ok := baseAttackOf(ctx, characterID, eq, items); ok {
+				if refusal := ammoRefusal(ctx, chars, eq, items, characterID, base); refusal != "" {
+					keepUp.Cancel(characterID)
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusal, MonsterID: req.TargetMonsterID}).Encode()})
+				}
+			}
 			if !firstSwingInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID) {
 				// Round 785: the refusal names its monster, and the requester
 				// is told where the server has that monster (resyncMonster),
@@ -1385,6 +1367,11 @@ func performAttack(
 	}
 	if len(outcomes) == 0 || outcomes[0].before.ID != monster.ID {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
+	}
+	// The ammunition (round 838, ammo.go): the swing is its base attack
+	// skill's cast, which spends after its blows resolve and before they land.
+	if r := spendAmmo(ctx, sess, chars, eq, inv, items, characterID, baseRow); r != "" {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: r, MonsterID: targetMonsterID}).Encode()})
 	}
 	swingAction := &ActionBlock{Target: uint32(monster.ID), TargetKind: ActionTargetMonster, HitCount: uint8(cc.terms.hits)}
 	// The blow, with the players watching the monster before it and after it
@@ -2040,7 +2027,7 @@ func playerEvadeCrit(_ context.Context, characterID int64, _ equipment.Store) fl
 // resolveBlow is combat.ResolveBlow under the SAME lock as every other roll in
 // this package -- it takes two chance rolls, and rand.Rand is not safe for
 // concurrent use.
-func resolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int, attackerID, defenderID int64) combat.Blow {
+func resolveBlow(base int, mitigationPercent float64, flat, critChance, blockChance, attackerLevel, defenderLevel int, attackerID, defenderID int64) combat.Blow {
 	damageRollMu.Lock()
 	defer damageRollMu.Unlock()
 	return combat.ResolveBlow(base, mitigationPercent, flat, critChance, blockChance,

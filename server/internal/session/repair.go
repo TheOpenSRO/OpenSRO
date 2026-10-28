@@ -11,6 +11,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/repair"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
 )
@@ -232,6 +233,123 @@ func RepairHandlerWithBag(chars character.Store, eq equipment.Store, inv invento
 			Durabilities: durs,
 		}).Encode()})
 	}
+}
+
+// The repair hammer (round 838): ITEM_MALL_REPAIR_HAMMER and its event and
+// quest twins, TypeID 3/3/13/7. READ in SR_GameServer,
+// CGItemExpendable::UseByKind (0x0049c2b0) case 7 (0x49c448..0x49c4db): for
+// every slot of the character's storage -- the worn 0..12 and the bag -- an
+// item that IsEquip (vslot 0x84) and CanRepair (vslot 0xd8) whose current
+// durability is not its max gets CGObjPC::ChangeItemDurability(slot, max -
+// cur), which clamps, puts a broken worn item's stats back and sends 0x3052;
+// no gold is read. None mended answers 0x1888
+// UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR and keeps the hammer; else the
+// use answers 1 and DoJob spends one. Param1 (2 on every row, "1=?, 2=?") is
+// never read by the case.
+//
+// Not modelled (as in the NPC repair above): the 'rep' option's decrement
+// (FUN_00491890) and UseByKind's logout refusal 0x186b. OURS: an item counts
+// as CanRepair when it has a durability range (the CanRepair column is not
+// exported; MEASURED, every 3/1 row with a range has CanRepair 1 -- the
+// accessories, job suits and avatars that have 0 carry no range).
+const (
+	repairHammerKind = 7 // UseByKind case 7
+	// ErrNoItemToRepair is 0x1888, UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR.
+	ErrNoItemToRepair uint16 = 0x1888
+)
+
+// useItemEquipment is the worn-item store the repair hammer mends (round
+// 838). UseItemHandler takes none, so cmd/server sets it once at start-up
+// (SetUseItemEquipment), before any session is served; nil refuses the
+// hammer.
+var useItemEquipment equipment.Store
+
+// SetUseItemEquipment wires the worn-item store into the item uses.
+func SetUseItemEquipment(eq equipment.Store) { useItemEquipment = eq }
+
+// isRepairHammer reports a 3/3/13/7 row.
+func isRepairHammer(it *refdata.Item) bool {
+	return it != nil && it.TypeID1 == equipment.TypeItem && it.TypeID2 == equipment.TypeExpendable &&
+		it.TypeID3 == 13 && it.TypeID4 == repairHammerKind
+}
+
+// useRepairHammer runs UseByKind case 7 for characterID's hammer in held.
+func useRepairHammer(ctx context.Context, sess *gateway.Session, eq equipment.Store, inv inventory.Store, items ItemLookup,
+	characterID int64, it *refdata.Item, held inventory.Slot, have int) error {
+	refuse := func(code uint16, reason string) error {
+		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Error: reason, Code: code}).Encode()})
+	}
+	if eq == nil || inv == nil || items == nil {
+		return refuse(0, "cannot use items")
+	}
+	type mendable struct {
+		slot       int // the equipment slot, or RepairBagSlotBase + the bag slot
+		itemID     int64
+		variance   uint64
+		durability int
+		set        func(d int) error
+	}
+	var list []mendable
+	worn, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return refuse(0, "lookup failed")
+	}
+	for _, e := range worn {
+		e := e
+		list = append(list, mendable{int(e.Slot), e.ItemID, e.Variance, e.Durability,
+			func(d int) error { return eq.SetDurability(ctx, characterID, e.Slot, d) }})
+	}
+	bag, err := inv.List(ctx, characterID)
+	if err != nil {
+		return refuse(0, "lookup failed")
+	}
+	for _, b := range bag {
+		b := b
+		list = append(list, mendable{RepairBagSlotBase + b.Index, b.ItemID, b.Variance, b.Durability,
+			func(d int) error { return inv.SetDurability(ctx, characterID, b.Index, d) }})
+	}
+	type mendedItem struct{ slot, durability int }
+	var mended []mendedItem
+	for _, e := range list {
+		if e.durability == durability.Untracked {
+			continue
+		}
+		ref, err := items.GetItem(ctx, e.itemID)
+		if err != nil || ref == nil || ref.TypeID2 != equipment.TypeEquipment || ref.DurabilityMax <= 0 {
+			continue
+		}
+		max := durability.MaxDurability(ref.DurabilityMin, ref.DurabilityMax, e.variance)
+		if e.durability == max {
+			continue
+		}
+		if err := e.set(max); err != nil {
+			continue
+		}
+		mended = append(mended, mendedItem{e.slot, max})
+	}
+	if len(mended) == 0 {
+		return refuse(ErrNoItemToRepair, "no item needs repairing")
+	}
+	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
+		// The items stay mended: the engine's job ran before DoJob's count
+		// (OURS: a removal that fails is a store error the engine has none of).
+		return refuse(0, "using failed")
+	}
+	// A broken piece mended counts again (round 769).
+	character.InvalidateBonus(characterID)
+	if err := sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
+		Remaining: int32(have - 1), ItemID: uint32(it.ID),
+	}).Encode()}); err != nil {
+		return err
+	}
+	// ChangeItemDurability's 0x3052, one per item, after the use's answer
+	// (OURS order: the engine's go out inside the job, before DoJob answers).
+	for _, m := range mended {
+		if err := sess.Send(&proto.Packet{Opcode: OpDurabilityChanged, Data: EncodeDurabilityChanged(m.slot, m.durability)}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mustWorn re-reads the worn list after a repair, empty on error.

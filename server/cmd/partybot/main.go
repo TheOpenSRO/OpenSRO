@@ -263,6 +263,8 @@ func (b *bot) saw(rec pcspawn.Record) {
 	if watchViews {
 		fmt.Printf("%s [%s] WATCH spawn %s uid %d body mode %d\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.BodyMode)
 	}
+	// Round 838: the body each spawn carries (a skin change respawns it).
+	fmt.Printf("%s [%s] MODEL spawn %s uid %d ref %d scale 0x%02x\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.RefObjID, rec.Scale)
 	// Round 814: a player's guild line as its spawn carries it.
 	if rec.GuildName != "" {
 		fmt.Printf("[%s] GUILD spawn %s uid %d guild %d %q grant %q\n", b.name, rec.Name, rec.UID, rec.GuildID, rec.GuildName, rec.Nickname)

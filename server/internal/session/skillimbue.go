@@ -94,7 +94,7 @@ func imbueHit(ctx context.Context, d combatDeps, characterID int64, it *imbueTer
 		flat = rollDamage(lo, hi)
 	}
 	def := m.Defense - statusFX.monsterDefenceCut(m.ID)
-	blow := resolveBlow(base+flat, m.DefensePercent, def, 0, 0, level, m.Level, characterID, m.ID)
+	blow := resolveBlow(base+flat, float64(m.DefensePercent), def, 0, 0, level, m.Level, characterID, m.ID)
 	dmg := combat.ApplySkillPercent(blow.Damage, attValue(it.row, 1))
 	return int(math.Round(float64(dmg) * float64(it.scale) / 100))
 }

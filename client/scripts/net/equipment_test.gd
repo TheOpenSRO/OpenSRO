@@ -52,10 +52,27 @@ func _test_decode_result() -> void:
 		_check(result.items[0].slot == 0, "slot round-trips")
 		_check(result.items[0].item_id == 100, "item id round-trips")
 
+## Round 838: the arrows worn in slot 7 come as an expendable's record, the
+## u16 count after the RefItemID (the server's wornItemInfos).
+func _test_worn_ammo_record() -> void:
+	var was := ItemInstance.types_of
+	ItemInstance.types_of = func(_ref: int) -> PackedInt32Array: return PackedInt32Array([3, 3, 4, 1])
+	var rec := PackedByteArray()
+	rec.resize(10)
+	rec.encode_u32(0, 0)
+	rec.encode_u32(4, 3823)
+	rec.encode_u16(8, 9876)
+	var got: Array = ItemInstance.read_record(rec, 0)
+	ItemInstance.types_of = was
+	_check(got[0] != null and int(got[1]) == 10, "a worn quiver's record reads to its end")
+	if got[0] != null:
+		_check((got[0] as ItemInstance).count == 9876, "the worn quiver's count is 9876")
+
 func _init() -> void:
 	_test_encode_equip()
 	_test_encode_unequip()
 	_test_decode_result()
+	_test_worn_ammo_record()
 
 	if _failures == 0:
 		print("ALL PASS")

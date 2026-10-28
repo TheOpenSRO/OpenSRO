@@ -142,6 +142,10 @@ var itemCSVColumns = []string{
 	// Item.ReviveCost). A strict suffix; an older export reads 0, and a
 	// broken item is mended without its restore fee.
 	"ReviveCost",
+	// Appended later still (round 838): the accessories' absorption ranges,
+	// itemdata columns 71/72 and 79/80 (see Item.PhysAbsorbMin). A strict
+	// suffix; an older export reads 0, and a worn accessory absorbs nothing.
+	"PhysAbsorbMin", "PhysAbsorbMax", "MagAbsorbMin", "MagAbsorbMax",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -456,6 +460,10 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 91 {
 		it.ReviveCost = int64(parseInt(f[91]))
+	}
+	if len(f) > 95 {
+		it.PhysAbsorbMin, it.PhysAbsorbMax = parseFloat(f[92]), parseFloat(f[93])
+		it.MagAbsorbMin, it.MagAbsorbMax = parseFloat(f[94]), parseFloat(f[95])
 	}
 
 	if err != nil {

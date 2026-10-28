@@ -228,11 +228,12 @@ var cleanupRefs = []ownerRef{
 	{"friendships", "friend_id", false},
 	{"friend_requests", "requester_id", false},
 	{"friend_requests", "target_id", false},
-	{"mall_purchases", "character_id", false}, // round 837, the item mall's log
-	{"mall_chest", "character_id", false},     // round 837, the item chest
-	{"mall_chest_log", "character_id", false}, // round 837
-	{"mall_lottery", "character_id", false},   // round 838, the Silk Lottery's entries
-	{"skill_jobs", "character_id", false},     // round 838, the item skill jobs
+	{"mall_purchases", "character_id", false},            // round 837, the item mall's log
+	{"mall_chest", "character_id", false},                // round 837, the item chest
+	{"mall_chest_log", "character_id", false},            // round 837
+	{"character_saved_locations", "character_id", false}, // round 838, the special scroll's slots
+	{"mall_lottery", "character_id", false},              // round 838, the Silk Lottery's entries
+	{"skill_jobs", "character_id", false},                // round 838, the item skill jobs
 	{inventory.WarehouseTable, "account_id", true},
 	{"character_locks", "account_id", true},        // round 788, the account PIN
 	{"character_lock_devices", "account_id", true}, // round 788, its remembered PCs

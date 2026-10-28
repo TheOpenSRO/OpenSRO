@@ -25,11 +25,25 @@ func FreshInstance(ctx context.Context, lookup DurabilityLookup, rng durability.
 	if err != nil {
 		return Instance{}, err
 	}
-	if !ok || !durability.Tracked(durMin, durMax) {
-		return Instance{Durability: durability.Untracked}, nil
-	}
 	if rng == nil {
 		rng = globalRand{}
+	}
+	if !ok || !durability.Tracked(durMin, durMax) {
+		// An earring, necklace or ring has no durability but does have a
+		// variance (round 838): the TypeID-3/1 creation dispatcher (gs
+		// 0x727590) sends TypeID3 5 and 12 to FUN_00728d50, which rolls only
+		// groups 0 and 1 -- the absorptions' qualities -- each
+		// round(RollWhiteStatUnit() * 31) (READ).
+		if acc, isAcc := lookup.(AccessoryLookup); isAcc {
+			yes, err := acc.IsAccessory(ctx, itemID)
+			if err != nil {
+				return Instance{}, err
+			}
+			if yes {
+				return Instance{Variance: durability.RollVarianceGroups(rng, 2), Durability: durability.Untracked}, nil
+			}
+		}
+		return Instance{Durability: durability.Untracked}, nil
 	}
 	v := durability.RollVariance(rng)
 	return Instance{Variance: v, Durability: durability.MaxDurability(durMin, durMax, v)}, nil

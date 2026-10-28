@@ -176,7 +176,7 @@ func TestMitigateDamage(t *testing.T) {
 	// which side of the fight owns it.
 	prev := MitigateDamage(1000, 0, 0)
 	for pct := 1; pct <= 120; pct++ {
-		got := MitigateDamage(1000, pct, 0)
+		got := MitigateDamage(1000, float64(pct), 0)
 		if got > prev {
 			t.Fatalf("mitigation not monotonic: pct %d gave %d, up from %d", pct, got, prev)
 		}
@@ -429,7 +429,7 @@ func TestResolveBlowOrder(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ResolveBlow(tc.base, tc.pct, tc.flat, tc.crit, tc.block,
+			got := ResolveBlow(tc.base, float64(tc.pct), tc.flat, tc.crit, tc.block,
 				tc.atkLevel, tc.defLevel, nil, nil)
 			if got != tc.want {
 				t.Errorf("ResolveBlow = %+v, want %+v", got, tc.want)
@@ -566,7 +566,7 @@ func TestDamageFloorIsTheGamesOwn(t *testing.T) {
 		{"an ordinary blow is untouched by the floor", 100, 0, 10, 90},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := MitigateDamage(tc.raw, tc.pct, tc.flat); got != tc.expect {
+			if got := MitigateDamage(tc.raw, float64(tc.pct), tc.flat); got != tc.expect {
 				t.Errorf("MitigateDamage(%d, %d, %d) = %d, want %d",
 					tc.raw, tc.pct, tc.flat, got, tc.expect)
 			}

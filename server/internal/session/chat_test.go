@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,8 +130,9 @@ type chatWorld struct {
 // globalItemID is a synthetic global chatting item (TypeID 3/3/3/5); 99 is a
 // potion-shaped item that is not one.
 const (
-	globalItemID = 900001
-	notGlobalID  = 99
+	globalItemID  = 900001
+	greenGlobalID = 57832 // ITEM_MALL_GLOBAL_CHATTING_GREEN (round 838)
+	notGlobalID   = 99
 )
 
 // newChatWorld logs three accounts in (alice is a GM), each into the same
@@ -151,6 +153,7 @@ func newChatWorld(t *testing.T) *chatWorld {
 	if err := items.ImportItems(ctx, []refdata.Item{
 		{ID: globalItemID, CodeName: "ITEM_MALL_GLOBAL_CHATTING", TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 5, MaxStack: 50},
 		{ID: notGlobalID, CodeName: "ITEM_ETC_HP_POTION_01", TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, MaxStack: 50},
+		{ID: greenGlobalID, CodeName: "ITEM_MALL_GLOBAL_CHATTING_GREEN", TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 5, MaxStack: 50},
 	}); err != nil {
 		t.Fatalf("ImportItems: %v", err)
 	}
@@ -365,6 +368,39 @@ func TestChatGlobalSpendsTheItemAndReachesEveryone(t *testing.T) {
 		if s.ItemID == globalItemID && s.Quantity != 1 {
 			t.Fatalf("global chatting items left = %d, want 1", s.Quantity)
 		}
+	}
+}
+
+// Round 838: a green global chatting item's line carries its colour (OURS,
+// GlobalChatColor) to everyone, and a line past 128 characters is cut with
+// "..." (READ, case 5); the plain item's line carries none.
+func TestChatGlobalGreenAndTheCut(t *testing.T) {
+	w := newChatWorld(t)
+	ctx := context.Background()
+	id := ec(w, "Aria")
+	if err := w.inv.AddItem(ctx, id, greenGlobalID, 1); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	slots, _ := w.inv.List(ctx, id)
+	long := strings.Repeat("x", 130)
+	w.a.send(OpChatGlobal, (&ChatGlobalRequest{InventorySlot: int32(slots[0].Index), Message: long}).Encode())
+	want := ChatUpdate{Type: ChatGlobal, Sender: "Aria", Message: strings.Repeat("x", 128) + "...", Color: 0xff71fe99}
+	for _, c := range []*chatClient{w.a, w.b, w.c} {
+		if u := c.update(); *u != want {
+			t.Fatalf("green global heard %+v, want %+v", u, want)
+		}
+	}
+	if r := w.a.result(); !r.OK {
+		t.Fatalf("green global result %+v", r)
+	}
+	// The colour rides as a strict suffix; a plain line has none.
+	plain := (&ChatUpdate{Type: ChatGlobal, Sender: "A", Message: "m"}).Encode()
+	green := (&ChatUpdate{Type: ChatGlobal, Sender: "A", Message: "m", Color: 0xff71fe99}).Encode()
+	if len(green) != len(plain)+4 {
+		t.Fatalf("green %d bytes, plain %d: want 4 more", len(green), len(plain))
+	}
+	if GlobalChatColor("ITEM_MALL_GLOBAL_CHATTING") != 0 || GlobalChatColor("ITEM_EVENT_GLOBAL_CHATTING") != 0 {
+		t.Error("the plain items must keep the yellow")
 	}
 }
 
