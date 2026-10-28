@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -357,6 +358,10 @@ func useScrollFill(ctx context.Context, sess *gateway.Session, hub *world.Hub, k
 		return nil
 	}
 	delay, code, err := sc.begin(ctx, sess, characterID, fill, req.Option, req.Target, spend)
+	var refused scrollRefusedText
+	if errors.As(err, &refused) {
+		return fail(refused.why, req.ItemID)
+	}
 	if err != nil {
 		return fail("using failed", req.ItemID)
 	}

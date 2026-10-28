@@ -120,6 +120,7 @@ package session
 //     walk-in refusals; it has no pets, logout, guild summon or thieves.
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -520,6 +521,10 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 	it *refdata.Item, held inventory.Slot, have int, req *UseItemRequest) error {
 	spend := func() error { return inv.RemoveItem(ctx, characterID, held.Index, 1) }
 	delay, code, err := s.begin(ctx, sess, characterID, it, req.Option, req.Target, spend)
+	var refused scrollRefusedText
+	if errors.As(err, &refused) {
+		return scrollRefusal(sess, 0, refused.why)
+	}
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Error: "using failed"}).Encode()})
 	}
@@ -530,6 +535,13 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 		Remaining: int32(have - 1), CastMs: uint32(delay / time.Millisecond), ItemID: uint32(it.ID),
 	}).Encode()})
 }
+
+// scrollRefusedText is begin's refusal with a text of its own and no retail
+// code (round 838: the special scroll's options 4 and 5, OURS); the caller
+// answers it.
+type scrollRefusedText struct{ why string }
+
+func (r scrollRefusedText) Error() string { return r.why }
 
 // begin is FUN_004a0380 / FUN_004a00c0 for the scroll it with the request's
 // option and target: the refusals (a non-zero code, nothing done), then
@@ -636,12 +648,12 @@ func (s *ScrollCaster) begin(ctx context.Context, sess *gateway.Session, charact
 			if !IsSpecialReverseReturnScroll(it) {
 				return refuse(ScrollErrUnknownOption)
 			}
-			cast.target = req.Target
-			if _, ok, why := s.addOnPoint(ctx, characterID, req.Option, req.Target); !ok {
+			cast.target = target
+			if _, ok, why := s.addOnPoint(ctx, characterID, option, target); !ok {
 				if s.logger != nil {
-					s.logger.Debug("scroll refused", "character_id", characterID, "item", it.CodeName, "option", req.Option, "why", why)
+					s.logger.Debug("scroll refused", "character_id", characterID, "item", it.CodeName, "option", option, "why", why)
 				}
-				return scrollRefusal(sess, 0, why)
+				return 0, 0, scrollRefusedText{why}
 			}
 		default:
 			return refuse(ScrollErrUnknownOption)
