@@ -40,6 +40,11 @@ type ServiceStore interface {
 	// character (any account, a pending deletion included, case ignored) or
 	// this one already holds it.
 	Rename(ctx context.Context, characterID int64, name string) error
+	// AddWaivedSP records n SP of skills the Skill Leveler opened free;
+	// TakeWaivedSP returns the total recorded and clears it. A skill reset
+	// takes it off its refund, so the free skills give no SP back.
+	AddWaivedSP(ctx context.Context, characterID int64, n int64) error
+	TakeWaivedSP(ctx context.Context, characterID int64) (int64, error)
 }
 
 // The pending flags (OURS).
@@ -61,11 +66,13 @@ const serviceSchema = `
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS name_colour BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS title_colour BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS service_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS waived_sp BIGINT NOT NULL DEFAULT 0;
 `
 
 // memService is one character's MemStore service state.
 type memService struct {
 	name, title, pending uint32
+	waived               int64
 }
 
 func (m *MemStore) serviceLocked(characterID int64) (*memService, error) {
@@ -129,6 +136,37 @@ func (m *MemStore) setColour(ctx context.Context, characterID int64, argb uint32
 		}
 	})
 	return nil
+}
+
+// AddWaivedSP implements ServiceStore.
+func (m *MemStore) AddWaivedSP(ctx context.Context, characterID int64, n int64) error {
+	_, err := m.changeWaived(ctx, characterID, func(w int64) int64 { return w + n })
+	return err
+}
+
+// TakeWaivedSP implements ServiceStore.
+func (m *MemStore) TakeWaivedSP(ctx context.Context, characterID int64) (int64, error) {
+	return m.changeWaived(ctx, characterID, func(int64) int64 { return 0 })
+}
+
+// changeWaived applies f to the waived SP and returns the value before.
+func (m *MemStore) changeWaived(ctx context.Context, characterID int64, f func(int64) int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.serviceLocked(characterID)
+	if err != nil {
+		return 0, err
+	}
+	before := s.waived
+	s.waived = f(before)
+	txn.OnRollback(ctx, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if s, err := m.serviceLocked(characterID); err == nil {
+			s.waived = before
+		}
+	})
+	return before, nil
 }
 
 // ServicePending implements ServiceStore.
@@ -235,6 +273,33 @@ func (s *SQLStore) serviceUpdate(ctx context.Context, q string, args ...any) err
 		return ErrNotFound
 	}
 	return nil
+}
+
+// AddWaivedSP implements ServiceStore.
+func (s *SQLStore) AddWaivedSP(ctx context.Context, characterID int64, n int64) error {
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx, `UPDATE characters SET waived_sp = waived_sp + $1 WHERE id = $2`, n, characterID)
+	if err != nil {
+		return fmt.Errorf("character: recording waived SP: %w", err)
+	}
+	if k, err := res.RowsAffected(); err == nil && k == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// TakeWaivedSP implements ServiceStore: one statement reads and clears it.
+func (s *SQLStore) TakeWaivedSP(ctx context.Context, characterID int64) (int64, error) {
+	var w int64
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `UPDATE characters c SET waived_sp = 0
+FROM (SELECT id, waived_sp FROM characters WHERE id = $1 FOR UPDATE) old
+WHERE c.id = old.id RETURNING old.waived_sp`, characterID).Scan(&w)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("character: taking waived SP: %w", err)
+	}
+	return w, nil
 }
 
 // ServicePending implements ServiceStore.

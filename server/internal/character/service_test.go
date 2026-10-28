@@ -9,7 +9,7 @@ import (
 )
 
 // Round 838: the service scrolls' state (ServiceStore), in memory and in
-// PostgreSQL alike: the plate colours, the pending flags, the rename and its
+// PostgreSQL alike: the plate colours, the pending flags, the waived SP, the rename and its
 // uniqueness, and a rename undone by its transaction.
 func TestServiceStores(t *testing.T) {
 	ctx := context.Background()
@@ -46,6 +46,24 @@ func TestServiceStores(t *testing.T) {
 			}
 			if p, _ := store.ServicePending(ctx, c.ID); p != ServicePendingStatReset {
 				t.Fatalf("read back %b", p)
+			}
+			if w, err := store.TakeWaivedSP(ctx, c.ID); err != nil || w != 0 {
+				t.Fatalf("a new character's waived SP %d %v", w, err)
+			}
+			if err := store.AddWaivedSP(ctx, c.ID, 120); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.AddWaivedSP(ctx, c.ID, 30); err != nil {
+				t.Fatal(err)
+			}
+			if w, err := store.TakeWaivedSP(ctx, c.ID); err != nil || w != 150 {
+				t.Fatalf("waived SP %d %v", w, err)
+			}
+			if w, _ := store.TakeWaivedSP(ctx, c.ID); w != 0 {
+				t.Fatalf("waived SP after the take %d", w)
+			}
+			if err := store.AddWaivedSP(ctx, 999999, 1); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("waived SP for no one: %v", err)
 			}
 			if err := store.Rename(ctx, c.ID, "bram"); !errors.Is(err, ErrNameTaken) {
 				t.Fatalf("a taken name: %v", err)

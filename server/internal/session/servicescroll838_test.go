@@ -431,6 +431,39 @@ func TestRound838SkillLeveler(t *testing.T) {
 	}
 }
 
+// The Skill Leveler's skills were never paid for, so a skill reset after it
+// gives their SP back to no one: the two scrolls cannot turn silk into SP.
+func TestRound838SkillResetRefundsNoLevelerSP(t *testing.T) {
+	f := setupService(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		f.skills.RaiseMastery(ctx, f.ariaID, 257, 0, 10)
+	}
+	slot := f.give(tidLeveler, 1)
+	if r := f.use(slot); r.Error != "" {
+		t.Fatalf("leveler: %+v", r)
+	}
+	f.line(f.a, f.ra)
+	slot = f.give(tidStatSkill, 1)
+	if r := f.use(slot); r.Error != "" {
+		t.Fatalf("reset: %+v", r)
+	}
+	f.line(f.a, f.ra)
+	f.a.Close()
+	time.Sleep(200 * time.Millisecond)
+	f.a, f.ra = f.enter("alice", "pw1", "Aria")
+	f.line(f.a, f.ra)
+	if l := f.line(f.a, f.ra); l != "Your skills have been reset: 0 SP returned." {
+		t.Fatalf("line %q", l)
+	}
+	if sp, _ := f.skills.SkillPoints(ctx, f.ariaID); sp != 0 {
+		t.Fatalf("the reset refunded %d SP of free skills", sp)
+	}
+	if w, _ := f.chars.TakeWaivedSP(ctx, f.ariaID); w != 0 {
+		t.Fatalf("waived SP left after the reset: %d", w)
+	}
+}
+
 func TestRound838NameChange(t *testing.T) {
 	f := setupService(t)
 	ctx := context.Background()

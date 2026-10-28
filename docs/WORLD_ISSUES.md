@@ -7557,8 +7557,9 @@ transaction as the scroll. Every accepted use answers with OpServiceLine.
   packages but has no use yet.
 - ITEM_TITLE_196 (the "SRO Lover Title") has none either. A non-job title line would have to read
   `NetClient.service.title_colour`.
-- The Skill Leveler is free and the reset refunds every learned row's SP, so silk can buy SP
-  through the two.
+- Fixed after the merge (OURS): the Skill Leveler records the SP it waived (`characters.waived_sp`)
+  and a skill reset refunds only what remains, so the two scrolls cannot turn silk into SP
+  (TestRound838SkillResetRefundsNoLevelerSP; the memory and Postgres stores in TestServiceStores).
 - A buff from a forgotten skill runs out on its own.
 - OpenSRO's QaSignIn does not answer a pending rename; the select screen does.
 

@@ -703,26 +703,36 @@ func (d *ServiceDeps) learnedSkills(ctx context.Context, characterID int64) (ids
 	return ids, sp, nil
 }
 
-// resetSkills forgets ids and refunds sp (inside the caller's transaction).
+// resetSkills forgets ids and refunds sp less the SP the Skill Leveler
+// waived (inside the caller's transaction), returning what came back.
 // OURS, the rule: every learned skill goes, each level's ReqLearn_SP (the
 // cost the learn handler took, skilldata column 46) comes back; the mastery
-// levels stay -- the descriptions name the skills alone.
-func (d *ServiceDeps) resetSkills(ctx context.Context, characterID int64, ids []int64, sp int) error {
+// levels stay -- the descriptions name the skills alone. Skills the leveler
+// opened free were never paid for, so their SP does not come back (or the
+// two scrolls together would turn silk into SP).
+func (d *ServiceDeps) resetSkills(ctx context.Context, characterID int64, ids []int64, sp int) (int, error) {
 	f, ok := d.Skills.(skill.Forgetter)
 	if !ok {
-		return errors.New("the skill store cannot forget")
+		return 0, errors.New("the skill store cannot forget")
 	}
 	for _, id := range ids {
 		if err := f.Forget(ctx, characterID, id); err != nil {
-			return err
+			return 0, err
 		}
+	}
+	if st, ok := d.Chars.(character.ServiceStore); ok {
+		waived, err := st.TakeWaivedSP(ctx, characterID)
+		if err != nil {
+			return 0, err
+		}
+		sp = max(0, sp-int(waived))
 	}
 	if sp > 0 {
 		if _, err := d.Skills.AddSkillPoints(ctx, characterID, sp); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return sp, nil
 }
 
 // skillsChanged refreshes what learned skills feed and tells the client:
@@ -759,9 +769,10 @@ func (u serviceUse) skillReset(ctx context.Context) error {
 	if len(ids) == 0 {
 		return u.fail("You have no skills to reset.")
 	}
-	if ok, err := u.run(ctx, func(ctx context.Context) error {
-		return u.d.resetSkills(ctx, u.cid, ids, sp)
-	}, u.d.Skills); !ok {
+	if ok, err := u.run(ctx, func(ctx context.Context) (err error) {
+		sp, err = u.d.resetSkills(ctx, u.cid, ids, sp)
+		return err
+	}, u.d.Skills, u.d.Chars); !ok {
 		return err
 	}
 	if err := u.accepted(fmt.Sprintf("Your skills have been reset: %d SP returned.", sp)); err != nil {
@@ -875,7 +886,9 @@ func (d *ServiceDeps) skillLevelerPlan(ctx context.Context, c *character.Charact
 // skillLeveler is the Skill Leveler: "automatically open the available skills
 // for each mastery you leveled up based on your mastery level." Every skill
 // skillLevelerPlan finds is learned, FREE (OURS: the description charges
-// nothing, and the scroll is the price); nothing to open refuses it.
+// nothing, and the scroll is the price); nothing to open refuses it. The SP
+// the skills would have cost is recorded (AddWaivedSP), so a later skill
+// reset does not refund it.
 func (u serviceUse) skillLeveler(ctx context.Context) error {
 	if u.d.Skills == nil || u.d.Refs == nil {
 		return u.fail("that cannot be used here")
@@ -893,13 +906,22 @@ func (u serviceUse) skillLeveler(ctx context.Context) error {
 		return u.fail("There are no skills to open for your mastery levels.")
 	}
 	if ok, err := u.run(ctx, func(ctx context.Context) error {
+		var waived int64
 		for _, id := range plan {
-			if err := u.d.Skills.Learn(ctx, u.cid, id); err != nil && !errors.Is(err, skill.ErrAlreadyKnown) {
+			if err := u.d.Skills.Learn(ctx, u.cid, id); errors.Is(err, skill.ErrAlreadyKnown) {
+				continue
+			} else if err != nil {
 				return err
 			}
+			if ref, err := u.d.Refs.GetSkill(ctx, id); err == nil && ref != nil {
+				waived += int64(ref.ReqLearnSP)
+			}
+		}
+		if st, ok := u.d.Chars.(character.ServiceStore); ok && waived > 0 {
+			return st.AddWaivedSP(ctx, u.cid, waived)
 		}
 		return nil
-	}, u.d.Skills); !ok {
+	}, u.d.Skills, u.d.Chars); !ok {
 		return err
 	}
 	if err := u.accepted(fmt.Sprintf("%d skill level(s) have been opened for your masteries.", len(plan))); err != nil {
@@ -1211,8 +1233,9 @@ func serviceAtEntry(ctx context.Context, chars character.Store, owned *character
 			pending &^= character.ServicePendingSkillReset
 		} else if ids, sp, err := d.learnedSkills(ctx, owned.ID); err != nil {
 			pending &^= character.ServicePendingSkillReset
-		} else if err := txn.For(d.Skills).Run(ctx, func(ctx context.Context) error {
-			return d.resetSkills(ctx, owned.ID, ids, sp)
+		} else if err := txn.For(d.Skills, d.Chars).Run(ctx, func(ctx context.Context) (err error) {
+			sp, err = d.resetSkills(ctx, owned.ID, ids, sp)
+			return err
 		}); err != nil {
 			slog.Warn("service: the skill reset failed", "character", owned.ID, "err", err)
 			pending &^= character.ServicePendingSkillReset
