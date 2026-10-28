@@ -29,9 +29,10 @@ package session
 // OpenSRO adds these entries to the character's param totals beside its
 // buffs' and passives' (charTotals), so every stat that reads a param through
 // buffStat / buffBonus sees them: Str and Int, max HP and MP, parry, hit
-// rate, the attacker's damage percent, and the regeneration rate (regen.go).
-// Params OpenSRO's combat does not read yet -- 52/53, 173, 174..177 on a
-// player, 188, 259 -- are carried and change nothing (OPEN, docs/TODO.md).
+// rate, the attacker's damage percent, the regeneration rate (regen.go) and,
+// since round 838, the damage a player takes (174..177, applyPlayerTaken).
+// Params OpenSRO's combat does not read yet -- 52/53, 173, 188, 259 -- are
+// carried and change nothing (OPEN, docs/TODO.md).
 //
 // The conditions (READ): a rental must not have expired (OpenSRO has no
 // rentals); a devil's spirit only while awake (DetachAbilityByItemOptLevel

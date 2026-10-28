@@ -231,6 +231,7 @@ var cleanupRefs = []ownerRef{
 	{"mall_purchases", "character_id", false}, // round 837, the item mall's log
 	{"mall_chest", "character_id", false},     // round 837, the item chest
 	{"mall_chest_log", "character_id", false}, // round 837
+	{"skill_jobs", "character_id", false},     // round 838, the item skill jobs
 	{inventory.WarehouseTable, "account_id", true},
 	{"character_locks", "account_id", true},        // round 788, the account PIN
 	{"character_lock_devices", "account_id", true}, // round 788, its remembered PCs

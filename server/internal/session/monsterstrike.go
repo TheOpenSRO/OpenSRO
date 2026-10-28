@@ -442,6 +442,11 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 		combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
 		monster.Level, playerLevel, monster.ID, characterID)
 	incoming := counter.Damage
+	// The defender's damage-taken multiplier (round 838, applyPlayerTaken):
+	// a monster's blow is physical here, p174 (defenderBlock's p136 too).
+	if !counter.Blocked {
+		incoming = applyPlayerTaken(characterID, false, incoming)
+	}
 	out.critical = counter.Critical
 	out.blocked = counter.Blocked
 	// A rider's blow lands on its mount (round 795: a single-target blow at

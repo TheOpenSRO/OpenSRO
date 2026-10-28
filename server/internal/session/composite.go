@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/berserk"
-	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
@@ -90,9 +89,9 @@ import (
 //     which every client in the zone is told of and draws on its owner --
 //     the buff bar and a target's CIFBuffViewer (docs/protocol/
 //     target_window_buffs.md). OpenSRO starts it on the user's buff book
-//     (startCasterBuffOn) with that duration; the skill gate 0x58d8f0 is
-//     not modelled, and the buff's params (dru, odar, hr, luck ...) are
-//     not applied -- the book models only run speed (TODO.md).
+//     (startCasterBuffOn) with that duration; of the skill gate 0x58d8f0
+//     only the recast rule is run (round 838, itemSkillRefusal), and the
+//     buff's params apply as any buff's do (round 785, buff/stats.go).
 //
 // Not modelled (disclosed): the grant and the bonus are in memory, so a
 // server restart loses them (the engine's timed jobs survive a relog through
@@ -447,10 +446,14 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			if ref.DuraMs == 0 { // 0x650d40: no 'dura' is 0x3003
 				return plan, "that cannot be used"
 			}
-			for _, r := range buffBooks.Active(characterID) { // FUN_00411560(0, skill id)
-				if r.SkillID == ref.ID {
-					return plan, compositeOverlapRefusal
-				}
+			// FUN_00411560(0, skill id): the same skill's job running is
+			// 0x1894; then (round 838, itemskill.go) the character visuals'
+			// rule (OURS) and the book's recast rule, before anything is
+			// spent -- the job's start would otherwise meet the engage test
+			// after the spend.
+			refs, _ := items.(SkillRefStore)
+			if refusal := itemSkillRefusal(ctx, refs, characterID, ref); refusal != "" {
+				return plan, refusal
 			}
 			plan.skills = append(plan.skills, ref)
 			plan.skillFor = append(plan.skillFor, usu1Duration(ref.DuraMs))
@@ -555,7 +558,7 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	// USU1: the skill job's buff, started on the user's own book and told to
 	// its zone as any buff is (round 638 review).
 	for i, ref := range plan.skills {
-		started := startUsu1Buff(hub, ref, plan.skillFor[i], characterID, now)
+		started := startUsu1Buff(ctx, hub, ref, plan.skillFor[i], characterID, it.ID, now)
 		slog.Info("composite: USU1 skill buff", "item", it.ID, "character", characterID, "skill", ref.ID,
 			"seconds", int64(plan.skillFor[i]/time.Second), "started", started)
 	}
@@ -872,19 +875,12 @@ func BerserkDisconnectHandler(hub *world.Hub, zerk *berserk.Tracker, keeper *Com
 
 // startUsu1Buff starts a USU1 skill job's buff on characterID, cast by
 // itself, lasting lasts (usu1Duration), and tells the zone (OpBuffStart),
-// under the owner's buff lock as every buff start is.
-func startUsu1Buff(hub *world.Hub, ref *refdata.Skill, lasts time.Duration, characterID int64, now time.Time) bool {
+// under the owner's buff lock as every buff start is. Since round 838 the job
+// is recorded (startSkillJobLocked, itemskill.go), so the buff outlives a
+// relog as the engine's timed job does.
+func startUsu1Buff(ctx context.Context, hub *world.Hub, ref *refdata.Skill, lasts time.Duration, characterID, itemID int64, now time.Time) bool {
 	l := buffLock(characterID)
 	l.Lock()
 	defer l.Unlock()
-	spec := buffSpec(ref, characterID)
-	spec.DuraMs = int(lasts.Milliseconds())
-	rec, ended, refused, sp := buffBooks.Start(characterID, spec, now)
-	if refused != buff.NotRefused {
-		return false
-	}
-	zone := zoneOf(hub, characterID)
-	broadcastBuffEnd(zone, characterID, ended, sp)
-	sendAboutOwner(zone, characterID, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
-	return true
+	return startSkillJobLocked(ctx, hub, ref, lasts, characterID, itemID, now)
 }
