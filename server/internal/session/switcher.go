@@ -295,6 +295,15 @@ func planSwitch(ctx context.Context, items ItemLookup, byCode itemByCode, tool *
 			return refuseSwitch(SwitchErrDegree, "that item's degree is too high for this tool")
 		}
 		if tgtIt.OrgCodeName == "" {
+			// An items import from before the column (round 838) has no
+			// OrgObjCodeName; the code's gender swap stands in (OURS). Over
+			// the archive's 5,916 armour rows that name one, the swap finds
+			// the same row for 5,832 (MEASURED); the other 84 are _ACTIVE rare
+			// rows whose name is the other gender's plain row, where the swap
+			// keeps _ACTIVE.
+			if twin := genderTwin(ctx, byCode, tgtIt); twin != nil {
+				return switchPlan{newItem: twin.ID, inst: inst, what: "gender (code swap " + twin.CodeName + ")"}, nil
+			}
 			return refuseSwitch(SwitchErrFailed, "that item has no counterpart of the other gender")
 		}
 		twin, err := byCode.GetItemByCode(ctx, tgtIt.OrgCodeName)

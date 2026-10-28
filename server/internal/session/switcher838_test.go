@@ -77,6 +77,12 @@ type switchHarness struct {
 // newSwitchHarness puts one of each id in held into the bag, in order.
 func newSwitchHarness(t *testing.T, held ...int64) *switchHarness {
 	t.Helper()
+	return newSwitchHarnessRows(t, switcherRows(), held...)
+}
+
+// newSwitchHarnessRows is newSwitchHarness over rows.
+func newSwitchHarnessRows(t *testing.T, rows []refdata.Item, held ...int64) *switchHarness {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -86,7 +92,7 @@ func newSwitchHarness(t *testing.T, held ...int64) *switchHarness {
 		t.Fatalf("create: %v", err)
 	}
 	items := refdata.NewMemStore()
-	if err := items.ImportItems(ctx, switcherRows()); err != nil {
+	if err := items.ImportItems(ctx, rows); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	inv := inventory.NewMemStore(items)
@@ -205,6 +211,23 @@ func TestRetailGenderToolMutatesArmour(t *testing.T) {
 	if len(states) != 1 || len(states[0]) != 6 || states[0][0] != byte(idx+13) || states[0][1] != 1 ||
 		binary.LittleEndian.Uint32(states[0][2:]) != 3646 {
 		t.Errorf("0x3040: %x", states)
+	}
+}
+
+// An items import from before the OrgObjCodeName column (the live server's)
+// leaves it empty; the code's gender swap finds the twin instead (OURS).
+func TestRetailGenderToolWithoutOrgCodeName(t *testing.T) {
+	rows := switcherRows()
+	for i := range rows {
+		rows[i].OrgCodeName = ""
+	}
+	h := newSwitchHarnessRows(t, rows, 23352, 3637)
+	idx, _ := h.slotOf(3637)
+	if res, _ := h.use(23352, 3637); res.Error != "" {
+		t.Fatalf("use: %+v", res)
+	}
+	if i2, _ := h.slotOf(3646); i2 != idx || h.has(3637) || h.has(23352) {
+		t.Fatalf("after: twin at %d (want %d), old there %v, tool there %v", i2, idx, h.has(3637), h.has(23352))
 	}
 }
 
