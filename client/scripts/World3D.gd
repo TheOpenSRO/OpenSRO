@@ -17714,6 +17714,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
 #   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
+#   hovernode:<name>    the same over the first visible Control of that name
+#                       (round 838)
 #   census              print every visible focusable Control that is not a
 #                       button (text lines, lists, spin boxes) and its rect
 #   talk                open the NPC talk box (as a click on an NPC does)
@@ -18524,6 +18526,18 @@ func _qa_input_step() -> void:
 				motion.button_mask = MOUSE_BUTTON_MASK_LEFT
 				get_viewport().push_input(motion)
 			_qa_push_mouse(to, MOUSE_BUTTON_LEFT, false)
+		"hovernode":
+			# Round 838: move the mouse to the centre of the first visible
+			# Control of that name (a worn slot's tooltip).
+			var hn := _qa_find_visible(ui_control, arg)
+			if hn == null:
+				_qa_input_report = action + " (no such visible node)"
+			else:
+				var motion := InputEventMouseMotion.new()
+				motion.position = hn.get_global_rect().get_center()
+				motion.global_position = motion.position
+				_qa_input_report = "%s at %s" % [action, motion.position]
+				get_viewport().push_input(motion)
 		"hover":
 			var hv := arg.split(",")
 			var motion := InputEventMouseMotion.new()
