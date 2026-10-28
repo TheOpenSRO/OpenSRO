@@ -411,7 +411,7 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// BOTH parties are players here, so neither divisor is covered by the
 	// monster measurement the PvE path cites -- see combat.EvadedChance.
 	blow := resolveBlow(
-		base, playerMitigationPercent, armor,
+		base, playerMitigationPercent(ctx, opponent.CharacterID, eq, items, false), armor,
 		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), playerEvadeCrit(ctx, opponent.CharacterID, eq)),
 		combat.EvadedChance(defenderBlock(ctx, opponent.CharacterID, eq, items), playerEvadeBlock(ctx, characterID, eq)),
 		atkLevel, defLevel, characterID, opponent.CharacterID)

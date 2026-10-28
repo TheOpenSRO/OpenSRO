@@ -158,7 +158,7 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 			return targetOutcome{}, err
 		}
 		base = combat.ApplyMasteryScale(base, c.terms.masteryPercent)
-		blow := resolveBlow(base+bonus, defPct, def, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
+		blow := resolveBlow(base+bonus, float64(defPct), def, c.critBase, blockChance, c.level, m.Level, c.casterID, m.ID)
 		dmg := 0
 		switch {
 		case blow.Blocked:

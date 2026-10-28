@@ -209,13 +209,14 @@ type pvpHit struct {
 func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *refdata.Skill, terms skillBlowTerms, t pvpTarget) ([]pvpHit, error) {
 	c := newCastContext(ctx, d, attacker.CharacterID, attacker, row, terms)
 	magical := terms.attackType.IsMagical() && !terms.attackType.IsPhysical()
-	defLevel, def, defPct, block, parry := 0, 0, 0, 0, 0.0
+	defLevel, def, block, parry := 0, 0, 0, 0.0
+	defPct := 0.0
 	critEvade := 0.0
 	if t.cos != nil {
 		cosWorld.mu.Lock()
 		r := t.cos.row
 		cosWorld.mu.Unlock()
-		defLevel, def, defPct, block = r.Level, r.Defense(), r.Level, r.Block()
+		defLevel, def, defPct, block = r.Level, r.Defense(), float64(r.Level), r.Block()
 		parry = float64(combat.MonsterRate(r.Level))
 		critEvade = monsterEvasion
 	} else {
@@ -229,7 +230,7 @@ func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *re
 		if err != nil {
 			return nil, err
 		}
-		defPct = playerMitigationPercent
+		defPct = playerMitigationPercent(ctx, t.char, d.eq, d.items, magical)
 		block = defenderBlock(ctx, t.char, d.eq, d.items)
 		parry, _ = defenderParryRate(ctx, t.char, d.eq, d.items)
 		critEvade = playerEvadeCrit(ctx, t.char, d.eq)

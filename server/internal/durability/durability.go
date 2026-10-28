@@ -121,6 +121,21 @@ func RollVariance(r Rand) uint64 {
 	return v
 }
 
+// RollVarianceGroups rolls only groups 0..n-1, the way RollVariance rolls
+// each, and leaves the rest 0: an accessory's FUN_00728d50 rolls groups 0 and
+// 1 (round 838, READ).
+func RollVarianceGroups(r Rand, n int) uint64 {
+	var v uint64
+	for k := 0; k < n && k < Groups; k++ {
+		g := uint64(math.Round(RollWhiteStatUnit(r) * GroupMax))
+		if g > GroupMax {
+			g = GroupMax
+		}
+		v |= g << (5 * uint(k))
+	}
+	return v
+}
+
 // Group returns the 5-bit value of variance group k.
 func Group(variance uint64, k int) int {
 	return int((variance >> (5 * uint(k))) & 0x1f)
