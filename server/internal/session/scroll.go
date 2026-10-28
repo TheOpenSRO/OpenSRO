@@ -742,6 +742,10 @@ func (s *ScrollCaster) complete(characterID int64, cast *scrollCast) {
 			return
 		}
 		zone, bucket, pos, frame, placed = placeArrival(p.Region, p.X, p.Y, p.Z, p.WorldID)
+	case skinOptionInPlace:
+		// Round 838 (skinchange.go): the skin change's warp to where the
+		// character stands, which respawns it with its new body.
+		zone, bucket, pos, frame, placed = s.inPlaceArrival(characterID)
 	}
 	if !placed {
 		return

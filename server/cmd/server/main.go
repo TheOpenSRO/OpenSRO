@@ -2070,6 +2070,8 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("creatable catalogue loaded: characters can be created", "path", *chargenCSV, "ids", chargen.Len())
+		// Round 838: the skin change scroll picks among the same bodies.
+		session.SetSkinCatalogue(chargen)
 	} else {
 		logger.Warn("no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}

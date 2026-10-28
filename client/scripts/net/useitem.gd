@@ -68,6 +68,11 @@ const OPTION_COS_TARGET := 0xC5
 ## 256 palette indices after the option (retail's 0x704C carries them after
 ## the slot and type word, c:0x7974a2).
 const OPTION_CREST := 0xC6
+## Round 838 (OURS, the server's UseOptionSkinChange): the skin change scroll's
+## use, the chosen body's u32 ref id and the u8 scale after the option, as
+## retail's 0x704C carries {u32 ref, u8 scale} after the slot and type word
+## (SendItem_HandleUseItem 0x796660 case 9, c:0x797049..0x797222).
+const OPTION_SKIN_CHANGE := 0xFC
 
 ## Whether TypeIDs are an item the client sends with the current COS's uid
 ## (round 805; SendItem_HandleUseItem 0x796660, READ): a COS HP potion 3/3/1/4,
@@ -134,6 +139,17 @@ static func decode_reverse_saved(data: PackedByteArray) -> Dictionary:
 		out["slots"].append({"region": data.decode_s32(at), "x": data.decode_float(at + 4),
 			"y": data.decode_float(at + 8), "z": data.decode_float(at + 12)})
 		at += 16
+	return out
+
+## A skin change's use: the plain use, OPTION_SKIN_CHANGE, u32 ref, u8 scale.
+static func encode_use_skin(character_name: String, inventory_slot: int, ref_obj_id: int, scale: int) -> PackedByteArray:
+	var out := encode_use(character_name, inventory_slot)
+	out.append(OPTION_SKIN_CHANGE)
+	var id := PackedByteArray()
+	id.resize(4)
+	id.encode_u32(0, ref_obj_id)
+	out.append_array(id)
+	out.append(scale & 0xff)
 	return out
 
 ## A crest register's use: the plain use, OPTION_CREST, the 256 bytes.

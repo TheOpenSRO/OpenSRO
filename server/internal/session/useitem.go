@@ -65,14 +65,21 @@ type UseItemRequest struct {
 	// Pixels are a crest register's 256 palette indices (round 824,
 	// UseOptionCrest).
 	Pixels []byte
+	// Scale is a skin change's scale byte (round 838, UseOptionSkinChange,
+	// after the u32 RefObjID in Target).
+	Scale byte
 }
 
 func (r *UseItemRequest) Encode() []byte {
 	out := append(encodeStrings(r.CharacterName), encodeInt64(int64(r.InventorySlot))...)
 	if r.Option != 0 {
 		out = append(out, r.Option)
-		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget || r.Option == ReverseOptionParty || r.Option == ReverseOptionSaved {
+		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget || r.Option == ReverseOptionParty ||
+			r.Option == ReverseOptionSaved || r.Option == UseOptionSkinChange {
 			out = binary.LittleEndian.AppendUint32(out, r.Target)
+		}
+		if r.Option == UseOptionSkinChange {
+			out = append(out, r.Scale)
 		}
 		if r.Option == UseOptionCrest {
 			out = append(out, r.Pixels...)
@@ -97,6 +104,9 @@ func DecodeUseItemRequest(data []byte) (*UseItemRequest, error) {
 			req.Pixels = append([]byte(nil), rest[1:]...)
 		} else if len(rest) >= 5 {
 			req.Target = binary.LittleEndian.Uint32(rest[1:5])
+			if req.Option == UseOptionSkinChange && len(rest) >= 6 {
+				req.Scale = rest[5]
+			}
 		}
 	}
 	return req, nil
@@ -1152,6 +1162,10 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// scroll.go): DoJob's TypeID3 3 cases 1 and 3.
 		if scrolls != nil && (IsReturnScroll(it) || IsReverseReturnScroll(it)) {
 			return scrolls.use(ctx, sess, inv, characterID, it, held, have, req)
+		}
+		// The skin change scroll (round 838, skinchange.go): UseByKind case 9.
+		if scrolls != nil && isSkinChangeScroll(it) {
+			return scrolls.skinChange(ctx, sess, inv, characterID, it, held, have, req)
 		}
 		// The cure pills (round 786, curepill.go): DoJob's case 2, slot 308's
 		// TypeID3-2 branch -- the universal and purification pills.

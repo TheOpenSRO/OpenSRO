@@ -1455,6 +1455,11 @@ func use_item_crest(char_name: String, inventory_slot: int, pixels: PackedByteAr
 	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_crest(char_name, inventory_slot, pixels))
 
+## Round 838: the skin change scroll's use with the chosen body and scale.
+func use_item_skin(char_name: String, inventory_slot: int, ref_obj_id: int, scale: int) -> void:
+	last_use_slot = inventory_slot
+	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use_skin(char_name, inventory_slot, ref_obj_id, scale))
+
 func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
 	last_use_slot = inventory_slot
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot, option, target))

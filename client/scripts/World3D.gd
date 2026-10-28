@@ -2992,6 +2992,7 @@ func _try_initialize_pk2_ui() -> void:
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_hud_panels.cos_item_requested.connect(_use_cos_item)
+	_hud_panels.skin_change_requested.connect(_on_skin_change_requested)
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
 	# Round 838: the special scroll's lists name places by their zone.
@@ -7474,6 +7475,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var dead_at_arrival := _player_dead
 	var keep_server_point := arrival_keeps_server_point(teleport_arrival, requested, dead_at_arrival)
 	if result != null and result.ok:
+		# Round 838: an accepted skin change's body goes on with the warp.
+		_apply_skin_pending()
 		# Round 795: the COS in view start over (the server sends its own
 		# again with their 0x30C8; the mount is found again by its uid).
 		_cos_clear()
@@ -13324,6 +13327,10 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.bag_item_types(int(item["slot"]))):
 			_hud_panels.open_reverse_return_box(int(item["slot"]))
 			return
+		# Round 838: and the skin change scroll its window.
+		if _hud_panels != null and HudPanels.is_skin_change_item(_hud_panels.bag_item_types(int(item["slot"]))):
+			_on_skin_change_requested(int(item["slot"]))
+			return
 		# Round 805: a pet's potion, food or cure names the current COS, as
 		# the bag's right-click does.
 		if _hud_panels != null and HudPanels.is_cos_target_item(_hud_panels.bag_item_types(int(item["slot"]))):
@@ -17828,6 +17835,31 @@ func _qa_reequip_step() -> void:
 				return
 		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
 
+## OPENSRO_QA_UNEQUIP="<tick>:<slot>,<slot>..;.." (round 838; needs a server):
+## at each tick take those worn slots off through the real unequip message
+## (NetClient.unequip, the equipment window's own), one a tick from that tick
+## on -- the skin change's live run takes the armour off before a change of
+## sex. QA only; never set in real play.
+var _qa_unequip_spec := OS.get_environment("OPENSRO_QA_UNEQUIP")
+
+func _qa_unequip_step() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	for part in _qa_unequip_spec.split(";", false):
+		var bits := part.split(":", false)
+		if bits.size() != 2 or not bits[0].is_valid_int():
+			continue
+		var slots := bits[1].split(",", false)
+		var i := _qa_tick - int(bits[0])
+		if i < 0 or i >= slots.size():
+			continue
+		var slot := int(slots[i])
+		if int(_player_equipped_last.get(slot, 0)) <= 0:
+			continue
+		print("QA UNEQUIP: tick %d taking off slot %d (item %d)" % [_qa_tick, slot, int(_player_equipped_last.get(slot, 0))])
+		_awaiting_equip_ack = true
+		NetClient.unequip(NetClient.current_character_name, slot)
+
 ## OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,.." (round 789 lane E; needs a
 ## server; QA only): `show` opens the inventory in its avatar view over the
 ## server's own avatar list (NetClient.last_avatar_instances, from 0x0045 and
@@ -19370,6 +19402,8 @@ func _qa_step() -> void:
 		_qa_pmi_step()
 	if _qa_reequip_spec != "":
 		_qa_reequip_step()
+	if _qa_unequip_spec != "":
+		_qa_unequip_step()
 	if _qa_equip_bag_spec != "":
 		_qa_equip_bag_step()
 	if _qa_cos_spec != "":
@@ -25293,6 +25327,152 @@ func _use_cos_item(slot: int) -> void:
 
 const COS_CANT_USE_ITEM_KEY := "UIIT_MSG_COSPETERR_CANT_USEITEM"
 const COS_WRONG_OBJECT_KEY := "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+
+# --- The skin change scroll (round 838, SkinChangeWindow) ---------------------
+
+var _skin_window: SkinChangeWindow = null
+## The body and scale a sent skin change asked for, kept until the server's
+## answer: [ref_obj_id, scale], [] for none.
+var _skin_sent: Array = []
+## An accepted change's body, put on at the warp that follows it (retail's
+## pending teleport reason 6, Item_OnUseItemResult case 9, and the reload).
+var _skin_pending: Array = []
+
+## The scroll in bag slot `slot` was used: the window opens on the player's
+## own body (GInterfaceWndRelation::FUN_0079b790).
+func _on_skin_change_requested(slot: int) -> void:
+	if _skin_window == null:
+		_skin_window = SkinChangeWindow.new()
+		_skin_window.name = "SkinChangeWindow"
+		ui_control.add_child(_skin_window)
+		if not _skin_window.setup(_ui_builder):
+			_log_system("The skin change window is unavailable.")
+			_skin_window.queue_free()
+			_skin_window = null
+			return
+		_skin_window.preview_builder = _skin_preview_body
+		_skin_window.gear_reader = _skin_gear_held
+		_skin_window.refused.connect(func(text: String) -> void:
+			print("SKIN refused here: %s" % text)
+			_log_system(text))
+		_skin_window.confirmed.connect(_on_skin_change_confirmed)
+	var body := _skin_own_body()
+	var race := int(body[1])
+	var lists := _skin_lists(race)
+	_skin_window.model.women = lists[0]
+	_skin_window.model.men = lists[1]
+	print("SKIN window: slot %d, own body %d (race %d, sex %d, scale 0x%02x), %d women, %d men" % [
+		slot, int(body[0]), race, int(body[2]), int(body[3]), lists[0].size(), lists[1].size()])
+	_skin_window.open_for(slot, int(body[0]), int(body[2]), int(body[3]))
+	if _skin_window.doll != null and _portrait_zone_light.size() == 2:
+		_skin_window.doll.set_zone_light(_portrait_zone_light[0], _portrait_zone_light[1])
+
+## [ref_obj_id, race, sex, scale] of the player's body now.
+func _skin_own_body() -> Array:
+	var ewr = NetClient.last_enter_world_result
+	var ref := 0
+	var scale := CharacterAppearance.DEFAULT_SCALE
+	var gender := DEFAULT_GENDER
+	if ewr != null:
+		if ewr.has_model:
+			ref = ewr.ref_obj_id
+			scale = ewr.scale
+		if ewr.gender != "":
+			gender = ewr.gender
+	var race := 1 if gender.begins_with("europe") else 0
+	var sex := 0 if gender.ends_with("woman") else 1
+	var cat := _appearance.catalog() if _appearance != null else null
+	var e: CharCatalog.Entry = cat.get_entry(ref) if cat != null and ref > 0 else null
+	if e != null and e.is_body:
+		race = e.race
+		sex = e.sex
+	return [ref, race, sex, scale]
+
+## The window's two lists for `race`: usableresobjiddata.txt's ids in file
+## order (Client_LoadRefDataFile case 7), kept when the catalogue holds them as
+## a body of that race, by sex. Without the file, the catalogue's bodies in id
+## order (MEASURED: the file lists the 52 bodies in id order).
+func _skin_lists(race: int) -> Array:
+	var cat := _appearance.catalog() if _appearance != null else null
+	var ids: Array = []
+	if _media_pk2 != null:
+		var e := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\usableresobjiddata.txt")
+		if e != null:
+			var raw := _media_pk2.read_file(e)
+			var text := ""
+			if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+				text = TextDecode.utf16(raw.slice(2))
+			else:
+				text = raw.get_string_from_utf8()
+			ids = SkinChangeModel.parse_usable_ids(text)
+	if ids.is_empty() and cat != null:
+		ids = cat.all_ids()
+	var body_of := func(id: int) -> Dictionary:
+		var entry: CharCatalog.Entry = cat.get_entry(id) if cat != null else null
+		if entry == null or not entry.is_body:
+			return {}
+		return {"race": entry.race, "sex": entry.sex}
+	var m := SkinChangeModel.from_ids(ids, race, body_of)
+	return [m.women, m.men]
+
+## The preview's body (FUN_007ee450): the chosen model at `scale`, wearing the
+## weapon and shield always and the rest of the worn items and the avatars
+## only when the sex is the player's (`keep_gear`).
+func _skin_preview_body(ref_obj_id: int, scale: int, keep_gear: bool) -> Skeleton3D:
+	var equipped := {}
+	for k in _player_equipped_last:
+		var slot := int(k)
+		if keep_gear or slot == 6 or slot == 7:
+			equipped[slot] = _player_equipped_last[k]
+	if keep_gear:
+		equipped = _with_player_avatars(equipped)
+	var body := _body_key_for(ref_obj_id, "")
+	var skel := _build_assembled_character(equipped, body, scale, _player_pluses_last)
+	if skel == null:
+		return null
+	var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped, body))
+	if idle != null and _frame_count(idle) > 1:
+		Skeleton3DBuilder.apply_ban_pose_at(skel, idle, 0.0, true)
+		_animated.append([skel, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
+	print("SKIN preview: model %d (%s) scale 0x%02x, gear %s" % [ref_obj_id, body, scale, str(keep_gear)])
+	return skel
+
+## The pre-check's reading: the worn equip slots and the avatars held.
+func _skin_gear_held() -> Array:
+	var worn: Array = []
+	for k in _player_equipped_last:
+		if int(_player_equipped_last[k]) > 0:
+			worn.append(int(k))
+	return [worn, _player_avatars.size()]
+
+func _on_skin_change_confirmed(slot: int, ref_obj_id: int, scale: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	print("SKIN confirm: slot %d -> model %d scale 0x%02x" % [slot, ref_obj_id, scale])
+	_skin_sent = [ref_obj_id, scale]
+	UiSounds.expect_use(_hud_panels.bag_item_types(slot) if _hud_panels != null else PackedInt32Array())
+	NetClient.use_item_skin(NetClient.current_character_name, slot, ref_obj_id, scale)
+
+## The warp after an accepted change: the player's own body is the new one
+## (the client reloads it at the teleport; the others respawn it).
+func _apply_skin_pending() -> void:
+	if _skin_pending.is_empty():
+		return
+	var ewr = NetClient.last_enter_world_result
+	var ref := int(_skin_pending[0])
+	var scale := int(_skin_pending[1])
+	_skin_pending = []
+	if ewr == null:
+		return
+	var cat := _appearance.catalog() if _appearance != null else null
+	var e: CharCatalog.Entry = cat.get_entry(ref) if cat != null else null
+	ewr.ref_obj_id = ref
+	ewr.scale = scale
+	ewr.has_model = true
+	if e != null and e.is_body:
+		ewr.gender = ("europe" if e.race == 1 else "china") + ("_woman" if e.sex == 0 else "_man")
+	print("SKIN applied: model %d scale 0x%02x gender %s" % [ref, scale, ewr.gender])
+	_apply_player_equipment_visual(_player_equipped_last)
 
 ## The global chatting item was used from the bag: "Chat to all" opens for
 ## that slot (CIFWholeChat, round 634).
@@ -35803,12 +35983,19 @@ func _on_use_item_result(result) -> void:
 	if result.error != "":
 		# Logged, so a tester's log shows every refusal (composite review).
 		print("World3D: use item refused: %s (code 0x%x)" % [result.error, result.code])
+		_skin_sent = []
 		# A refusal with an engine code (round 778: the scrolls') is the
 		# archive's own category-1 message (ErrorText.scroll_line).
 		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
 		return
 	# Round 826: its re-use timers.
 	_arm_item_cooldowns(result)
+	# Round 838: an accepted skin change puts the body on at the warp.
+	if not _skin_sent.is_empty() and _hud_panels != null and result.item_id != 0 \
+			and HudPanels.is_skin_change_item(_hud_panels.item_types(result.item_id)):
+		_skin_pending = _skin_sent
+		_skin_sent = []
+		print("SKIN accepted: model %d at the warp" % int(_skin_pending[0]))
 	# Round 824: a crest item's accepted use opens its result box.
 	if result.item_id != 0 and _hud_panels != null:
 		var code := _hud_panels.item_code_for_id(result.item_id)

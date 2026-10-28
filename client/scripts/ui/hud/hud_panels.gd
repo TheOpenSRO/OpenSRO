@@ -815,6 +815,9 @@ signal global_chat_requested(slot: int, count: int)
 ## An item used on the current COS (is_cos_target_item, round 805) was used
 ## from bag slot `slot`: World3D names the pet (World3D._use_cos_item).
 signal cos_item_requested(slot: int)
+## Round 838: a character skin change scroll (is_skin_change_item) was used
+## from bag slot `slot`: World3D opens the skin change window for it.
+signal skin_change_requested(slot: int)
 ## A destination line of a gate's talk box (open_teleport_list, round 603) was
 ## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
 ## with the gate the list was opened at (NetClient.teleport_use).
@@ -5326,6 +5329,12 @@ func item_types(item_id: int) -> PackedInt32Array:
 static func is_global_chat_item(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 5
 
+## Whether TypeIDs are a character skin change scroll's, 3/3/13/9 (round 838:
+## IFSlotWithHelp::FUN_00676570's 3/3/13 test 0x5dd680 and `tid >> 11 == 9`
+## at 0x676b87, which opens CIFChangePlayerModel instead of sending).
+static func is_skin_change_item(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 9
+
 ## Whether TypeIDs are a reverse return scroll's, 3/3/3/3 (round 778: the
 ## client's own test FUN_0078e870 -- `(tid & 0x780) == 0x180` and
 ## `(tid & 0xf800) == 0x1800` over 3/3).
@@ -6537,6 +6546,10 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		# Round 838: the repair hammer asks first (open_hammer_confirm).
 		if is_repair_hammer(item_types(item_id)):
 			open_hammer_confirm(slot)
+			return
+		# Round 838: the skin change scroll opens its window.
+		if is_skin_change_item(item_types(item_id)):
+			skin_change_requested.emit(slot)
 			return
 		if NetClient.current_character_name != "":
 			UiSounds.expect_use(item_types(item_id))
