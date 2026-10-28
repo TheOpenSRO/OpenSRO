@@ -286,8 +286,27 @@ func _test_stream_order() -> void:
 	var ok := BmsReader.parse(good)
 	_check(ok != null and ok.indices.size() == 3, "stream order: a fitting header is untouched")
 
+## Round 838's merge: of the two box candidates, an inverted one (min above
+## max, a shifted read landing in other data) is rejected without building
+## an AABB of negative size, and the other is taken.
+func _test_bbox_inverted_candidate() -> void:
+	var data := PackedByteArray()
+	data.resize(64)
+	for i in 3:
+		_put_f32(data, 8 + i * 4, 5.0)
+		_put_f32(data, 8 + 12 + i * 4, -5.0)
+		_put_f32(data, 40 + i * 4, -1.0)
+		_put_f32(data, 40 + 12 + i * 4, 2.0)
+	var mesh := BmsReader.ParsedMesh.new()
+	var v := BmsReader.Vertex.new()
+	v.position = Vector3(0.5, 0.5, 0.5)
+	mesh.vertices.append(v)
+	_check(BmsReader._bbox_offset(data, 40, -32, mesh) == 40,
+		"r838 merge: an inverted shifted box is passed over for hdr[4]'s")
+
 func _init() -> void:
 	_test_header_index_off()
+	_test_bbox_inverted_candidate()
 	var data := _build_synthetic_mesh()
 	var mesh := BmsReader.parse(data)
 	_check(mesh != null, "parses synthetic mesh")

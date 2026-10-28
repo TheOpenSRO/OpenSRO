@@ -411,6 +411,9 @@ static func _bbox_offset(data: PackedByteArray, at: int, shift: int, mesh: Parse
 		var hi := Vector3(_le_f32(data, off + 12), _le_f32(data, off + 16), _le_f32(data, off + 20))
 		if not (lo.is_finite() and hi.is_finite()):
 			return false
+		# An inverted box holds nothing (and AABB errors on a negative size).
+		if lo.x > hi.x or lo.y > hi.y or lo.z > hi.z:
+			return false
 		var box := AABB(lo, hi - lo).grow(0.01)
 		for v in mesh.vertices:
 			if not box.has_point(v.position):
