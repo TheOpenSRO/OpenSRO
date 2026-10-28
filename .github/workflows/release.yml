@@ -16,7 +16,7 @@ on:
 jobs:
   release:
     name: Build & Release Client
-    runs-on: [self-hosted, opensro-pve]
+    runs-on: [self-hosted, opensro-release]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 45
     permissions:
