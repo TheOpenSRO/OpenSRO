@@ -25199,7 +25199,7 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 		# R replies to this name (KeyMap slot 20; _key_whisper_reply).
 		_last_whisperer = u.sender_name
 	if _hud_chat != null:
-		_hud_chat.add_chat(u.type, u.sender_name, u.message_text)
+		_hud_chat.add_chat(u.type, u.sender_name, u.message_text, false, u.color)
 	if u.type == HudChat.TYPE_NOTICE:
 		_show_banner("gm_notice", u.message_text)
 	if chat_log != null:

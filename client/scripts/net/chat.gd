@@ -17,6 +17,9 @@ class Update:
 	var type: int
 	var sender_name: String
 	var message_text: String
+	## A coloured global's colour, 0xAARRGGBB (round 838, OURS: the server's
+	## GlobalChatColor, a strict suffix); 0 draws the type's own.
+	var color: int = 0
 
 ## Result of decode_result().
 class Result:
@@ -74,6 +77,9 @@ static func decode_update(data: PackedByteArray) -> Update:
 	u.type = data[0]
 	u.sender_name = sender[0]
 	u.message_text = text[0]
+	var end := int(text[1])
+	if data.size() >= end + 4:
+		u.color = data.decode_u32(end)
 	return u
 
 ## Decodes an OpChatResult payload, or null.
