@@ -2745,6 +2745,8 @@ func _try_initialize_pk2_ui() -> void:
 	NetClient.service.plate_colours_changed.connect(_on_plate_colours_changed)
 	# The own colours may have come before this was connected.
 	_own_plate_colours_told()
+	# Round 838: a title given or changed (0x30DF, the custom text).
+	NetClient.titles.changed.connect(_on_title_changed)
 	# QA: once a kill has dropped a potion into the bag, drink it, so a render
 	# can show a consumable actually working. Never fires in real play.
 	if OS.get_environment("OPENSRO_QA_USEITEM") != "":
@@ -2998,6 +3000,10 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_warning.setup(_ui_builder, HudNotice.STYLE_WARNING)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
+	# Round 838 (OURS): the Custom Title Scroll's typed title.
+	_hud_panels.custom_title_requested.connect(func(slot: int, text: String) -> void:
+		if NetClient.current_character_name != "":
+			NetClient.use_item_custom_title(NetClient.current_character_name, slot, text.strip_edges()))
 	_hud_panels.cos_item_requested.connect(_use_cos_item)
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
@@ -9572,6 +9578,10 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 	var title_text := ""
 	if titled:
 		title_text = _resolve_any_text(JobText.class_key(job_state, job_level, europe), "")
+	elif job_state == UserSpawnNet.JOB_STATE_NONE:
+		# Round 838: the hwan level's title (TitleNet; READ FUN_009ca930 ->
+		# the title slot, which a job suit empties).
+		title_text = _hwan_title_text(_own_id() if holder == label else int(holder.get_meta("character_id", -1)), europe)
 	_job_mark(label, holder, job_state, swept)
 	if title_text != "":
 		var title := _name_plate(title_text, 0.0, false)
@@ -9785,12 +9795,63 @@ func _on_plate_colours_changed(uid: int) -> void:
 			if shadow != null:
 				shadow.modulate = Color(0.0, 0.0, 0.0, c.a)
 
+## Round 838: uid's title text (TitleNet.text_for): the hwanleveldata row's
+## key by race, the text table's line.
+func _hwan_title_text(uid: int, europe: bool) -> String:
+	if uid < 0 or NetClient.titles.level_of(uid) <= 0:
+		return ""
+	return NetClient.titles.title_text(uid, europe, _hwan_levels(), func(key: String) -> String:
+		return _resolve_any_text(key, ""))
+
+## hwanleveldata.txt (TitleNet.parse_levels), read once.
+var _hwan_level_rows = null
+
+func _hwan_levels() -> Dictionary:
+	if _hwan_level_rows != null:
+		return _hwan_level_rows
+	_hwan_level_rows = {}
+	if _media_pk2 == null:
+		return _hwan_level_rows
+	var e := ObjectLoader.find_file(_media_pk2, TitleNet.LEVEL_TABLE)
+	if e == null:
+		return _hwan_level_rows
+	var raw: PackedByteArray = _media_pk2.read_file(e)
+	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+		raw = raw.slice(2)
+	var text := TextDecode.utf16(raw)
+	if text.is_empty():
+		text = raw.get_string_from_utf8()
+	_hwan_level_rows = TitleNet.parse_levels(text)
+	print("World3D: hwanleveldata %d rows" % (_hwan_level_rows as Dictionary).size())
+	return _hwan_level_rows
+
+## Round 838: uid's title changed -- its plate's title line made again (the
+## own plate, or that player's).
+func _on_title_changed(uid: int) -> void:
+	print("World3D: title of %d: level %d '%s'" % [uid, NetClient.titles.level_of(uid), NetClient.titles.custom_of(uid)])
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		_refresh_player_name_plate()
+		return
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) != uid:
+			continue
+		var node: Node3D = _other_bodies[id]
+		if node == null or not is_instance_valid(node):
+			continue
+		var plate := node.get_node_or_null("Name") as Label3D
+		if plate == null:
+			continue
+		var job: Dictionary = NetClient.user_jobs.get(int(id), {})
+		_job_plate_decor(plate, node, int(job.get("state", UserSpawnNet.JOB_STATE_NONE)), int(job.get("level", 0)), _other_is_europe(node), true)
+
 ## Round 838: redraws the own plate when 0x013B named the own id already
 ## (it arrives with the world entry, which can come before the plate's
 ## signal is connected or before the id is known).
 func _own_plate_colours_told() -> void:
 	var own := _own_id()
-	if own >= 0 and NetClient.service.plate_colours.has(own & 0xffffffff):
+	# Round 838: or the own title (0x30DF), which a plate built before the id
+	# came could not look up.
+	if own >= 0 and (NetClient.service.plate_colours.has(own & 0xffffffff) or NetClient.titles.level_of(own) > 0):
 		_refresh_player_name_plate()
 
 func _on_guild_line_changed(uid: int) -> void:
@@ -18286,8 +18347,11 @@ func _qa_job_step() -> void:
 					var cc := c as Control
 					# A number names the item id instead of its code.
 					var cid := int(cc.get_meta("inv_item_id", -1))
+					# Round 838 lane 6: a code ending in "*" matches by prefix.
+					var ccode := _hud_panels.item_code_for_id(cid)
 					if cc.has_meta("inv_slot") and cid >= 0 and cc.is_visible_in_tree() \
-							and (_hud_panels.item_code_for_id(cid) == rcode or (rcode.is_valid_int() and cid == int(rcode))):
+							and (ccode == rcode or (rcode.ends_with("*") and ccode.begins_with(rcode.trim_suffix("*"))) \
+							or (rcode.is_valid_int() and cid == int(rcode))):
 						cell = cc
 						break
 			if cell == null:
@@ -18296,6 +18360,61 @@ func _qa_job_step() -> void:
 				var rclick_at := cell.get_global_rect().get_center()
 				print("QA SERVICE: tick %d bag_rclick %s at slot %d, %s" % [_qa_tick, rcode, int(cell.get_meta("inv_slot")), str(rclick_at)])
 				_qa_push_click(rclick_at, MOUSE_BUTTON_RIGHT, true)
+		# Round 838 lane 6 (QA only): title_type:<text> types the text into the
+		# Custom Title Scroll's box as key presses, then presses Enter, as a
+		# player would (the box open: bag_rclick:ITEM_TITLE_255 first).
+		elif what.begins_with("title_type:"):
+			var tbox: HudCosBox = _hud_panels.custom_title_box
+			if tbox == null or not is_instance_valid(tbox) or tbox.edit == null:
+				print("QA TITLE: tick %d title_type: no box" % _qa_tick)
+			else:
+				tbox.edit.grab_focus()
+				for ch in what.substr(11):
+					var kev := InputEventKey.new()
+					kev.pressed = true
+					kev.unicode = ch.unicode_at(0)
+					get_viewport().push_input(kev)
+					var kup := kev.duplicate() as InputEventKey
+					kup.pressed = false
+					get_viewport().push_input(kup)
+				print("QA TITLE: tick %d typed '%s' -> edit '%s'" % [_qa_tick, what.substr(11), tbox.edit.text])
+				var kent := InputEventKey.new()
+				kent.pressed = true
+				kent.keycode = KEY_ENTER
+				get_viewport().push_input(kent)
+		# Round 838 lane 6 (QA only): chest_rows prints the open chest's rows;
+		# chest_take_all clicks its Take All button (a real press).
+		elif what == "chest_rows":
+			var ch: ItemChestWindow = _hud_panels.item_chest
+			if ch == null or not ch.is_open():
+				print("QA TITLE: tick %d chest_rows: no chest open" % _qa_tick)
+			else:
+				for k in 8:
+					var rt := ch.row_texts(k)
+					if not rt.is_empty() and "".join(PackedStringArray(rt)).strip_edges() != "":
+						print("QA TITLE: tick %d chest row %d %s" % [_qa_tick, k, str(rt)])
+		elif what == "chest_take_all":
+			var cht: ItemChestWindow = _hud_panels.item_chest
+			var tab := cht.take_all_button() if cht != null and cht.is_open() else null
+			if tab == null or not tab.is_visible_in_tree():
+				print("QA TITLE: tick %d chest_take_all: no button" % _qa_tick)
+			else:
+				print("QA TITLE: tick %d chest_take_all at %s" % [_qa_tick, str(tab.get_global_rect().get_center())])
+				_qa_push_click(tab.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+		elif what == "chest_close":
+			# The chest window's own close button (a real press): the icon
+			# under the minimap is under the window.
+			var chc: ItemChestWindow = _hud_panels.item_chest
+			var cb: BaseButton = null
+			if chc != null and chc.is_open():
+				for b in chc.find_children("*", "BaseButton", true, false):
+					if (b as BaseButton).position.is_equal_approx(chc._close_position()):
+						cb = b as BaseButton
+			if cb == null:
+				print("QA TITLE: tick %d chest_close: no button" % _qa_tick)
+			else:
+				print("QA TITLE: tick %d chest_close at %s" % [_qa_tick, str(cb.get_global_rect().get_center())])
+				_qa_push_click(cb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
 		# Round 838 (QA only): chest_icon clicks the item chest's icon under
 		# the minimap (a real press), which opens the chest window.
 		# stat_plus:<n> presses the character window's Str "+" n times (real
