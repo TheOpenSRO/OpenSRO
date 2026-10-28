@@ -996,7 +996,14 @@ func main() {
 		"path to the devil's spirits' plus-level table as CSV (env OPENSRO_ITEM_OPT_LEVEL_CSV; from cmd/export-refdata "+
 			"-mode itemoptlevel on the client's refabilitybyitemoptleveldata.txt, refmagicoptbyitemoptleveldata.txt and "+
 			"refskillbyitemoptleveldata.txt, round 838): an awake spirit's HP / MP percent, block rate and skills by its "+
-			"plus level. Without it a spirit gives only its own blue options. A configured path that does not load is fatal.")
+			"plus level. Without it a spirit gives only its own blue options. A configured path that does not load is fatal. "+
+			"Round 839: the export may come from the shard DB's own _RefAbilityByItemOptLevel / _RefMagicOptByItemOptLevel / "+
+			"_RefSkillByItemOptLevel CSVs, the tables the original server runs on.")
+	inferredEnv, _ := envBoolDefault("OPENSRO_ITEM_OPT_LEVEL_INFERRED", true)
+	itemOptLevelInferred := flag.Bool("item-opt-level-inferred", inferredEnv,
+		"apply the -item-opt-level-csv's inferred option rows (kind optinf, round 839, INFERRED/OURS): five angel's spirits "+
+			"have no option rows at +6..+10 in any source, and take their siblings' rows at the same plus level. false: "+
+			"only the tables' own rows (env OPENSRO_ITEM_OPT_LEVEL_INFERRED).")
 	magicOptAssignCSV := flag.String("magic-option-assign-csv", os.Getenv("OPENSRO_MAGIC_OPTION_ASSIGN_CSV"),
 		"path to the game's magic option assign table as CSV (env OPENSRO_MAGIC_OPTION_ASSIGN_CSV; from "+
 			"cmd/export-refdata -mode magicoptassign on a client's own server_dep\\silkroad\\textdata\\"+
@@ -2083,8 +2090,13 @@ func main() {
 			logger.Error("loading the item opt level table", "path", *itemOptLevelCSV, "err", err)
 			os.Exit(1)
 		}
+		dropped := 0
+		if !*itemOptLevelInferred {
+			dropped = t.DropInferred()
+		}
 		session.SetSpiritAbilities(t)
-		logger.Info("item opt level table loaded: devil's spirits give their plus-level abilities", "path", *itemOptLevelCSV, "keys", t.Len())
+		logger.Info("item opt level table loaded: devil's spirits give their plus-level abilities", "path", *itemOptLevelCSV, "keys", t.Len(),
+			"inferred_rows", t.Inferred(), "inferred_dropped", dropped)
 	} else {
 		logger.Info("no item opt level table (-item-opt-level-csv / OPENSRO_ITEM_OPT_LEVEL_CSV): a devil's spirit gives only its own blue options")
 	}
