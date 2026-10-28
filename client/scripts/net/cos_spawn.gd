@@ -79,6 +79,25 @@ class Record:
 static func plate_text(name: String) -> String:
 	return "< %s >" % name if name != "" else ""
 
+## A COS's name as CICCos::vslot_034 settles it at spawn (READ,
+## c:0x9c6d46..0x9c6d8d): the record's own name; with none, an owner in no job
+## (job byte 4) gets no_name_text (UIIT_STT_COSNEWUI_TITLE, "No name") and any
+## other the ref's name text (FUN_008c9bb0 on ref+0x60) -- both written into
+## the name itself (+0x110). Round 839: a NameStrID with no text gives the
+## text manager's empty string (FUN_008c9b20 returns the static L"" at
+## c:0xec3b70, made from c:0xe17460 by c:0xd75cc0), so the name stays empty
+## and the spawn skips the name setter (c:0x9d19d6: no "< >" line). The 13
+## Celestial Fellow pets' COS_P_* keys have no text in the archive (MEASURED),
+## so a job-suited owner's unnamed one has no name line; OpenSRO showed the
+## key itself ("< SN_COS_P_KLOX >": UiTextTable.get_text answers a missing key
+## with the key). ref_text is the looked-up text, "" when the key has none.
+static func display_name(rec: Record, no_name_text: String, ref_text: String) -> String:
+	if rec.name != "":
+		return rec.name
+	if rec.has_owner_job() and rec.owner_job == 4 and no_name_text != "":
+		return no_name_text
+	return ref_text
+
 ## One record from r, the RefObjID's TypeID4 given (kind). null with r.error
 ## set on a bad record.
 static func read_record(r: NpcSpawnNet.Reader, kind: int) -> Record:

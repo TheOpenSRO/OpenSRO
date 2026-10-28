@@ -835,7 +835,11 @@ func dist2(a, b world.Position) float64 {
 }
 
 // transportBagSize is FUN_004d1a50 for a transport row and its owner's
-// level.
+// level. Retail also grows a transport's bag when its owner's level changes
+// (GObjPC_SetLevel s:0x4e4f0a -> s:0x4fc960, 0x30C9 type 2 with the new
+// size); OpenSRO does not (OURS): with the shipped rows' InventorySize 1 the
+// size is 1 at every level, so the growth never fires (round 839,
+// specialty.BagSize).
 func transportBagSize(row species.Row, level int) int {
 	var goldMin int64
 	if levelTable != nil {

@@ -137,10 +137,18 @@ Find all the effects this applies to and what exact times they trigger."
 
 ## Round 789 lane AS follow-ups (avatars on the server; docs/protocol/avatars.md, docs/rounds/r789as.md)
 
-- [ ] **The devil's spirit's opt-level abilities**: `RefMagicOptByItemOptLevel`,
-      `RefAbilityByItemOptLevel` and `RefSkillByItemOptLevel` (MEASURED 505 / 266 / 335 rows) have
-      no exporter or loader; a spirit's per-plus abilities and its skill strip's skills are not
-      applied (`PublishEquipItemParams`' `FUN_00498020(2)`, READ). Its own blue options are.
+- [x] **The devil's spirit's opt-level abilities** -- round 838 (`-item-opt-level-csv`); round 839
+      reads the shard DB's own three tables (158 / 359 / 240 rows, what SR_ShardManager loads)
+      and fills the angel's spirits' missing +6..+10 options from their siblings (`optinf`,
+      INFERRED, `-item-opt-level-inferred`). Left for the user to decide (WORLD_ISSUES round 839,
+      lane P):
+  - [ ] **The event spirits.** The shard gives only ITEM_EVENT_AVATAR_M/W_NASRUN +0 (+5 % HP/MP,
+        skill 31141); the archive's 110 event abilities (160..269) are client-only and their skill
+        rows are keyed off the ability numbering (no clean transform; the client's strip offers the
+        archive's skill, which the server refuses). Making them act as their mall twins is OURS.
+  - [ ] **The re-check's other triggers**: `FUN_0059f0e0` also runs after equipment moves and
+        durability changes (weapon, shield, armour kinds); OpenSRO runs it after avatar moves, for
+        the kind-14 lists only (`session/buffreqs.go`).
 - [ ] **Params with no reader**: an avatar's `hpna`/`mpna` (52/53), `luca` (173), `mdia` (188),
       `umdu` (259) and a player's damage-taken multipliers 174..177 (`dara`) are carried in the
       totals and change nothing; `brna`'s leaf (param 10, gated on `+0x190`) is not followed.

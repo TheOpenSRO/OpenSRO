@@ -39,6 +39,25 @@ func _init() -> void:
 		"the name line wraps the name in '< ' and ' >'")
 	_check(g.has_owner_job(),
 		"a growth pet's record carries the owner's job byte")
+	# Round 839 (READ CICCos::vslot_034 c:0x9c6d46..0x9c6d8d, FUN_008c9b20's
+	# empty fallback, the spawn's skip at c:0x9d19d6): the name a COS ends with.
+	var un := CosSpawnNet.Record.new()
+	un.kind = 3
+	un.owner_job = 4
+	_check(CosSpawnNet.display_name(g, "No name", "Wolf") == "Rex",
+		"a named pet keeps its own name")
+	_check(CosSpawnNet.display_name(un, "No name", "") == "No name"
+		and CosSpawnNet.plate_text(CosSpawnNet.display_name(un, "No name", "")) == "< No name >",
+		"an unnamed pet of an owner in no job: \"< No name >\", with or without the ref's text")
+	un.owner_job = 1
+	_check(CosSpawnNet.display_name(un, "No name", "Wolf") == "Wolf",
+		"an unnamed pet of a job-suited owner: the ref's name text")
+	_check(CosSpawnNet.display_name(un, "No name", "") == ""
+		and CosSpawnNet.plate_text(CosSpawnNet.display_name(un, "No name", "")) == "",
+		"a job-suited owner's unnamed Celestial Fellow pet (a key with no text): no name line")
+	un.owner_job = 4
+	_check(CosSpawnNet.display_name(un, "", "") == "",
+		"no UIIT text and no ref text: no name, never a key or code")
 	var r := NpcSpawnNet.Reader.new(RIDE.hex_decode())
 	var ride := CosSpawnNet.read_record(r, 1)
 	_check(ride != null and r.pos == RIDE.length() / 2 and ride.owner_uid == 0 and ride.has_dest \

@@ -17,40 +17,47 @@ import (
 // 28 days of 3 h, today carried one day, the previous day drained first.
 func TestGoldTimeRollAndDrain(t *testing.T) {
 	start := time.Unix(1_800_000_000, 0)
-	g := &goldTime{started: start, days: 28, daily: 10800, today: 10800}
+	g := &goldTime{started: start, period: 28 * 86400, days: 28, daily: 10800, today: 10800, lastTick: start}
 	for i := 0; i < 100; i++ {
 		g.drain()
 	}
 	if g.today != 10700 || g.prev != 0 {
 		t.Fatalf("after 100 s: today %d prev %d, want 10700 / 0", g.today, g.prev)
 	}
-	if g.roll(start.Add(86399 * time.Second)) {
+	if g.advance(start.Add(86399 * time.Second)) {
 		t.Fatal("rolled before a whole day")
 	}
-	if !g.roll(start.Add(86400 * time.Second)) {
+	if !g.advance(start.Add(86400 * time.Second)) {
 		t.Fatal("no roll at 86,400 s")
 	}
-	if g.days != 27 || g.prev != 10700 || g.today != 10800 {
-		t.Fatalf("after the roll: days %d prev %d today %d, want 27 / 10700 / 10800", g.days, g.prev, g.today)
+	if g.days != 27 || g.prev != 10700 || g.today != 10800 || g.into != 0 {
+		t.Fatalf("after the roll: days %d prev %d today %d into %d, want 27 / 10700 / 10800 / 0", g.days, g.prev, g.today, g.into)
 	}
 	g.drain()
 	if g.prev != 10699 || g.today != 10800 {
 		t.Errorf("the previous day drains first: prev %d today %d", g.prev, g.today)
 	}
-	// Two days missed at once (a logged-out owner): yesterday's carry is lost.
-	g.roll(start.Add(3 * 86400 * time.Second))
-	if g.days != 25 || g.prev != 10800 || g.today != 10800 {
-		t.Errorf("after two more rolls: days %d prev %d today %d, want 25 / 10800 / 10800", g.days, g.prev, g.today)
+	// Two days missed at once (a logged-out owner, caught up at the load):
+	// yesterday's carry is lost.
+	if !g.catchUp(start.Add(3*86400*time.Second + 3600*time.Second)) {
+		t.Fatal("catch-up ended a running job")
 	}
-	if got := g.periodLeft(start.Add(3*86400*time.Second + 3600*time.Second)); got != 25*86400-3600 {
+	if g.days != 25 || g.prev != 10800 || g.today != 10800 || g.into != 3600 {
+		t.Errorf("after two more rolls: days %d prev %d today %d into %d, want 25 / 10800 / 10800 / 3600", g.days, g.prev, g.today, g.into)
+	}
+	if got := g.periodLeft(); got != 25*86400-3600 {
 		t.Errorf("period left %d, want %d (days * 86400 - seconds into the day)", got, 25*86400-3600)
 	}
 	// The last day: days 0, today 0, the carry kept one more day, then the end.
-	g.roll(start.Add(28 * 86400 * time.Second))
+	g.catchUp(start.Add(28 * 86400 * time.Second))
 	if g.days != 0 || g.today != 0 || g.prev == 0 || g.ended() {
 		t.Fatalf("after the last roll: days %d today %d prev %d ended %v", g.days, g.today, g.prev, g.ended())
 	}
-	g.roll(start.Add(29 * 86400 * time.Second))
+	if g.periodLeft() != 0 {
+		t.Errorf("period word on the carry day %d, want 0", g.periodLeft())
+	}
+	g.lastTick = start.Add(28 * 86400 * time.Second)
+	g.advance(start.Add(29 * 86400 * time.Second))
 	if !g.ended() {
 		t.Errorf("one day after the period the job should end: %+v", *g)
 	}

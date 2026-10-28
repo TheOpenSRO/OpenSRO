@@ -1170,6 +1170,13 @@ func (b *Books) EndAll(ownerID int64) ([]Record, Speed) {
 	return append([]Record(nil), bk.records...), Speed{RunSpeed: after, Changed: after != before}
 }
 
+// EndWhere ends ownerID's records end answers true for (round 839:
+// GObjPC::FUN_0059f0e0's requirement re-check, session/buffreqs.go). The
+// owner's other records and its links stay.
+func (b *Books) EndWhere(ownerID int64, end func(Record) bool) ([]Record, Speed) {
+	return b.endWhere(ownerID, end)
+}
+
 // EndAllBut is EndAll for the records keep does not keep (round 838: a
 // death keeps an item's skill job buffs). The owner's own link records go,
 // as EndAll's do.

@@ -37224,17 +37224,19 @@ func _cos_display_name(rec: CosSpawnNet.Record) -> String:
 	# Round 797 (READ CICCos::vslot_034 0x9c6d46..0x9c6d82): with no name, an
 	# owner in no job (the record's job byte 4) gives "No name"
 	# (UIIT_STT_COSNEWUI_TITLE); any other gives the ref's own name -- a
-	# job suit's "< sylph >". Round 795 tried the ref name first.
-	if rec.has_owner_job() and rec.owner_job == 4 and _ui_text_table != null:
-		var none := _ui_text_table.get_text("UIIT_STT_COSNEWUI_TITLE", "")
-		if none != "":
-			return none
+	# job suit's "< sylph >". Round 839: a key with no text gives "" (no
+	# name line), not the row's code (CosSpawnNet.display_name).
+	# UiTextTable.get_text answers a missing key with the key itself, so
+	# both lookups test has() first.
+	var none := ""
+	if _ui_text_table != null and _ui_text_table.has("UIIT_STT_COSNEWUI_TITLE"):
+		none = _ui_text_table.get_text("UIIT_STT_COSNEWUI_TITLE")
 	var row := _cos_table.row(rec.ref_id) if _cos_table != null else null
-	if row == null:
-		return ""
 	var names := _object_names()
-	var text := names.get_text(row.name_key, "") if names != null and row.name_key != "" else ""
-	return text if text != "" else row.code
+	var text := ""
+	if row != null and names != null and row.name_key != "" and names.has(row.name_key):
+		text = names.get_text(row.name_key)
+	return CosSpawnNet.display_name(rec, none, text)
 
 
 

@@ -7483,6 +7483,119 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-thirty-ninth round, lane P: transport bags, spirits, fellow pet names, Gold Time across restarts
+
+The user: close round 838's known gaps. Round 838 lane 4 (pets, spirits, premium) left six open;
+this lane traced each in SR_GameServer.exe / sro_client.exe before changing anything.
+
+- **Transport bags: one slot is retail (READ, MEASURED).** `s:0x4d1a50` is min(level cap,
+  ref+0x224), and ref+0x224 is `_RefObjChar.InventorySize` (RefObjChar_ExtractData `s:0x6a58f0`:
+  ID, Lvl, CharGender, MaxHP, MaxMP, 32 four-byte resists, then that byte). The cart's storage is
+  made only by CGObjCOS vslot_349 (`s:0x4d1bd0` -> `s:0x4b7680`: maximum +0x1c = InventorySize,
+  passed in ecx; usable +0x20 = the bag); the owner's 0x30C8 writes +0x20 (CGCOSInventoryOP slot
+  29, `s:0x4ba720`); a level change only ever grows it (GObjPC_SetLevel `s:0x4e4f0a` ->
+  `s:0x4fc960`, 0x30C9 type 2); the client draws 28-cell pages with `pt_block.ddj` past the size
+  (`c:0x7a7e90`). InventorySize is 1 on all 47 COS_T rows of the archive and on the same rows of
+  the private server's own `_RefObjChar` (only its client-less COS_T_SCORPION* 50..177 and
+  COS_T_TEMP* 99 are larger; the box's SR_GameServer.exe is byte-identical to the private
+  server's). So a level-110 trader's donkey holds one stack in retail too; OpenSRO already
+  matched. Nothing changed but the notes (`specialty/scale.go`, `cos/rules.go`) and a test. OURS:
+  the level-up growth is not modelled (it cannot fire with InventorySize 1). If more slots are
+  wanted that is a design choice against both data sets, not a retail fix (the user's call).
+- **The spirits' tables are the shard's (MEASURED).** SR_ShardManager.exe loads
+  `_REFABILITYBYITEMOPTLEVEL`, `_REFMAGICOPTBYITEMOPTLEVEL` and `_REFSKILLBYITEMOPTLEVEL` from the
+  shard DB for the game server (the names are its strings; the game server's "Can`t attach passive
+  skill on _RefAbilityByItemOptLevel Table!"); the lookup is the exact (RefItemID, OptLevel) key
+  (`FUN_00498160`, "Invalid find key inserted!"). The restored shard (CT 104, exported to
+  `/opt/sro-files/db/csv/r839/`) has 158 abilities, 359 option rows and 240 skill rows; the
+  archive's text has 266 / 505 / 335. They agree on abilities 1..159 except 89. `export-refdata
+  -mode itemoptlevel` now also reads the shard's three CSVs (header = the DB's columns), and the
+  deploy CSV is made from them.
+- **Angel's Spirit +6..+10 (INFERRED, OURS, the user's decision).** Neither source has option rows
+  for W_AMALRUN, M/W_AMALRUN_YELLOW and M/W_AMALRUN_BLUE at +6..+10 (their ability rows and
+  36280/36281-style skills are there; M_AMALRUN alone has the options, 354/355 = 13+L and 356 = 2,
+  exactly the devil's spirits' rows). The export fills each empty ability as kind `optinf` from
+  every sibling spirit whose option rows equal the item's own at each level both have rows for,
+  when those siblings agree (here M_AMALRUN and the six non-unique NASRUN items: 75 rows). The
+  server applies them unless `-item-opt-level-inferred=false` (boot log `inferred_rows`). The
+  +6..+10 MOBDEFENCEIGNORE skill (31152 on the devil's spirits) is not inferred: even M_AMALRUN,
+  which has the options, has no such skill row.
+- **The event spirits' rows (MEASURED).** Not a column shift or an encoding: the archive carries
+  110 abilities (160..269) for the ten event spirits that the shard never had, and reuses ability
+  89 (ITEM_EVENT_AVATAR_M_NASRUN +0) for them. Their option rows follow the angel's +0..+5 pattern
+  by level; their skill rows do not -- they use only ability ids ending 0..6 (75 rows, never x7..x9)
+  while the abilities run consecutively, and only 18 of the 110 get the skill set their level's
+  pattern predicts (33 none). No clean transform recovers them (OPEN). The shard's rows are what the
+  server reads: ITEM_EVENT_AVATAR_M/W_NASRUN +0 give +5 % HP / MP and SKILL_EVENT_NASRUN_
+  ECCENTRICDEMON_01 (31141); every other event spirit level gives nothing (the eight colored event
+  spirits carry the mall NASRUN's names but no ability rows). The client's skill strip still reads
+  the archive (retail's client does too), so it offers the archive's skill, which the server
+  refuses ("skill not known"), as the original pair would. Making the event spirits act as their
+  mall counterparts would be OURS (the user's call).
+- **Spirit expiry under a running buff (READ).** refskill +0x65 is Basic_Activity
+  (`docs/protocol/skill_fields.md`). `GObjPC::FUN_0059f0e0` (`s:0x59f0e0`) re-checks every
+  self-cast running record's reqi list: kind 14 value 1 is the avatar storage's index-4 item that
+  is not an expired 3/1/14 (vtable +0x584(4) -> `0x4a6910` on pc+0x1c34, `FUN_00498610`); a
+  failing active record ends (`FUN_0059eff0(0)`) unless its Basic_Code holds
+  "SKILL_CH_FIRE_SHIELD_"; a passive one only loses its params. It runs after equipment and avatar
+  moves (`s:0x50f53f`) and durability changes (`s:0x4e71a2`), but not at a worn spirit's expiry:
+  the 10-second rental check (`s:0x4a707b` -> `0x4b9060` -> DetachAbilityByItemOptLevel
+  `s:0x4bbd60`) removes the params and skills and sends 0x3078 {3, slot} and nothing else. So a
+  spirit's buff outlives its expiry until its own end or the next move. MEASURED: the 23 kind-14
+  skills are all "14:1", active, 300/600/1800 s. OpenSRO re-checks the kind-14 lists after every
+  avatar move (`session/buffreqs.go`). OPEN: the equipment-move and durability triggers for the
+  weapon, shield and armour kinds (a weapon swap would then end weapon-bound buffs: a visible
+  change, left for the user).
+- **Fellow pet names (READ, MEASURED).** The 13 Celestial Fellow pets (COS_P_ANCIENT_TRIBAL_BEAR,
+  BLOOD_ARMOR_DINO, CELESTIAL_TIGER, DARK_GRIFFIN, GOLD_HORN, HALF_MOON_JAGUAR, KLOX,
+  LAVA_ROAR_HOUND, NIGHT_FANG, RUBINO_PHOENIX, SILVERBACK, SOUL_TAIL, YELLOW_SPARKLE_OSTRICH; 1,820
+  rows; scrolls 50864..50876) have NameStrIDs with no row in any of the archive's 377 textdata
+  files. CICCos::vslot_034 (`c:0x9c6d27..0x9c6d8d`) settles a COS's name at spawn: its own; else,
+  for an owner in no job (byte 4), UIIT_STT_COSNEWUI_TITLE -- so "< No name >" is retail's for any
+  unnamed pet; else the ref's text, which for a key with no text is the text manager's static empty
+  string (`FUN_008c9b20` -> `c:0xec3b70`), and the spawn then skips the name setter (`c:0x9d19d6`):
+  no name line. Ours showed "< SN_COS_P_KLOX >" for a job-suited owner (UiTextTable answers a
+  missing key with the key). `CosSpawnNet.display_name` follows the engine. OPEN: retail writes the
+  substitute once at spawn; ours rebuilds the label when it is redrawn.
+- **Gold Time across a restart (READ).** CTJ_PremiumKeeper keeps retail's `_TIMEDJOB` words:
+  TimeToKeep = into << 8 | days (into, the seconds into the job's day, runs on the keeper's Tick
+  `s:0x6529d0`, so only while the owner is in the world), Data1 the start, Data2 prev << 16 |
+  today, Data3 extra days, Data4 paused (getters +0x68..+0x80; `_ADDTIMEDJOB` `s:0x650980`). The
+  load (vslot_012 `s:0x6525bf..0x6526fe`) compares R = (Data3 + 1) x 86400 + P1 - (now - start)
+  with T = (days + 1) x 86400 - into: R <= 0 zeroes the job and sends nothing, and the first tick
+  ends it with the end form; otherwise into += T - R, then one roll per whole day. So days away and
+  a server's downtime are spent on the job's own boundaries (start + k days), and **the "+1 day" is
+  the carry day after the period**. Data3 has no writer in the engine (INFERRED: the only type-3
+  creator, `s:0x49c6b4`, passes 0; the keeper never calls the setter). OpenSRO stores those words
+  (V1/V2/V3), runs the Tick's day clock and the load's catch-up, sends the short form {3, 1, ref, 0,
+  0} when the period and both halves are 0 (`s:0x65285b..0x6528e4`), and reads round-838 rows
+  unchanged. OURS: Data3 is not kept; a crash loses up to 60 s of drained time.
+- **Live (box, port 16890, real clicks and keys through OPENSRO_QA_INPUT; frames in
+  `/var/tmp/r839p/keep/`).** A level-110 trader (joined, *Merchy, suit worn) right-clicked
+  ITEM_COS_T_DONKEY and the status icon: "Special Item Inventory (1/1)", one open cell, 27 blocked.
+  ITEM_MALL_AVATAR_M_AMALRUN_BLUE +7 (an inferred row) picked from the bag onto avatar slot 5: max HP
+  and MP 11,169 -> 13,402 (+20 %), the strip [36286]; its skill cast (a 600 s buff); at the
+  spirit's expiry 0x3078 came, max HP fell back to 11,169 and the buff stayed on the board; a hat
+  put on (an avatar move) ended it (`BUFF end ... tokens [1]`). Another run took the awake spirit
+  off under its buff: the buff ended with the move. ITEM_EVENT_AVATAR_M_NASRUN +0: max HP 11,727
+  (+5 %); its strip offered the archive's 36285, refused "skill not known". ITEM_EVENT_AVATAR_M_
+  NASRUN_BLUE +3: no change. KLOX summoned by a no-job owner: plate "Nora" / "< No name >"; by the
+  suited trader: owner line "*Merchy", no name line. **Not run live: the Gold Time across a real
+  restart** -- the box has no PostgreSQL, the in-memory store forgets timed jobs at a restart, and
+  reaching a database from the box was not permitted in this session. The restart is tested in Go
+  instead (below), over the memory store and the PostgreSQL store.
+- **Tests.** Server `go test ./...` passes (88 packages): `TestBagSizeShippedTransports`;
+  `TestExportItemOptLevel839` (both sources, the optinf fill and its refusals, the reader's
+  DropInferred); `buffreqs839_test.go` (5: the index-4 rule, the fire shield, ANY/ALL, take-off ends,
+  expiry does not until the next move); `goldtime839_test.go` (a restart after 3 d 2 h, over
+  MemStore and SQLStore; expiry while away; a round-838 row; words ahead of the clock). Client:
+  `remote_godot.sh check` ALL LOAD (1,017 scripts), `tests` "ran 382 suite(s), 0 failing"
+  (`cos_net_test`: five name checks). No perf gate: server, net and plate text only.
+- **Deploy.** Prod needs the new spirit table: `/var/tmp/r839p/deploy/itemoptlevel.csv` on the box
+  (674 rows, 75 `optinf`; from `export-refdata -mode itemoptlevel` on the shard's three CSVs), read by
+  `-item-opt-level-csv` (`OPENSRO_ITEM_OPT_LEVEL_CSV`); `-item-opt-level-inferred=false` drops the
+  inferred rows. Round-838 Gold Time rows need nothing.
+
 ## Eight-hundred-and-thirty-eighth round, lane 6: the title scrolls are the hwan level, and the Random Wing Scroll
 
 The user: "let's make all the items in the item mall functional ... Make no mistakes." This lane:

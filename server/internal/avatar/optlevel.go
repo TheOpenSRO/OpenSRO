@@ -29,9 +29,55 @@ type OptLevelGrant struct {
 }
 
 // OptLevelOption is one magic option row: the magicoption id and its value.
+// Inferred marks a row the export filled in (round 839, kind "optinf",
+// INFERRED/OURS): an ability the tables give no option row, taking its
+// siblings' rows at the same plus level (export-refdata's inferOptions).
 type OptLevelOption struct {
-	ID    uint32
-	Value int
+	ID       uint32
+	Value    int
+	Inferred bool
+}
+
+// DropInferred removes every inferred option row (cmd/server's
+// -item-opt-level-inferred=false: only the tables' own rows), and returns
+// how many it removed. A grant left with neither options nor skills is
+// removed with them.
+func (t *OptLevelTable) DropInferred() int {
+	if t == nil {
+		return 0
+	}
+	n := 0
+	for k, g := range t.byKey {
+		kept := g.Options[:0]
+		for _, o := range g.Options {
+			if o.Inferred {
+				n++
+				continue
+			}
+			kept = append(kept, o)
+		}
+		g.Options = kept
+		if len(g.Options) == 0 && len(g.Skills) == 0 {
+			delete(t.byKey, k)
+		}
+	}
+	return n
+}
+
+// Inferred is the number of inferred option rows the table holds.
+func (t *OptLevelTable) Inferred() int {
+	if t == nil {
+		return 0
+	}
+	n := 0
+	for _, g := range t.byKey {
+		for _, o := range g.Options {
+			if o.Inferred {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // Grant returns the item's grant at optLevel, or nil.
@@ -50,8 +96,8 @@ func (t *OptLevelTable) Len() int {
 	return len(t.byKey)
 }
 
-// ReadOptLevelCSV reads the export: RefItemID, OptLevel, "opt" | "skill", id,
-// value.
+// ReadOptLevelCSV reads the export: RefItemID, OptLevel, "opt" | "optinf" |
+// "skill", id, value.
 func ReadOptLevelCSV(r io.Reader) (*OptLevelTable, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = 5
@@ -83,8 +129,8 @@ func ReadOptLevelCSV(r io.Reader) (*OptLevelTable, error) {
 			t.byKey[key] = g
 		}
 		switch rec[2] {
-		case "opt":
-			g.Options = append(g.Options, OptLevelOption{ID: uint32(v[2]), Value: val})
+		case "opt", "optinf":
+			g.Options = append(g.Options, OptLevelOption{ID: uint32(v[2]), Value: val, Inferred: rec[2] == "optinf"})
 		case "skill":
 			g.Skills = append(g.Skills, v[2])
 		default:

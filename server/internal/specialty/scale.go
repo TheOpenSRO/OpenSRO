@@ -102,6 +102,20 @@ func (t Thresholds) Scale(amount uint32) byte {
 //	cap = trunc(jobs.Unit(goldMin) x 2448 / 11796.0 x 40.0 / S')
 //	S'  = S, or S / 1.4 for a cash COS (the float32 1.4 at s:0xb45c08)
 //	size = 0 when invSize is 0, else 1 when cap < 1, else min(cap, invSize)
+//
+// Round 839 traced the rest of the chain (READ): CGObjCOS vslot_349
+// (s:0x4d1bd0) makes the cart's storage with InventorySize as its maximum
+// (+0x1c, passed in ecx) and this size as its usable count (+0x20,
+// s:0x4b7680); the owner's 0x30C8 writes +0x20 (CGCOSInventoryOP slot 29,
+// s:0x4ba720); the client draws 28-cell pages and paints every cell past
+// the size with interface\pet\pt_block.ddj (c:0x7a7e90). The only other
+// caller is GObjPC_SetLevel (s:0x4e4f0a -> s:0x4fc960): on a level change it
+// sends 0x30C9 type 2 with the new size when it is above the storage's.
+// MEASURED: InventorySize is 1 on all 47 COS_T rows of the archive's
+// characterdata and on the same rows of the private server's own
+// _RefObjChar (only its COS_T_SCORPION* 50..177 and COS_T_TEMP* 99, absent
+// from the client archive, are larger), so min(cap, 1) is 1 at every level:
+// retail gives these transports one slot, and so does OpenSRO.
 func BagSize(invSize int, goldMin int64, rarity int, cash bool) int {
 	if invSize <= 0 {
 		return 0
