@@ -5332,6 +5332,41 @@ static func is_global_chat_item(types: PackedInt32Array) -> bool:
 static func is_reverse_return_scroll(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 3
 
+## Whether TypeIDs are a repair hammer's, 3/3/13/7 (round 838).
+static func is_repair_hammer(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 7
+
+## Round 838: the repair hammer asks first. READ (sro_client): the bag's use
+## path (IFSlotWithHelp::FUN_00676570, 0x676a09) opens message box kind 0x1f
+## for a 3/3/13 item whose CanUse byte is 129 (every hammer row's) --
+## UIIT_STT_CONFIRM_BOX, UIIT_MSG_QUESTION_SILKMALL_ITEM_USE "Will you use
+## the selected item?", OK and Cancel -- and its OK (0x797d90 case 0x1f)
+## reaches SendItem_HandleUseItem (0x796660), whose case 7 sums the repair
+## quote of the worn and carried items first and, at 0, says
+## UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR without sending.
+## OURS: the box is the generic question box (PartyMatchConfirm, Yes / No);
+## kind 0x1f's own size and button words were not read. Retail asks the same
+## box for every CanUse-129 3/3/13 item but TypeID4 8, 12, 15 and 16; only
+## the hammer is routed here.
+func open_hammer_confirm(slot: int) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _resolve_ui("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE", "Will you use the selected item?")):
+		box.free()
+		return null
+	box.name = "HammerConfirm"
+	box.confirmed.connect(func() -> void:
+		if repair_all_quote() <= 0:
+			system_notice.emit(_resolve_ui("UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR", "No item needs repairing."))
+			return
+		if NetClient.current_character_name != "":
+			print("HudPanels: the repair hammer at bag slot %d" % slot)
+			NetClient.use_item(NetClient.current_character_name, slot))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
 ## Whether TypeIDs are an item used on the current COS (round 805,
 ## UseItemNet.is_cos_target_item).
 static func is_cos_target_item(types: PackedInt32Array) -> bool:
@@ -6350,6 +6385,10 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		# Round 805: a pet's potion, food or cure names the current COS.
 		if is_cos_target_item(item_types(item_id)):
 			cos_item_requested.emit(slot)
+			return
+		# Round 838: the repair hammer asks first (open_hammer_confirm).
+		if is_repair_hammer(item_types(item_id)):
+			open_hammer_confirm(slot)
 			return
 		if NetClient.current_character_name != "":
 			UiSounds.expect_use(item_types(item_id))

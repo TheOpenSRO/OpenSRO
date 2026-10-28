@@ -1148,6 +1148,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if isCurePill(it) {
 			return useCurePill(ctx, sess, fail, inv, hub, potionLocks, characterID, it, held, have, useItemClock())
 		}
+		// Round 838 (repair.go): the repair hammer, UseByKind case 7 -- every
+		// worn and carried item mended for free.
+		if isRepairHammer(it) {
+			return useRepairHammer(ctx, sess, useItemEquipment, inv, items, characterID, it, held, have)
+		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.
 		if !restoresUserPool(it) {

@@ -13327,6 +13327,12 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		if _hud_panels != null and HudPanels.is_cos_target_item(_hud_panels.bag_item_types(int(item["slot"]))):
 			_use_cos_item(int(item["slot"]))
 			return
+		# Round 838: the repair hammer asks first, as the bag's right-click
+		# does (INFERRED for the quick slot: its path to 0x676570 was not
+		# traced, as round 778's reverse scroll above).
+		if _hud_panels != null and HudPanels.is_repair_hammer(_hud_panels.bag_item_types(int(item["slot"]))):
+			_hud_panels.open_hammer_confirm(int(item["slot"]))
+			return
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
@@ -35764,6 +35770,13 @@ func _on_use_item_result(result) -> void:
 		var code := _hud_panels.item_code_for_id(result.item_id)
 		if HudPanels.CREST_ITEM_BOXES.has(code):
 			_hud_panels.crest_used(code)
+		# Round 838: the repair hammer's mended items arrive as 0x3052s; a
+		# piece mended from broken counts again, so the doll and the stats
+		# are asked for (OURS: retail's ChangeItemDurability pushes them).
+		if HudPanels.is_repair_hammer(_hud_panels.item_types(result.item_id)) and NetClient.current_character_name != "":
+			print("World3D: the repair hammer mended the worn and carried items")
+			NetClient.list_equipment(NetClient.current_character_name)
+			NetClient.character_stats(NetClient.current_character_name)
 	# Round 786: every accepted use is logged with what it left, so a run
 	# (the auto potion's QA) reads the count and the pools from the log.
 	print("World3D: use item ok: %d left, HP %d/%d, MP %d/%d, restored %d HP %d MP" % [result.remaining,
