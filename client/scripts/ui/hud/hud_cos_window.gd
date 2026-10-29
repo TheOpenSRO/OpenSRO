@@ -347,10 +347,16 @@ func show_cos(d: CosNet.Data, requested: int) -> void:
 	select_page(page)
 
 ## Opens the window (0x79bcd0 with open 1): the saved position or centred.
-func open_for(d: CosNet.Data, requested: int) -> void:
+## Round 841 (OURS): `unsaved_at`, when given, stands for the centre while no
+## position is saved -- the specialty store puts the transport's window where
+## the bag goes beside its store (HudPanels.open_shop), since this client's
+## store sits left of the centre the original's window would cover.
+func open_for(d: CosNet.Data, requested: int, unsaved_at: Variant = null) -> void:
 	show_cos(d, requested)
 	if saved_position != null:
 		position = saved_position
+	elif unsaved_at is Vector2:
+		position = unsaved_at
 	else:
 		var view := screen_size()
 		position = Vector2(floorf((view.x - size.x) / 2.0), floorf((view.y - size.y) / 2.0))

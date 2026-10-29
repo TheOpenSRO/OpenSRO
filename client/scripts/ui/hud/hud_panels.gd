@@ -1244,9 +1244,7 @@ func open_alchemy() -> AlchemyWindow:
 	window.move_to_front()
 	# 0x79af20: the inventory -- ShowWindow(1), its tab, then the toggle
 	# helper 0x79a7e0 on the main popup, which sounds snd_window_open (read).
-	var popup_window := open("inventory")
-	if popup_window != null:
-		UiSounds.window_toggled(popup_window.visible, _interface_shown(), "alchemy opened: 0x79af20 raises the inventory")
+	inventory_companion("alchemy opened: 0x79af20 raises the inventory")
 	return window
 
 ## 0x798e20(0): Y from open, the window's close button (CNIFEnchantWnd
@@ -1416,6 +1414,31 @@ func menu_action(panel_id: String) -> void:
 		open_item_mall_entry()
 		return
 	toggle(panel_id)
+
+## Round 841: the windows that open alongside an operation. The census of
+## every opener of the inventory (the main popup's inventory tab) and of the
+## COS window, read from sro_client.exe, is docs/protocol/window_companions.md.
+##
+## HudCos, for the specialty store's transport window and Escape's COS
+## window step (World3D sets it).
+var hud_cos: HudCos = null
+## Whether the interface's interaction lock (+0x4fc, c:0x787bd0 "Lock : %d")
+## holds 0xc: the store was opened by 0xB046 {1, 0xc}, the specialty store
+## (SpecialtyFlow sets it; READ c:0x79dbd0's 0x676390(0xc)).
+var specialty_lock: Callable
+
+## 0x79af20 (READ): the main popup ShowWindow(1) -- its current tab
+## re-selected --, the inventory tab unless its pane already shows
+## (0x6a1d20 / 0xb8f530 -> 0x6a1f70(0x46)), then the toggle helper 0x79a7e0
+## on the popup: raised, snd_window_open. Its callers here: the alchemy
+## window's OnCreate (c:0x592635), the grant window (c:0x888fff), the stall
+## window's show (CIFStall::vslot_023, c:0x6b9780) and Gori's exchange
+## (c:0x703336). Returns the popup window, or null.
+func inventory_companion(why: String) -> HudWindow:
+	var popup_window := open("inventory")
+	if popup_window != null:
+		UiSounds.window_toggled(popup_window.visible, _interface_shown(), why)
+	return popup_window
 
 ## Moves a window this client placed itself. The main popup keeps a wanted
 ## position that its clamp and every resize rebuild from
@@ -2377,6 +2400,39 @@ func qa_press_talk_line(n: int) -> String:
 				return key
 	return ""
 
+## Round 841 (OPENSRO_QA_INPUT talkline:<n>): where the talk box draws its
+## numbered line n -- a point on its first words (40 px in, past "n. "), in
+## viewport pixels -- or (-1, -1) when it is not shown inside the box.
+func qa_talk_line_point(n: int) -> Vector2:
+	if not is_open("npctalk"):
+		return Vector2(-1, -1)
+	var body := NpcTalkView.body_of(_windows["npctalk"])
+	if body == null:
+		return Vector2(-1, -1)
+	var lines: PackedStringArray = body.get_meta(NpcTalkView.META_LINES, PackedStringArray())
+	var parsed := body.get_parsed_text()
+	var tags := RegEx.create_from_string("\\[[^\\]]*\\]")
+	var seen := 0
+	var from := 0
+	for i in lines.size():
+		if lines[i].begins_with("[url="):
+			seen += 1
+			# The line's own words as drawn (its tags dropped), found in the
+			# label's text after the lines before it.
+			var plain := tags.sub(lines[i], "", true)
+			var char_at := parsed.find(plain, from) if plain != "" else -1
+			if char_at < 0:
+				continue
+			from = char_at + plain.length()
+			if seen == n:
+				var line := body.get_character_line(char_at)
+				var y := body.global_position.y + body.get_line_offset(line) + NpcTalkView.line_height(body) * 0.5
+				var clip := _windows["npctalk"].find_child(NpcTalkView.CLIP_NAME, true, false) as Control
+				if clip != null and not clip.get_global_rect().has_point(Vector2(clip.get_global_rect().position.x + 1, y)):
+					return Vector2(-1, -1)
+				return Vector2(body.global_position.x + 40.0, y)
+	return Vector2(-1, -1)
+
 ## OPENSRO_QA_TELEPORT (World3D): prints the talk box's lines as drawn and
 ## clicks dest_id's line through the label's own meta_clicked, the signal a
 ## click raises. False when the list is not shown or does not hold dest_id.
@@ -2455,16 +2511,35 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	# the main popup shown, then the helper on the store: the open (read,
 	# 0x79dcfe). The popup gets no helper call of its own there.
 	UiSounds.window_toggled(window.visible, _interface_shown(), "store opened (0x79dbd0)")
-	# Open the bag alongside, so the player can sell from it -- the client sells
-	# by clicking an inventory item while the shop is open. Set side by side so
-	# the shop and the bag both read (the client pairs them the same way).
-	var bag: HudWindow = open("inventory")
-	if bag != null:
-		var view := get_viewport_rect().size
-		window.position = Vector2(view.x * 0.5 - window.size.x - 8.0, (view.y - window.size.y) * 0.5).round()
-		place_window(bag, Vector2(view.x * 0.5 + 8.0, (view.y - bag.size.y) * 0.5).round())
-		bag.move_to_front()
+	# Round 841 (READ c:0x79dbd0, docs/protocol/window_companions.md): the
+	# main popup is hidden first (0x7992c0, silent), then the interaction lock
+	# picks the companion -- 0xc (the specialty store) the transport's window
+	# (HudCos.specialty_store_opened), 1 the inventory tab. The store and its
+	# companion side by side is this client's own placement (round 513/593).
+	var view := get_viewport_rect().size
+	var beside := Vector2(view.x * 0.5 + 8.0, 0.0)
+	var store_at := Vector2(view.x * 0.5 - window.size.x - 8.0, (view.y - window.size.y) * 0.5).round()
+	if specialty_lock.is_valid() and bool(specialty_lock.call()):
+		window.position = store_at
+		if _popup != null and _popup.window != null:
+			_popup.window.hide()
+		var did := "none"
+		if hud_cos != null:
+			var cos_h := hud_cos.window.size.y if hud_cos.window != null else 390.0
+			did = hud_cos.specialty_store_opened(Vector2(beside.x, (view.y - cos_h) * 0.5).round())
+		print("HudPanels: specialty store -- the bag hidden, the transport's window %s (0x811130 / 0x7a0980(0))" % did)
+		# The store is raised last (0x79dcf0), over the COS window's layer.
+		move_to_front()
 		window.move_to_front()
+	else:
+		# Open the bag alongside, so the player can sell from it -- the client
+		# sells by clicking an inventory item while the shop is open.
+		var bag: HudWindow = open("inventory")
+		if bag != null:
+			window.position = store_at
+			place_window(bag, Vector2(beside.x, (view.y - bag.size.y) * 0.5).round())
+			bag.move_to_front()
+			window.move_to_front()
 	# Prices for just this NPC's goods, and the current purse. The catalogue is
 	# the server's to compute; the client only displays what it sends. Asking
 	# for only these ids (not the whole ~12k catalogue) keeps the reply inside
@@ -4074,6 +4149,12 @@ func open_stall_window() -> void:
 		window.centre()
 		window.position += StallController.OPEN_SHIFT
 	window.move_to_front()
+	# Round 841, READ CIFStall::vslot_023(1) (c:0x6b9730), the owner's 0xB0B1
+	# {1} and a visitor's 0xB0B3 {1} alike: the alchemy window destroyed if it
+	# exists (0x799580 -> 0x798e20(0)), then 0x79af20 -- the inventory, raised
+	# over the stall (the stall's own show, 0x652b70, raises nothing).
+	close_alchemy()
+	inventory_companion("stall shown: CIFStall::vslot_023 -> 0x79af20 raises the inventory")
 
 func close_stall_window() -> void:
 	var window: HudWindow = _windows.get(StallController.WINDOW)
@@ -5408,13 +5489,20 @@ func _escape_close() -> bool:
 		world_map.hide()
 		UiSounds.window_toggled(false, _interface_shown(), "Escape: world map")
 		return true
-	for panel_id in ["storage", "npctalk", "exchange"]:
+	# Round 841: GDR_STALL (0x21) between the NPC window and the exchange
+	# (READ c:0x79d8c5..0x79d959): its vslot_043, the X -- the owner's 0x70B2,
+	# a visitor's 0x70B5, the window kept until the answer. (A hide here left
+	# the stall open on the server.)
+	for panel_id in ["storage", "npctalk", StallController.WINDOW, "exchange"]:
 		var window: HudWindow = _windows.get(panel_id)
 		if window != null and window.visible:
 			if panel_id == "exchange" and exchange_mode():
 				# Round 834: vslot_043 is the X, 0x7b24d0: the cancel, the
 				# window kept until the answer.
 				exchange.press_cancel()
+				return true
+			if panel_id == StallController.WINDOW:
+				_stall().press_close()
 				return true
 			window.hide()
 			if panel_id != "exchange":
@@ -5423,7 +5511,12 @@ func _escape_close() -> bool:
 	if alchemy_window() != null:
 		close_alchemy()
 		return true
-	return close_topmost()
+	if close_topmost():
+		return true
+	# Round 841: the COS window after the main popup (c:0x79d9c5 ->
+	# 0x799140(0x78), 0x79bcd0(0, 0, 0)); it is HudCos's, not one of these
+	# windows, so it closes once none of them is left.
+	return hud_cos != null and hud_cos.escape_close_window()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
@@ -6495,8 +6588,9 @@ func open_grant_window() -> GrantMagicAttributeWindow:
 			if not window.visible:
 				c.clear_item())
 	c.clear_item()
-	# 0x79af20: the inventory beside it.
-	open("inventory")
+	# 0x79af20: the inventory beside it, raised, with the helper's
+	# snd_window_open (round 841: the sound was missing).
+	inventory_companion("grant window opened: 0x79af20 raises the inventory")
 	return c
 
 ## The open grant window's controller, or null.
