@@ -429,6 +429,14 @@ log as CIFTextBox 304 is set (READ: pitch 14 `0x638c20(0xe)`, lines from the top
 indent), the trust check showing 155 and giving 156 the warning (READ `c:0x7b399f..0x7b39d4`),
 and the busts as below. A screen too small for the window at its UI scale gets the compact one.
 
+**The busts move (READ, round 841).** Each is a `CCObjCharacter` clone (`+0x33e4` own, `+0x3588`
+opponent) set up once per exchange (`0x7b3180` -> `0x7b2a20`: dressed from the body, type 0 played
+with `(0, 0, 0, 0, 1.0, 1.0)`, stepped 1 ms) and then stepped every frame by the frame's
+milliseconds in the window's tick (`vslot_012` `0x7b2210` -> `0xa5ac80`, the int at `0x110f7f8`,
+1..3000) and rendered by `vslot_015` (`0x7b21b0` -> `0x4ffc50`): the stand clip loops for as long as
+the window is open. Nothing else touches the clones, so the body's own actions and dress changes do
+not reach them. OpenSRO: `PlayerPortrait.animate` (round 841's WORLD_ISSUES entry).
+
 **Header** (`c:0x7b2d00`, READ):
 
 - A player in normal state (vslot `0xac == 4`) gets UIIT_STT_SOMEONESITEM_GUILD "[%s - %s]'s item"
