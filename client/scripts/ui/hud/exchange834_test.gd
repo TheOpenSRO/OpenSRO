@@ -207,6 +207,10 @@ func _run_both() -> void:
 		var mv: TextureRect = panels.call("exchange_portrait_view", true)
 		_check(ov != null and mv != null and _rect_of(ov) == Rect2(249, 72, 96, 100) and _rect_of(mv) == Rect2(249, 216, 96, 100),
 			"the portraits inside their boxes, inset 2,2,4,4 (got %s / %s)" % [str(_rect_of(ov)) if ov != null else "-", str(_rect_of(mv)) if mv != null else "-"])
+		# Round 841: both busts play their clip (CIFExchange::vslot_012).
+		var op = panels.call("exchange_portrait", false)
+		var mp = panels.call("exchange_portrait", true)
+		_check(op != null and mp != null and op.animate and mp.animate, "both busts are animated pictures")
 		var logged: Array = panels.call("exchange_log_lines")
 		_check(logged.size() == 2 and String(logged[0]["text"]) == "You started to exchange with [Pain]."
 			and (logged[0]["color"] as Color).is_equal_approx(ExchangeController.ORANGE)

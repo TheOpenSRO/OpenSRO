@@ -4575,6 +4575,9 @@ func _install_exchange_extras(window: HudWindow) -> void:
 		portrait.size = Vector2i(r.size)
 		portrait.set_transparent(true)
 		portrait.set_framing(EXCHANGE_PORTRAIT_DISTANCE, EXCHANGE_PORTRAIT_FOV, 0.0, EXCHANGE_PORTRAIT_LIFT, 0.0)
+		# Round 841: the bust plays its stand clip every frame, as retail's
+		# (CIFExchange::vslot_012 0x7b2210 steps it, vslot_015 draws it).
+		portrait.animate = true
 		view.add_child(portrait)
 		ViewportPixels.attach(view, portrait, exchange_portrait_buffer_for)
 		view.texture = portrait.get_texture()
@@ -4602,7 +4605,8 @@ static func exchange_portrait_buffer_for(physical: Vector2i) -> Vector2i:
 	return Vector2i(maxi(physical.x, 96), maxi(physical.y, 100))
 
 ## One side's portrait (`own_side`: the player's, below; else the
-## opponent's, on top): a dressed body copy this takes, posed, rendered once.
+## opponent's, on top): a dressed body copy this takes, playing `pose` (its
+## stand clip) from the start, rendered every frame while shown (round 841).
 func set_exchange_portrait(own_side: bool, skeleton: Skeleton3D, pose: BanReader.ParsedAnimation,
 		zone_light: Array = []) -> void:
 	var k := 1 if own_side else 0
