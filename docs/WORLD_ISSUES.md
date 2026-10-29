@@ -7483,6 +7483,97 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-second round, lane P: guild colours and the stall plate
+
+The user (2026-10-29, on v0.1.604): "When someone is in the same guild their guild name should show orange
+like your own, not blue. If they're in a union with you it should show green." and "the background around
+Tobi's name widens when opening a stall and it should not". Their prod picture: Pain's own
+`[OFWS * RatSlayer]` orange, Tobi's `[OFWS * Pengis]` (the same guild) light blue, and the box behind "Tobi"
+about as wide as the stall title `[[Tobi]'s stall.]` above it. Labels: READ (c: sro_client.exe, s:
+SR_GameServer.exe), MEASURED, INFERRED, OURS, OPEN. Full reading: docs/protocol/guild_plate.md "Colour".
+
+**What the original does.**
+- **Colours and rule (READ).** A guild line is one plate item per guild NAME, shared by every character of
+  that guild (the guild manager 0xeeef70's refcounted map, c:0x9a4f40 makes, c:0x9a4650 releases). At its
+  making it is 0xffa0fe68 (160, 254, 104) when the name is in the union map (c:0x996d60, CDD+0x148 map
+  +0x94, "IsAllianceGuild"), else 0xffff0000 when it is in the hostile list (c:0x992a90, +0xa4,
+  "IsHostileGuild(sGuildWarDef...)", fed by 0x3109), else 0xff66b9ff (102, 185, 255). The own player's line
+  (c:0x9dc460, an exact CICPlayer) recolours ITS entry 0xfffead2e (254, 173, 46) at c:0x9dc4d4, so **every
+  member of your guild is orange like you** -- the user's description is the original's. c:0x9a4450
+  recolours every entry (lists, then the own entry orange) after 0x3102, 0x3109, 0x34B4 and 0x38F5 types 2,
+  3, 0x0d, 0x12, 0x19, 0x1c, 0x23 (the switch tables at c:0x888b00 / c:0x888ab4). The extra relation is
+  red, guild war; OpenSRO has no wars.
+- **Union data (READ).** 0x3102 (c:0x87fd00 -> 0x99a810; s:0x5c4550 -> 0x5b8eb0 to each member guild's
+  local members): u32 union id, u32 crest revision, u32 slot 0's guild (INFERRED the leader), u8 n x {u32
+  id, str name, u8 level, str master, u32 (INFERRED the master's model), u8 (INFERRED members)}; 0x38F5
+  type 0x0d adds a guild (UIIT_MSG_GUILD_ALLY_JOIN_RESULT); type 0x12 {u8 1 left / 2 expelled + u32, 3
+  broken} clears the union when the guild is the own one or the map held fewer than two (c:0x988a60), else
+  takes that guild out.
+- **Pets (READ).** No COS calls c:0x9a4f40 (its callers: fortress structures, guards, c:0x7891f0 and the
+  users): a pet's owner line takes no guild colour; nothing to change.
+- **The stall title (READ, MEASURED).** Its item (+0x474) gets 0xFFFEB5FF and the name setter's
+  0x40000000 box (c:0x9c89c2 / c:0x9c89ca), so its box is drawn where the title is. Its text is "[" + the
+  stall's name + "]" (c:0x9dc3a0), and the default name is UIIT_STT_STALL_DEFAULT_TITLE (MEASURED in the box's
+  Media.pk2: "[%s]'s stall.") formatted with the own name (c:0x641f40 purpose 0): `[[Tobi]'s stall.]` is the
+  original's own double bracket. Nothing to change there.
+
+**What was wrong.**
+- The client coloured only the own line orange (round 814's reading stopped at the constant), and OpenSRO had
+  no unions at all.
+- `StallWorld.apply` fitted the title's NameBox when the title was made, at the name's line, then raised the
+  text 37 px: the title-wide box stayed behind the name (and a rename kept the old width).
+
+**What we built.**
+- Client: `GuildLineColour` (the rule and the four ARGB), `UnionData` (0x3102, 0x38F5 0x0d / 0x12 inside
+  GuildData, cleared with the guild), `World3D._guild_line_colour` / `_recolour_guild_lines` (on the own line
+  changing and on the union changing), `UserSpawnNet` / 0x30FF keep the union id; `StallWorld.apply` refits
+  the title's box after placing it. QA: `OPENSRO_QA_GUILD` also prints `QA PLATE` (each name and stall title
+  box size and height, with the frame).
+- Server: `guild/union.go` (the record, 0x3102 / 0x38F5 encoders), MemStore and SQLStore unions
+  (`guild_unions`, `guild_union_members`, slots kept, a union under two guilds dissolved -- INFERRED from the
+  client's rule -- a disbanded or emptied guild leaving its union), `session/union.go` (0x3102 after every
+  guild block, to the union on a join; 0x0d to the others; 0x12 to the whole union on a leave, an expel, a
+  disband), the union id in pcspawn and 0x30FF. OURS: `/union <guild>`, `/union leave`, `/union expel
+  <guild>` (GM, a test tool; the original's request flow 0x70FB..0x70FD is not built). partybot:
+  `-gm-timed`, `-guild-delay`. Prod needs no flag; the schema adds its tables itself.
+
+**Live (render box, lane server 16970 in memory; the rendered QaWin with real chat input; partybots Mate
+(OFWS master), Tobi (OFWS, stall), Ally (Beta), Other (Gamma), Solo (no guild, stall), Late (joins OFWS in
+view); evidence in `/var/tmp/r842p/keep`, `head_*` the lane client, `dev_*` dev 295b2c48 in the same run).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| Dev reproduces the report: in OFWS, Mate's and Tobi's lines (102, 185, 255) | PASS (bug seen) | dev_b0230.png, base2.client.log |
+| QaWin joins OFWS by Mate's invitation: Mate's and Tobi's lines turn (254, 173, 46), live; Beta, Gamma (102, 185, 255) | PASS | head_c0230.png (pixel mode of each line), run2.client.log frames 120 -> 240 |
+| `/union Beta` typed in the chat: Ally's line (160, 254, 104), live; OFWS still orange, Gamma blue | PASS | head_c0500.png, frame 480 |
+| Late joins OFWS in view: its new line orange | PASS | head_c0560.png, frame 540 |
+| `/union leave`: Ally back to (102, 185, 255), live | PASS | head_c0700.png, frame 660 |
+| Mate expels QaWin: every OFWS line (102, 185, 255), live | PASS | head_c1100.png, frame 1020 |
+| Dev reproduces the box: with the stall open, the box under "Tobi" 75 px, under "Solo" 77 px (26 and 28 before) | PASS (bug seen) | dev_b0400.png, box columns measured (darker by the box alpha against the rows round it) |
+| Fixed, with a guild (Tobi): the name's box 26 px before, while and after the stall (rows 220..235); the title's own box 76 px at rows 183..198, 37 rows up; QA PLATE rect 26x16 / 75x16 | PASS | head_c0230/0400/1100.png, run2.client.log |
+| Fixed, without a guild (Solo): 28 px before, while and after; the title's box at 183..198 | PASS | the same |
+| The title reads `[[Tobi]'s stall.]` in (254, 181, 255), the original's | PASS | head_c0400.png |
+| Regression, own plate (`[OFWS]` + QaWin), NPC plates (Soldier Dangsam / Jingyo), the own jinn's plates (`< No name >`, owner QaWin), a Mangyang's plate: same as dev (the frame diff is the guild line's new orange and the pet's own movement) | PASS | rd0599.png, rpet.png, rhead/rbase.client.log |
+
+**Tests.** Go: `guild.TestRound842Unions{Mem,SQL}`, `TestRound842UnionBytes`, `session.TestRound842UnionFlow`
+(two clients: formed, 0x3102 and the lines' union ids, the spawn record, the leave's 0x12, a deleted guild
+leaving), `gm`'s console list; `go test ./...` passes. Client: `world/guild_colour842_test.gd` (the colours,
+UnionData's every case, the live recolouring, the stall title's box), `remote_godot.sh check` ALL LOAD (1038
+scripts), `tests` "ran 391 suite(s), 0 failing".
+
+**Perf gate** (`--base 295b2c48 --head 36ec909b --sites jangan --frames 30000`): median of 3, all SAME.
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 0.87 -> 0.88 | 8817 -> 8866 | 2781 -> 2825 | 5 -> 5 |
+
+**OPEN.** The players' own union flow (request, answer, leave, the union window and chat); red lines (no
+guild wars); whether the original keeps a former guild's lines orange after the player leaves it (its own
+entry pointer is not seen cleared on 0x38F5 type 3; OpenSRO recolours when the own line drops); the u32 and
+u8 at the end of a union entry (INFERRED the master's model and the member count).
+**Harness note.** The first copy of round 841's qa script on the box still killed `r841m` processes at its
+end (its pkill pattern did not match the path rewrite); fixed for r842p, round 841's lanes were finished.
+
 ## Eight-hundred-and-forty-first round, lane K: the stall network's key
 
 The user's ask: "The stall network should have a default bind to the F key and should show in the
