@@ -18,6 +18,10 @@ the `OPENSRO_*` variables use the new one (`docs/WORLD_ISSUES.md`, round 704).
   features.
 - **Never run Godot on the host machine.** Godot is only run on the dedicated render/RE box (`192.168.10.78`, see `docs/RENDER_BOX.md`), never locally on the developer's machine.
 - **Branch policy**: work on `dev`, never push to `main` directly. See `CONTRIBUTING.md`.
+- **Every release has a changelog.** Before tagging, write `docs/release_notes/<tag>.md`: a title
+  saying what the release is about and one line per player-facing change. The game shows it
+  (Help > Release notes) and the release build fails without it (`docs/release_notes/README.md`).
+  A tag that only names the version is not a changelog.
 
 ## Layout
 
@@ -120,7 +124,8 @@ godot4 --headless --path client --import --quit                 # compile check 
 godot4 --headless --path client --script res://scripts/nav/nav_graph_test.gd
 godot4 --headless --path client --script res://scripts/nvm/nvm_water_test.gd
 cd server && go build ./... && go test ./...
-git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z            # builds and publishes the release
+client/tools/release_notes.sh --check vX.Y.Z                     # the changelog must exist first (hard rule)
+git tag -s vX.Y.Z -F docs/release_notes/vX.Y.Z.md && git push origin vX.Y.Z   # builds and publishes the release
 ```
 
 ## Traps that have each cost hours
