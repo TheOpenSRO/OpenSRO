@@ -66,12 +66,13 @@ Find all the effects this applies to and what exact times they trigger."
 
 ## Round 839 lane S follow-ups (player stalls; docs/protocol/stall.md)
 
-- [ ] OPEN: S+0x49 (0x70BA type 4, no client sender); whether a stall owner can be attacked; how
-      retail stacks the stall title against the name and guild lines (ours: 22 px over the name).
-- [ ] Not made (no OpenSRO state): the trade ban 0x3405 and the chat-ban rename at the open, the
-      quest block 0x3c32 / 0x3c33, the murderer refusal 0x3c39, the arena / flag world refusal.
-- [ ] The decoration booths' own animation (`booth_*.ban`) is not played; the title's name filter
-      (c:0x8c3f10, 0x3c38) is not run.
+- [x] Round 840 lane B: S+0x49 has no meaning; an owner can be attacked; the title 37 px over the
+      name; the trade and chat bans, the quest block and the title filter made; the booths animate;
+      the own jinn takes the vendor pose (stall.md section 11).
+- [ ] The murderer refusal 0x3c39 and the arena / flag world refusal 0x3c16 wait for open-world PvP
+      and those worlds (hooks `session.stallMurderer`, `session.stallWorldRefuses`).
+- [ ] The other ban refusals OpenSRO has no feature for yet: the consignment's session, the item drop,
+      the letters, the guild and academy notices (restriction.go); the exchange's quest block 0x100.
 - [ ] The Stall Network (`CIFStallNetwork`, the ware-network kind of 0x30B7, 0x3c41..0x3c53).
 
 ## Round 834 follow-ups (friends, the exchange, the target menu; docs/protocol/friends.md, exchange.md)

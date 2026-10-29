@@ -7483,6 +7483,97 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fortieth round, lane B: stall booths, the owner's pets and the stall refusals
+
+The user's ask for round 840: finish round 839's stall OPEN items. This lane: the decoration booths'
+own animation, what the original does with the owner's pets, and the stall refusals that lacked state
+(the trade and chat bans, the quest block, the title's word filter), with S+0x49, an owner under
+attack and the title's height settled. `docs/protocol/stall.md` section 11 has the whole reading;
+labels as there (READ s: SR_GameServer.exe / c: sro_client.exe, MEASURED on the box's archives,
+INFERRED, OURS, OPEN).
+
+**What the original does.**
+- **The booth moves (READ, MEASURED).** FUN_009dd040 plays the booth through its CCObjAnimation's slot
+  3 at once (c:0x9dd14f..0x9dd16a: group `default`, type 0, no fade, speed 1.0, looping as the
+  `.ban` says) -- the map objects' rule. The four decoration booths each carry one cyclic default
+  type-0 clip (5000 / 5000 / 3333 / 5000 ms, 3 / 9 / 3 / 15 bones); `cj_store` and
+  `euro_streetstall01` have no skeleton.
+- **The owner's pets (READ, MEASURED).** Only when the stalling character is the client's own
+  player, each COS of the player's COSDataMgr in the world whose `default` group has a type-80 clip
+  enters state 0xF (the vendor loop); at the close every such COS enters state 3 (stand). Nobody
+  else's pets, in any client. Of 8,539 `.bsr`s only `cos\p_jinn.bsr` and `p_jinn_02.bsr` (the
+  COS_P_JINN growth pets) have one: every other pet and ride keeps its pose.
+- **S+0x49 / type 4 (READ):** written by type 4 and echoed, read by nothing on either side (the client
+  overwrites it before use and its type-4 reply only reads the byte). A vestige.
+- **An owner under attack (READ, INFERRED):** no attack, skill or target code reads INTERACTMODE;
+  the owner's death closes the stall 0x3c0e and the open protects its items from the death drop: an
+  owner can be attacked like anyone. OpenSRO already behaves so.
+- **The title's height (READ):** the name pass moves the plate point up 20 px for a character out of
+  a suit (the guild line's place), then the title is drawn half its 14 rows plus 10 px above that:
+  37 px over the name, 17 over the guild line. Ours was an OURS 22, which sat on the guild line.
+- **The bans (READ):** two restriction slots per player (3 trade, 4 chat) set by the account side from
+  the operator console's punishments; FUN_004f0a00 answers 0x3405 {kind, packed end} and the caller
+  drops the request. Trade: the exchange request, the stall open and enter, the consignment, the
+  item drop. Chat: every chat line, the global chatting item, the stall name at the open (CharName
+  plus one of eleven suffixes), the guild notice, letters, the academy notice. The client shows the
+  line in the warning banner and the system window; MEASURED: the archive misspells the trade row's
+  key (`..._TRADE _BLOCK`), so the original shows nothing for a trade ban.
+- **The quest block (READ):** a mask on the PC (QB_* slots 143..145); 0x200 refuses the open (0x3c32)
+  and the enter (0x3c33); the only setters OR 0x60000, so no quest of this server sets 0x200.
+- **The title filter (READ, MEASURED):** the abuse filter's fourth flag, tested only in the client's
+  title box (c:0x8c3f10) for the first title and a rename; a refusal shows 0x3c38 and the window's
+  X sends 0x70B2. The server loads the lists and never reads them. Group 4: 82 stall substring words,
+  0 whole; group 5 (the box's Media.pk2 language): 38 and 217.
+- **Not built** (no OpenSRO system): the murderer refusal 0x3c39 and the arena / flag world 0x3c16 --
+  one hook each, `session.stallMurderer` / `session.stallWorldRefuses`, OPEN.
+
+**What we built.**
+- Server: `session/restriction.go` (the slots from round 788's `account_punishments` types 3 and 4,
+  cached 30 s and dropped by the GM commands -- OURS; 0x3405; the suffix table; the quest block
+  mask; the two hooks), wired into the stall open / enter / name, chat, the global item and the
+  exchange request in retail's order; `namefilter` reads f4 (`StallTitleOK`) and the server answers
+  a filtered title 0x3c38 too (OURS, with the existing `-abuse-filter`). GM: `/chatban`, `/tradeban`,
+  `/unchatban`, `/untradeban` (OURS beside `/block`, no new table) and `/questblock` (a test tool).
+- Client: `StallWorld.start_booth` (the booth's own clip), `TITLE_RAISE_PX` 37, World3D
+  `_stall_own_pets` (the own COS's vendor loop and stand), `PunishNet` (0x3405's line),
+  `NameFilter.stall_title_ok` and the title box's refusal; QA log `OPENSRO_QA_STALL_LOG`.
+
+**Live (render box, lane server 16910 in memory with the COS table; real clicks and keys through
+OPENSRO_QA_INPUT, partybot as the other players; evidence in `/var/tmp/r840b/keep`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| Four decoration booths on bots, each `1 clip(s) playing`; every booth's clock advances 0.5 s per 30 ticks and its first moving bone turns (QA BOOTH lines) | PASS | booths_client.txt, booths_f530/560.png |
+| Booth pixels change between frames, a wall beside them does not (Mangyang's booth 385 / 95 px of 4125 over 30-frame steps; control 0 of 6400) | PASS | booths_pet_vendor_title_f500.png, booths_f530.png, booths_f560.png |
+| The own jinn: `p_jinn_stand01` before the stall, `p_jinn_cart_stand01` while it is open, back to `p_jinn_stand01` at the close (state 3) | PASS | booths_client.txt (QA COS state lines), booths_pet_before_f300.png |
+| Every title 37 plate px over its name, above the name plate | PASS | booths_client.txt, booths_pet_vendor_title_f500.png |
+| Chat-banned: a chat line dropped with "Chat restricted by GM. Can chat from 2026year 10month 29date Forenoon 2hour 9minute(s)." in the banner and the system window | PASS | chatban_banner_systemline_f500.png, chatban_client.txt |
+| Chat-banned: the stall opens as "QaStall :-D" (typed "My stall"), the banner again; the own window keeps the typed title (the original's 0x30B8 handler does not re-title it, c:0x873c10) | PASS | chatban_stall_renamed_f470.png, chatban_server.txt |
+| Trade-banned: the open answers 0x3405 kind 1 and no 0xB0B1, no stall; nothing shown (the archive's key); clicking a bot's booth: 0x3405, no 0xB0B3; the title box opens again | PASS | tradeban_client.txt, tradeban_server.txt, tradeban_no_stall_titlebox_again_f500.png |
+| Quest block 0x200: the open 0x3c32, the enter 0x3c33 (no client text, as the original); `/questblock clear` releases it and the next open goes through | PASS | questblock_client.txt, questblock_server.txt |
+| A title with a stall word (the archive's group-5 list): "Invalid letters are included. Invalid name for the shop.", 0x70B2 sent, no 0x70B1 | PASS | title_filter_client.txt, title_filter_server.txt |
+| The HUD unchanged against dev (frame 290, inventory open): 0 px differ > 16 in the bottom bar, the portrait and the minimap; the whole frame's 168 are a brazier's flame (366..385, 283..308) | PASS | hud_head_f290.png / hud_base_f290.png |
+
+**Perf gate** (`--base d5c95083 --head b50e8b88 --sites jangan --frames 20000`, median of 3): frame 0.86
+-> 0.86 ms SAME, entry 10026 -> 8582 ms (FASTER, run-to-run noise: base 8662..10075), freeze 2736 ->
+2746 ms SAME, hitches 5 -> 5 SAME. A booth's clip is one AnimationPlayer on a few bones, only while
+a stall stands; the title's offset and the own pets' loop swap happen once per open and close.
+
+**Tests.** `go test ./...` passes: `restriction840_test.go` (0x3405's layout and the client's reading,
+the trade ban at the open / enter / exchange in order, the chat ban's dropped lines and renamed
+stall, an ended and an infinite ban, the quest block's order and release, the title filter at open
+and rename), `gm/restrict840_test.go` (the four ban commands, `/questblock`), `namefilter` (f4).
+Client: `remote_godot.sh check` ALL LOAD (1025 scripts), `tests` "ran 385 suite(s), 0 failing"
+(`world/stall840_test.gd`: the booth's clip on the synthetic tree and on the four real booths, the
+default stalls still, the jinn's and the wolf's and fox's type-80 entries, 0x3405's line, the f4 test
+and the title box's refusal).
+
+**OPEN.** The murderer and arena refusals (hooks); whether a monster's acquire skips an owner; the
+account side clearing a ban at its end (INFERRED); the other ban refusals for features OpenSRO lacks
+(consignment, item drop, letters, guild and academy notices) and the exchange's quest block 0x100.
+**For the user:** the original shows no text for a trade ban with the retail Media.pk2 (its row's key
+is misspelt); ours does the same -- say if the misspelt row should be shown instead (OURS).
+
 ## Eight-hundred-and-thirty-ninth round, lane P: transport bags, spirits, fellow pet names, Gold Time across restarts
 
 The user: close round 838's known gaps. Round 838 lane 4 (pets, spirits, premium) left six open;
