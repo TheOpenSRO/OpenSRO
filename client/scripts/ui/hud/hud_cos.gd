@@ -734,6 +734,52 @@ func run_command(cmd: int) -> void:
 			command.emit(uid, cmd)
 			setting_requested.emit(uid, CosNet.SETTING_AI, next)
 
+## Round 841: the store opened under the specialty lock (0xB046 {1, 0xc}:
+## the specialty traders' stores and NPC_TD_THIEF_BUY). READ c:0x79dbd0 ->
+## 0x811130(1) then 0x811310(0, 0xff) (docs/protocol/window_companions.md):
+## - 0x811130(1): the current COS when its kind (+0x14) is 1, a transport;
+##   else, with two or more out, the first transport in summon order made
+##   current (0x810fd0); none: nothing, and no window opens;
+## - 0x811310(0, 0xff) -> 0x7a0980(0): command 0 on the current COS, the COS
+##   window's TOGGLE -- opened on the Inventory page (kind 1) when closed,
+##   closed (its position saved) when it was open.
+## `unsaved_at` is the window's place while no position is saved (OURS,
+## HudCosWindow.open_for). Returns what it did: "none" (no transport),
+## "opened", "closed".
+func specialty_store_opened(unsaved_at: Variant = null) -> String:
+	var uid := 0
+	var cur: Entry = _entries.get(_current)
+	if cur != null and cur.kind == 1:
+		uid = _current
+	elif _order.size() > 1:
+		for other in _order:
+			var e: Entry = _entries[other]
+			if e.kind == 1:
+				uid = int(other)
+				break
+	if uid == 0:
+		return "none"
+	make_current(uid)
+	# Command 0 runs while the owner is dead too (0x7a0a09..0x7a0a16): no
+	# test of _dead here.
+	if window == null:
+		return "none"
+	if window.visible:
+		window.close_window()
+		return "closed"
+	var e2: Entry = _entries[uid]
+	window.open_for(e2.data, HudCosWindow.info_command_page(e2.kind), unsaved_at)
+	return "opened"
+
+## Round 841: Escape's COS window step (c:0x79d620 -> 0x799140(0x78),
+## 0x79bcd0(0, 0, 0)): the window closed, its position saved. True when it
+## was open.
+func escape_close_window() -> bool:
+	if window == null or not window.visible:
+		return false
+	window.close_window()
+	return true
+
 ## The transport's terminate question (request type 0xd); Yes sends it.
 func _ask_clean(uid: int) -> void:
 	if clean_box != null and is_instance_valid(clean_box):

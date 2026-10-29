@@ -39,6 +39,9 @@ func _init(w: Node, h: HudPanels, c: HudCos) -> void:
 	hud = h
 	hud_cos = c
 	h.specialty_buy_hook = buy
+	# Round 841: the store's companion -- the transport's window, not the bag --
+	# while the 0xc lock holds (store_opened .. store_closed; c:0x79dbd0).
+	h.specialty_lock = func() -> bool: return store_npc != 0
 	NetClient.trade_result.connect(_on_result)
 	NetClient.trade_scale_changed.connect(func(_s: int) -> void: _refresh_cos())
 	NetClient.trade_prices.connect(func(_p: Dictionary) -> void: _refresh_cos())

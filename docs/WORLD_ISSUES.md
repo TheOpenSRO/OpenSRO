@@ -7669,6 +7669,121 @@ renders a frame).
   automatically canceled" line (frame 399 of an unkept run). Whether retail closes it there was not
   checked. Not this lane's.
 
+## Eight-hundred-and-forty-first round, lane W: the windows that open alongside
+
+The user: "there's a lot of times when the inventory or pet inventory window should open alongside
+an operation but it doesn't. Like buying trade goods or opening a stall or buying from a stall".
+This lane took a census of every opener of the inventory (the main popup's inventory tab) and of the
+COS window (the pet / transport window) in sro_client.exe, and of everything that closes them, then
+built each one OpenSRO has. `docs/protocol/window_companions.md` has the full table with every
+address. Labels as there: READ c: sro_client.exe, MEASURED, INFERRED, OURS, OPEN.
+
+**How the census was taken (READ).**
+- The inventory tab is selected only by `0x6a1f70(0x46)`. All 31 calls of the selector were listed,
+  and so was every reader of the popup pointer (`+0x728`) and of its getter `0x798d00` that shows the
+  popup.
+- The COS window is created and shown only by `0x79bcd0(1, ...)`, from the command `0x7a0980(0)`.
+- No absolute pointer to any of the openers exists in the image, so the direct calls are all of
+  them.
+- The openers that go with an operation: `0x79af20` (its callers: the alchemy window's OnCreate
+  c:0x592635, the stall window's show c:0x6b9780, the fortress smith c:0x6fff15, Gori c:0x703336,
+  CIFAlchemyBox c:0x722ba8, the grant window c:0x888fff, the guild storage c:0x88f6b1), the store /
+  storage open `0x79dbd0`, and the exchange open `0x79df10`.
+- No operation's end hides the inventory. Its only hides are the keys, Escape, the store's pre-hide
+  and the world-entry reset.
+
+**What the original does that OpenSRO did not.**
+- **The stall window's show opens the inventory** (CIFStall::vslot_023(1), c:0x6b9730), for the
+  owner's 0xB0B1 {1} and a visitor's 0xB0B3 {1} alike. It destroys the alchemy window first, then
+  calls `0x79af20`, which raises the inventory over the stall. Its hide re-enables the bag's cells
+  and leaves the inventory. OpenSRO opened nothing.
+- **The specialty store opens the transport's window, not the inventory** (c:0x79dbd0).
+  - The store open first hides the main popup (`0x7992c0`).
+  - The interaction lock (CGInterface `+0x4fc`, which the 0xB046 handler fills, "Lock : %d") picks
+    the companion. Lock 1 shows the inventory again. Lock 0xc runs `0x811130(1)`: a transport made
+    current, the first in summon order when the current COS is not one.
+  - Then `0x811310(0, 0xff)` -> `0x7a0980(0)`: command 0, the COS window's **toggle**. It opens on
+    the Inventory page at its saved position or centred, and closes when it was already open.
+  - With no transport, nothing opens. OpenSRO opened the inventory beside it.
+- **Gori's exchange opens the inventory** before 0x7119 (c:0x703330..0x70333b). OpenSRO did not.
+- **The grant window's inventory sounds** the helper's snd_window_open (`0x79af20` -> `0x79a7e0`).
+  OpenSRO's was silent.
+- **Escape closes the stall through its X.** In `0x79d620` GDR_STALL comes after the NPC window and
+  before the exchange. Its vslot_043 sends the owner's 0x70B2 or a visitor's 0x70B5. OpenSRO's
+  Escape only hid the window and left the stall open on the server.
+- **Escape closes the COS window** after the main popup. It was not in OpenSRO's Escape list.
+
+**Unchanged, confirmed:** the store (lock 1), the storage, the exchange (its end leaves the
+inventory), the alchemy window. The placement beside the store and storage stays OpenSRO's own
+(rounds 513 / 593); the original only moves the popup to its tab's side (x = W - 388 - 0x50, the y
+kept) and never places one window relative to the other.
+
+**What we built.**
+- `HudPanels.inventory_companion` (0x79af20).
+  - Used by the alchemy window, the grant window, the stall window's show (`open_stall_window`, which
+    also closes the alchemy window) and Gori's exchange (`World3D._gacha_exchange`).
+- `open_shop`'s lock branch: `specialty_lock` comes from SpecialtyFlow (`store_npc != 0`), and
+  `hud_cos` is set by World3D.
+- `HudCos.specialty_store_opened` (0x811130 / 0x7a0980(0)) and `HudCos.escape_close_window`.
+- `HudCosWindow.open_for`'s `unsaved_at`.
+  - OURS: with no saved position, the transport's window takes the bag's place right of the
+    centre. The original's centre lies under this client's store.
+- `_escape_close` gains the stall's X and the COS window step.
+- New QA steps `npcclick:<code>` (a click on the server's NPC where it is drawn; off screen it
+  refuses) and `talkline:<n>` (the talk line's own rect: the pointer comes first and the click a
+  few frames later, as a hand moves).
+  - A press in the same frame as a fresh hover is missed by the talk box's link: the hover
+    re-renders the label. MEASURED at the blacksmith's first line; recorded as a side finding.
+
+**Live (render box, lane server 16950 in memory; real clicks and keys through OPENSRO_QA_INPUT,
+partybots as the other players; evidence in `/var/tmp/r841w/keep`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| Own stall from the action window: the action tab gives way, and the stall and the inventory open together, the inventory raised over the stall | PASS | stall_owner_action_tab_before_f375.png, stall_owner_open_with_bag_f420.png, f1_client.txt ("key:enter: open=[inventory,equipment,stall]") |
+| Escape: the stall's X (server "stall: closed ... 0x3c17"), the inventory stays; a second Escape closes the inventory | PASS | stall_owner_escape_bag_stays_f470.png, stall_escape2_bag_closed_f515.png, servers.txt |
+| A click on a bot's booth with the bag closed: the visitor's stall and the inventory | PASS | stall_visitor_open_with_bag_f570.png, f1_client.txt ("stall: enter") |
+| Escape: 0x70B5 (the bot sees 0x30B7 kind 1), the inventory stays | PASS | stall_visitor_escape_bag_stays_f620.png, f1_bot_merchant.txt |
+| The booth clicked with the bag already open: it stays open; the stall's X leaves it | PASS | stall_visitor_bag_already_open_f720.png, stall_visitor_x_bag_stays_f770.png |
+| A trader (joined, suit, a donkey called by a right-click), the bag open, NPC_CH_SPECIAL clicked, its store line clicked: the bag hidden, the store and the donkey's "Special Item Inventory" side by side | PASS | specialty_bag_open_before_f1220.png, specialty_store_transport_window_bag_hidden_f1340.png, f2_client.txt ("the transport's window opened") |
+| Escape: the store goes, the transport's window stays; Escape again: it closes | PASS | specialty_escape_store_transport_stays_f1410.png, specialty_escape_transport_closed_f1460.png |
+| The store line again: the window back at its saved place; dragged away, the store line once more with it open: closed (the toggle) | PASS | specialty_reopen_saved_place_f1580.png, specialty_transport_dragged_f1635.png, specialty_toggle_closes_transport_f1740.png |
+| Gori clicked with a coupon in the bag, his exchange line clicked: the inventory opens (snd_window_open), 0x7119 sent | PASS | gori_talk_before_f300.png, gori_exchange_bag_open_f360.png, f3_client.txt |
+| The warehouse keeper's storage line: the storage and the inventory | PASS | storage_with_bag_f350.png, f4_client.txt |
+| The blacksmith's store line: the store and the inventory; his grant line: the grant window and the inventory | PASS | smith_store_with_bag_f660.png, grant_with_bag_f840.png |
+| An exchange asked by the client and accepted by a bot: the exchange and the inventory; Escape cancels it (0x3088 0x182c), the inventory stays | PASS | exchange_with_bag_f515.png, exchange_escape_bag_stays_f550.png, exchange_escape2_bag_closed_f600.png, f5_bot_xbot.txt |
+| A bot's request accepted by a real click on Accept: the exchange and the inventory | PASS | exchange_accept_click_with_bag_f300.png, exchange_accept_click_client.txt |
+| The HUD against dev: the bag opened with I (frame 280) and the blacksmith's store (440, same QA path in both); pixels differing by more than 16 | PASS | 280: bottom bar 0 / minimap 0 / the bag window 2 (the live paper-doll figure); 440: the store 0, the bag 0. The rest is the world's own motion. hud_head_bag_f280.png / hud_base_bag_f280.png, hud_head_store_f440.png / hud_base_store_f440.png |
+
+Not seen live: the alchemy window destroyed by a stall's show. Both of OpenSRO's routes to a stall
+refuse while it is open ("Cannot enter a shop while conducting alchemy."); the unit test covers it.
+
+**Tests.** Client: `remote_godot.sh check` ALL LOAD (1,033 scripts), and `tests` reported "ran 388
+suite(s), 0 failing". The new `window_companions_test.gd` runs on the real Media.pk2 and checks:
+- the stall's show for the owner and a visitor: the inventory tab from the skill tab, the alchemy
+  window destroyed, the inventory over the stall, the tab's x with the dragged y kept, one open
+  sound;
+- the stall's close, Escape's X (0x70B5 sent, the window kept) and the inventory after it;
+- the store under lock 1 and under 0xc: the bag hidden, the transport made current over a pet, its
+  Inventory page, the unsaved place, the store's layer on top;
+- Escape after the popup, the saved position, the toggle's close, no transport;
+- the storage, the exchange and its end, the grant window's sound, the alchemy window;
+- a text line keeping the keyboard, the talk line's point, and Gori's order in World3D's source.
+
+Server: `go test ./...` passes (unchanged). No perf gate: UI only (World3D gains the wiring and QA
+steps).
+
+**OPEN.**
+- The fortress smith's repair (talk item 0x36) and the guild storage (0xB250) open the inventory
+  in the original, but OpenSRO has neither system.
+- The COS window's open and close sounds (`0x79bcd0`'s helper).
+- CIFAlchemyBox's `0x79af20` (INFERRED unreachable: no code loads its section).
+
+**For the user:**
+- The original's specialty store toggles the transport's window: if it is already open when the
+  store opens, it closes. This round does the same. Say if it should only ever open (OURS).
+- The specialty store also puts the inventory away, as the original's does.
+
 ## Eight-hundred-and-fortieth round, lane N: the stall network
 
 The user's ask for round 840: finish round 839's open stall items. This lane: retail's Stall Network,

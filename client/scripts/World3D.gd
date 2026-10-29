@@ -18048,6 +18048,10 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   census              print every visible focusable Control that is not a
 #                       button (text lines, lists, spin boxes) and its rect
 #   talk                open the NPC talk box (as a click on an NPC does)
+#   npcclick:<code>     left click the server's NPC of that code where it is
+#                       drawn (round 841)
+#   talkline:<n>        left click the talk box's numbered line n where it is
+#                       drawn (round 841)
 #   extbars             print where the Additional Quick Slot bars, their
 #                       buttons and shown slots are (QA EXTBAR / EXTBTN /
 #                       EXTSLOT lines; round 788)
@@ -18996,8 +19000,10 @@ func _qa_input_step() -> void:
 				_qa_input_report = action + " (no such visible node)"
 			else:
 				var centre := node.get_global_rect().get_center()
-				_qa_input_report = "%s at %s (%s)" % [action, centre, node.get_path()]
 				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
+				# Round 841: what took the click (the control under the pointer).
+				var nhov := get_viewport().gui_get_hovered_control()
+				_qa_input_report = "%s at %s (%s; hovered %s)" % [action, centre, node.get_path(), nhov.get_path() if nhov != null else "nothing"]
 		"bagitem", "rbagitem":
 			# Round 791: left click the bag cell holding that item id (the
 			# shown page), as a player picks an item up; round 838: `rbagitem`
@@ -19276,6 +19282,47 @@ func _qa_input_step() -> void:
 		"talk":
 			if _hud_panels != null:
 				_hud_panels.open_npc_talk("QA NPC", "Hello.", [])
+		"npcclick":
+			# Round 841: left click the middle of the server's NPC of that
+			# code as drawn (the talk ray, the approach and the select 0x7045
+			# decide what it does, as a player's click).
+			var nh := _qa_server_npc(arg)
+			if nh == null or camera_3d == null or camera_3d.is_position_behind(nh.global_position):
+				_qa_input_report = action + " (no such NPC drawn)"
+			else:
+				var nat := camera_3d.unproject_position(nh.global_position + Vector3(0, 0.9 * PLAYER_SCALE_RATIO, 0))
+				var where := "NPC at %s, player at %s" % [str(nh.global_position.round()), str(player.global_position.round())]
+				if not get_viewport().get_visible_rect().has_point(nat):
+					# Off the screen: not a click a player could make.
+					_qa_input_report = "%s (off screen at %s; %s)" % [action, nat, where]
+				else:
+					_qa_input_report = "%s at %s (%s)" % [action, nat, where]
+					_qa_push_click(nat, MOUSE_BUTTON_LEFT)
+		"talkline":
+			# Round 841: left click the talk box's numbered menu line n where
+			# it is drawn (the label's own link hit test takes it).
+			var tl := _hud_panels.qa_talk_line_point(int(arg)) if _hud_panels != null else Vector2(-1, -1)
+			if tl.x < 0:
+				_qa_input_report = action + " (no such talk line shown)"
+			else:
+				# The pointer comes to the line first (the label colours the
+				# line under it and lays itself out again), the click a few
+				# frames later -- as a hand moves, then clicks.
+				var tmo := InputEventMouseMotion.new()
+				tmo.position = tl
+				tmo.global_position = tl
+				get_viewport().push_input(tmo)
+				get_tree().create_timer(0.15).timeout.connect(func() -> void:
+					for pressed in [true, false]:
+						var tev := InputEventMouseButton.new()
+						tev.button_index = MOUSE_BUTTON_LEFT
+						tev.pressed = pressed
+						tev.position = tl
+						tev.global_position = tl
+						tev.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+						get_viewport().push_input(tev))
+				var thov := get_viewport().gui_get_hovered_control()
+				_qa_input_report = "%s at %s (hovered %s)" % [action, tl, thov.get_path() if thov != null else "nothing"]
 		"extbars":
 			if _hud_ext_slots != null:
 				_hud_ext_slots.qa_print_slots()
@@ -27721,6 +27768,10 @@ func _gacha_exchange() -> void:
 			"Oh. You don't have Item Exchange Coupon. Then I can't if you don't have the item exchange coupon."), [])
 		return
 	print("GACHA: exchange 0x7119 at NPC %d (%d coupon(s))" % [_talk_npc_uid(), _gacha_coupon_slots.size()])
+	# Round 841: the inventory first, then the request (READ c:0x703330..
+	# 0x70333b: 0x79af20, then 0x7119).
+	if _hud_panels != null:
+		_hud_panels.inventory_companion("Gori's exchange: 0x79af20 raises the inventory")
 	NetClient.gacha_exchange(_talk_npc_uid())
 	# Retail is told each slot by 0x3040; this client asks for its bag, which
 	# the server answers after the exchange (OURS, session/gacha.go).
@@ -28190,6 +28241,8 @@ func _job_setup() -> void:
 	NetClient.strip_cancelled.connect(_on_strip_cancelled)
 	# Round 801: the specialty trade.
 	_specialty_flow = SpecialtyFlow.new(self, _hud_panels, _hud_cos)
+	# Round 841: the specialty store's transport window and Escape's COS step.
+	_hud_panels.hud_cos = _hud_cos
 	NetClient.notice_word.connect(func(w: int) -> void: _specialty_flow.on_notice_word(w))
 	if _hud_cos != null:
 		_hud_cos.sell_all_requested.connect(func(uid: int) -> void: _specialty_flow.sell_all(uid))
