@@ -18490,11 +18490,15 @@ func _qa_job_step() -> void:
 					continue
 				var spine := bk.find_bone("Bip01 Spine1")
 				var head := bk.find_bone("Bip01 Head")
-				print("QA BUST: tick %d %s clip %s %d ms cyclic %s at %.1f ms (frames %d) spine1 %s head %s" % [_qa_tick,
+				var bv: TextureRect = _hud_panels.exchange_portrait_view(own)
+				print("QA BUST: tick %d %s clip %s %d ms cyclic %s at %.1f ms (frames %d) spine1 %s head %s view %s" % [_qa_tick,
 					"own" if own else "partner", bc.animation_name if bc != null else "-", bc.duration_ms if bc != null else 0,
 					str(bc.cyclic) if bc != null else "-", bp.clip_ms, bp.clip_frames,
 					str(bk.get_bone_pose_rotation(spine)) if spine >= 0 else "-",
-					str(bk.get_bone_global_pose(head).origin) if head >= 0 else "-"])
+					str(bk.get_bone_global_pose(head).origin) if head >= 0 else "-",
+					str(bv.get_global_rect()) if bv != null else "-"])
+			var fv := _hud_player_info.portrait_view() if _hud_player_info != null else null
+			print("QA BUST: tick %d player block face view %s" % [_qa_tick, str(fv.get_global_rect()) if fv != null else "-"])
 		elif what.begins_with("xans:"):
 			var xb = _hud_panels.exchange_request_box()
 			print("QA SOCIAL: tick %d exchange box %s answered %s" % [_qa_tick, str(xb), what.substr(5)])
