@@ -203,6 +203,10 @@ func _run() -> void:
 	_check(q != null and net.sent.is_empty() and (q.get_node("Message") as Label).text.contains(t.call("UIIT_MSG_WARENETWORK_REGIST_01")),
 		"Start in a town asks the type-1001 question (OURS creator) with REGIST_01..03")
 	if q != null:
+		var msg := q.get_node("Message") as Label
+		var yes := q._find_button(true)
+		var by := yes.get_global_rect().position.y - q.get_global_rect().position.y if yes != null else 0.0
+		_check(yes != null and q.size.y == 151 + 26 and by >= 65 + (q.size.y - 122), "the question box 177 tall, its buttons (y %d) below the 3-line text box (65 + %d) (OURS)" % [by, q.size.y - 122])
 		q.confirmed.emit()
 	_check(net.sent == ["update 05010100"] and sc.network, "Yes: 0x70BA type 5 {1, net 1}; the stall on the network (got %s)" % str(net.sent))
 	sc.on_updated({"code": 1, "type": 5, "open": true, "net": 1})
@@ -220,7 +224,7 @@ func _run() -> void:
 	_check(net.sent == ["update 03000500"], "remove while on the network: net 5 (got %s)" % str(net.sent))
 	lines.clear()
 	sc.on_updated({"code": 1, "type": 3, "net": 0x3c41, "entries": {}})
-	_check(not lines.is_empty() and String(lines[-1][0]) == t.call("UIIT_MSG_WARENETWORK_ERROR_FAIL"), "type 3 answered 0x3c41: ERROR_FAIL")
+	_check(not lines.is_empty() and String(lines[-1][0]) == t.call("UIIT_MSG_WARENETWORK_ERROR_FAIL"), "type 3 answered 0x3c41: the registration-failed line")
 	sc.on_updated({"code": 1, "type": 5, "open": true, "net": 0x3c4a})
 	_check(not sc.network, "type 5 answered 0x3c4a: off the network")
 	await process_frame

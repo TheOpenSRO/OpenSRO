@@ -9696,6 +9696,8 @@ func open_stall_network_notice(text: String) -> PartyMatchConfirm:
 	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
 	return box
 
+const STALLNET_QUESTION_GROW := 26.0
+
 ## The type-1001 question (c:0x6b9a20 answers it; OURS: its creator): the
 ## REGIST_01..03 lines, Yes / No. `answered(yes)`.
 func open_stall_network_question(answered: Callable) -> PartyMatchConfirm:
@@ -9708,11 +9710,20 @@ func open_stall_network_question(answered: Callable) -> PartyMatchConfirm:
 		if t != "":
 			lines.append(t)
 	var box := PartyMatchConfirm.new()
-	if not box.build(_builder, "\n".join(lines) if not lines.is_empty() else "Register items with stall network?"):
+	# OURS: three lines do not fit MsgBoxSimple's 360 x 151 text box (h - 122):
+	# the box is a row pitch taller per extra line and its buttons go down with it.
+	var grow := STALLNET_QUESTION_GROW
+	if not box.build(_builder, "\n".join(lines) if not lines.is_empty() else "Register items with stall network?",
+			PartyMatchConfirm.SIZE + Vector2(0, grow)):
 		box.free()
 		answered.call(false)
 		return null
 	box.name = "StallNetworkQuestion"
+	for yes in [true, false]:
+		var b := box._find_button(yes)
+		if b != null:
+			b.position.y += grow
+			b.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(b.position, b.size))
 	box.confirmed.connect(func() -> void: answered.call(true))
 	box.declined.connect(func() -> void: answered.call(false))
 	add_child(box)
@@ -9744,8 +9755,9 @@ func stall_network_tree() -> Array:
 	return _stall_network_tree
 
 ## World3D's town test for the stall network (CRegionManagerBody slot 23,
-## c:0x414560: the position's regioninfo claim is #TOWN). Unset: true.
+## c:0x414560: the position's regioninfo claim is #TOWN). Unset (no world):
+## false -- Start then opens plainly, as retail's button does.
 var stall_network_town := Callable()
 
 func stall_network_in_town() -> bool:
-	return bool(stall_network_town.call()) if stall_network_town.is_valid() else true
+	return bool(stall_network_town.call()) if stall_network_town.is_valid() else false

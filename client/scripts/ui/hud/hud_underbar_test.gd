@@ -423,6 +423,23 @@ func _run() -> void:
 			item.pressed.emit()
 		_check(menu != null and actions == [pair[1]] and not menu.visible,
 			"item %d opens %s and closes the menu (got %s)" % [pair[0], pair[1], actions])
+	# Round 840: a real click (the viewport's own hit test) on item 120.
+	actions.clear()
+	if menu != null:
+		menu.visible = true
+	var i120c := _at(broot, [59, 120])
+	if i120c != null:
+		var at120 := i120c.get_global_rect().get_center()
+		for pressed in [true, false]:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = pressed
+			ev.position = at120
+			ev.global_position = at120
+			get_root().push_input(ev)
+			await process_frame
+	_check(actions == ["stallnetwork"], "a real click on item 120 opens the stall network (got %s; hit %s)" % [actions,
+		get_root().gui_get_hovered_control().get_path() if get_root().gui_get_hovered_control() != null else "nothing"])
 	for id in [102, 104, 117]:
 		actions.clear()
 		var item := _at(broot, [59, id]) as BaseButton

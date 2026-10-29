@@ -69,6 +69,8 @@ func _initialize() -> void:
 		and int(StallNetworkNet.decode_search(PackedByteArray([1, 0, 0]))["pages"]) == 0, "{1, 0, 0}: nothing found")
 	_check(int(StallNetworkNet.decode_search(PackedByteArray([2, 0x49, 0x3c]))["code"]) == 0x3c49, "{2, 0x3c49}")
 	_check(StallNetworkNet.decode_search(PackedByteArray([1, 1, 1]) + item).is_empty(), "a cut record does not parse")
+	# The static lambda must not outlive this script (a freed capture at exit, as stall_net_test).
+	ItemInstance.types_of = Callable()
 	# The commission (c:0x87a4bf: ftol(price * 0.01f), 1..100000; nothing for 0).
 	var table := [[0, 0], [1, 1], [99, 1], [100, 1], [101, 1], [199, 1], [200, 1], [201, 2], [1000, 9], [1001, 10], [10000, 99],
 		[100000, 999], [123456789, 100000], [10000000, 99999], [10000002, 100000], [9999999999, 100000]]

@@ -18033,6 +18033,12 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   bagempty            left click the shown bag page's first empty cell
 #   actionslot:<id>     right click the action window's button (round 839)
 #   stallclose          left click the stall window's X (round 839)
+#   netnode:<id>[,..] / netbox:<id> / underbar:<id>[,..]  left click a control
+#                       of the stall network window, its buy box or the
+#                       underbar by GetChild path (round 840)
+#   boxyes:<name> / boxno:<name>  a question box's Yes / No (round 840)
+#   netpage:<i> / netprev / netnext / netlist:<i> / netclose  the network's
+#                       page buttons, the open combo list's row i, its X
 #   worn:<slot>         left click that worn slot's icon (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
@@ -18950,6 +18956,8 @@ func _qa_input_step() -> void:
 			var xy := arg.split(",")
 			_qa_push_click(Vector2(float(xy[0]), float(xy[1])),
 				MOUSE_BUTTON_RIGHT if kind == "rclick" else MOUSE_BUTTON_LEFT)
+			var hov := get_viewport().gui_get_hovered_control()
+			_qa_input_report = "%s (hovered %s)" % [action, hov.get_path() if hov != null else "nothing"]
 		"node":
 			var node := _qa_find_visible(ui_control, arg)
 			if node == null:
@@ -19006,6 +19014,25 @@ func _qa_input_step() -> void:
 			else:
 				_qa_input_report = "%s at %s" % [action, nc.get_global_rect().get_center()]
 				_qa_push_click(nc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"boxyes", "boxno":
+			# Round 840: the Yes / No of a question box under HudPanels by
+			# its node name (StallNetworkQuestion, StallNetworkNotice ...).
+			var qb = _hud_panels.get_node_or_null(arg) if _hud_panels != null else null
+			var qbtn: BaseButton = qb._find_button(kind == "boxyes") if qb != null and qb.has_method("_find_button") else null
+			if qbtn == null or not qbtn.is_visible_in_tree():
+				_qa_input_report = action + " (no such box)"
+			else:
+				_qa_input_report = "%s at %s" % [action, qbtn.get_global_rect().get_center()]
+				_qa_push_click(qbtn.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"netclose":
+			# Round 840: the stall network window's X.
+			var ncw := _hud_panels.stall_network_window() if _hud_panels != null else null
+			var ncx := ncw.get_node_or_null("CloseButton") as Control if ncw != null else null
+			if ncx == null:
+				_qa_input_report = action + " (no window)"
+			else:
+				_qa_input_report = "%s at %s" % [action, ncx.get_global_rect().get_center()]
+				_qa_push_click(ncx.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
 		"netpage", "netprev", "netnext":
 			# Round 840: the page manager's page button i, prev or next.
 			var nw := _hud_panels.stall_network_window() if _hud_panels != null else null

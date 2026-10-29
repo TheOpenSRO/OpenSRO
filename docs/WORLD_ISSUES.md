@@ -7483,6 +7483,86 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fortieth round, lane N: the stall network
+
+The user's ask for round 840: finish round 839's open stall items. This lane: retail's Stall Network,
+the window that searches other players' stalls and buys from them without walking there (FEATURES
+"Stall network | Not yet"). `docs/protocol/stall_network.md` has the whole reading with every address;
+the labels are its own (READ s: SR_GameServer.exe / c: sro_client.exe / sm: SR_ShardManager.exe and
+the archive on the box, MEASURED, INFERRED, OURS, OPEN).
+
+**What the original has (READ), and what this build switched off.**
+- The client carries all of it: `CNIFStallNetwork` from `res_ui\stallnetwork.2dt` (662 x 561: Class /
+  Type / Degree combos from `fmncategorytreedata.txt`, Search, fifteen `CNIFStallNetworkSlot` rows with
+  Number, Level, Item, Name, Quantity, Price, a `CNIFPageManager`, Seller + Whisper, Purchase),
+  its buy box `CNIFStallNetworkMsgBox` (`nifstallnetworkmsgbox.2dt`), the wire 0x7461 search
+  `{u8 mode, u8 page, u32 TidGroupID, u8 degree}`, 0xB461 `{1, n, pages, records}` (the item record,
+  u32 owner, str seller, u8 slot, u16 count, u8 level, u64 price, u64 serial), 0x7462 leave, 0x7463 buy
+  echoing the record, 0xB463; the stall's network flag (CIFStall +0x864) and 0x70BA's network u16
+  (price 4, add 2, remove 5, register 1, modify 3) with 0xB0BA's answers (REGIST_SUCCESS, 0x3c4a
+  USE_CITY); 0x30B7 kind 4 with "[buyer] has purchased [item] through stall network." and the owner's
+  "[%s]gold has been paid as commission." = ftol(price x 0.01f), 1..100,000 (c:0x87a4bf); the codes
+  0x3c41..0x3c53 (c:0x7b8b40's jump table).
+- Switched off: the only opener, the underbar's item 120, is hidden by the bar's OnCreate (c:0x60e2cd)
+  and no key reaches FUN_00799020(1); the owner's type-1001 question has an answer handler
+  (c:0x6b9a20) but no creator and its REGIST_01..03 text is not in the exe; and the server set answers
+  nothing -- no table entry for 0x7461..0x7463 in the GameServer (base 0xcd3d08), no immediate in any
+  server binary; only the sale's tail is left (AQ_ItemXChanger kind 2 -> 0xB463 {1}, the event item
+  ITEM_ETC_WARENETWORK_EVENT at 1/1000 for prices of 100,000+, 0x30B7 kind 4), unreachable. The DB
+  binds `_FleaMarketNetwork` (AbleOpen, CharID, Slot, TidGroupID, ItemClass, ItemCount, MakeZone, Cash).
+
+**What we built.**
+- Server (`session/stallnet.go`, a fork of this lane): search by group and degree (round 838's
+  `itemDegree`), open registered stalls only, the searcher's own left out, newest listing first, 15 a
+  page, at most 255 pages, a snapshot per searcher re-read per page; the 10 s search guard (0x3c46,
+  OURS); the town test (0x3c49 / 0x3c4a; `_RefRegion.IsBattleField` 0 via `-regions-csv`, any place
+  without it, OURS); the remote buy in round 839's one transaction with a ledger claim, the owner paid
+  price less the commission, the sale row marked (`stall_sales.network`, `.commission`, idempotent
+  `ADD COLUMN IF NOT EXISTS`); every refusal in `stall_network.md` §5's order; 0x70BA's network answers
+  (`stall.go`, a dozen lines); the event item (OURS: after the transaction, the bag list sent);
+  partybot `-stall-net`, `-net-search`, `-net-buy`, `-net-page`, `-net-leave`.
+- Client: `StallNetworkNet`, `StallNetworkController`, `StallNetworkWindow` and `StallNetworkBox`
+  from the archive's own `.2dt` files, `NifPageManager` (READ c:0x485690..0x4866c0), the row
+  selection on `com_bar01select_`, the column sort, the gold line, the 10 s Search timer, Whisper; the
+  owner's side in `StallController` (the flag, the net values, the answers, kind 4's lines; kind 3's
+  line colour corrected to 0xffdbc99b, c:0x87a5bd). OURS: the underbar's item 120 shown a row below
+  Stall (the menu 25 taller upwards) with the caption "Stall network"; Start asks the type-1001
+  question (REGIST_01..03, a box 26 taller for its three lines) in a town; the underbar is raised
+  above its siblings while its menu is open (and put back when it closes) -- the system message
+  window lay over the menu's lower rows and took their clicks. QA steps `underbar:`, `netnode:`, `netbox:`, `netlist:`, `netpage:`, `netclose`,
+  `boxyes:` / `boxno:`.
+
+**Live (render box, lane server 16900 in memory with the region table; real clicks through
+OPENSRO_QA_INPUT; partybots SellA / SellB / SellC / NetBuy; evidence in `/var/tmp/r840n/keep`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| Menu -> Stall network opens the window in Jangan (real clicks on the menu and item 120) | PASS | search_buy_run_client.txt ("STALLNET: open -> opened") |
+| Class Expendables / Type Recovery Potion from the combos' lists, Search: 25 bot listings, page 1 of 2, Search greyed 10 s | PASS | search_results_p1_f330.png, search_buy_run_client.txt (0x7461 mode 1 group 42) |
+| Page 2 by the page manager (0x7461 mode 3), 10 rows, Number 16..25 | PASS | search_results_p2_f400.png |
+| A row selected (bar, Seller "SellA", Whisper on), Purchase -> the box (icon, name, 10, 500) | PASS | row_selected_buybox_f470.png |
+| Buy: 0xB463 {1}, the row gone, gold 1,001,000 -> 1,000,500; SellA told kind 4; commission 4 | PASS | after_buy_row_gone_gold_f520.png, search_buy_run_server.txt, search_buy_run_bots.txt |
+| CHN weapon / Sword / 2 Degree after the 10 s: only the degree-2 sword (level 8, 4,000), bought (commission 39) | PASS | filter_sword_degree2_f960.png, search_buy_run_server.txt |
+| Both bought stacks in the bag, gold 996,500 | PASS | bag_after_buys_f1140.png |
+| Own stall: Start -> the question, Yes -> {1, net 1}, "Registering ... successful." | PASS | owner_open_regist_success_f700.png, owner_run_client.txt |
+| NetBuy finds the client's sword (group 1) and buys it remotely: "[NetBuy] has purchased [Copper Sword] through stall network.", "[49]gold has been paid as commission.", gold 2,000 -> 6,951 | PASS | owner_remote_sale_commission_f2350.png, owner_run_netbuy.txt, owner_run_server.txt |
+| The question box's three lines clear of its buttons | PASS | question_box_f600.png |
+
+**Tests.** `go test ./...` passes (`stallnet840_test.go`: the codecs, the commission table, the
+registration answers, the search filters and paging, the guard, the town refusals, every buy
+refusal, the sale's money and item, two remote buyers on one listing, a remote buyer against a stall
+visitor, the owner closing mid-buy, the owner's gold overflow, a failed and a lost commit, the event
+item; `stall/network840_test.go`: both stores' new columns and the migration of an older table; race
+detector on the stall tests). Client: `remote_godot.sh check` ALL LOAD (1030 scripts), `tests` "ran 386 suite(s), 0
+failing" (new: `stall_network_net_test`, `stall_network840_test` on the real Media.pk2, `hud_underbar_test` (item 120
+shown, a real click on it); `hud_window_test` and `hud_keys_after_chat_test` pass with the menu's
+raise (a first version that left the bar raised took the chat line's clicks, caught by the latter).
+No perf gate: a UI and server round (World3D gains only the wiring and QA steps).
+
+**OPEN.** What 0x3c41 / 0x3c43 / 0x3c44 / 0x3c45 / 0x3c47 / 0x3c4c meant to the original server;
+ERROR_TRIANGLE's code; whether a modifying stall stayed listed (AbleOpen); MakeZone; the original
+result order; the sort's direction; the page manager's prev / next offsets (INFERRED).
+
 ## Eight-hundred-and-thirty-ninth round, lane P: transport bags, spirits, fellow pet names, Gold Time across restarts
 
 The user: close round 838's known gaps. Round 838 lane 4 (pets, spirits, premium) left six open;

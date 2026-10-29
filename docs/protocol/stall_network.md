@@ -267,10 +267,17 @@ the icon 27; the name 20 (275 wide, centred) in `frame_msg_` 14; the count 21 an
 
 ## 6. OURS, disclosed
 
-- The underbar menu's item 120 "Stall network" is shown and opens the window (retail hides it, §0).
+- The underbar menu's item 120 is shown and opens the window (retail hides it, §0). It shares 117's
+  row in the file, so the menu grows one row (25) upwards, the items down to 117 move up a row and
+  120 keeps the row; its caption is UIIT_STT_WARENETWORK_TITLE (the record's is empty). While the
+  menu is open the bar is raised above its siblings (the system message window lay over the lower
+  rows and took their clicks) and put back when it closes.
 - The Start button of a stall asks the type-1001 question ("Register items with stall network?",
   REGIST_01..03, Yes / No) while the owner stands in a town; outside a town it opens the stall off the
-  network as retail's Start does.
+  network as retail's Start does. The box is MsgBoxSimple's 360 x 151 made 26 taller, its buttons
+  moved down with it, so the three lines clear them.
+- Box codes (0x3c46, 0x3c49) go to an OK box (MsgBoxSimple style 0); retail's path for them
+  (c:0x7b9ddd -> 0x77b580) was not read further.
 - The server's rules in §5 marked OURS or INFERRED: there is no server code to read.
 
 ## 7. OPEN

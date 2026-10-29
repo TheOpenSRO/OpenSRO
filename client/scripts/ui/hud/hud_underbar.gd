@@ -622,14 +622,31 @@ func toggle_menu() -> void:
 	else:
 		show_menu()
 
+## Round 840: the bar's index before its open menu raised it, or -1.
+var _raised_from := -1
+
 func show_menu() -> void:
 	if _menu == null:
 		return
 	_menu.visible = true
 	_clamp_menu()
+	# Round 840 (OURS): the open menu above its siblings -- the system message
+	# window at the bottom right (HudSystemMessage, a STOP surface) lies over
+	# the menu's lower rows (Stall, Stall network, Auto potion) and took their
+	# clicks; retail's popup is on top. Only while it is open: the bar goes
+	# back to its place when it closes (the chat on the bar keeps its clicks).
+	var parent := get_parent()
+	if parent != null and _raised_from < 0:
+		_raised_from = get_index()
+		move_to_front()
 
 ## The menu closes as the client closes it (see _input).
 func hide_menu() -> void:
+	if _raised_from >= 0:
+		var parent := get_parent()
+		if parent != null:
+			parent.move_child(self, mini(_raised_from, parent.get_child_count() - 1))
+		_raised_from = -1
 	if _menu != null and _menu.visible:
 		_menu.visible = false
 		if _menu.has_meta(UiBuilder.AUTHORED_RECT_META):
