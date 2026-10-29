@@ -571,8 +571,9 @@ func (d *StallDeps) update(ctx context.Context, sess *gateway.Session, data []by
 	var reply []byte
 	var members []stall.Member
 	var renamed string
+	town := kind == StallUpdateOpen && stallNetInTown(me) // round 840: the network's town test
 	d.Stalls.Do(me.CharacterID, func(s *stall.Stall) {
-		code, reply = d.applyUpdate(ctx, s, kind, body, bag, ref, petOut)
+		code, reply = d.applyUpdate(ctx, s, kind, body, bag, ref, petOut, town)
 		if code == 1 {
 			members = s.Members()
 			if kind == StallUpdateRename {
@@ -594,7 +595,7 @@ func (d *StallDeps) update(ctx context.Context, sess *gateway.Session, data []by
 // on success, the reply. What it needs from the stores (the bag slot, its
 // row, whether its pet is out) is read before the lock.
 func (d *StallDeps) applyUpdate(ctx context.Context, s *stall.Stall, kind byte, b []byte,
-	bag *inventory.Slot, ref *refdata.Item, petOut bool) (uint16, []byte) {
+	bag *inventory.Slot, ref *refdata.Item, petOut, town bool) (uint16, []byte) {
 	if kind != StallUpdateValue4 && kind != StallUpdateOpen && kind != StallUpdateWelcome && s.Open {
 		return StallErrHostState, nil
 	}
@@ -624,7 +625,7 @@ func (d *StallDeps) applyUpdate(ctx context.Context, s *stall.Stall, kind byte, 
 		out := append(ok, byte(i))
 		out = binary.LittleEndian.AppendUint16(out, uint16(qty))
 		out = binary.LittleEndian.AppendUint64(out, price)
-		return 1, binary.LittleEndian.AppendUint16(out, 0)
+		return 1, binary.LittleEndian.AppendUint16(out, stallNetAnswer(s, kind, 0, stallNetU16(b, 11), town))
 	case StallUpdateAdd: // s:0x473121: {u8 slot, u8 bag, u16 count, u64 price, u32 group, u16}
 		if len(b) < 16 {
 			return StallErrOperation, nil
@@ -663,8 +664,8 @@ func (d *StallDeps) applyUpdate(ctx context.Context, s *stall.Stall, kind byte, 
 			return StallErrNoGroup, nil
 		}
 		s.Slots[i] = stall.Listing{Used: true, BagSlot: slot, ItemID: bag.ItemID, Quantity: bag.Quantity,
-			Inst: bag.Instance(), Price: int64(price), Group: group}
-		return 1, appendStallList(ctx, d.Items, binary.LittleEndian.AppendUint16(ok, 0), s.Slots)
+			Inst: bag.Instance(), Price: int64(price), Group: group, Seq: d.Stalls.NextSeq()}
+		return 1, appendStallList(ctx, d.Items, binary.LittleEndian.AppendUint16(ok, stallNetAnswer(s, kind, 0, stallNetU16(b, 16), town)), s.Slots)
 	case StallUpdateRemove: // s:0x473261: {u8 slot, u16}
 		if len(b) < 1 {
 			return StallErrOperation, nil
@@ -674,7 +675,7 @@ func (d *StallDeps) applyUpdate(ctx context.Context, s *stall.Stall, kind byte, 
 			return StallErrSlot, nil
 		}
 		s.Slots[i] = stall.Listing{}
-		return 1, appendStallList(ctx, d.Items, binary.LittleEndian.AppendUint16(ok, 0), s.Slots)
+		return 1, appendStallList(ctx, d.Items, binary.LittleEndian.AppendUint16(ok, stallNetAnswer(s, kind, 0, stallNetU16(b, 1), town)), s.Slots)
 	case StallUpdateValue4: // s:0x47332c: {u8}
 		if len(b) < 1 {
 			return StallErrOperation, nil
@@ -692,7 +693,7 @@ func (d *StallDeps) applyUpdate(ctx context.Context, s *stall.Stall, kind byte, 
 			return StallErrOpenValue, nil
 		}
 		s.Open = b[0] == 1
-		return 1, binary.LittleEndian.AppendUint16(append(ok, b[0]), 0)
+		return 1, binary.LittleEndian.AppendUint16(append(ok, b[0]), stallNetAnswer(s, kind, b[0], stallNetU16(b, 1), town))
 	case StallUpdateWelcome: // s:0x4733fd: {str}
 		msg, _, okStr := stallReadString(b)
 		if !okStr {
@@ -829,6 +830,12 @@ func stallLedgerKey(n uint64) string {
 // buyer's first empty slot (FindFirstEmptySlot(0xd), s:0x472a59), and the
 // sale row. It answers the code and the buyer's slot.
 func (d *StallDeps) sell(ctx context.Context, owner, buyer int64, slot int, l stall.Listing) (uint16, int) {
+	return d.sellFor(ctx, owner, buyer, slot, l, 0, false)
+}
+
+// sellFor is sell with the stall network's commission (round 840): the owner
+// is paid the price less fee; network marks the sale row.
+func (d *StallDeps) sellFor(ctx context.Context, owner, buyer int64, slot int, l stall.Listing, fee int64, network bool) (uint16, int) {
 	refusal := uint16(1)
 	toSlot := -1
 	key := stallLedgerKey(stallSaleSeq.Add(1))
@@ -864,7 +871,7 @@ func (d *StallDeps) sell(ctx context.Context, owner, buyer int64, slot int, l st
 		if err != nil {
 			return err
 		}
-		if o.Gold > math.MaxInt64-l.Price {
+		if o.Gold > math.MaxInt64-(l.Price-fee) {
 			return refuse(StallErrGeneric)
 		}
 		// The rows in ascending character id (round 743's lock order).
@@ -879,8 +886,10 @@ func (d *StallDeps) sell(ctx context.Context, owner, buyer int64, slot int, l st
 						}
 						return err
 					}
-				} else if err := d.Chars.AddGold(ctx, owner, l.Price); err != nil {
-					return err
+				} else if l.Price-fee > 0 {
+					if err := d.Chars.AddGold(ctx, owner, l.Price-fee); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -907,7 +916,7 @@ func (d *StallDeps) sell(ctx context.Context, owner, buyer int64, slot int, l st
 		if d.Sales != nil {
 			if err := d.Sales.RecordSale(ctx, stall.Sale{SellerID: owner, BuyerID: buyer, ItemID: l.ItemID,
 				Quantity: l.Quantity, Serial: got.Serial, Price: l.Price, Slot: slot, BagSlot: l.BagSlot,
-				ToSlot: toSlot}); err != nil {
+				ToSlot: toSlot, Network: network, Commission: fee}); err != nil {
 				return err
 			}
 		}

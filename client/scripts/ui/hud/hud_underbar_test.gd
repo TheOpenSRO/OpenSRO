@@ -114,7 +114,15 @@ func _run() -> void:
 	_check(menu != null and not menu.visible, "the menu 59 starts hidden")
 	_check(_at(broot, [16]) != null and not _at(broot, [16]).visible, "the pet bar 16 starts hidden")
 	_check(_at(broot, [103]) != null and not _at(broot, [103]).visible, "the slot arrow 103 starts hidden")
-	_check(_at(broot, [59, 120]) != null and not _at(broot, [59, 120]).visible, "the stall-network item 59 -> 120 is hidden")
+	# Round 840 (OURS, HudUnderbar.SHOW_STALL_NETWORK): retail hides 120; this
+	# client shows it a row below 117, which moves up with everything above it.
+	_check(_at(broot, [59, 120]) != null and _at(broot, [59, 120]).visible, "the stall-network item 59 -> 120 is shown (OURS)")
+	var i117 := _at(broot, [59, 117])
+	var i120 := _at(broot, [59, 120])
+	var i123 := _at(broot, [59, 123])
+	_check(i117 != null and i120 != null and i123 != null and i120.position.y - i117.position.y == 25
+		and i123.position.y - i120.position.y == 25, "117, 120, 123 a row (25) apart (got %s %s %s)" % [
+			i117.position if i117 else Vector2(), i120.position if i120 else Vector2(), i123.position if i123 else Vector2()])
 	_check(_at(broot, [104]) != null and _at(broot, [104]).visible, "the bar's own 104 is shown")
 	_check(_text(_at(broot, [14])) == "tt exp", "14 is captioned UIO_CHARINFO_STT_EXP (got '%s')" % _text(_at(broot, [14])))
 	_check(_text(_at(broot, [11])) == "tt skill points", "11 keeps its record's text id (got '%s')" % _text(_at(broot, [11])))
@@ -401,8 +409,8 @@ func _run() -> void:
 			var w := int(ceil(font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x))
 			overrun = maxi(overrun, w - 82)
 	var want_w := 138 + (10 + overrun if overrun > 0 else 0)
-	_check(menu != null and menu.size.x == want_w and _local(bar, menu) == Vector2(800 - want_w, 44 - 438),
-		"the menu is %d wide (138 + 10 + overrun %d) and right-aligned to the bar (got %s at %s)" % [
+	_check(menu != null and menu.size.x == want_w and _local(bar, menu) == Vector2(800 - want_w, 44 - 25 - 438) and menu.size.y == 403 + 25,
+		"the menu is %d wide (138 + 10 + overrun %d), right-aligned to the bar, 25 taller upwards for 120 (got %s at %s)" % [
 			want_w, overrun, menu.size if menu else Vector2(), _local(bar, menu)])
 	var item83 := _at(broot, [59, 83])
 	_check(item83 != null and item83.size.x == 97 + (want_w - 138), "the items widen with it (got %s)" % [item83.size if item83 else Vector2()])
@@ -483,7 +491,7 @@ func _run() -> void:
 		"the open menu stays inside the view (top %s)" % [menu.get_global_rect().position.y if menu else -1])
 	if bar.has_method("hide_menu"):
 		bar.call("hide_menu")
-	_check(menu != null and _local(bar, menu).y == 44 - 438, "closed, it is back at its place (got %s)" % [_local(bar, menu)])
+	_check(menu != null and _local(bar, menu).y == 44 - 25 - 438, "closed, it is back at its place (round 840: 25 higher for item 120) (got %s)" % [_local(bar, menu)])
 	bar.position = Vector2(176, 560)
 
 	# --- labels: centred and right-aligned text overrun its 4-pixel row the

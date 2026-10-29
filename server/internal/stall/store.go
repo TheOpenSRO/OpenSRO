@@ -38,6 +38,10 @@ type Sale struct {
 	BagSlot int
 	ToSlot  int
 	SoldAt  time.Time
+	// Network (round 840) marks a sale through the stall network (0x7463),
+	// and Commission the gold the owner paid of it (stall_network.md §5).
+	Network    bool
+	Commission int64
 }
 
 // SaleStore keeps the sales.
@@ -112,6 +116,8 @@ CREATE TABLE IF NOT EXISTS stall_sales (
 );
 CREATE INDEX IF NOT EXISTS stall_sales_seller ON stall_sales (seller_id, sold_at);
 CREATE INDEX IF NOT EXISTS stall_sales_buyer ON stall_sales (buyer_id, sold_at);
+ALTER TABLE stall_sales ADD COLUMN IF NOT EXISTS network BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE stall_sales ADD COLUMN IF NOT EXISTS commission BIGINT NOT NULL DEFAULT 0;
 `
 
 // SQLStore keeps the sales in Postgres.
@@ -144,10 +150,10 @@ func (s *SQLStore) RecordSale(ctx context.Context, sale Sale) error {
 		at = time.Now()
 	}
 	_, err := txn.Conn(ctx, s.db).ExecContext(ctx, `INSERT INTO stall_sales
-		(seller_id, buyer_id, item_id, quantity, serial, price, slot, bag_slot, to_slot, sold_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		(seller_id, buyer_id, item_id, quantity, serial, price, slot, bag_slot, to_slot, sold_at, network, commission)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		sale.SellerID, sale.BuyerID, sale.ItemID, sale.Quantity, sale.Serial, sale.Price,
-		sale.Slot, sale.BagSlot, sale.ToSlot, at)
+		sale.Slot, sale.BagSlot, sale.ToSlot, at, sale.Network, sale.Commission)
 	if err != nil {
 		return fmt.Errorf("stall: recording a sale: %w", err)
 	}
@@ -160,7 +166,7 @@ func (s *SQLStore) Sales(ctx context.Context, characterID int64, limit int) ([]S
 		limit = 1000
 	}
 	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx, `SELECT id, seller_id, buyer_id, item_id, quantity, serial,
-		price, slot, bag_slot, to_slot, sold_at FROM stall_sales
+		price, slot, bag_slot, to_slot, sold_at, network, commission FROM stall_sales
 		WHERE seller_id = $1 OR buyer_id = $1 ORDER BY id DESC LIMIT $2`, characterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("stall: reading sales: %w", err)
@@ -170,7 +176,7 @@ func (s *SQLStore) Sales(ctx context.Context, characterID int64, limit int) ([]S
 	for rows.Next() {
 		var v Sale
 		if err := rows.Scan(&v.ID, &v.SellerID, &v.BuyerID, &v.ItemID, &v.Quantity, &v.Serial,
-			&v.Price, &v.Slot, &v.BagSlot, &v.ToSlot, &v.SoldAt); err != nil {
+			&v.Price, &v.Slot, &v.BagSlot, &v.ToSlot, &v.SoldAt, &v.Network, &v.Commission); err != nil {
 			return nil, err
 		}
 		out = append(out, v)

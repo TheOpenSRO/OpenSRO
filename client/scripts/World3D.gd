@@ -3336,6 +3336,10 @@ func _relay_middle_button_to_hotbar() -> void:
 func _on_underbar_menu_action(action_name: String) -> void:
 	if _hud_panels == null:
 		return
+	# Round 840: item 120, the stall network (FUN_00799020(1); OURS shown).
+	if action_name == HudUnderbar.STALL_NETWORK_ACTION:
+		print("STALLNET: open -> %s" % _hud_panels.open_stall_network(_stall_network_in_town(), false))
+		return
 	# HudPanels.menu_action: a toggle, except the alchemy item, which only
 	# opens (0x798e20(1)).
 	_hud_panels.menu_action(action_name)
@@ -18991,6 +18995,37 @@ func _qa_input_step() -> void:
 			else:
 				_qa_input_report = "%s at %s" % [action, sc.get_global_rect().get_center()]
 				_qa_push_click(sc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"netnode", "netbox", "underbar":
+			# Round 840: left click a control of the stall network window
+			# (netnode:<id>[,<id>..], a GetChild path from its root), of its
+			# buy box (netbox:<id>) or of the underbar (underbar:<id>[,..]:
+			# 4 the menu button, 59,120 the stall network item).
+			var nc := _qa_net_control(kind, arg)
+			if nc == null:
+				_qa_input_report = action + " (not shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, nc.get_global_rect().get_center()]
+				_qa_push_click(nc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"netpage", "netprev", "netnext":
+			# Round 840: the page manager's page button i, prev or next.
+			var nw := _hud_panels.stall_network_window() if _hud_panels != null else null
+			var pb: Control = null
+			if nw != null and nw.pager != null:
+				pb = nw.pager.page_button(int(arg)) if kind == "netpage" else (nw.pager.prev_button() if kind == "netprev" else nw.pager.next_button())
+			if pb == null or not pb.is_visible_in_tree():
+				_qa_input_report = action + " (not shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, pb.get_global_rect().get_center()]
+				_qa_push_click(pb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"netlist":
+			# Round 840: row i of the open combo list (ComboList).
+			var cl := ComboList.current()
+			if cl == null:
+				_qa_input_report = action + " (no list open)"
+			else:
+				var at := cl.to_canvas * (cl.list_rect.position + ComboList.row_rect(cl.list_rect.size, int(arg)).get_center())
+				_qa_input_report = "%s at %s (%s)" % [action, at, cl.items[int(arg)] if int(arg) < cl.items.size() else "?"]
+				_qa_push_click(at, MOUSE_BUTTON_LEFT)
 		"stallclose":
 			# Round 839: left click the stall window's X.
 			var sw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null
@@ -33444,6 +33479,11 @@ func _wire_stalls() -> void:
 	NetClient.stall_renamed.connect(func(d: Dictionary) -> void:
 		c.on_renamed(d)
 		_stall_refresh(int(d["owner"])))
+	# Round 840: the stall network (StallNetworkController).
+	var sn := _hud_panels._stall_network()
+	NetClient.stall_net_searched.connect(sn.on_searched)
+	NetClient.stall_net_bought.connect(sn.on_bought)
+	_hud_panels.stall_network_town = _stall_network_in_town
 
 ## The booth, title and loop of uid's body as its stall state says. Nothing
 ## is done for a body that neither stalls nor carries a booth (every spawn
@@ -33476,6 +33516,45 @@ func _stall_refresh(uid: int) -> void:
 			"found" if _body_animation_for(body, StallWorld.VENDOR_ACTION, group) != null else "none"])
 	if not own:
 		_refresh_other_loop(uid)
+
+## Round 840: the control a QA netnode / netbox / underbar step clicks.
+func _qa_net_control(kind: String, arg: String) -> Control:
+	if _hud_panels == null:
+		return null
+	var ids: Array = []
+	for b in arg.split(",", false):
+		ids.append(int(b))
+	var c: Control = null
+	match kind:
+		"netnode":
+			var nw := _hud_panels.stall_network_window()
+			c = nw.control(ids) if nw != null else null
+		"netbox":
+			var nb = _hud_panels.stall_network.box if _hud_panels.stall_network != null else null
+			c = nb.control(ids) if nb != null and is_instance_valid(nb) and nb.visible else null
+		"underbar":
+			c = TwoDtBuilder.find_path(_hud_underbar.bar_root, ids) if _hud_underbar != null else null
+	return c if c != null and c.is_visible_in_tree() else null
+
+## Round 840: the stall network's town test (CRegionManagerBody slot 23,
+## c:0x414560): the claim of the English regioninfo.txt (the music's table)
+## at the player's region-local position is #TOWN. OURS: with no table (no
+## Data.pk2) the test passes and the server decides.
+func _stall_network_in_town() -> bool:
+	var music := _audio_music()
+	var table: RegioninfoReader.ParsedTable = music._region_table() if music != null else null
+	if table == null or player == null:
+		return true
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		return false
+	var group: Node3D = pair[1]
+	var parts := String(group.name).trim_prefix("RealTerrain_").split("_")
+	if parts.size() < 2:
+		return false
+	var local := group.to_local(player.global_position)
+	var zi := table.zone_for_position(parts[0].to_int(), parts[1].to_int(), local.x, local.z)
+	return zi >= 0 and zi < table.zones.size() and table.zones[zi].kind == RegioninfoReader.KIND_TOWN
 
 func _stall_tick() -> void:
 	if _stall_world == null or _stall_world.pending_owner < 0 or player == null:

@@ -103,8 +103,18 @@ const ID_EXP_LINE := 104
 ## The menu's items as the OnCreate fetches them into +0x394..+0x3c8, the
 ## order `0x60afe0` walks when it fits the menu to its captions.
 const MENU_ITEMS := [83, 93, 96, 99, 102, 105, 108, 111, 114, 104, 117, 120, 123, 126]
-## Hidden by the OnCreate (`0x60e2cd..0x60e2db`).
+## Hidden by the OnCreate (`0x60e2cd..0x60e2db`), at the very rect of 117
+## (open a stall, 789,353) with its own icon `ub_new_icon_stallnet.ddj` and
+## an empty caption (0x60d5f0 captions it nothing).
 const ID_MENU_STALLNET := 120
+const ID_MENU_STALL := 117
+## Round 840 (OURS, docs/protocol/stall_network.md §0): the stall network is
+## reached from item 120, so it is shown: the menu grows 25 upwards (its row
+## pitch), the items down to 117 move up a row and 120 takes 117's old row;
+## its caption is UIIT_STT_WARENETWORK_TITLE. False restores the retail menu.
+const SHOW_STALL_NETWORK := true
+const MENU_ROW := 25
+const STALL_NETWORK_CAPTION := "UIIT_STT_WARENETWORK_TITLE"
 ## A CNIFMenuButton's caption child, the one its SetText forwards to.
 const MENU_CAPTION := 200
 
@@ -123,10 +133,12 @@ const MENU_CAPTION := 200
 ## stall network (hidden).
 ## Round 837: button 9's action, the item mall's entry box (not a panel).
 const MALL_ENTRY_ACTION := "itemmall_entry"
+## Round 840: item 120, the stall network (0x60cee3 -> FUN_00799020(1)).
+const STALL_NETWORK_ACTION := "stallnetwork"
 const MENU_ACTIONS := {
 	6: "character", 7: "inventory", 8: "skill", 9: MALL_ENTRY_ACTION,
 	83: "party", 93: "partymatch", 96: "guild", 99: "academy", 105: "action",
-	108: "community", 111: "quest", 114: "alchemy", 123: "autopotion", 126: "system",
+	108: "community", 111: "quest", 114: "alchemy", 120: STALL_NETWORK_ACTION, 123: "autopotion", 126: "system",
 }
 
 ## The captions `0x60d5f0` gives the items: the text-table format with the
@@ -333,7 +345,7 @@ func _apply_create_state() -> void:
 		_set_shown(_nodes.get(id), false)
 	_set_shown(_nodes.get(ID_EXP_LINE), true)
 	if _menu != null:
-		_set_shown(TwoDtBuilder.child(_menu, ID_MENU_STALLNET), false)
+		_set_shown(TwoDtBuilder.child(_menu, ID_MENU_STALLNET), SHOW_STALL_NETWORK)
 	_build_slots()
 	_select_page(0)
 	_apply_hover_strings()
@@ -444,6 +456,10 @@ func _apply_menu_captions() -> void:
 		var caption := TwoDtBuilder.child(TwoDtBuilder.child(_menu, int(id)), MENU_CAPTION)
 		if caption != null:
 			_twodt.set_text(caption, _with_key(_ui_builder.resolve_text(spec[0]), spec[1]))
+	if SHOW_STALL_NETWORK:
+		var c120 := TwoDtBuilder.child(TwoDtBuilder.child(_menu, ID_MENU_STALLNET), MENU_CAPTION)
+		if c120 != null:
+			_twodt.set_text(c120, _ui_builder.resolve_text(STALL_NETWORK_CAPTION))
 
 ## A caption format with its `%s` filled by the key this client binds to
 ## `panel_id` (Godot's name for it). `0x60d020`'s own key naming is not read.
@@ -485,11 +501,15 @@ func _fitted(file: TwoDtReader.TwoDtFile) -> TwoDtReader.TwoDtFile:
 		if MENU_CAPTIONS.has(id):
 			var spec: Array = MENU_CAPTIONS[id]
 			text = _with_key(_ui_builder.resolve_text(spec[0]), spec[1])
+		elif int(id) == ID_MENU_STALLNET and SHOW_STALL_NETWORK:
+			text = _ui_builder.resolve_text(STALL_NETWORK_CAPTION)
 		elif caption.text_id != "":
 			text = _ui_builder.resolve_text(caption.text_id)
 		var width := _text_width(text, caption.font_index)
 		overrun = maxi(overrun, width - caption.rect.size.x)
 	var changes := {}
+	if SHOW_STALL_NETWORK:
+		_make_stall_network_row(file, menu, changes)
 	var grow := MENU_FIT_MARGIN + overrun if overrun > 0 else 0
 	if grow > 0:
 		var widen := [menu]
@@ -498,7 +518,8 @@ func _fitted(file: TwoDtReader.TwoDtFile) -> TwoDtReader.TwoDtFile:
 			if r != null:
 				widen.append(r)
 		for r in widen:
-			changes[r.index] = Rect2i(r.rect.position, r.rect.size + Vector2i(grow, 0))
+			var at: Rect2i = changes.get(r.index, r.rect)
+			changes[r.index] = Rect2i(at.position, at.size + Vector2i(grow, 0))
 	var bar := file.root().rect
 	var menu_rect: Rect2i = changes.get(menu.index, menu.rect)
 	var menu_x := bar.position.x + bar.size.x - menu_rect.size.x
@@ -510,6 +531,26 @@ func _fitted(file: TwoDtReader.TwoDtFile) -> TwoDtReader.TwoDtFile:
 	if changes.is_empty():
 		return file
 	return _copy_with(file, changes)
+
+## Round 840 (OURS, SHOW_STALL_NETWORK): the menu and its tile 25 taller
+## upwards, every item and line from the top down to 117 a row up, so 120
+## keeps the row it shares with 117 in the file.
+func _make_stall_network_row(file: TwoDtReader.TwoDtFile, menu: TwoDtReader.Record, changes: Dictionary) -> void:
+	var stall := file.child_with_id(menu.index, ID_MENU_STALL)
+	if stall == null or file.child_with_id(menu.index, ID_MENU_STALLNET) == null:
+		return
+	var row_y := stall.rect.position.y
+	var up := Vector2i(0, -MENU_ROW)
+	changes[menu.index] = Rect2i(menu.rect.position + up, menu.rect.size + Vector2i(0, MENU_ROW))
+	var tile := file.child_with_id(menu.index, ID_MENU_TILE)
+	if tile != null:
+		changes[tile.index] = Rect2i(tile.rect.position + up, tile.rect.size + Vector2i(0, MENU_ROW))
+	for c in menu.children:
+		var r := file.records[c]
+		if r.id == ID_MENU_STALLNET or r.id == ID_MENU_TILE:
+			continue
+		if r.rect.position.y < row_y or r.id == ID_MENU_STALL:
+			_shift(file, c, up, changes)
 
 func _shift(file: TwoDtReader.TwoDtFile, i: int, by: Vector2i, changes: Dictionary) -> void:
 	var r: Rect2i = changes.get(i, file.records[i].rect)

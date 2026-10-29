@@ -942,6 +942,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	b.mallSteps()
 	b.useSteps()
 	b.stallSteps()
+	b.netSteps()
 	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
 	// can invite it beside the leader first and then move it away.
 	var tp2C <-chan time.Time
@@ -1138,6 +1139,12 @@ func main() {
 	flag.DurationVar(&botStall.leaveAfter, "stall-leave-after", 0, "bot (round 839): leave the visited stall after this long")
 	flag.StringVar(&botStall.chat, "stall-chat", "", "bot (round 839): a stall chat line once open or inside")
 	flag.DurationVar(&botStall.delay, "stall-delay", 2*time.Second, "bot (round 839): the wait before each stall step")
+	flag.BoolVar(&botStall.network, "stall-net", false, "bot (round 840): open -stall-open's stall on the stall network (0x70BA 5 {1, net 1})")
+	flag.StringVar(&botStall.netSearch, "net-search", "", "bot (round 840): search the stall network once in the world, \"<group>,<degree>\" (0x7461)")
+	flag.IntVar(&botStall.netPage, "net-page", 0, "bot (round 840): after -net-search, ask this page (0x7461 mode 3)")
+	flag.IntVar(&botStall.netBuy, "net-buy", -1, "bot (round 840): buy this record (0-based) of -net-search's first answer (0x7463)")
+	flag.DurationVar(&botStall.netAfter, "net-after", 5*time.Second, "bot (round 840): the wait before -net-search")
+	flag.BoolVar(&botStall.netLeave, "net-leave", false, "bot (round 840): leave the stall network (0x7462) after the search")
 	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")

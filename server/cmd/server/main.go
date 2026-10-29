@@ -2745,6 +2745,9 @@ func main() {
 		// INTERACTMODE in the trade hub's gates.
 		session.StallHandler(session.StallDeps{Chars: chars, Inv: inv, Items: refItems, Hub: hub,
 			Stalls: stall.NewHub(), Trades: trades, Parties: parties, Sales: stallSales}),
+		// The stall network (round 840, stallnet.go): 0x7461..0x7463, the
+		// search and the remote buy, on the stalls above.
+		session.StallNetHandler(),
 		// The item mall (round 837, session/mall.go): 0x7121, the silk
 		// history 0x711a and the item chest (OURS 0x00D0..0x00D4); the buy is
 		// the item operation's 0x7034 type 0x18.
@@ -2796,6 +2799,7 @@ func main() {
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 	tradeDisconnect := session.ExchangeDisconnectHandler(hub)
 	stallDisconnect := session.StallDisconnectHandler(hub)
+	stallNetDisconnect := session.StallNetDisconnectHandler()
 	guildPointsDisconnect := session.GuildPointsDisconnectHandler(hub, gpSkills)
 	friendDisconnect := session.FriendDisconnectHandler(hub)
 
@@ -2847,6 +2851,7 @@ func main() {
 			step("duel", func() { duelDisconnect(sess) })
 			step("trade", func() { tradeDisconnect(sess) })
 			step("stall", func() { stallDisconnect(sess) })
+			step("stall network", func() { stallNetDisconnect(sess) })
 			step("npc", func() { session.ForgetNPCInteraction(sess.ID()) })
 			step("quest", func() { session.ForgetQuestSession(sess.ID()) })
 			step("guild points", func() { guildPointsDisconnect(sess) })

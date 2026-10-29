@@ -223,6 +223,11 @@ static func combo_text_rect(size: Vector2) -> Rect2:
 ## crisp (NEAREST) sampling: the button draws nothing else, and the field and
 ## arrow are its siblings, so they keep the UI art's filter.
 func _make_combo(host: Control) -> OptionButton:
+	return make_combo(_builder, host)
+
+## Round 840: the same combo for any `.2dt` window's ComboBox record (the
+## stall network's three).
+static func make_combo(ui_builder: UiBuilder, host: Control) -> OptionButton:
 	if host == null:
 		return null
 	var size := host.size
@@ -234,10 +239,10 @@ func _make_combo(host: Control) -> OptionButton:
 	field.size = fr.size
 	var pieces := {}
 	for p in COMBO_FIELD_PIECES:
-		pieces[p] = _builder.load_texture(COMBO_FIELD_BASE + p + ".ddj") if _builder != null else null
+		pieces[p] = ui_builder.load_texture(COMBO_FIELD_BASE + p + ".ddj") if ui_builder != null else null
 	field.draw.connect(func() -> void: OptionVideoPage.draw_combo_field(field, pieces))
 	host.add_child(field)
-	var arrow_tex := _builder.load_texture(ARROW_DDJ) if _builder != null else null
+	var arrow_tex := ui_builder.load_texture(ARROW_DDJ) if ui_builder != null else null
 	var arrow := TextureRect.new()
 	arrow.name = "ComboArrow"
 	arrow.texture = arrow_tex
@@ -266,7 +271,7 @@ func _make_combo(host: Control) -> OptionButton:
 	combo.add_theme_icon_override("arrow", _blank_arrow())
 	combo.add_theme_constant_override("arrow_margin", 0)
 	combo.add_theme_constant_override("h_separation", 0)
-	var font := _builder.font_at(0) if _builder != null else null
+	var font := ui_builder.font_at(0) if ui_builder != null else null
 	if font != null:
 		combo.add_theme_font_override("font", font)
 	combo.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])

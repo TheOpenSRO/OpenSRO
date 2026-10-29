@@ -526,6 +526,11 @@ signal stall_event(d: Dictionary)
 signal stall_appeared(d: Dictionary)
 signal stall_gone(d: Dictionary)
 signal stall_renamed(d: Dictionary)
+## Round 840: the stall network (StallNetworkNet): 0xB461's dictionary,
+## 0xB462's and 0xB463's codes.
+signal stall_net_searched(d: Dictionary)
+signal stall_net_left(code: int)
+signal stall_net_bought(code: int)
 ## Round 837: the item mall (MallNet). 0xB121's result; a mall buy's 0xB034
 ## (MallNet.decode_buy_result's dictionary, or {"ok": false, "code"}); the
 ## silk balances (0x3153) and an outside change (0x3154); the silk history
@@ -923,7 +928,8 @@ func _passes_group(p: Packet) -> bool:
 				ExchangeNet.OP_CONFIRM_RESULT, ExchangeNet.OP_APPROVE_RESULT, ExchangeNet.OP_CANCEL_RESULT, \
 				ExchangeNet.OP_DONE, ExchangeNet.OP_CLOSED, StallNet.OP_OPEN_RESULT, StallNet.OP_CLOSE_RESULT, \
 				StallNet.OP_ENTER_RESULT, StallNet.OP_BUY_RESULT, StallNet.OP_LEAVE_RESULT, StallNet.OP_UPDATE_RESULT, \
-				StallNet.OP_EVENT, \
+				StallNet.OP_EVENT, StallNetworkNet.OP_SEARCH_RESULT, StallNetworkNet.OP_LEAVE_RESULT, \
+				StallNetworkNet.OP_BUY_RESULT, \
 				FriendNet.OP_DELETE_RESULT, FriendNet.OP_LIST, FriendNet.OP_PUSH, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
 				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE, \
@@ -2029,6 +2035,20 @@ func stall_avatar(key: int, decoration: int) -> void:
 ## 0x70BA with one of StallNet's encode_* bodies.
 func stall_update(body: PackedByteArray) -> void:
 	_send(StallNet.OP_UPDATE, body)
+
+## Round 840: the stall network's requests (StallNetworkNet). The page a
+## search asked for is kept for its answer's Number column.
+var stall_net_page := 0
+
+func stall_net_search(mode: int, page: int, group: int, degree: int) -> void:
+	stall_net_page = page
+	_send(StallNetworkNet.OP_SEARCH, StallNetworkNet.encode_search(mode, page, group, degree))
+
+func stall_net_leave() -> void:
+	_send(StallNetworkNet.OP_LEAVE)
+
+func stall_net_buy(r: StallNetworkNet.Record) -> void:
+	_send(StallNetworkNet.OP_BUY, StallNetworkNet.encode_buy(r))
 
 ## Round 834: the exchange's requests (ExchangeNet).
 func exchange_request(target_id: int) -> void:
@@ -3279,6 +3299,16 @@ func _dispatch(p: Packet) -> void:
 			if not sg.is_empty():
 				stalls.erase(int(sg["owner"]))
 				stall_gone.emit(sg)
+		StallNetworkNet.OP_SEARCH_RESULT:
+			var nsr := StallNetworkNet.decode_search(p.data, stall_net_page)
+			if nsr.is_empty():
+				push_warning("NetClient: 0xB461 did not parse (%d bytes)" % p.data.size())
+			else:
+				stall_net_searched.emit(nsr)
+		StallNetworkNet.OP_LEAVE_RESULT:
+			stall_net_left.emit(int(p.data[0]) if p.data.size() >= 1 else -1)
+		StallNetworkNet.OP_BUY_RESULT:
+			stall_net_bought.emit(StallNetworkNet.decode_result(p.data))
 		StallNet.OP_RENAMED:
 			var sr := StallNet.decode_renamed(p.data)
 			if not sr.is_empty():
