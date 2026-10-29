@@ -5423,6 +5423,12 @@ func _escape_close() -> bool:
 	if alchemy_window() != null:
 		close_alchemy()
 		return true
+	# Round 841: the stall network, 0x799020(0) when 0x778a40 says it is up
+	# (READ, 0x79d620's list after the alchemy window; the main popup and two
+	# windows this client lacks come between, OURS order here).
+	if stall_network != null and stall_network.is_open():
+		stall_network.close()
+		return true
 	return close_topmost()
 
 func _unhandled_key_input(event: InputEvent) -> void:

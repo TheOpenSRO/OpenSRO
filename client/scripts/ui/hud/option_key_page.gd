@@ -15,8 +15,12 @@ class_name OptionKeyPage
 ##
 ## **The rows (READ).** Row i is KeyMap slot i (0x5f68e0); its label is the
 ## slot's row text (0x5fb9e0). Line L of the list shows rows 2L and 2L + 1
-## (0x5fc530); a row past 32 hides its slot. The scroll runs over lines 0..10
-## (0x478ab0(0, ceil((33 - 14) / 2), 1)); a line a step is INFERRED.
+## (0x5fc530); a row past the last hides its slot (retail: past 32). The
+## scroll runs over lines 0..10 (0x478ab0(0, ceil((33 - 14) / 2), 1)); a
+## line a step is INFERRED. Round 841 (OURS): a 34th row, KeyMap slot 33, the
+## stall network (default F, labelled UIIT_STT_WARENETWORK_TITLE). It fills
+## the slot the retail list leaves hidden on its last line, so the scroll
+## range is the same, ceil((34 - 14) / 2) = 10.
 ##
 ## **Rebinding (READ).** A left press on a row (CNIFKeyOptionSlot vslot_017
 ## 0x6ed820 -> 0x5fc5f0) clears the flag of every row shown, sets the pressed
@@ -34,7 +38,8 @@ class_name OptionKeyPage
 ## (0x5f6970). ClientSettings.mouse_mode holds it; World3D reads it.
 ##
 ## **Default (0x5fcda0, READ):** mode 0 at once (live, before Apply), radio 110
-## checked, the rows back to the 33 defaults (in force on Apply).
+## checked, the rows back to the defaults (in force on Apply): the 33 retail
+## ones and F on the stall network's row (OURS).
 ##
 ## OURS: the key that rebinds a row is not also run by the game (whether the
 ## original's dispatcher 0x780610 sees it too is OPEN); the wheel over the list
@@ -50,7 +55,9 @@ const ID_LABEL := 212
 const SLOT_CLASS := "CNIFKeyOptionSlot"
 const SELECT_DDJ := "interface\\option\\opt_key_select.ddj"
 const COLUMNS := 2
-const ROWS := 33
+## The rows: the retail 33 (READ) and, from round 841, the OURS slots after
+## them (KeyMap.SLOTS: slot 33, the stall network on F).
+var _rows: int = KeyMap.SLOTS.size()
 ## The scroll bar's art, the Video tab's (CNIFVerticalScroll, READ there).
 const SCROLL_BAR_DDJ := OptionVideoPage.SCROLL_BAR_DDJ
 const SCROLL_UP_DDJ := OptionVideoPage.SCROLL_UP_DDJ
@@ -87,11 +94,11 @@ func _init(builder: UiBuilder, root: Control) -> void:
 func at(path: Array) -> Control:
 	return TwoDtBuilder.find_path(_root, path) if _root != null else null
 
-## Builds the pieces over the file's controls with `live` keys (33) and the
+## Builds the pieces over the file's controls with `live` keys (one a row) and the
 ## mouse `mode`.
 func build(live: PackedInt32Array, mode: int) -> void:
 	keys = live.duplicate()
-	_flags.resize(ROWS)
+	_flags.resize(_rows)
 	_flags.fill(false)
 	mouse_mode = mode
 	var list := at([ID_PANE, ID_LIST])
@@ -132,14 +139,15 @@ func build(live: PackedInt32Array, mode: int) -> void:
 ## The row a visible slot shows, or -1 past the last row.
 func row_at_slot(n: int) -> int:
 	var i := _line * COLUMNS + n
-	return i if i < ROWS else -1
+	return i if i < _rows else -1
 
 func lines() -> int:
-	return (ROWS + COLUMNS - 1) / COLUMNS
+	return (_rows + COLUMNS - 1) / COLUMNS
 
-## The last top line (READ: ceil((33 - 14) / 2) = 10).
+## The last top line (READ: ceil((33 - 14) / 2) = 10; with the OURS row
+## ceil((34 - 14) / 2), still 10).
 func max_line() -> int:
-	return maxi(ceili(float(ROWS - _slots.size()) / float(COLUMNS)), 0)
+	return maxi(ceili(float(_rows - _slots.size()) / float(COLUMNS)), 0)
 
 func scroll_line() -> int:
 	return _line
@@ -153,7 +161,7 @@ func slot_count() -> int:
 
 ## A row pressed (0x5fc5f0): the shown rows' flags cleared, its own set.
 func select_row(row: int) -> void:
-	if row < 0 or row >= ROWS:
+	if row < 0 or row >= _rows:
 		return
 	for n in _slots.size():
 		var r := row_at_slot(n)
@@ -178,7 +186,7 @@ func _slot_input(n: int, e: InputEvent) -> void:
 func take_key(keycode: int) -> bool:
 	if selected < 0 or not KeyNames.accepts(keycode):
 		return false
-	for i in ROWS:
+	for i in _rows:
 		if not _flags[i] and int(keys[i]) == keycode:
 			keys[i] = KEY_NONE
 	keys[selected] = keycode
@@ -192,7 +200,7 @@ func wants_key(keycode: int) -> bool:
 	return tab_shown and selected >= 0 and keycode != KEY_ESCAPE
 
 func flag(row: int) -> bool:
-	return row >= 0 and row < ROWS and _flags[row]
+	return row >= 0 and row < _rows and _flags[row]
 
 # --- the radios and Default -------------------------------------------------------
 

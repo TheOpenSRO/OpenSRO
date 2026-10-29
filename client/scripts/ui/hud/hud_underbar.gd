@@ -111,10 +111,15 @@ const ID_MENU_STALL := 117
 ## Round 840 (OURS, docs/protocol/stall_network.md §0): the stall network is
 ## reached from item 120, so it is shown: the menu grows 25 upwards (its row
 ## pitch), the items down to 117 move up a row and 120 takes 117's old row;
-## its caption is UIIT_STT_WARENETWORK_TITLE. False restores the retail menu.
+## False restores the retail menu. Its caption (OURS, the record's is empty
+## and 0x60d5f0 gives it none) is the archive's own key-naming format for it,
+## UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET "Stall network ( %s )", filled as
+## the other rows' are with the key KeyMap binds to it now (round 841: slot
+## 33, OURS, default F); with no key bound, UIIT_STT_WARENETWORK_TITLE alone.
 const SHOW_STALL_NETWORK := true
 const MENU_ROW := 25
-const STALL_NETWORK_CAPTION := "UIIT_STT_WARENETWORK_TITLE"
+const STALL_NETWORK_CAPTION := "UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET"
+const STALL_NETWORK_TITLE := "UIIT_STT_WARENETWORK_TITLE"
 ## A CNIFMenuButton's caption child, the one its SetText forwards to.
 const MENU_CAPTION := 200
 
@@ -135,6 +140,8 @@ const MENU_CAPTION := 200
 const MALL_ENTRY_ACTION := "itemmall_entry"
 ## Round 840: item 120, the stall network (0x60cee3 -> FUN_00799020(1)).
 const STALL_NETWORK_ACTION := "stallnetwork"
+## Round 841: the KeyMap action whose key item 120's caption names (slot 33).
+const STALL_NETWORK_KEY_ACTION := "stall_network"
 const MENU_ACTIONS := {
 	6: "character", 7: "inventory", 8: "skill", 9: MALL_ENTRY_ACTION,
 	83: "party", 93: "partymatch", 96: "guild", 99: "academy", 105: "action",
@@ -459,7 +466,18 @@ func _apply_menu_captions() -> void:
 	if SHOW_STALL_NETWORK:
 		var c120 := TwoDtBuilder.child(TwoDtBuilder.child(_menu, ID_MENU_STALLNET), MENU_CAPTION)
 		if c120 != null:
-			_twodt.set_text(c120, _ui_builder.resolve_text(STALL_NETWORK_CAPTION))
+			_twodt.set_text(c120, _stall_network_caption())
+
+## Item 120's caption (OURS, see SHOW_STALL_NETWORK): "Stall network ( F )"
+## with the stall network's live key, or the plain title when it has none.
+func _stall_network_caption() -> String:
+	var key := KeyMap.key_for(STALL_NETWORK_KEY_ACTION)
+	if key == KEY_NONE:
+		return _ui_builder.resolve_text(STALL_NETWORK_TITLE)
+	var format := _ui_builder.resolve_text(STALL_NETWORK_CAPTION)
+	if not format.contains("%s"):
+		return _ui_builder.resolve_text(STALL_NETWORK_TITLE)
+	return format.replace("%s", OS.get_keycode_string(key))
 
 ## A caption format with its `%s` filled by the key this client binds to
 ## `panel_id` (Godot's name for it). `0x60d020`'s own key naming is not read.
@@ -502,7 +520,7 @@ func _fitted(file: TwoDtReader.TwoDtFile) -> TwoDtReader.TwoDtFile:
 			var spec: Array = MENU_CAPTIONS[id]
 			text = _with_key(_ui_builder.resolve_text(spec[0]), spec[1])
 		elif int(id) == ID_MENU_STALLNET and SHOW_STALL_NETWORK:
-			text = _ui_builder.resolve_text(STALL_NETWORK_CAPTION)
+			text = _stall_network_caption()
 		elif caption.text_id != "":
 			text = _ui_builder.resolve_text(caption.text_id)
 		var width := _text_width(text, caption.font_index)

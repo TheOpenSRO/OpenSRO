@@ -100,8 +100,26 @@ func _page() -> void:
 	_check(win._capture_key(KEY_K) and page.key_text_at_slot(0) == "K" and page.selected == 0,
 		"the row stays selected and takes the next key too")
 	page.scroll_to(99)
-	_check(page.scroll_line() == 10 and page.slot_node(13).visible == false and page.key_text_at_slot(0) == "R",
-		"scrolled to the end: line 10 shows rows 20..32 (Reply whisper's R first), the last slot hidden")
+	_check(page.scroll_line() == 10 and page.max_line() == 10 and page.key_text_at_slot(0) == "R",
+		"scrolled to the end: line 10 (the retail range, ceil((34 - 14) / 2)) shows rows 20.. (Reply whisper's R first)")
+	# Round 841 (OURS): row 33, the stall network on F, fills the slot the
+	# retail list leaves hidden on its last line.
+	_check(page.slot_node(13).visible and page.key_text_at_slot(13) == "F" and page.label_text_at_slot(13) == "UIIT_STT_WARENETWORK_TITLE",
+		"the last slot shows row 33: the stall network's F (no text table here: the id) (got %s '%s' '%s')" % [
+			page.slot_node(13).visible, page.key_text_at_slot(13), page.label_text_at_slot(13)])
+	# The conflict rule applies to it like any row (a press clears only the
+	# shown rows' flags, 0x5fc5f0, so every press here is on line 10).
+	page.slot_node(0).gui_input.emit(press)
+	_check(page.selected == 20 and win._capture_key(KEY_F) and page.key_text_at_slot(0) == "F" and page.key_text_at_slot(13) == " ",
+		"F given to the Reply row: the stall network's row is unbound (got '%s')" % page.key_text_at_slot(13))
+	page.slot_node(13).gui_input.emit(press)
+	_check(page.selected == 33 and page.select_shown_at_slot(13) and not page.select_shown_at_slot(0), "a press on the stall network's row selects row 33")
+	_check(win._capture_key(KEY_F) and page.key_text_at_slot(13) == "F" and page.key_text_at_slot(0) == " ",
+		"F back on it: taken from the Reply row")
+	_check(win._capture_key(KEY_J) and page.key_text_at_slot(13) == "J", "J on it: the stall network is J")
+	_check(win._capture_key(KEY_F) and page.key_text_at_slot(13) == "F", "and F again")
+	page.slot_node(0).gui_input.emit(press)
+	_check(win._capture_key(KEY_R) and page.key_text_at_slot(0) == "R" and page.key_text_at_slot(13) == "F", "R back on the Reply row")
 	page.scroll_to(0)
 	_check(KeyMap.key_of_slot(0) == KEY_C, "nothing is in force before Apply")
 	(win.control([OptionWindow.ID_TAB_VIDEO]) as BaseButton).pressed.emit()
@@ -113,9 +131,13 @@ func _page() -> void:
 	win.press_apply()
 	_check(KeyMap.key_of_slot(0) == KEY_K and KeyMap.key_of_slot(1) == KEY_NONE and modes == [1] and ClientSettings.mouse_mode() == 1,
 		"Apply on the tab: K is the character key, Inventory unbound, mouse mode 1 in force")
+	var saved_now = ClientSettings.get_value(ClientSettings.SECTION_KEYMAP, ClientSettings.KEY_KEYMAP_SLOTS, null)
+	_check(KeyMap.key_for("stall_network") == KEY_F and saved_now is Array and (saved_now as Array).size() == 34
+		and int((saved_now as Array)[33]) == KEY_F, "Apply saves all 34 keys, the stall network's F among them")
 	win.press_default()
 	_check(page.key_text_at_slot(0) == "C" and page.mouse_mode == 0 and modes == [1, 0] and ClientSettings.mouse_mode() == 0
 		and KeyMap.key_of_slot(0) == KEY_K, "Default: the rows back to C..., mode 0 at once, the keys not yet")
+	_check(page.keys.size() == 34 and int(page.keys[33]) == KEY_F, "Default puts F back on the stall network's row")
 	var cap := win.control([OptionWindow.ID_TAB_INPUT]).get_node_or_null(TwoDtBuilder.TEXT_NODE) as Label
 	var other := win.control([OptionWindow.ID_TAB_VIDEO]).get_node_or_null(TwoDtBuilder.TEXT_NODE) as Label
 	_check(cap != null and other != null and (cap.get_theme_font("font") != other.get_theme_font("font")),

@@ -392,6 +392,10 @@ func _run() -> void:
 		"83's caption is CONTENTS_MENU_PARTY with this client's key (got '%s')" % _text(_at(broot, [59, 83, 200])))
 	_check(_text(_at(broot, [59, 108, 200])) == "tt community U",
 		"108's caption names the guild's key, as the client's does (got '%s')" % _text(_at(broot, [59, 108, 200])))
+	# Round 841 (OURS): item 120 names the stall network's key (KeyMap slot
+	# 33, default F) in the archive's own CONTENTS_MENU_STORENET format.
+	_check(_text(_at(broot, [59, 120, 200])) == "tt stall network F",
+		"120's caption is CONTENTS_MENU_STORENET with the stall network's key F (got '%s')" % _text(_at(broot, [59, 120, 200])))
 	_check(_text(_at(broot, [59, 102, 200])) == "tt camp match",
 		"102 keeps its record's caption (got '%s')" % _text(_at(broot, [59, 102, 200])))
 	var b6 := _at(broot, [6])
