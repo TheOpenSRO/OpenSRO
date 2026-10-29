@@ -7483,6 +7483,77 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-first round, lane K: the stall network's key
+
+The user's ask: "The stall network should have a default bind to the F key and should show in the
+dropdown(up?) menu." Labels: READ (sro_client.exe, md5 2a5794b7...), MEASURED, INFERRED, OURS.
+
+**What the original has.**
+- No key (READ). 0x7778b0's 33 defaults have no 0x46; the key-down dispatcher 0x780610's command
+  switch (after 0x778310) has no case 0x46 and never calls FUN_00799020; neither do the WM_CHAR
+  handler 0x78b660 (0x7e, Enter, Esc) nor the key-up handler 0x77d8d0. 0x799020's callers: 0x60cd10
+  (the underbar's hidden item 120, the only one with 1), the network windows' X (c:0x6bc6b0,
+  c:0x6bc8a0), Escape's 0x79d620, 0xB461's refusal 0x88dca0, and 0x77b540 / 0x787860, all with 0.
+- The archive meant F (MEASURED, textuisystem.txt, unused by the exe): UIIT_STT_WARENETWORK_TITLE_SHOTCUT
+  "Stall network ( F )", UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET "Stall network ( %s )" beside the
+  other menu rows' CONTENTS_MENU formats, and the key description UIIT_STT_INPUT_TTDESC_31 "Open stall
+  network window. ...".
+- Escape closes the window (READ): 0x79d620's list, after the alchemy window, the main popup and
+  two windows this client lacks, tests 0x778a40 = 0x469020(0x96) and runs 0x799020(0).
+- The menu captions are set once, by 0x60d5f0, whose one call is the bar's OnCreate 0x60df30
+  (READ; no absolute reference to 0x60d5f0): a rebind shows on no menu row until the bar is made again.
+
+**What we built.**
+- `KeyMap.SLOTS` slot 33 (OURS, `"ours": true`, `cmd` -1): the stall network, default F, row label
+  UIIT_STT_WARENETWORK_TITLE "Stall network". `RETAIL_SLOTS` 33. World3D's `stall_network` action ->
+  `StallNetworkController.toggle`: closed, item 120's `open` (0x799020(1): the town rule, the
+  USE_CITY box, the own-stall rule); open, `close` (0x799020(0): 0x7462 after a search). The toggle is
+  INFERRED from Y (0x780a65..0x780a8c: window 0xa8 there -> 0x798e20(0), else 0x798e20(1)).
+- Option > Key Map: a 34th row, the 14th slot of line 10 that retail leaves hidden, so the scroll
+  range is still 0..10 (ceil((34 - 14) / 2)); Default, Apply (34 keys saved) and the conflict rule
+  as any row (`OptionKeyPage._rows`).
+- Saved maps: `KeyMap.migrate` fills a 33-key save: F on the new row, or unbound when the saved keys
+  already give F to a row (never bound twice); kept in memory, saved by the next Apply.
+- Typing: F is a letter, so a text line with the keyboard keeps it (KeyInput's rule, unchanged).
+- Item 120's caption: CONTENTS_MENU_STORENET with the live key ("Stall network ( F )"), the plain
+  title with none; as retail's rows, set when the bar is made.
+- Escape closes the window (`HudPanels._escape_close`, after the alchemy window; OURS order against
+  the main popup).
+- QA: the `netnode` / `netbox` / `underbar` / `netclose` / `netpage` / `boxyes` clicks and
+  `hovernode` push in UI units (`local`), so they land at a UI scale other than 1 (MEASURED: at
+  1920x1080 x 1.5 `underbar:4` missed the menu button before).
+
+**Live (render box, lane server 16930 in memory with the region table, client
+`/opt/opensro-client-r841k` from git; real keys and clicks through OPENSRO_QA_INPUT, the Option window
+opened by the `option` QA step; evidence in `/var/tmp/r841k/keep`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| Menu (real click on MENU): every row, icon and caption, "Stall network ( F )" between Stall and Auto Potion, hover bar on it, nothing over it (the system lines lie under the menu's translucent tile) | PASS | menu_hover_stallnetwork_F_f238.png |
+| Menu > Stall network (real click on item 120) opens the window | PASS | menu_item120_opens_window_f248.png, runG_client_qa_lines.txt ("STALLNET: open -> opened") |
+| F opens the window; F again closes it | PASS | F_opens_f300.png, F_again_closes_f330.png ("KEYMAP F -> stall_network 33: stall network: opened" / "closed") |
+| Enter, then F typed into the chat line: "f" in the line, no window, nothing run | PASS | F_typed_in_chat_no_window_f378.png (keymap=[]) |
+| Escape closes the window, no System menu | PASS | F_opens_before_escape_f415.png, escape_closes_f438.png |
+| Option > Key Map: scrolled to the end (real click on the bar), real click on row 33 "Stall network", K, Apply | PASS | keymap_row33_rebound_K_f550.png (hovered `Slot249`, `Button9`) |
+| After the rebind F does nothing (it reaches the world unhandled), K opens and closes | PASS | runG_client_qa_lines.txt (QA INPUT 19-21), K_opens_after_rebind_f615.png |
+| Menu > Stall network still works after the rebind (its caption still names F, as every retail caption keeps its key until the bar is made again) | PASS | menu_after_rebind_caption_F_f660.png, QA INPUT 22-23 |
+| Default + Apply: F back, F opens it | PASS | keymap_default_applied_f745.png, F_opens_after_default_f775.png |
+| 1920x1080 at UI scale 1.5: menu, hover, item 120, F | PASS | menu_hover_1920x1080_scale1.5_f240.png, runH_1920x1080_scale1.5_qa_lines.txt |
+| 1280x720 at UI scale 1.25: menu (fits), hover, item 120, F | PASS | menu_hover_1280x720_scale1.25_f240.png, runI_1280x720_scale1.25_qa_lines.txt |
+
+**Tests.** `keymap_test` (34 slots, slot 33 OURS F, F runs it, F typed into a line does not, a rebind
+to K, `migrate` and the load of a saved 33-key map with and without F taken), `option_key_page_test`
+(row 33 on line 10's last slot, the conflict rule both ways, Default, Apply saves 34 keys),
+`stall_network_key841_test` (real Media.pk2, real KeyInput: F opens and closes, 0x7462 after a
+search, the town refusal, F in a focused line, rebound to K, Escape), `hud_underbar_test` (120's
+caption names F). `remote_godot.sh check` ALL LOAD (1034 scripts), `tests` "ran 388 suite(s), 0
+failing"; `go test ./...` passes (no server change). No perf gate: a UI round.
+
+**OPEN.** A rebind shows on the menu captions only when the bar is made again (as retail's, READ
+above); refreshing them on Apply would be OURS. At UI scale 1.5 on a 1280x720 screen (canvas 853x480)
+the extra quick-slot bars as saved on the box lay over the underbar's MENU button and took the click
+(MEASURED: `ExtQuickSlot1/ExtSlot54`); F still opens the window, and the bars can be moved.
+
 ## Eight-hundred-and-fortieth round, lane N: the stall network
 
 The user's ask for round 840: finish round 839's open stall items. This lane: retail's Stall Network,
