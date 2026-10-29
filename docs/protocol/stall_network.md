@@ -38,7 +38,15 @@ Three things are switched off in this build:
    unconditionally (c:0x60e2c0..0x60e2db). The hotkey captions `UIIT_STT_WARENETWORK_TITLE_SHOTCUT`
    "Stall network ( F )", `UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET` and `UIIT_STT_INPUT_TTDESC_31` are
    in the text table but not in the exe (string search of both encodings, MEASURED) -- no key opens
-   it.
+   it. Round 841 (lane K) re-read the keyboard: 0x7778b0's 33 defaults have no 0x46 ('F'); the
+   key-down dispatcher 0x780610's command switch (after 0x778310) has cases 0x09, 0x21-0x24, 0x2d,
+   0x2e, 0x41, 0x43, 0x45, 0x47-0x4e, 0x50-0x5a, 0x8019-0x801c, 0x801f, 0x8020 and none for 0x46;
+   neither it, the WM_CHAR handler 0x78b660 (0x7e, Enter, Esc) nor the key-up handler 0x77d8d0 calls
+   0x799020. Its callers are 0x60cd10 (item 120, the only one with 1), the two network windows' X
+   (vslot_043 c:0x6bc6b0, c:0x6bc8a0), Escape's 0x79d620, 0xB461's refusal 0x88dca0 and the teardown
+   paths 0x77b540 / 0x787860, all with 0 (READ). The archive's own texts name F, so F was meant
+   (INFERRED); `UIIT_STT_INPUT_TTDESC_31` "Open stall network window. ..." is the 31st of the key
+   descriptions (03 character .. 30 party matching).
 2. **No stall is ever put on the network.** The owner's choice is a message box of type 1001: its
    answer handler c:0x6b9a20 (Yes: 0x70BA type 5 `{open 1, net 1}`, then +0x864 = the town test;
    No: `{open 1, net 0}`, +0x864 = 0) is in the exe, but nothing creates a type-1001 box: every
@@ -269,13 +277,29 @@ the icon 27; the name 20 (275 wide, centred) in `frame_msg_` 14; the count 21 an
 
 - The underbar menu's item 120 is shown and opens the window (retail hides it, §0). It shares 117's
   row in the file, so the menu grows one row (25) upwards, the items down to 117 move up a row and
-  120 keeps the row; its caption is UIIT_STT_WARENETWORK_TITLE (the record's is empty). While the
+  120 keeps the row; its caption is UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET with its key (round 841;
+  UIIT_STT_WARENETWORK_TITLE before; the record's is empty). While the
   menu is open the bar is raised above its siblings (the system message window lay over the lower
   rows and took their clicks) and put back when it closes.
 - The Start button of a stall asks the type-1001 question ("Register items with stall network?",
   REGIST_01..03, Yes / No) while the owner stands in a town; outside a town it opens the stall off the
   network as retail's Start does. The box is MsgBoxSimple's 360 x 151 made 26 taller, its buttons
   moved down with it, so the three lines clear them.
+- **The key (round 841, lane K).** The stall network is KeyMap slot 33, one OURS slot after the
+  retail 33, default **F** (the archive's `UIIT_STT_WARENETWORK_TITLE_SHOTCUT` "Stall network ( F )").
+  It shows in Option > Key Map as a 34th row labelled `UIIT_STT_WARENETWORK_TITLE` "Stall network"
+  (the 14th slot of the list's last line, which retail leaves hidden, so the scroll range stays
+  0..10), rebinds and conflicts like any row, and Default puts F back. F toggles the window
+  (`StallNetworkController.toggle`): closed, it is item 120's open, 0x799020(1), with the town rule
+  and the USE_CITY refusal; open, it is 0x799020(0) (0x7462 after a search). The toggle is
+  INFERRED from the retail keys for windows the menu only opens (Y: window 0xa8 there ->
+  0x798e20(0), else 0x798e20(1), READ 0x780a65..0x780a8c). A text line with the keyboard keeps F
+  (KeyInput's typing rule). A key map saved before round 841 (33 keys) gets F on the new row unless
+  the player had given F to another row, when the row starts unbound (`KeyMap.migrate`). Item 120's
+  caption is now the archive's `UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET` "Stall network ( %s )" with
+  the bound key, as the other menu rows name theirs (plain "Stall network" with no key bound); like
+  every menu caption it is set when the bar is made (0x60d5f0 runs only from the bar's OnCreate
+  0x60df30, READ), so after a rebind it names the old key until the bar is made again.
 - Box codes (0x3c46, 0x3c49) go to an OK box (MsgBoxSimple style 0); retail's path for them
   (c:0x7b9ddd -> 0x77b580) was not read further.
 - The server's rules in §5 marked OURS or INFERRED: there is no server code to read.

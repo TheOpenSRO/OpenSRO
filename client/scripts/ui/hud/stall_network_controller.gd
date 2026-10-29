@@ -80,6 +80,18 @@ func open(in_town: bool, busy: bool) -> String:
 	print("StallNetwork: window opened (%s)" % StallNetworkWindow.FILE_2DT)
 	return "opened"
 
+## Round 841 (lane K): the stall network's key (KeyMap slot 33, OURS, default
+## F). With the window up it closes it, 0x799020(0) (close(): 0x7462 when a
+## search went out); otherwise it is item 120's open, 0x799020(1), with its
+## town rule and refusal. The toggle is INFERRED from the retail keys for
+## windows the menu only opens (Y: window 0xa8 there -> 0x798e20(0), else
+## 0x798e20(1), READ 0x780a65..0x780a8c).
+func toggle(in_town: bool, busy: bool) -> String:
+	if is_open():
+		close()
+		return "closed"
+	return open(in_town, busy)
+
 ## The buy box, loaded hidden with the window (c:0x6c5140's window 300).
 func _make_box() -> void:
 	var b := StallNetworkBox.new(panels._builder)

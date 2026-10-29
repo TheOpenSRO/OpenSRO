@@ -136,16 +136,28 @@ func _run() -> void:
 	await _check_focus_button()
 	_check_no_movement()
 	_check_pure(keymap)
+	_check_stall_network_key()
 	await _check_ground_items(keymap)
 
-## The slot table itself: 33 slots in slot order, each on the retail default
-## key and command (0x7778be, 0x778310).
+## The slot table itself: the retail 33 slots in slot order, each on the
+## retail default key and command (0x7778be, 0x778310), then round 841's one
+## OURS slot, the stall network on F.
 func _check_table(keymap: GDScript) -> void:
 	if keymap == null:
 		_check(false, "the slot table: no KeyMap to read")
 		return
 	var slots: Array = keymap.get_script_constant_map().get("SLOTS", [])
-	_check(slots.size() == 33, "the table has the retail client's 33 slots (got %d)" % slots.size())
+	_check(slots.size() == 34, "the table has the retail client's 33 slots and one OURS slot (got %d)" % slots.size())
+	if slots.size() == 34:
+		var net: Dictionary = slots[33]
+		_check(int(net["slot"]) == 33 and int(net["key"]) == KEY_F and String(net["action"]) == "stall_network"
+			and bool(net.get("ours", false)) and String(net["row"]) == "UIIT_STT_WARENETWORK_TITLE",
+			"slot 33 is the stall network, OURS, default F, labelled UIIT_STT_WARENETWORK_TITLE (got %s)" % [net])
+		var ours := 0
+		for i in 33:
+			if bool((slots[i] as Dictionary).get("ours", false)):
+				ours += 1
+		_check(ours == 0, "none of the retail 33 is marked OURS (got %d)" % ours)
 	var want := [KEY_C, KEY_I, KEY_S, KEY_A, KEY_P, KEY_Q, KEY_U, KEY_M, KEY_TAB, KEY_H, KEY_Z, KEY_X,
 		KEY_N, KEY_G, KEY_INSERT, KEY_HOME, KEY_PAGEUP, KEY_DELETE, KEY_END, KEY_PAGEDOWN, KEY_R, KEY_T,
 		KEY_W, KEY_E, KEY_Y, KEY_NONE, KEY_NONE, KEY_NONE, KEY_NONE, KEY_V, KEY_L, KEY_NONE, KEY_NONE]
@@ -183,7 +195,9 @@ func _check_world_keys() -> void:
 	var keys := {KEY_TAB: ["berserk", 8], KEY_H: ["help", 9], KEY_X: ["mouse_slot", 11], KEY_N: ["sit", 12],
 		KEY_G: ["pickup", 13], KEY_INSERT: ["pet_info", 14], KEY_HOME: ["pet_ride", 15],
 		KEY_PAGEUP: ["pet_unsummon", 16], KEY_DELETE: ["pet_follow", 17], KEY_END: ["pet_attack", 18],
-		KEY_PAGEDOWN: ["pet_ai", 19], KEY_R: ["whisper_reply", 20], KEY_W: ["pet_switch", 22]}
+		KEY_PAGEDOWN: ["pet_ai", 19], KEY_R: ["whisper_reply", 20], KEY_W: ["pet_switch", 22],
+		# Round 841, OURS: F is the stall network (slot 33).
+		KEY_F: ["stall_network", 33]}
 	for code in keys:
 		var got := _what(code)
 		_check(got[0] == [keys[code]] and got[1].is_empty(),
@@ -361,7 +375,7 @@ func _check_typing() -> void:
 	# key-table matter), and every key after it would then not be typed.
 	var codes := [KEY_C, KEY_I, KEY_S, KEY_A, KEY_P, KEY_Q, KEY_U, KEY_M, KEY_H, KEY_Z, KEY_X, KEY_N,
 		KEY_G, KEY_INSERT, KEY_HOME, KEY_PAGEUP, KEY_DELETE, KEY_END, KEY_PAGEDOWN, KEY_R, KEY_T, KEY_W, KEY_E,
-		KEY_Y, KEY_V, KEY_L, KEY_1, KEY_0]
+		KEY_Y, KEY_V, KEY_L, KEY_F, KEY_1, KEY_0]
 	var ran: Array = []
 	for code in codes:
 		var got := _what(code)
@@ -463,6 +477,55 @@ func _check_pure(keymap: GDScript) -> void:
 	var skill_key := str(underbar.call("key_name", "skill")) if underbar != null else ""
 	var equip_key := str(underbar.call("key_name", "equipment")) if underbar != null else "?"
 	_check(skill_key == "S" and equip_key == "", "the bar names S for the skill window and no key for equipment (got '%s', '%s')" % [skill_key, equip_key])
+
+## Round 841: the stall network's OURS key -- F by default, rebindable like
+## any row, and a saved table of the retail 33 keys made whole without
+## binding F twice.
+func _check_stall_network_key() -> void:
+	KeyMap.reset_to_defaults_unsaved()
+	_check(KeyMap.key_for("stall_network") == KEY_F and KeyMap.resolve(KEY_F, false, false, false, false) == ["stall_network", 33],
+		"F resolves to the stall network, slot 33")
+	_check(KeyMap.resolve(KEY_F, true, false, false, false) == ["stall_network", 33]
+		and KeyMap.resolve(KEY_F, false, false, false, false, true) == ["stall_network", 33],
+		"Ctrl+F and Shift+F too, as every table key (no modifier is tested)")
+	var keys := KeyMap.default_keys()
+	keys[33] = KEY_K
+	KeyMap.set_keys(keys, false)
+	var got := _what(KEY_F)
+	var k := _what(KEY_K)
+	_check(got[0].is_empty() and got[1].is_empty() and k[0] == [["stall_network", 33]],
+		"rebound to K: K opens it and F does nothing (F ran %s, K ran %s)" % [got[0], k[0]])
+	KeyMap.reset_to_defaults_unsaved()
+	# Before round 841 ClientSettings saved the retail 33 keys.
+	var old33 := PackedInt32Array()
+	for i in 33:
+		old33.append(int(KeyMap.SLOTS[i]["key"]))
+	var m := KeyMap.migrate(old33)
+	_check(m.size() == 34 and m[33] == KEY_F and m.slice(0, 33) == old33,
+		"a saved table of 33 keys gets F on the new row, the 33 unchanged (got %s)" % [m])
+	var with_f := old33.duplicate()
+	with_f[12] = KEY_F
+	var m2 := KeyMap.migrate(with_f)
+	_check(m2.size() == 34 and m2[33] == KEY_NONE and m2[12] == KEY_F,
+		"a saved table that gave F to another row (sit) leaves the new row unbound: F is never bound twice (got %s)" % [m2])
+	var full := KeyMap.default_keys()
+	full[33] = KEY_J
+	_check(KeyMap.migrate(full) == full, "a saved table of 34 keys is kept as it is")
+	KeyMap.set_keys(m2, false)
+	_check(KeyMap.slot_for_key(KEY_F)["action"] == "sit" and KeyMap.key_for("stall_network") == KEY_NONE,
+		"migrated in force: F sits, the stall network has no key")
+	# The load itself: a saved 33-key table read from ClientSettings.
+	var saved = ClientSettings.get_value(ClientSettings.SECTION_KEYMAP, ClientSettings.KEY_KEYMAP_SLOTS, null)
+	for pair in [[old33, KEY_F], [with_f, KEY_NONE]]:
+		ClientSettings.set_value(ClientSettings.SECTION_KEYMAP, ClientSettings.KEY_KEYMAP_SLOTS, Array(pair[0]))
+		KeyMap._loaded = false
+		var net_key := KeyMap.key_for("stall_network")
+		var f_slot = KeyMap.slot_for_key(KEY_F)
+		_check(net_key == pair[1] and f_slot != null and String(f_slot["action"]) == ("stall_network" if pair[1] == KEY_F else "sit"),
+			"a saved 33-key table loads with the stall network on %s (got %s; F is %s)" % [
+				OS.get_keycode_string(pair[1]) if pair[1] != KEY_NONE else "no key", net_key, f_slot["action"] if f_slot != null else "nothing"])
+	ClientSettings.set_value(ClientSettings.SECTION_KEYMAP, ClientSettings.KEY_KEYMAP_SLOTS, saved if saved != null else Array(KeyMap.default_keys()))
+	KeyMap.reset_to_defaults_unsaved()
 
 ## G's 50-unit search and Z's 300-unit names, on real GroundItems nodes.
 func _check_ground_items(_keymap: GDScript) -> void:

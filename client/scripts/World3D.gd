@@ -19013,7 +19013,8 @@ func _qa_input_step() -> void:
 				_qa_input_report = action + " (not shown)"
 			else:
 				_qa_input_report = "%s at %s" % [action, nc.get_global_rect().get_center()]
-				_qa_push_click(nc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+				# Round 841: in UI units (local), so the click lands at a UI scale other than 1.
+				_qa_push_click(nc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
 		"boxyes", "boxno":
 			# Round 840: the Yes / No of a question box under HudPanels by
 			# its node name (StallNetworkQuestion, StallNetworkNotice ...).
@@ -19023,7 +19024,7 @@ func _qa_input_step() -> void:
 				_qa_input_report = action + " (no such box)"
 			else:
 				_qa_input_report = "%s at %s" % [action, qbtn.get_global_rect().get_center()]
-				_qa_push_click(qbtn.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+				_qa_push_click(qbtn.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
 		"netclose":
 			# Round 840: the stall network window's X.
 			var ncw := _hud_panels.stall_network_window() if _hud_panels != null else null
@@ -19032,7 +19033,7 @@ func _qa_input_step() -> void:
 				_qa_input_report = action + " (no window)"
 			else:
 				_qa_input_report = "%s at %s" % [action, ncx.get_global_rect().get_center()]
-				_qa_push_click(ncx.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+				_qa_push_click(ncx.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
 		"netpage", "netprev", "netnext":
 			# Round 840: the page manager's page button i, prev or next.
 			var nw := _hud_panels.stall_network_window() if _hud_panels != null else null
@@ -19043,7 +19044,7 @@ func _qa_input_step() -> void:
 				_qa_input_report = action + " (not shown)"
 			else:
 				_qa_input_report = "%s at %s" % [action, pb.get_global_rect().get_center()]
-				_qa_push_click(pb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+				_qa_push_click(pb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
 		"netlist":
 			# Round 840: row i of the open combo list (ComboList).
 			var cl := ComboList.current()
@@ -19227,7 +19228,7 @@ func _qa_input_step() -> void:
 				motion.position = hn.get_global_rect().get_center()
 				motion.global_position = motion.position
 				_qa_input_report = "%s at %s" % [action, motion.position]
-				get_viewport().push_input(motion)
+				get_viewport().push_input(motion, true)
 		"hover":
 			var hv := arg.split(",")
 			var motion := InputEventMouseMotion.new()
@@ -33921,6 +33922,12 @@ func _run_key_action(action: String, arg: int) -> String:
 		"hide_ui":
 			_toggle_ui_visibility()
 			return "UI %s" % ("shown" if ui_control.visible else "hidden")
+		"stall_network":
+			# Round 841 (OURS key, default F): item 120's open, or the close
+			# when the window is up (StallNetworkController.toggle).
+			if _hud_panels == null:
+				return "no HUD"
+			return "stall network: %s" % _hud_panels._stall_network().toggle(_stall_network_in_town(), false)
 		"item_mall":
 			# Round 837 (0x7807aa): the "Enter Item Mall" box when the mall
 			# is not open and no such box is up; F10 never closes it.

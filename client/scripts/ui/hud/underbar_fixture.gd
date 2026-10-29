@@ -58,6 +58,9 @@ const TEXT := [
 	["UIIT_PAG_COLLECTION_WINDOW", "tt collection"],
 	["UIIT_CTL_OPEN_STORE", "tt stall"],
 	["UIIT_STT_MK", "tt making"],
+	# Round 841: item 120's caption with the stall network's key, and its title.
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET", "tt stall network %s"],
+	["UIIT_STT_WARENETWORK_TITLE", "tt stall network"],
 ]
 
 static func _rec(f: Dictionary) -> PackedByteArray:

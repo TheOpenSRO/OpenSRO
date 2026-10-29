@@ -18,7 +18,8 @@ class_name KeyMap
 ## window's Key Map tab (OptionKeyPage): `key` below is the slot's DEFAULT,
 ## and key_of_slot the live one (saved in ClientSettings, not the retail
 ## file). A rebinding changes the key and nothing else: a slot's action, like
-## its retail command, does not move with the key.
+## its retail command, does not move with the key. Round 841 added one OURS
+## slot after the 33, the stall network on F (slot 33, `"ours": true`).
 ##
 ## Each slot's `state`:
 ## - "works": the key does what the retail handler does, as far as this
@@ -130,7 +131,29 @@ const SLOTS: Array = [
 	# 0xca/0xcc (0x9c6eb0, read; what the codes mean is not read).
 	{"slot": 31, "key": KEY_NONE, "cmd": 0x801f, "row": "UIIT_STT_BLIND_ALLY", "action": "hide_allies", "state": "unbound"},
 	{"slot": 32, "key": KEY_NONE, "cmd": 0x8020, "row": "UIIT_STT_BLIND_ENEMY", "action": "hide_enemies", "state": "unbound"},
+	# Round 841 (lane K), OURS: the stall network, default F -- the one slot
+	# past the retail 33 ("ours": true). The original has no key for it
+	# (READ: no 0x46 in 0x7778b0's 33 defaults; 0x780610 has no command 0x46
+	# and never calls FUN_00799020, whose only caller with 1 is the underbar's
+	# hidden item 120, c:0x60ceeb; the WM_CHAR handler 0x78b660 and the key-up
+	# handler 0x77d8d0 do not either). Its archive does carry the key's text,
+	# unused by the exe (MEASURED, docs/protocol/stall_network.md §0):
+	# UIIT_STT_WARENETWORK_TITLE_SHOTCUT "Stall network ( F )" -- hence F --,
+	# UIIT_STT_TOGGLE_CONTENTS_MENU_STORENET "Stall network ( %s )" and
+	# UIIT_STT_INPUT_TTDESC_31. The row's label is the window's own title,
+	# UIIT_STT_WARENETWORK_TITLE "Stall network". F toggles the window
+	# (World3D "stall_network" -> StallNetworkController.toggle): open is
+	# item 120's FUN_00799020(1) with its town rule and refusal, and with the
+	# window up it is 0x799020(0) -- the toggle INFERRED from the retail keys
+	# for windows the menu only opens: Y tests window 0xa8 and calls
+	# 0x798e20(0) or 0x798e20(1) (READ, 0x780a65..0x780a8c). `cmd` -1: no
+	# retail command code.
+	{"slot": 33, "key": KEY_F, "cmd": -1, "row": "UIIT_STT_WARENETWORK_TITLE", "action": "stall_network", "state": "works", "ours": true},
 ]
+
+## The retail table's size: 0x7778b0 writes 33 defaults (READ), and
+## ClientSettings held 33 keys before round 841. Slots from here on are OURS.
+const RETAIL_SLOTS := 33
 
 ## The keys the dispatcher 0x780610 answers outside the slot table, and the
 ## few this client adds (read unless marked). Kept as a list so the help and
@@ -197,8 +220,8 @@ static var _by_key: Dictionary = {}
 ## Round 833: the live keys, slot -> keycode, where they differ from SLOTS'
 ## defaults -- the Option window's Key Map tab rebinds a slot's key and
 ## nothing else (its action and command stay, as 0x778310's do). Saved in
-## ClientSettings (SECTION_KEYMAP, all 33 keys in slot order); loaded once
-## by load_saved().
+## ClientSettings (SECTION_KEYMAP, all the table's keys in slot order -- 33
+## before round 841, migrate() fills a shorter save); loaded once.
 static var _bound: Dictionary = {}
 static var _loaded := false
 ## Round 833: while the Option window's Key Map tab waits for a key, the
@@ -213,21 +236,21 @@ static func key_of_slot(slot: int) -> int:
 		return int(_bound[slot])
 	return int(SLOTS[slot]["key"]) if slot >= 0 and slot < SLOTS.size() else KEY_NONE
 
-## The 33 default keys, in slot order (0x7778b0's dwords).
+## The default keys, in slot order (0x7778b0's 33 dwords, then the OURS slots).
 static func default_keys() -> PackedInt32Array:
 	var out := PackedInt32Array()
 	for slot in SLOTS:
 		out.append(int(slot["key"]))
 	return out
 
-## The 33 live keys, in slot order.
+## The live keys, in slot order.
 static func live_keys() -> PackedInt32Array:
 	var out := PackedInt32Array()
 	for i in SLOTS.size():
 		out.append(key_of_slot(i))
 	return out
 
-## Puts `keys` (33, slot order) in force, and saves them when `save`.
+## Puts `keys` (SLOTS.size(), slot order) in force, and saves them when `save`.
 static func set_keys(keys: PackedInt32Array, save: bool = true) -> void:
 	_loaded = true
 	_bound.clear()
@@ -243,8 +266,22 @@ static func _ensure_loaded() -> void:
 		return
 	_loaded = true
 	var saved = ClientSettings.get_value(ClientSettings.SECTION_KEYMAP, ClientSettings.KEY_KEYMAP_SLOTS, null)
-	if saved is Array and (saved as Array).size() == SLOTS.size():
-		set_keys(PackedInt32Array(saved), false)
+	if saved is Array and (saved as Array).size() >= RETAIL_SLOTS and (saved as Array).size() <= SLOTS.size():
+		set_keys(migrate(PackedInt32Array(saved)), false)
+
+## Round 841 (OURS): a saved key map from before a slot was added (the 33
+## retail keys before the stall network's slot 33) made whole. Each missing
+## slot gets its default key unless the saved keys already give that key to
+## another row -- a key is never bound twice -- in which case it starts
+## unbound. Kept in memory; the next Apply saves the full table.
+static func migrate(saved: PackedInt32Array) -> PackedInt32Array:
+	var out := saved.duplicate()
+	if out.size() > SLOTS.size():
+		out.resize(SLOTS.size())
+	for i in range(out.size(), SLOTS.size()):
+		var k := int(SLOTS[i]["key"])
+		out.append(KEY_NONE if k != KEY_NONE and out.has(k) else k)
+	return out
 
 ## Back to the defaults in memory only (tests).
 static func reset_to_defaults_unsaved() -> void:
