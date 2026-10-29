@@ -16,6 +16,18 @@ package main
 //	                            stalling, then buy -stall-buy's slots (0x70B4)
 //	-stall-leave-after D        leave it (0x70B5) after D
 //	-stall-chat "text"          a stall chat line (type 9) once inside / open
+//
+// Round 840 (lane N), the stall network (session/stallnet.go):
+//
+//	-stall-net                  open -stall-open's stall on the network:
+//	                            0x70BA type 5 {1, net 1} (the type-1001 Yes)
+//	-stall-items "i71:500:42"   a third field is that item's group (TidGroupID;
+//	                            -stall-group otherwise)
+//	-net-search "group,degree"  search the network (0x7461 mode 1) once in
+//	                            the world, after -net-after
+//	-net-page N                 then ask page N (mode 3)
+//	-net-buy N                  buy the Nth record of the first answer (0x7463)
+//	-net-leave                  leave the network (0x7462) at the end
 
 import (
 	"encoding/binary"
@@ -44,10 +56,21 @@ var botStall struct {
 	buyAfter   time.Duration
 	chat       string
 	delay      time.Duration
+	// Round 840: the stall network.
+	network   bool
+	netSearch string
+	netPage   int
+	netBuy    int
+	netAfter  time.Duration
+	netLeave  bool
 
 	mu      sync.Mutex
 	entered bool
 	qty     map[int]int
+	// netAnswered is set by the first 0xB461 answer -net-buy acts on.
+	netAnswered bool
+	netGroup    uint32
+	netDegree   byte
 }
 
 func stallLog(b *bot, format string, args ...any) {
@@ -77,9 +100,15 @@ func (b *bot) stallSteps() {
 		slot := 0
 		for _, f := range strings.Split(s.items, ",") {
 			f = strings.TrimSpace(f)
-			parts := strings.SplitN(f, ":", 2)
-			if f == "" || len(parts) != 2 {
+			parts := strings.SplitN(f, ":", 3)
+			if f == "" || len(parts) < 2 {
 				continue
+			}
+			group := uint32(s.group)
+			if len(parts) == 3 {
+				if g, err := strconv.ParseUint(parts[2], 10, 32); err == nil {
+					group = uint32(g)
+				}
 			}
 			price, err := strconv.ParseUint(parts[1], 10, 64)
 			if err != nil {
@@ -113,16 +142,21 @@ func (b *bot) stallSteps() {
 			body := []byte{session.StallUpdateAdd, byte(slot), byte(idx + session.ItemWireBagOffset)}
 			body = binary.LittleEndian.AppendUint16(body, uint16(qty))
 			body = binary.LittleEndian.AppendUint64(body, price)
-			body = binary.LittleEndian.AppendUint32(body, uint32(s.group))
+			body = binary.LittleEndian.AppendUint32(body, group)
 			body = binary.LittleEndian.AppendUint16(body, 0)
-			stallLog(b, "lists bag slot %d x%d at %d in slot %d (0x70BA 2)", idx, qty, price, slot)
+			stallLog(b, "lists bag slot %d x%d at %d in slot %d, group %d (0x70BA 2)", idx, qty, price, slot, group)
 			_ = b.send(session.OpStallUpdate, body)
 			slot++
 		}
 		if !s.modify {
 			time.Sleep(s.delay)
-			stallLog(b, "opens for business (0x70BA 5)")
-			_ = b.send(session.OpStallUpdate, []byte{session.StallUpdateOpen, 1, 0, 0})
+			if s.network {
+				stallLog(b, "opens for business on the stall network (0x70BA 5 {1, net 1})")
+				_ = b.send(session.OpStallUpdate, []byte{session.StallUpdateOpen, 1, byte(session.StallNetRegister), 0})
+			} else {
+				stallLog(b, "opens for business (0x70BA 5)")
+				_ = b.send(session.OpStallUpdate, []byte{session.StallUpdateOpen, 1, 0, 0})
+			}
 		}
 		if s.chat != "" {
 			time.Sleep(s.delay)
@@ -133,6 +167,81 @@ func (b *bot) stallSteps() {
 			stallLog(b, "closes (0x70B2)")
 			_ = b.send(session.OpStallClose, nil)
 		}
+	}()
+}
+
+// netSteps searches the stall network (-net-search), asks -net-page, and
+// leaves it (-net-leave); -net-buy acts on the first answer (noteStall).
+func (b *bot) netSteps() {
+	s := &botStall
+	if s.netSearch == "" {
+		return
+	}
+	parts := strings.SplitN(s.netSearch, ",", 2)
+	g, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 32)
+	if err != nil {
+		stallLog(b, "bad -net-search %q", s.netSearch)
+		return
+	}
+	degree := uint64(0)
+	if len(parts) == 2 {
+		degree, _ = strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 8)
+	}
+	s.mu.Lock()
+	s.netGroup, s.netDegree = uint32(g), byte(degree)
+	s.mu.Unlock()
+	go func() {
+		time.Sleep(s.netAfter)
+		req := session.StallNetSearch{Mode: session.StallNetModeEnter, Group: uint32(g), Degree: byte(degree)}
+		stallLog(b, "searches the stall network: group %d, degree %d (0x7461 % x)", g, degree, req.Encode())
+		_ = b.send(session.OpStallNetSearch, req.Encode())
+		if s.netPage > 0 {
+			time.Sleep(s.delay)
+			req.Mode, req.Page = session.StallNetModePage, byte(s.netPage)
+			stallLog(b, "asks page %d (0x7461 mode 3)", s.netPage)
+			_ = b.send(session.OpStallNetSearch, req.Encode())
+		}
+		if s.netLeave {
+			time.Sleep(2 * s.delay)
+			stallLog(b, "leaves the stall network (0x7462)")
+			_ = b.send(session.OpStallNetLeave, nil)
+		}
+	}()
+}
+
+// noteNet prints a 0xB461 and buys -net-buy's record from the first answer.
+func (b *bot) noteNet(data []byte) {
+	res, err := session.DecodeStallNetResult(data)
+	if err != nil {
+		stallLog(b, "0xB461 does not parse (%v): % x", err, data)
+		return
+	}
+	if !res.OK {
+		stallLog(b, "0xB461 refused %#04x", res.Code)
+		return
+	}
+	stallLog(b, "0xB461: %d record(s), %d page(s)", len(res.Records), res.Pages)
+	for i, r := range res.Records {
+		stallLog(b, "  #%d item %d x%d, level %d, %d gold, seller %s (owner %d slot %d serial %d)",
+			i, r.Item.RefItemID, r.Count, r.Level, r.Price, r.Seller, r.Owner, r.Slot, r.Serial)
+	}
+	s := &botStall
+	s.mu.Lock()
+	first := !s.netAnswered
+	s.netAnswered = true
+	s.mu.Unlock()
+	if !first || s.netBuy < 0 {
+		return
+	}
+	if s.netBuy >= len(res.Records) {
+		stallLog(b, "no record #%d to buy", s.netBuy)
+		return
+	}
+	r := res.Records[s.netBuy]
+	go func() {
+		time.Sleep(s.delay)
+		stallLog(b, "buys #%d through the network: item %d for %d from %s (0x7463)", s.netBuy, r.Item.RefItemID, r.Price, r.Seller)
+		_ = b.send(session.OpStallNetBuy, r.Buy().Encode())
 	}()
 }
 
@@ -222,6 +331,10 @@ func (b *bot) noteStall(op uint16, data []byte) {
 				b.stallSeen(who, uid)
 			}
 		}
+	case session.OpStallNetSearchResult:
+		b.noteNet(data)
+	case session.OpStallNetBuyResult, session.OpStallNetLeaveResult:
+		stallLog(b, "network message %#04x % x", op, data)
 	case session.OpStallOpenResult, session.OpStallCloseResult, session.OpStallEnterResult, session.OpStallBuyResult,
 		session.OpStallLeaveResult, session.OpStallUpdateResult, session.OpStallEvent, session.OpStallGone, session.OpStallRenamed:
 		stallLog(b, "message %#04x % x", op, data)

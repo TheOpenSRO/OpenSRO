@@ -9293,6 +9293,8 @@ func _apply_stats(stats: StatsNet.Stats) -> void:
 			push_warning("HudPanels: character stats refused: %s" % stats.error)
 		return
 	_stats = stats
+	if stall_network != null:
+		stall_network.gold_changed(int(stats.gold))
 
 	var inventory: HudWindow = _windows.get("inventory")
 	if inventory != null:
@@ -9619,3 +9621,143 @@ func _describe_unknown(entry: Variant) -> String:
 		if not fields.is_empty():
 			return ", ".join(fields)
 	return str(entry)
+
+# --- The stall network (round 840, lane N; StallNetworkController, docs/protocol/stall_network.md) ---
+
+var stall_network: StallNetworkController
+
+func _stall_network() -> StallNetworkController:
+	if stall_network == null:
+		stall_network = StallNetworkController.new(self)
+	return stall_network
+
+## The underbar's item 120 (FUN_00799020(1)); World3D gives the town test
+## and the busy test.
+func open_stall_network(in_town: bool, busy: bool) -> String:
+	return _stall_network().open(in_town, busy)
+
+func stall_network_window() -> StallNetworkWindow:
+	return stall_network.window if stall_network != null and stall_network.is_open() else null
+
+## The carried gold (the network window's gold line, c:0x6becb0).
+func carried_gold() -> int:
+	return int(_stats.gold) if _stats != null else 0
+
+## 0x8bd0e0 on a record's item (round 829's repair test, RepairQuote).
+func stall_network_repairable(it) -> bool:
+	if it == null:
+		return true
+	_load_items()
+	var ref := int(it.ref_item_id)
+	var item: ItemTableReader.Item = _items.get(ref)
+	if item == null:
+		return true
+	return RepairQuote.can_be_repaired(item_types(ref), ItemTooltipInstance.option_entries(it, item.item_class))
+
+## A network code (c:0x7b8b40 case 10, StallNetworkNet.CODE_TEXTS): the box
+## codes in a box (OURS: the OK box, MsgBoxSimple style 0), the others as a
+## game line; a code with no text shows nothing.
+func stall_network_code(code: int) -> void:
+	var key := String(StallNetworkNet.CODE_TEXTS.get(code, ""))
+	if key == "":
+		stall_code_message(code)
+		return
+	var text := _resolve_ui(key, "")
+	if text == "":
+		return
+	if code in StallNetworkNet.BOX_CODES:
+		open_stall_network_notice(text)
+	else:
+		stall_system_line.emit(text, HudSystemMessage.TYPE_GAME)
+
+## An OK box (MsgBoxSimple style 0: OK centred at w / 2 - 38, UIIT_CTL_CONFIRM,
+## Cancel hidden; docs/protocol/message_box.md).
+func open_stall_network_notice(text: String) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var old := get_node_or_null("StallNetworkNotice")
+	if old != null:
+		old.queue_free()
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, text):
+		box.free()
+		return null
+	box.name = "StallNetworkNotice"
+	var ok := box._find_button(true)
+	var no := box._find_button(false)
+	if no != null:
+		no.visible = false
+	if ok != null:
+		var at := Vector2(PartyMatchConfirm.SIZE.x / 2.0 - 38.0, ok.position.y)
+		ok.position = at
+		ok.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(at, ok.size))
+		_builder.set_button_text(ok, _resolve_ui("UIIT_CTL_CONFIRM", "Confirm"))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
+const STALLNET_QUESTION_GROW := 26.0
+
+## The type-1001 question (c:0x6b9a20 answers it; OURS: its creator): the
+## REGIST_01..03 lines, Yes / No. `answered(yes)`.
+func open_stall_network_question(answered: Callable) -> PartyMatchConfirm:
+	if _builder == null:
+		answered.call(false)
+		return null
+	var lines := PackedStringArray()
+	for k in ["UIIT_MSG_WARENETWORK_REGIST_01", "UIIT_MSG_WARENETWORK_REGIST_02", "UIIT_MSG_WARENETWORK_REGIST_03"]:
+		var t := _resolve_ui(k, "")
+		if t != "":
+			lines.append(t)
+	var box := PartyMatchConfirm.new()
+	# OURS: three lines do not fit MsgBoxSimple's 360 x 151 text box (h - 122):
+	# the box is a row pitch taller per extra line and its buttons go down with it.
+	var grow := STALLNET_QUESTION_GROW
+	if not box.build(_builder, "\n".join(lines) if not lines.is_empty() else "Register items with stall network?",
+			PartyMatchConfirm.SIZE + Vector2(0, grow)):
+		box.free()
+		answered.call(false)
+		return null
+	box.name = "StallNetworkQuestion"
+	for yes in [true, false]:
+		var b := box._find_button(yes)
+		if b != null:
+			b.position.y += grow
+			b.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(b.position, b.size))
+	box.confirmed.connect(func() -> void: answered.call(true))
+	box.declined.connect(func() -> void: answered.call(false))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
+## fmncategorytreedata.txt from Media.pk2, read once (StallNetworkNet.parse_tree).
+var _stall_network_tree = null
+
+func stall_network_tree() -> Array:
+	if _stall_network_tree != null:
+		return _stall_network_tree
+	_stall_network_tree = []
+	var media: Pk2Reader = _builder.media_archive() if _builder != null else null
+	if media == null:
+		return _stall_network_tree
+	var e := ObjectLoader.find_file(media, StallNetworkNet.TREE_PATH)
+	if e == null:
+		print("HudPanels: no %s" % StallNetworkNet.TREE_PATH)
+		return _stall_network_tree
+	var raw: PackedByteArray = media.read_file(e)
+	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+		raw = raw.slice(2)
+	var text := TextDecode.utf16(raw)
+	if text.is_empty():
+		text = raw.get_string_from_utf8()
+	_stall_network_tree = StallNetworkNet.parse_tree(text)
+	print("HudPanels: fmncategorytreedata %d classes" % (_stall_network_tree as Array).size())
+	return _stall_network_tree
+
+## World3D's town test for the stall network (CRegionManagerBody slot 23,
+## c:0x414560: the position's regioninfo claim is #TOWN). Unset (no world):
+## false -- Start then opens plainly, as retail's button does.
+var stall_network_town := Callable()
+
+func stall_network_in_town() -> bool:
+	return bool(stall_network_town.call()) if stall_network_town.is_valid() else false

@@ -15,7 +15,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
-| [Economy](#economy) | 7 |  |  | 3 | 10 |
+| [Economy](#economy) | 8 |  |  | 2 | 10 |
 | [Social](#social) | 12 | 4 |  | 4 | 20 |
 | [Job / trade](#job--trade) | 6 |  |  |  | 6 |
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
@@ -27,11 +27,11 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **164** | **30** | **1** | **34** | **229** |
+| **All** | **165** | **30** | **1** | **33** | **229** |
 
 ## Biggest gaps
 
-- No consignment or stall network
+- No consignment
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
 - Guilds: no ranks, notice, storage, unions or wars yet
@@ -210,7 +210,7 @@ Retail items with real stats, blues, alchemy and potions.
 
 ## Economy
 
-Gold, NPC trade and storage work; player markets are not built yet.
+Gold, NPC trade, storage, player stalls and the stall network work; consignment is not built yet.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -218,7 +218,7 @@ Gold, NPC trade and storage work; player markets are not built yet.
 | Storage gold | ✅ Supported | Deposit and withdraw gold in the warehouse |
 | Exchange (player trade) | ✅ Supported | The original's exchange: request from the right-click menu, the action window or a selected player, its Accept / Refuse box; the window with up to 12 items and gold a side (drop an item on it, Alt+click, or its gold button); the other side's offer appears when they Confirm, then both Approve; offered items greyed in your bag, the "not in your Guild/Union/Friend" warning; ends on cancel, death, a warp or logging off. On by default (Extra Settings): the larger window private servers show, with both players' portraits, a pulsing red warning behind someone not in your friends or guild, and the exchange's message log -- the original's own controls, which its layout keeps off screen; the compact window when the screen is too small at your UI scale |
 | Player stalls | ✅ Supported | The original's stalls: Stall in the action window, a title, a greeting, up to 10 items from your bag at your own prices (whole stacks), Open / Modify; others see your booth (default or your stall decoration) and the stall's name over you, click to enter (the stall cursor), buy, and chat in the stall window; no tax; up to 7 visitors; closes on death, teleport or logout |
-| Stall network | ❌ Not yet | Search and buy from other players' stalls remotely; needs player stalls first |
+| Stall network | ✅ Supported | The original's Stall Network window (Stall network in the bottom menu, in a town): pick a class, type and degree, search, 15 results a page with Number, Level, Item, Name, Quantity and Price (click a column to sort), select a row to see the seller and whisper them, Purchase with the confirmation box -- the item comes straight to your bag, no walking to the stall; a new search after 10 seconds. Sellers put their stall on the network when they open it in a town (Yes to "Register items with stall network?"); a network sale costs the seller 1% commission (at least 1, at most 100,000 gold) and both sides see who bought what. The menu entry and the question are this client's own disabled parts switched on (OpenSRO add-on) |
 | Consignment | ❌ Not yet | No consignment trading yet |
 | Item mall (silk) | ✅ Supported | The original's in-game Item Mall (F10, after its "Enter Item Mall" warning): categories and sub-tabs, the main page's New / Best / Recommend lists, the HOT shop and the Reserved list, search, badges, buying with Silk, Gift Silk and points, "Buy Item Worn" and Buy All, the Buying list. Hover an item's icon for its full description. The Avatar tab sells the archive's avatars (hats, dresses, attachments). Try avatars on before buying: hats, dresses, flags and pets on a 3D preview you turn with the left mouse button and move with the right. Your Silk balances are kept by the server; GMs can grant them with /silk |
 | Item mall items | ✅ Supported | Everything the mall sells does what its description says. Visual scrolls (wings, horns, crowns, capes, trails) and Godbless wings show on your character for everyone, one look at a time, and survive relog and death; Boots of Speed, speed drugs and damage absorption scrolls; silk scrolls, Lucky Dice and the lottery tickets (a GM draws with /lottery draw); the job, guild and premium removers and the red-stat remover; skill, stat and skill+stat resets and the Skill Leveler; name change at next login; name and title colours; starter packages into the item chest; Pet Level Up; title scrolls and the custom title; the Random Wing Scroll; the gender, avatar, devil-spirit and flag switchers, the weapon type switchers and the model switchers (right-click, then click the item); silk pets, fellow pets, rides and carts; the Clock of Reincarnation and the pet growth potion; devil's and angel's spirits with their plus-level abilities and skills, the Nasrun extension and magic stone; GoldTime PLUS (Gold Time with pause, free return and reverse scroll uses); the repair hammer, storage expansion (twice per account), arrows and bolts that are spent and reloaded, coloured global chatting, the skin change window, Magic POP cards, the special reverse scroll (party member and saved locations) and the EU accessories' absorption. Stall decorations are stored but show once player stalls exist |

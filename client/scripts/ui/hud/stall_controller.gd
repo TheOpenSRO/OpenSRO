@@ -69,9 +69,8 @@ const OPEN_SHIFT := Vector2(0, -60)
 ## The chat module's lines (0x778a10's colour for the state lines, 0xffdbc99b).
 const STATE_LINE_COLOUR := Color8(0xdb, 0xc9, 0x9b)
 const DIM_ALPHA := 128.0 / 255.0
-## The send's net u16 (c:0x6b9940 and the others): 0 outside the stall
-## network.
-const NET := 0
+## Round 840: the send's net u16 (c:0x6b9940 and the others) is 0 off the
+## stall network, else StallNetworkNet.NET_* (`_net_value`).
 
 ## The HudPanels this drives.
 var panels
@@ -84,6 +83,9 @@ var owner_id := -1
 var own := false
 var open := false
 var value4 := 0
+## Round 840: this player's stall is on the stall network (+0x864, set by
+## the type-1001 answer c:0x6b9a20 to the town test).
+var network := false
 var title := ""
 var greeting := ""
 ## slot -> StallNet.Entry.
@@ -163,6 +165,7 @@ func _reset_for_new() -> void:
 	own = true
 	open = false
 	value4 = 0
+	network = false
 	title = ""
 	greeting = ""
 	entries = {}
@@ -290,11 +293,13 @@ func on_updated(d: Dictionary) -> void:
 		return
 	match int(d["type"]):
 		StallNet.UPDATE_PRICE:
+			_net_answer(d)
 			var e: StallNet.Entry = entries.get(int(d["slot"]))
 			if e != null:
 				e.count = int(d["count"])
 				e.price = int(d["price"])
 		StallNet.UPDATE_ADD, StallNet.UPDATE_REMOVE:
+			_net_answer(d)
 			entries = d["entries"]
 			panels.redraw_bag()
 		StallNet.UPDATE_VALUE4:
@@ -304,6 +309,7 @@ func on_updated(d: Dictionary) -> void:
 			# The state line in the window's own chat (c:0x878486..0x8784e0).
 			chat_line("", _text("UIIT_STT_STALL_CONDITION_START" if open else "UIIT_STT_STALL_CONDITION_END", ""),
 				STATE_LINE_COLOUR)
+			_open_net_answer(int(d.get("net", 0)))
 		StallNet.UPDATE_GREETING:
 			greeting = String(d["greeting"])
 		StallNet.UPDATE_RENAME:
@@ -329,11 +335,17 @@ func on_event(d: Dictionary) -> void:
 			var item_name := ""
 			if e != null:
 				item_name = panels.item_name(e.item.ref_item_id)
-			var fmt := _text("UIIT_MSG_STREET_STORE_SELL_COMMODITY", "[%s]bought item [%s].")
-			var line := fmt
-			if fmt.count("%s") == 2:
-				line = fmt % [String(d["buyer"]), item_name]
-			chat_line("", line, Color.WHITE)
+			if int(d.get("kind", 0)) == 4:
+				# Round 840, a stall network sale (c:0x87a435..0x87a5ca): the
+				# purchase line, and the owner's commission line.
+				_network_sale_lines(String(d["buyer"]), item_name, e.price if e != null else 0)
+			else:
+				var fmt := _text("UIIT_MSG_STREET_STORE_SELL_COMMODITY", "[%s]bought item [%s].")
+				var line := fmt
+				if fmt.count("%s") == 2:
+					line = fmt % [String(d["buyer"]), item_name]
+				# 0xffdbc99b, as every 0x778a10 line here (c:0x87a5bd).
+				chat_line("", line, STATE_LINE_COLOUR)
 			entries = d["entries"]
 			if own:
 				panels.refresh_bag_after_exchange()
@@ -378,10 +390,69 @@ func press_close() -> void:
 	else:
 		_net().stall_leave()
 
-## Button 4 (c:0x6b9940).
+## Button 4 (c:0x6b9940): open -> modify {0, net 3 while on the network};
+## modify -> open {1, 0}. Round 840 (OURS, the creator): in a town the
+## type-1001 question goes first, its answer as c:0x6b9a20 sends it.
 func press_state() -> void:
-	if active and own:
-		_net().stall_update(StallNet.encode_open_state(not open, NET))
+	if not active or not own:
+		return
+	if open:
+		_net().stall_update(StallNet.encode_open_state(false, StallNetworkNet.NET_MODIFY if network else 0))
+		return
+	if box_open:
+		return
+	if panels != null and panels.has_method("open_stall_network_question") and panels.stall_network_in_town():
+		box_open = true
+		panels.open_stall_network_question(func(yes: bool) -> void:
+			box_open = false
+			network_answer(yes))
+		return
+	_net().stall_update(StallNet.encode_open_state(true, 0))
+
+## c:0x6b9a20: Yes {1, net 1} and +0x864 = the town test; No {1, 0}, +0x864 0.
+func network_answer(yes: bool) -> void:
+	if not active or not own:
+		return
+	if yes:
+		_net().stall_update(StallNet.encode_open_state(true, StallNetworkNet.NET_REGISTER))
+		network = panels.stall_network_in_town() if panels != null else false
+	else:
+		_net().stall_update(StallNet.encode_open_state(true, 0))
+		network = false
+
+## A send's net u16 while on the network, else 0.
+func _net_value(v: int) -> int:
+	return v if network else 0
+
+## 0xB0BA types 1/2/3: the answer's u16 when it is not one the client takes
+## (c:0x8783f2, 0x878432, 0x878472) shows as a code.
+func _net_answer(d: Dictionary) -> void:
+	var n := int(d.get("net", 0))
+	if not StallNetworkNet.update_net_ok(int(d.get("type", 0)), n):
+		panels.stall_network_code(n)
+
+## 0xB0BA type 5's u16 (c:0x8784e0..0x8785de): 1 "Registering ... is
+## successful." in the window's chat; 0x3c4a, to the owner, the USE_CITY box
+## and its code.
+func _open_net_answer(n: int) -> void:
+	if n == StallNetworkNet.NET_REGISTER:
+		chat_line("", _text("UIIT_MSG_WARENETWORK_REGIST_SUCCESS", ""), STATE_LINE_COLOUR)
+	elif n == StallNetworkNet.CODE_USE_CITY_STALL and own:
+		network = false
+		if panels.has_method("open_stall_network_notice"):
+			panels.open_stall_network_notice(_text("UIIT_MSG_WARENETWORK_USE_CITY", ""))
+		panels.stall_network_code(n)
+
+## 0x30B7 kind 4's lines (c:0x87a435..0x87a5ca): to everyone
+## UIIT_MSG_WARENETWORK_BUY_SUCCESS (buyer, item); to the owner, for a price
+## that is not 0, UIIT_MSG_WARENETWORK_CHARGE with StallNetworkNet.commission.
+func _network_sale_lines(buyer: String, item_name: String, price: int) -> void:
+	var fmt := _text("UIIT_MSG_WARENETWORK_BUY_SUCCESS", "[%s] has purchased [%s] through stall network.")
+	chat_line("", fmt % [buyer, item_name] if fmt.count("%s") == 2 else fmt, STATE_LINE_COLOUR)
+	if own and price != 0:
+		var c := _text("UIIT_MSG_WARENETWORK_CHARGE", "[%s]gold has been paid as commission.")
+		var figure := StallNet.group_digits(StallNetworkNet.commission(price))
+		chat_line("", c % figure if c.count("%s") == 1 else c, STATE_LINE_COLOUR)
 
 ## Button 5 (c:0x6ba8f0).
 func press_title() -> void:
@@ -402,7 +473,7 @@ func press_modify(slot: int) -> void:
 	box_open = true
 	var on_ok := func(count: int, price: int) -> void:
 		box_open = false
-		_net().stall_update(StallNet.encode_price(slot, count, price, NET))
+		_net().stall_update(StallNet.encode_price(slot, count, price, _net_value(StallNetworkNet.NET_PRICE)))
 	var box = panels.open_stall_box(StoreMessageBox.Kind.STALL_PRICE, e.item.ref_item_id, e.count, e.price, on_ok)
 	if box == null:
 		box_open = false
@@ -439,7 +510,7 @@ func drop_from_bag(bag_slot: int, item_id: int, qty: int, at: Vector2) -> String
 	box_open = true
 	var on_ok := func(count: int, price: int) -> void:
 		box_open = false
-		_net().stall_update(StallNet.encode_add(slot, bag_slot, count, price, group, NET))
+		_net().stall_update(StallNet.encode_add(slot, bag_slot, count, price, group, _net_value(StallNetworkNet.NET_ADD)))
 	var box = panels.open_stall_box(StoreMessageBox.Kind.STALL_REGISTER, item_id, qty, 1, on_ok)
 	if box == null:
 		box_open = false
@@ -455,7 +526,7 @@ func slot_to_bag(slot: int) -> String:
 	if own:
 		if open:
 			return "open"
-		_net().stall_update(StallNet.encode_remove(slot, NET))
+		_net().stall_update(StallNet.encode_remove(slot, _net_value(StallNetworkNet.NET_REMOVE)))
 		return "remove"
 	return open_buy_box(slot)
 

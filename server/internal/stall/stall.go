@@ -20,6 +20,7 @@ package stall
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
@@ -59,6 +60,10 @@ type Listing struct {
 	Inst     inventory.Instance
 	Price    int64
 	Group    uint32
+	// Seq (round 840, OURS) is the listing's number, from the hub's counter
+	// (Hub.NextSeq) when it was listed: the stall network shows the newest
+	// listing first and echoes it as the record's u64 (stall_network.md).
+	Seq uint64
 }
 
 // Member is one participant.
@@ -85,6 +90,10 @@ type Stall struct {
 	Selling bool
 	// Decoration is the booth the stall was announced with (0x30B8's u32).
 	Decoration int
+	// Network (round 840) is CIFStall +0x864's server side: the stall is
+	// registered on the stall network (0x70BA type 5 {1, net 1} in a town).
+	// Its listings are searchable while Open (docs/protocol/stall_network.md).
+	Network bool
 }
 
 // Members is the participant vector: the owner, then the visitors in the
@@ -146,6 +155,8 @@ type Hub struct {
 	byOwner map[int64]*Stall
 	// in is each visitor's stall owner.
 	in map[int64]int64
+	// seq numbers the listings (Listing.Seq).
+	seq atomic.Uint64
 }
 
 // NewHub returns an empty hub.
@@ -282,6 +293,27 @@ func (h *Hub) Close(owner int64) (Stall, bool) {
 		delete(h.in, v.CharacterID)
 	}
 	return s.Copy(), true
+}
+
+// NextSeq is the next listing number (Listing.Seq); it never repeats while
+// the hub lives. Safe under or outside the lock.
+func (h *Hub) NextSeq() uint64 { return h.seq.Add(1) }
+
+// Network is a snapshot of every stall the stall network searches: open and
+// registered (round 840).
+func (h *Hub) Network() []Stall {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []Stall
+	for _, s := range h.byOwner {
+		if s.Open && s.Network {
+			out = append(out, s.Copy())
+		}
+	}
+	return out
 }
 
 // All is a snapshot of every open stall (the spawn record and the tests).
