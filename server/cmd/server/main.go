@@ -1033,7 +1033,8 @@ func main() {
 		"path to an AbuseFilter.txt (env OPENSRO_ABUSE_FILTER; round 788): the operator's own -- the copy beside "+
 			"SR_ShardManager.exe, or a client's Media.pk2 server_dep\\silkroad\\textdata\\abusefilter.txt -- never "+
 			"shipped. Its group for -abuse-filter-locale gives the characters a new character or guild name may "+
-			"use and the words it may not contain or be, as SR_ShardManager's 0x40f200 applies them. Without it "+
+			"use and the words it may not contain or be, as SR_ShardManager's 0x40f200 applies them, and (round 840) "+
+			"the words a stall's title may not contain or be (its fourth flag, the client's own test in the original). Without it "+
 			"names are limited to [0-9A-Za-z_] and the compiled-in SQL words, and no word list applies. A "+
 			"configured path that does not load is fatal. See deploy/README.md, \"Name filter\".")
 	abuseFilterLocale := flag.String("abuse-filter-locale", os.Getenv("OPENSRO_ABUSE_FILTER_LOCALE"),
@@ -2167,8 +2168,10 @@ func main() {
 				os.Exit(1)
 			}
 			rows, substr, whole := nf.Counts()
+			stallSubstr, stallWhole := nf.StallCounts()
 			logger.Info("name filter loaded", "path", *abuseFilter, "locale", locale, "group", group,
-				"allow_rows", rows, "substring_words", substr, "whole_words", whole)
+				"allow_rows", rows, "substring_words", substr, "whole_words", whole,
+				"stall_title_substring_words", stallSubstr, "stall_title_whole_words", stallWhole)
 			session.SetNameFilter(nf)
 		} else {
 			logger.Warn("no name filter word list (-abuse-filter / OPENSRO_ABUSE_FILTER): new names are limited to [0-9A-Za-z_] and the SQL words, no AbuseFilter words apply -- see deploy/README.md \"Name filter\"")
@@ -2556,6 +2559,8 @@ func main() {
 	gmDeps.Sessions = session.GMSessions{Hub: hub, Online: loginService.Online}
 	gmDeps.Punishments, _ = accounts.(account.PunishmentStore)
 	gmDeps.AccountLookup, _ = accounts.(account.AccountLookup)
+	// Round 840: the chat and trade bans (types 4 and 3) answer 0x3405.
+	session.SetRestrictionStore(gmDeps.Punishments)
 	// Where a new character's defaults go (round 692): both stores, memory
 	// and SQL, take them.
 	defaultSkills, _ := skills.(session.CharDefaultSkills)

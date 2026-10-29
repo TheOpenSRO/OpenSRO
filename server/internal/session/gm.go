@@ -163,6 +163,10 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 	if deps.Lottery == nil {
 		deps.Lottery = gmLottery{hub: hub}
 	}
+	// Round 840: the chat and trade bans' cache, the quest block.
+	if deps.Restrictions == nil {
+		deps.Restrictions = gmRestrictions{hub: hub}
+	}
 	// Round 788: /block refuses a GM's account; /ban kicks from the world.
 	if deps.IsGMAccount == nil {
 		deps.IsGMAccount = gate.Allows

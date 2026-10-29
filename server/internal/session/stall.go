@@ -27,10 +27,12 @@ package session
 //
 // OURS, disclosed:
 //
-//   - The restriction slots (FUN_004f0a00: the trade ban 0x3405, the chat ban
-//     that renames a stall), the quest block 0x200 (0x3c32 / 0x3c33), the
-//     murderer state (0x3c39) and the battle arena / flag world refusal have
-//     no OpenSRO state and are not made.
+//   - Round 840 (lane B, restriction.go): the trade ban 0x3405, the quest
+//     block 0x200 (0x3c32 / 0x3c33) and the chat ban's name are made; the
+//     murderer state (0x3c39, stallMurderer) and the battle arena / flag
+//     world (0x3c16, stallWorldRefuses) are hooks that answer no until
+//     OpenSRO has open-world PvP and those worlds. The title's word filter
+//     (0x3c38), the client's alone in the original, is run here too.
 //   - The sale is one transaction (txn.For(...).Run with a ledger claim, as
 //     the exchange's): the item, both golds and the sale row commit together
 //     or not at all. Retail moves them in memory first and queues the DB job;
@@ -142,7 +144,11 @@ const (
 	StallErrDB            uint16 = 0x3c2f
 	StallErrNoFreeSlot    uint16 = 0x3c30
 	StallErrOpenValue     uint16 = 0x3c31
+	StallErrQuestOpen     uint16 = 0x3c32 // the quest block at the open
+	StallErrQuestEnter    uint16 = 0x3c33 // the quest block at the enter
 	StallErrRiding        uint16 = 0x3c34 // CANT_OPEN_MARKET_IN_RIDESTATE
+	StallErrTitleFilter   uint16 = 0x3c38 // NOT_ALLOWED_FMARKETNAME (the client's own; OURS from the server)
+	StallErrMurderer      uint16 = 0x3c39 // CANT_OPEN_MARKET_MURDERER
 	StallErrPetOut        uint16 = 0x3c3a
 	StallErrJob           uint16 = 0x3c3b // UIIT_MSG_FREEMARKET_NOTUSE_JOB
 	StallErrNoGroup       uint16 = 0x3c3c
@@ -330,7 +336,7 @@ func stallOf(characterID int64) (string, uint32, bool) {
 // alive, INTERACTMODE 0 and GROUPMODE neither PARTY_SETUP nor
 // SOLOPARTY_SETUP -- OpenSRO's pending party invitation.
 func (d *StallDeps) worldBusy(e world.Entity) bool {
-	if e.Life != world.LifeAlive || d.Stalls.StallOf(e.CharacterID) != 0 {
+	if e.Life != world.LifeAlive || d.Stalls.StallOf(e.CharacterID) != 0 || stallWorldRefuses(e) {
 		return true
 	}
 	if d.Trades.Busy(e.CharacterID) || npcTalkOpen(e.Session.ID()) {
@@ -353,12 +359,22 @@ func (d *StallDeps) open(ctx context.Context, sess *gateway.Session, data []byte
 		fail(StallErrName)
 		return
 	}
+	// Round 840: the trade ban answers 0x3405 and no 0xB0B1 (s:0x515f21).
+	if restricted(ctx, sess, RestrictTrade) {
+		return
+	}
 	switch {
+	case questBlocked(me.CharacterID, QuestBlockStall):
+		fail(StallErrQuestOpen)
+		return
 	case d.worldBusy(me):
 		fail(StallErrBusy)
 		return
 	case riderMount(me.CharacterID) != nil:
 		fail(StallErrRiding)
+		return
+	case stallMurderer(me):
+		fail(StallErrMurderer)
 		return
 	case inJobMode(ctx, me.CharacterID):
 		fail(StallErrJob)
@@ -382,6 +398,15 @@ func (d *StallDeps) open(ctx context.Context, sess *gateway.Session, data []byte
 	if len(name) == 0 || len(name) > stall.MaxText {
 		fail(StallErrName)
 		return
+	}
+	if stallTitleRefused(name) {
+		fail(StallErrTitleFilter)
+		return
+	}
+	// A chat-banned owner's stall takes its name and a suffix (s:0x471db6),
+	// and the owner is told the ban (0x3405 {0}).
+	if restricted(ctx, sess, RestrictChat) {
+		name = chatBannedStallName(me.Name)
 	}
 	deco := StallDecorationOf(ctx, d.Chars, me.CharacterID)
 	if _, err := d.Stalls.Open(stall.Member{CharacterID: me.CharacterID, Session: sess, Name: me.Name}, name, deco); err != nil {
@@ -449,6 +474,7 @@ func StallDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
 		if e, ok := hub.EntityBySession(sess.ID()); ok {
 			stallEnd(e.CharacterID, StallErrHostLeft)
+			questBlockReset(e.CharacterID)
 		}
 	}
 }
@@ -462,6 +488,14 @@ func (d *StallDeps) enter(ctx context.Context, sess *gateway.Session, data []byt
 		return
 	}
 	fail := func(code uint16) { sendStall(sess, OpStallEnterResult, stallResult(code)) }
+	// Round 840: the trade ban (0x3405, no 0xB0B3), then the quest block.
+	if restricted(ctx, sess, RestrictTrade) {
+		return
+	}
+	if questBlocked(me.CharacterID, QuestBlockStall) {
+		fail(StallErrQuestEnter)
+		return
+	}
 	if d.worldBusy(me) {
 		fail(StallErrBusy)
 		return
@@ -710,6 +744,9 @@ func (d *StallDeps) applyUpdate(ctx context.Context, s *stall.Stall, kind byte, 
 		}
 		if len(name) == 0 || len(name) > stall.MaxText {
 			return StallErrName, nil
+		}
+		if stallTitleRefused(name) {
+			return StallErrTitleFilter, nil
 		}
 		s.Name = name
 		return 1, ok

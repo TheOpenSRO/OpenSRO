@@ -64,7 +64,7 @@ func Load(data []byte, group int) (*Filter, error) {
 	}
 	text := encodeCP1252(utf16.Decode(units))
 
-	f := &Filter{group: group, whole: map[string]struct{}{}}
+	f := &Filter{group: group, whole: map[string]struct{}{}, stallWhole: map[string]struct{}{}}
 	skip := 0
 	if group >= 0 && group < Groups {
 		skip = 6 * group
@@ -100,6 +100,17 @@ func Load(data []byte, group int) (*Filter, error) {
 			f.whole[cell] = struct{}{}
 		case 2:
 			f.substr = append(f.substr, cell)
+		}
+		// Round 840: f4, the stall title's flag. The loader reads all four
+		// flags in order (READ s:0x987cb0 / c:0x8c4a10: f4 1 -> the set at
+		// +0x20c0, 2 -> the list at +0x203c); f2 and f3 are read past.
+		c.readInt()
+		c.readInt()
+		switch c.readInt() {
+		case 1:
+			f.stallWhole[cell] = struct{}{}
+		case 2:
+			f.stallSubstr = append(f.stallSubstr, cell)
 		}
 	}
 	// The loader zeroed the table, set a bit per allowed code, and inverts it

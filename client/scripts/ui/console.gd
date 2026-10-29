@@ -22,7 +22,7 @@ const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wi
 ## server (which refuses a non-GM). Mirrors server/internal/gm's dispatcher.
 ## server/internal/gm's TestConsoleListsEveryCommand keeps the two in step
 ## (round 837: /silk and eight older commands were missing here).
-const GM_COMMANDS := ["tp", "goto", "give", "item", "avatar", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "hwan", "notice", "invsize", "speed", "hurt", "afflict", "hour", "ban", "block", "unblock", "blockinfo", "jobexp", "jobweek", "guildlevel", "silk", "lottery"]
+const GM_COMMANDS := ["tp", "goto", "give", "item", "avatar", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "hwan", "notice", "invsize", "speed", "hurt", "afflict", "hour", "ban", "block", "unblock", "blockinfo", "chatban", "unchatban", "tradeban", "untradeban", "questblock", "jobexp", "jobweek", "guildlevel", "silk", "lottery"]
 
 ## Set from the server's GM probe reply; decides whether help shows the GM
 ## line and its window shows the GM section.
@@ -149,7 +149,7 @@ func help_line() -> String:
 
 ## The GM one-liner, shown to a GM in chat on enter-world and in the tooltip.
 func gm_help_line() -> String:
-	return "GM tools: /tp /give /item /avatar /level /spawn /spawnunique /heal /gold /silk /durability /sp /kill /damage /goto /hwan /notice /invsize /speed /hurt /afflict /hour /ban /block /unblock /blockinfo /jobexp /jobweek /guildlevel -- type /help"
+	return "GM tools: /tp /give /item /avatar /level /spawn /spawnunique /heal /gold /silk /durability /sp /kill /damage /goto /hwan /notice /invsize /speed /hurt /afflict /hour /ban /block /unblock /blockinfo /chatban /tradeban /jobexp /jobweek /guildlevel -- type /help"
 
 func _whisper(args: PackedStringArray) -> void:
 	if args.size() < 2:

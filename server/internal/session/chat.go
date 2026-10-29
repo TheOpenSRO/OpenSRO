@@ -295,6 +295,11 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 	if !ok {
 		return nil
 	}
+	// Round 840: a chat-banned player's every line is dropped with 0x3405
+	// {0, end} and no result (s:0x4b17ce, before the type is read).
+	if restricted(ctx, sess, RestrictChat) {
+		return nil
+	}
 	fail := func(code uint16, target string) error {
 		return sendChatResult(sess, &ChatResult{Type: req.Type, Index: req.Index, Code: code, Target: target})
 	}
@@ -428,6 +433,12 @@ func handleChatGlobal(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	}
 	sender, ok := d.Hub.EntityBySession(sess.ID())
 	if !ok {
+		return nil
+	}
+	// Round 840: the global chatting item under a chat ban: 0x3405 {0, end},
+	// nothing used (CGItemExpendable::vslot_307 case 5, s:0x49c0f2; retail's
+	// item-use answer 2 has no counterpart on OpenSRO's global opcode).
+	if restricted(ctx, sess, RestrictChat) {
 		return nil
 	}
 	fail := func(code uint16) error {
