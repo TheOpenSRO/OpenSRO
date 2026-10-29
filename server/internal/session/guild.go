@@ -737,7 +737,13 @@ func handleGuildLeave(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{Reason: errStr}).Encode()})
 	}
 
-	if _, _, err := guilds.Leave(ctx, characterID); err != nil {
+	var unionBefore *guild.Union
+	var was *guild.Guild
+	if g, gerr := guilds.GetByCharacter(ctx, characterID); gerr == nil {
+		unionBefore, was = unionBeforeDisband(ctx, g.ID), g
+	}
+	gid, left, err := guilds.Leave(ctx, characterID)
+	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{Reason: guildErrorMessage(err)}).Encode()})
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{OK: true}).Encode()}); err != nil {
@@ -745,6 +751,11 @@ func handleGuildLeave(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	}
 	// Round 814: the line goes (OURS: the original's removal path is OPEN).
 	refreshGuildPlate(hub, characterID, nil)
+	if left == nil && unionBefore != nil {
+		// Round 842: the last member's leave deleted the guild, and the
+		// store freed its union slot: the union is told.
+		unionLeft(ctx, unionBefore, gid, guild.UnionOutLeft, was)
+	}
 	return nil
 }
 

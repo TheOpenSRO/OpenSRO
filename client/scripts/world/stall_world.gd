@@ -128,6 +128,14 @@ func apply(uid: int, node: Node3D, race: int, top: float) -> void:
 	# the guild line is placed (World3D._layout_guild_line).
 	var name_plate := node.get_node_or_null("Name") as Label3D
 	title.offset.y = (name_plate.offset.y if name_plate != null else 0.0) + TITLE_RAISE_PX * world._plate_fk(title)
+	# Round 842: the title's own box follows it up (and its new text's width).
+	# It was fitted when the title was made, at the name's line, and stayed
+	# there: the title's box, as wide as the title, sat behind the name, so
+	# the name's box seemed to widen when a stall opened. The original's
+	# title item carries its own box where the item is drawn (c:0x9c89ca ->
+	# FUN_008b3bd0, the 0x40000000 box; drawn at the title's point,
+	# FUN_009d0a80 c:0x9d0d4d..0x9d0d78).
+	world._fit_monster_name_box(title)
 	print("STALL: %d's title '%s' %.1f plate px over its name (%s)" % [uid, text,
 		(title.offset.y - (name_plate.offset.y if name_plate != null else 0.0)) / world._plate_fk(title),
 		"name plate found" if name_plate != null else "no name plate"])

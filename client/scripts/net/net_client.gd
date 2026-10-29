@@ -2470,7 +2470,7 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 		"trade_rank": rec.trade_rank}
 	# Round 814: its guild line as the record carries it.
 	user_guilds[rec.uid] = {"guild_id": rec.guild_id, "guild_name": rec.guild_name, "nickname": rec.nickname, "name": rec.name,
-		"crest_rev": rec.crest_rev}
+		"crest_rev": rec.crest_rev, "union_id": rec.union_id}
 	# Round 838: its title as the record carries it (slot 27 -> FUN_009ca930).
 	titles.note_level(rec.uid, rec.hwan_level, false)
 	crest_cache.note_guild(rec.guild_name, rec.guild_id, rec.crest_rev)
@@ -2519,7 +2519,7 @@ func _guild_line_update(d: Dictionary) -> void:
 		return
 	var uid := int(d["uid"])
 	var line := {"guild_id": int(d["guild_id"]), "guild_name": String(d["guild_name"]), "nickname": String(d["nickname"]),
-		"crest_rev": int(d.get("crest_rev", 0))}
+		"crest_rev": int(d.get("crest_rev", 0)), "union_id": int(d.get("union_id", 0))}
 	crest_cache.note_guild(String(d["guild_name"]), int(d["guild_id"]), int(d.get("crest_rev", 0)))
 	if own_character_id >= 0 and uid == (own_character_id & 0xffffffff):
 		own_guild_line = line

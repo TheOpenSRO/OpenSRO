@@ -83,6 +83,10 @@ class Record:
 	## Round 824: the guild's crest revision (the guild block's first u32
 	## after the grant name; GlobalDataManager::FUN_009ddc40 0x9de0fe).
 	var crest_rev := 0
+	## Round 842: the union's id and crest revision (the block's next two
+	## u32, handed to the crest cache 0x9a4780 with the guild's); 0 none.
+	var union_id := 0
+	var union_crest_rev := 0
 	## Round 839: the interaction byte (+0x471, c:0x9ddee9) and, when it is 4,
 	## the stall block after the guild block (c:0x9de103..0x9de1bd): the
 	## stall's name (kept as "[name]" at +0x798) and its booth (+0x790).
@@ -247,7 +251,9 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 		rec.guild_id = r.u32()
 		rec.nickname = r.bytes(r.u16()).get_string_from_utf8()
 		rec.crest_rev = r.u32()
-		r.bytes(8) # union id, union crest revision (no unions in OpenSRO)
+		# Round 842: the union's id and crest revision.
+		rec.union_id = r.u32()
+		rec.union_crest_rev = r.u32()
 		r.u8() # membership
 		r.u8() # fortress role
 	rec.interact = interact

@@ -78,6 +78,9 @@ func sendGuildBlock(ctx context.Context, sess *gateway.Session, g *guild.Guild) 
 	for _, p := range guildBlockPackets(ctx, g) {
 		_ = sess.Send(p)
 	}
+	// Round 842: and its union (0x3102), which the client colours union
+	// members' guild lines by.
+	sendUnionInfo(ctx, sess, g)
 }
 
 // sendOwnGuildBlock is the world entry's: characterID's guild, if any.

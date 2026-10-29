@@ -163,6 +163,10 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 	if deps.Lottery == nil {
 		deps.Lottery = gmLottery{hub: hub}
 	}
+	// Round 842: /union (a test tool).
+	if deps.Unions == nil {
+		deps.Unions = UnionCommands{}
+	}
 	// Round 840: the chat and trade bans' cache, the quest block.
 	if deps.Restrictions == nil {
 		deps.Restrictions = gmRestrictions{hub: hub}

@@ -50,15 +50,45 @@ CICUser slot 15, event 4 (`GlobalDataManager::FUN_009dea30`, asm 0x9df082..0x9df
   - That makes it ride a mount with the name (round 811's `FUN_009d0a80` mount path).
   - MEASURED in the user's 2x private-server screenshot: 40 px apart, both centred near x = 270.
 - **Crests.** They are drawn left of it (`+0x34`, `+0x38`). OPEN: OpenSRO has no crests.
-- **Colour.**
-  - The own character (an exact CICPlayer, `FUN_009dc460` at 0x9dc4d4): **0xfffead2e** = (254, 173, 46),
-    orange.
-  - Everyone else (`FUN_009a4f40`):
-    - **0xffa0fe68** (green) if the guild name is in the list at manager `+0x98` (`FUN_00996d60`);
-    - else **0xffff0000** (red) if it is in the list at `+0xa4` (`FUN_00992a90`);
-    - else **0xff66b9ff** = (102, 185, 255), light blue.
-  - INFERRED: the two lists are allied guilds and war enemies. OpenSRO forms neither (`guild/alliance.go`
-    and `guild/war.go` hold rules only), so green and red are OPEN; OpenSRO uses light blue.
+- **Colour (round 842, all READ unless marked; earlier rounds read only the constants).**
+  - **One plate item per guild name.** The guild manager 0xeeef70 keeps a refcounted entry per guild
+    NAME (a map at `+8`, looked up by `FUN_009a4090`); `FUN_009a4f40` makes it once (its plate item
+    `FUN_008b4f30` at entry `+0x20`, the guild id at `+0x30`) or returns the existing one with its count
+    raised; `FUN_009a4650` releases it. Every character's line (CICUser `+0x7c4`) is that entry.
+  - **At its making** (`FUN_009a4f40`, 0x9a5045..0x9a5084, ecx 0xeeebd8 = CharacterDependentData):
+    **0xffa0fe68** (160, 254, 104) when the guild name is in the union map (`FUN_00996d60`: CDD+0x148
+    = `FUN_009870d0`, map `+0x94`, size `+0x9c`; the asserts "!IsAllianceGuild(dwGuildID)" in
+    `CharacterDependentData::FUN_00999120`, its adder), else **0xffff0000** when it is in the hostile list
+    (`FUN_00992a90`, the list at `+0xa4`; "!IsHostileGuild(sGuildWarDef.dwGuildWarID)" in `FUN_00999260`,
+    its adder, filled by 0x3109 `FUN_0087fd90 -> FUN_0099ab20`), else **0xff66b9ff** (102, 185, 255).
+  - **The own player** (`FUN_009dc460`, its class tested exact by `FUN_00b94b70(0xef1b44)` at 0x9dc4c2):
+    `mov ecx,[eax+0x20]; push 0xfffead2e; call 0x8b2b70` (0x9dc4cb..0x9dc4d9) -- its ENTRY's item is
+    recoloured **0xfffead2e** (254, 173, 46). The entry is shared, so **every member of the player's guild
+    shows orange like the player** (the user's report, 2026-10-29: Tobi, in Pain's OFWS, showed blue).
+  - **Recolouring** (`FUN_009a4450`): every entry by the two lists again, then the own player's entry
+    (0xeef5ec -> `FUN_009db0f0`) orange (0x9a44d4). Called after 0x3102 (`FUN_0087fd00`, which then
+    makes the own line again), 0x3109 (`FUN_0087fd90`), the guild block 0x34B4 (0x885794) and 0x38F5
+    types 2, 3, 0x0d, 0x12, 0x19, 0x1c, 0x23 (`FUN_00887330`; the byte table 0x888b00 and jump table
+    0x888ab4 give the cases at 0x8874ac, 0x88773e, 0x887ae9, 0x887e3b, 0x88812e, 0x88853b, 0x8889c5).
+  - **No pet plate takes it.** `FUN_009a4f40`'s callers are `CICATStruct::vslot_025` (fortress
+    structures), `CICGuard::vslot_025`, `FUN_007891f0` and `FUN_009dc460` -- no COS.
+  - **The union record** (READ c:/s:): 0x3102 = u32 the union's id (alliance +0x18; CDD+0x248), u32
+    its crest revision (alliance +0x40; CDD+0x244), u32 slot 0's guild (s:0x5b9260, INFERRED the leader;
+    CDD+0x240), u8 count (s:0x5b9240), then per guild (s:0x5d0bc0 with flags 0xff, s:0x5b8f5e) u32 id,
+    str name, u8 level, str master, u32 (the master object's +0x80, INFERRED its RefObjID), u8 (the guild
+    +0x24, INFERRED its member count); sent to each member guild's local members (s:0x5c4550). 0x38F5
+    type 0x0d adds one entry (`FUN_00580650`, `UIIT_MSG_GUILD_ALLY_JOIN_RESULT`); type 0x12 = u8 how
+    (1 left `_ALLY_EXIT_RESULT`, 2 expelled `_RESPECT_ALLY_EXPEL_RESULT`, both + u32 guild; 3 broken
+    `UIIT_MSG_QUESTION_GUILD_RESPECT_ALLY_BREAKUP`): the whole union is cleared (0x580630) when the guild
+    is the own one (0x4e9530 on the names), when the map held fewer than two (0x988a60 < 2) or for 3,
+    else that guild alone (0x580720).
+  - **OpenSRO** builds all of it (`GuildLineColour`, `UnionData`, `World3D._recolour_guild_lines`; the
+    server's `guild/union.go`, `session/union.go`): unions in both stores (`guild_unions`,
+    `guild_union_members`), 0x3102 with the guild block and to the union on a join, 0x38F5 0x0d / 0x12,
+    the union id in the spawn and 0x30FF. OURS: the union is formed and left by the GM's `/union` only
+    (the original's request flow, 0x70FB..0x70FD with the NPC, is not built); a 0x3102 replaces the
+    client's record and an empty one clears it; a union under two guilds is dissolved by the server
+    (INFERRED from the client's < 2 rule). Red stays unfed: OpenSRO has no guild wars (OPEN).
 
 ## The grant name (READ, server unless marked)
 
@@ -126,7 +156,9 @@ CICUser slot 15, event 4 (`GlobalDataManager::FUN_009dea30`, asm 0x9df082..0x9df
 
 ## OPEN
 
-- Green and red lines (alliances, wars), crests, fortress roles and their `(role)` suffix.
+- Red lines (wars: no OpenSRO wars), the union's own request flow and window, fortress roles and their `(role)` suffix.
+- Whether the original keeps a former guild's lines orange after the player leaves it (the own entry
+  pointer is not seen cleared on 0x38F5 type 3; OpenSRO recolours them when the own line drops).
 - The display option, and how the original drops a line.
 - The membership byte's meaning, and `0x4c51`'s text.
 - Member rows in the guild window.
