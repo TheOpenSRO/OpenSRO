@@ -252,6 +252,32 @@ var renders_requested := 0
 ## SubViewport and leave it false.
 var glow_world_present := false
 
+## Round 841 (lane X): a picture whose body PLAYS its clip, every frame, as
+## CIFExchange's two busts do. Off for the player block's face (retail renders
+## that once per dress, in ANI_POSE).
+## READ, sro_client.exe:
+## - the bust's clone is set up once per exchange (0x7b3180, from 0xB081's
+##   success c:0x880330 and 0x3080's accept c:0x88aa60) -> 0x7b2a20: the clone
+##   dressed from the body (0xa61c30), type 0 played on it with no fade, speed
+##   1.0, weight 1.0 (CCObjCharacter slot 3 0xa5faf0 `(0, 0, 0, 0, 1.0, 1.0)`
+##   -> 0xa5b550), then stepped 1 ms (its object's vt+0x38 `(1, 1, 0.0)`);
+## - CIFExchange::vslot_012 (0x7b2210, the window tick CGWndBase 0xb92070 runs
+##   for every shown window each frame) steps both clones by the frame's
+##   milliseconds (0xa5ac80 -> vt+0x38 with the int at 0x110f7f8: at least 1,
+##   at most 3000, c:0xba40fb / 0x84c349), and vslot_015 (0x7b21b0) renders
+##   both every frame (0x4ffc50);
+## - the clip loops or plays once as its `.ban`'s IsCyclic says (the mixer,
+##   docs/protocol/animation_mixer.md); a stand clip is cyclic.
+## Nothing else touches the clones (+0x33e4 / +0x3588: the constructor, the
+## destructor, the tick, the render and the set-up are every reference), so
+## the body's own actions or a change of dress do not reach a bust.
+var animate := false
+var _clip: BanReader.ParsedAnimation
+## The clip's clock, in milliseconds since the set-up.
+var clip_ms := 0.0
+## Frames the clip was posed and rendered since the set-up (QA, the test).
+var clip_frames := 0
+
 func _init() -> void:
 	size = Vector2i(BUFFER_SIZE, BUFFER_SIZE)
 	own_world_3d = true
@@ -304,6 +330,11 @@ func set_character(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> voi
 	_character = skeleton
 	if skeleton == null:
 		return
+	# Round 841: an animated picture's clip starts again with each body (the
+	# set-up's play and its 1 ms step, READ above).
+	_clip = pose if animate else null
+	clip_ms = 1.0
+	clip_frames = 0
 	if skeleton.get_parent() != null:
 		skeleton.get_parent().remove_child(skeleton)
 	# Height stays (round 689's review, READ): the equipment page's avatar this
@@ -349,6 +380,32 @@ func set_transparent(on: bool) -> void:
 func request_render() -> void:
 	renders_requested += 1
 	render_target_update_mode = SubViewport.UPDATE_ONCE
+
+## Round 841: an animated picture steps its clip by the frame's milliseconds
+## (READ: at least 1, at most 3000) and renders, while its picture shows. A
+## one-shot clip past its end holds its last pose and is not drawn again.
+func _process(delta: float) -> void:
+	if _clip == null or _character == null or not is_instance_valid(_character):
+		return
+	var shown := get_parent() as CanvasItem
+	if shown != null and not shown.is_visible_in_tree():
+		return
+	if not _clip.cyclic and clip_ms >= float(_clip.duration_ms):
+		return
+	step_clip(clampf(delta * 1000.0, 1.0, 3000.0))
+
+## Advances the clip by `ms` and renders the new pose on this frame.
+func step_clip(ms: float) -> void:
+	if _clip == null or _character == null or not is_instance_valid(_character):
+		return
+	clip_ms += ms
+	Skeleton3DBuilder.apply_ban_pose_at(_character, _clip, clip_ms / 1000.0, _clip.cyclic)
+	clip_frames += 1
+	render_target_update_mode = SubViewport.UPDATE_ONCE
+
+## The clip the picture plays (null: a still picture).
+func clip() -> BanReader.ParsedAnimation:
+	return _clip
 
 func character() -> Skeleton3D:
 	return _character

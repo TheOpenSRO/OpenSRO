@@ -7554,6 +7554,121 @@ above); refreshing them on Apply would be OURS. At UI scale 1.5 on a 1280x720 sc
 the extra quick-slot bars as saved on the box lay over the underbar's MENU button and took the click
 (MEASURED: `ExtQuickSlot1/ExtSlot54`); F still opens the window, and the bars can be moved.
 
+## Eight-hundred-and-forty-first round, lane X: the exchange portraits' motion
+
+The user: "Also I think the exchange window character portraits are supposed to be animated. Verify
+that." They are: retail's two busts breathe in their stand clip for as long as the window is open.
+Ours (round 836) posed the clip's first key and rendered once.
+
+**What the original does (READ, sro_client.exe).**
+- **Set-up, once per exchange.** `0x7b3180` stores the partner (`+0x372c`) and calls `0x7b2a20`; its
+  two callers are `0xB081`'s success (`c:0x880330`) and `0x3080`'s accept (`c:0x88aa60`). For each
+  side, `0x7b2a20`:
+  - dresses the clone, a `CCObjCharacter` embedded at `+0x33e4` (own) / `+0x3588` (partner), from the
+    body (`0xa61c30` -> `0xa619e0`: the body's model and equipment lists into `InstallEquipVisual`,
+    then its slot 8 `0xa61c60`: the animation group, the equipment visuals, one step);
+  - plays type 0 on it: slot 3 (`0xa5faf0`, vtable `0xde5fd8`) with `(0, 0, 0, 0, 1.0, 1.0)` ->
+    `0xa5b550`: the group's type-0 clip, no fade, speed 1.0, weight 1.0;
+  - reads `Bip01 Head` (`0xa5ace0`), moves the model (`0xa5a880`), and steps the clip 1 ms (the
+    object at `+0x33e8` / `+0x358c`, its vt+0x38 `(1, 1, 0.0)`).
+- **Every frame.** CIFExchange's vtable (`0xdbce4c`) slot 12 is `0x7b2210`: `0xa5ac80(1, 0.0)` on
+  both clones, which is vt+0x38 with the int at `0x110f7f8`. That int is the frame's milliseconds,
+  written at `0xba4106` and clamped to 3000 (`0xba410d`), set to 1 when 0 (`0x84c349`). Slot 12 is
+  the window tick: the main frame's tick runs `CGWndBase::vslot_012` (`0xb92070`), which recurses
+  into every shown child at `0xb923f0` (READ earlier, the quick-slot key numbers' entry). Slot 15
+  is `0x7b21b0`: both clones are rendered into their rects through `0x4ffc50`, with no dirty flag.
+  That it runs every draw is INFERRED from its place beside slot 14 (CGWnd's child draw
+  `0xba0300`). The character window's doll (`CIFEquipment::vslot_012` `0x6ab6b0`), the item mall's
+  preview (`0x7bd0f0`) and the race view are stepped by the same call.
+- **The clip.** Type 0 is the stand, looked up in the clone's own weapon group, then `default`.
+  Whether it loops is decided by its `.ban` IsCyclic (the mixer, `animation_mixer.md`), not by the
+  caller. MEASURED live: `chinaman_fighter_standcity`, 2333 ms, cyclic.
+- **What does not reach a bust.** The partner sitting, emoting or walking: the clone is a separate
+  object playing its own type 0. A change of dress: the clone is dressed only at set-up. Every
+  reference to `+0x33e4..` / `+0x3588..` in the disassembly is one of these: the constructor
+  (`0x7b2074` / `0x7b2085`), the destructor (`0x7b2128` / `0x7b213b`), the render, the tick and the
+  set-up. Item moves are refused during an exchange anyway (`0x1834`, round 834).
+- **The other portraits.** The player block's face is rendered once per dress, in ANI_POSE stepped
+  once (`FUN_007b7740`, `player_mini_info.md`). It is not animated, and it is unchanged here. The
+  character window's doll is stepped every frame, as ours has been since round 144.
+
+**Ours, before (MEASURED).** Live, client and partybot. The bot asks; the client accepts with a real
+click on the box's Accept. Frames were then taken every 5 ticks from tick 400 to 1990 (318 pairs,
+26.5 s of game time). The busts' rects are (707,182) and (707,326), each 96 x 100, and the face's is
+(19,14) 48 x 48.
+- The own bust changed in **0 of 318** pairs.
+- The partner bust changed in 236, all from the red stranger pulse behind it. At one pulse phase,
+  frames 1000 and 1054 are identical in both busts (max 0).
+- `xbust`: no clip; `Bip01 Spine1` was (0, -0.0741, 0, 0.9973) at every tick from 175 to 1975.
+
+**Changed.**
+- `PlayerPortrait.animate` (off by default) is on for the exchange's two busts only
+  (`HudPanels._install_exchange_extras`).
+- A new body starts the clip at 1 ms. While the picture shows, `_process` adds the frame's
+  milliseconds, clamped to 1..3000 as `0x110f7f8` is, and poses with the clip's own IsCyclic. It
+  renders that frame (`UPDATE_ONCE`).
+- A hidden window steps nothing. A one-shot clip holds its last pose and is not drawn again.
+- The player block's face does not set it: one render per dress, as before.
+- QA steps:
+  - `xans:c<1|0>`: a real click on the request box's Accept or Refuse;
+  - `xbust`: each bust's clip, clock, `Bip01 Spine1` and head pose and screen rect, and the face's
+    rect.
+
+**After (MEASURED, the same run).**
+- The own bust changed in **318 of 318** pairs; the partner bust in 318.
+- `xbust`: `chinaman_fighter_standcity` 2333 ms cyclic. The clock goes 234.3 / 567.7 / 901.0 /
+  1234.3 ms at ticks 315 / 335 / 355 / 375 (20 ticks = 333.3 ms of game time) and reaches 27901.0 ms
+  at tick 1975 (11.96 loops). The spine moves every sample.
+- Frames 1000 and 1054 (the same pulse phase):
+  - own bust mean 4.80, 13.0 % of pixels off by more than 8;
+  - partner bust mean 4.47, 12.9 %;
+  - the window outside both portrait boxes mean 0.01 (0.01 %, the same as the before run's pair);
+  - the face mean 0.53, max 4 (the same as before).
+- Regression check, frame 1990 before against after:
+  - the face max 1;
+  - the window outside the busts max 1.
+
+  The face drifts by up to 94 between ticks 400 and 1990 in both runs alike (before 15.07 mean, after
+  14.16). That is not this change, and it was not looked into.
+
+**Evidence** (box, `/var/tmp/r841x/keep`): the window crops `before_win_1000/1054.png` and
+`after_win_1000/1054.png`, with `win_montage.png` holding all four; the HUD corners
+`*_hud_1990.png`; the full frames at 1000; the `QA BUST` / `QA SOCIAL` lines (`*_qa.log`); the bot
+logs. The recipe is `/var/tmp/r841x/run841.sh` + `qa841.sh`. The before build is this branch less
+the one `animate` line (`/opt/opensro-client-r841x-before`).
+
+**Tests.**
+- `exchange_bust841_test` (synthetic skeleton and clip) checks that:
+  - the clip advances each frame and the pose moves;
+  - a step adds the frame's ms and renders;
+  - a cyclic clip loops at its length;
+  - a hidden bust is not stepped;
+  - a new body starts again;
+  - a one-shot holds;
+  - the player block's face holds its pose with one render per dress.
+- `exchange834_test`: both busts are animated.
+- `check` ALL LOAD (1033 scripts); `tests` 388 suites, 0 failing; `go test ./...` passes.
+
+**Perf gate** (`--base ff0ec68e --head 08f1fd95 --sites jangan`): SAME on every number
+(`--frames 30000`: at ~0.9 ms a frame the default 3000 frames ended a run before the gate's ten
+fps samples, "missing numbers"; overlapped runs repeated):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.91 | 0.91 | SAME |
+| entry ms | 9154 | 8829 | SAME |
+| freeze ms | 2867 | 2795 | SAME |
+| hitches | 4 | 5 | SAME |
+
+The gate's view opens no exchange; the busts cost only while the window is open (two 96 x 100
+renders a frame).
+
+**OPEN.**
+- The clone's camera (`+0x33e8`'s FOV) is still unread; the framing stays round 836's (OURS).
+- During the first QA runs the request box stayed up after the 30 s timeout's "Trade request is
+  automatically canceled" line (frame 399 of an unkept run). Whether retail closes it there was not
+  checked. Not this lane's.
+
 ## Eight-hundred-and-fortieth round, lane N: the stall network
 
 The user's ask for round 840: finish round 839's open stall items. This lane: retail's Stall Network,
