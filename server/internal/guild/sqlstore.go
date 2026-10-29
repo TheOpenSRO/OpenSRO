@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS guild_penalties (
 -- crest_rev is CurCrestRev). NULL / 0 for none.
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS crest BYTEA;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS crest_last_rev BIGINT NOT NULL DEFAULT 0;
+-- Unions (round 842): the alliance and its fixed slots (MaxAllianceGuilds);
+-- a guild deleted frees its slot.
+CREATE TABLE IF NOT EXISTS guild_unions (
+	id        BIGSERIAL PRIMARY KEY,
+	crest_rev BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS guild_union_members (
+	union_id BIGINT NOT NULL REFERENCES guild_unions(id) ON DELETE CASCADE,
+	guild_id BIGINT NOT NULL UNIQUE REFERENCES guilds(id) ON DELETE CASCADE,
+	slot     INTEGER NOT NULL,
+	UNIQUE (union_id, slot)
+);
 -- A master stored before round 821 gets the master's mask.
 UPDATE guild_members gm SET permission = 4294967295 FROM guilds g
  WHERE g.id = gm.guild_id AND g.leader_id = gm.character_id AND gm.permission = 0;
@@ -127,7 +139,7 @@ func (s *SQLStore) Close() error {
 // TruncateForTest clears all guild data, for other packages' tests sharing
 // this Postgres instance. Not for production use.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE guild_members, guilds, guild_penalties RESTART IDENTITY CASCADE`)
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE guild_union_members, guild_unions, guild_members, guilds, guild_penalties RESTART IDENTITY CASCADE`)
 	return err
 }
 
@@ -268,6 +280,9 @@ func (s *SQLStore) Leave(ctx context.Context, characterID int64) (int64, *Guild,
 	}
 
 	if remaining == 0 {
+		if _, err := leaveUnionTx(ctx, tx, guildID); err != nil {
+			return 0, nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM guilds WHERE id = $1`, guildID); err != nil {
 			return 0, nil, fmt.Errorf("guild: disbanding empty guild: %w", err)
 		}
@@ -599,6 +614,9 @@ func (s *SQLStore) Disband(ctx context.Context, guildID int64) (*Guild, error) {
 	defer tx.Rollback()
 	g, err := getGuild(ctx, tx, guildID)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := leaveUnionTx(ctx, tx, guildID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM guild_members WHERE guild_id = $1`, guildID); err != nil {

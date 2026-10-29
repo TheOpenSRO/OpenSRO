@@ -269,7 +269,7 @@ func (b *bot) saw(rec pcspawn.Record) {
 	fmt.Printf("%s [%s] MODEL spawn %s uid %d ref %d scale 0x%02x\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.RefObjID, rec.Scale)
 	// Round 814: a player's guild line as its spawn carries it.
 	if rec.GuildName != "" {
-		fmt.Printf("[%s] GUILD spawn %s uid %d guild %d %q grant %q\n", b.name, rec.Name, rec.UID, rec.GuildID, rec.GuildName, rec.Nickname)
+		fmt.Printf("[%s] GUILD spawn %s uid %d guild %d %q grant %q union %d\n", b.name, rec.Name, rec.UID, rec.GuildID, rec.GuildName, rec.Nickname, rec.UnionID)
 	}
 }
 
@@ -278,7 +278,7 @@ func (b *bot) saw(rec pcspawn.Record) {
 // answer to its own grant-name request (0xB256).
 func (b *bot) noteGuild(p *proto.Packet) {
 	switch p.Opcode {
-	case session.OpEntityGuildUpdate, session.OpGuildNicknameUpdate, session.OpGuildGrantNameResult:
+	case session.OpEntityGuildUpdate, session.OpGuildNicknameUpdate, session.OpGuildGrantNameResult, guild.OpUnionInfo:
 		fmt.Printf("[%s] GUILD %#04x % x\n", b.name, p.Opcode, p.Data)
 	}
 }
@@ -938,7 +938,11 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	if tp != "" {
 		gmTP(tp)
 	}
+	if botGuildDelay > 0 {
+		time.Sleep(botGuildDelay)
+	}
 	b.guildSteps(name)
+	b.timedGMLines(name)
 	b.mallSteps()
 	b.useSteps()
 	b.stallSteps()
@@ -1106,6 +1110,8 @@ func main() {
 	flag.DurationVar(&botGuild.inviteAfter, "guild-invite-after", 0, "bot (round 822): wait this long after first seeing the -guild-invite character before inviting it")
 	flag.DurationVar(&botGuild.expelAfter, "guild-expel-after", 0, "bot (round 822): expel the -guild-invite character (0x70F4) this long after it joins")
 	flag.StringVar(&botGMLines, "gm-lines", "", "bot (round 834): GM lines run once in the world, \";\"-separated (a GM account)")
+	flag.StringVar(&botGMTimed, "gm-timed", "", "bot (round 842): GM lines at times after entry, \"20s=/union Alpha;60s=/union leave\" (a GM account)")
+	flag.DurationVar(&botGuildDelay, "guild-delay", 0, "bot (round 842): wait this long before the guild steps (-guild-create / -guild-join)")
 	flag.StringVar(&botSocial.friendAsk, "friend-ask", "", "bot (round 834): ask this character to be friends (0x7302) once it is in view")
 	flag.StringVar(&botSocial.friendAnswer, "friend-answer", "", "bot (round 834): answer friend requests: accept, refuse, or nothing")
 	flag.StringVar(&botSocial.exchangeWith, "exchange-with", "", "bot (round 834): ask this character to exchange (0x7081) once it is in view")

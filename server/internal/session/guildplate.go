@@ -110,15 +110,17 @@ func (u *GuildNicknameUpdate) Encode() []byte {
 
 // EntityGuildUpdate is 0x30FF: one character's guild line, or none (an empty
 // GuildName). The three u32 after the grant name are the spawn block's: the
-// guild's crest revision (round 824), the union id and its crest revision;
-// then two bytes. The union fields and the bytes are written 0 (no unions or
-// fortress roles in OpenSRO, OPEN).
+// guild's crest revision (round 824), the union id and its crest revision
+// (round 842); then two bytes, written 0 (no fortress roles in OpenSRO,
+// OPEN).
 type EntityGuildUpdate struct {
-	UID       uint32
-	GuildID   uint32
-	GuildName string
-	Nickname  string
-	CrestRev  uint32
+	UID           uint32
+	GuildID       uint32
+	GuildName     string
+	Nickname      string
+	CrestRev      uint32
+	UnionID       uint32
+	UnionCrestRev uint32
 }
 
 // Encode is the update's bytes.
@@ -131,7 +133,8 @@ func (u *EntityGuildUpdate) Encode() []byte {
 	}
 	out = appendWireString(out, u.Nickname)
 	out = binary.LittleEndian.AppendUint32(out, u.CrestRev)
-	out = append(out, make([]byte, 8)...)
+	out = binary.LittleEndian.AppendUint32(out, u.UnionID)
+	out = binary.LittleEndian.AppendUint32(out, u.UnionCrestRev)
 	return append(out, 0, 0) // the fortress role, FUN_005cffe0's byte
 }
 
@@ -148,6 +151,8 @@ type guildPlate struct {
 	Nickname string
 	// CrestRev is the guild's crest revision (round 824; 0 none).
 	CrestRev uint32
+	// UnionID and UnionCrestRev are its guild's union's (round 842; 0 none).
+	UnionID, UnionCrestRev uint32
 }
 
 // guildPlates caches each character's line (characterID -> guildPlate), so
@@ -196,8 +201,22 @@ func guildPlateOf(ctx context.Context, characterID int64) guildPlate {
 		return guildPlate{}
 	}
 	p := plateOf(g, characterID)
+	p.UnionID, p.UnionCrestRev = unionFieldsOf(ctx, g)
 	guildPlates.Store(characterID, p)
 	return p
+}
+
+// unionFieldsOf is g's union's id and crest revision (0, 0 for none, or when
+// the store keeps no unions or fails).
+func unionFieldsOf(ctx context.Context, g *guild.Guild) (uint32, uint32) {
+	if g == nil {
+		return 0, 0
+	}
+	u := unionOfGuild(ctx, g.ID)
+	if u == nil {
+		return 0, 0
+	}
+	return uint32(u.ID), u.CrestRev
 }
 
 // plateOf is characterID's line in g (nil g: none).
@@ -222,6 +241,7 @@ func plateOf(g *guild.Guild, characterID int64) guildPlate {
 // sendAboutOwner).
 func refreshGuildPlate(hub *world.Hub, characterID int64, g *guild.Guild) {
 	p := plateOf(g, characterID)
+	p.UnionID, p.UnionCrestRev = unionFieldsOf(context.Background(), g)
 	if v, ok := guildPlates.Load(characterID); ok && v.(guildPlate) == p {
 		return
 	}
@@ -233,7 +253,8 @@ func refreshGuildPlate(hub *world.Hub, characterID int64, g *guild.Guild) {
 		sendAboutOwner(equipObservers(hub, characterID), characterID, guild.OpObjectLeft, guild.EncodeObjectLeft(uint32(characterID)))
 		return
 	}
-	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev}
+	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev,
+		UnionID: p.UnionID, UnionCrestRev: p.UnionCrestRev}
 	sendAboutOwner(equipObservers(hub, characterID), characterID, OpEntityGuildUpdate, msg.Encode())
 }
 
@@ -310,6 +331,7 @@ func ownGuildLine(ctx context.Context, characterID int64) *proto.Packet {
 	if p.Name == "" {
 		return nil
 	}
-	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev}
+	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev,
+		UnionID: p.UnionID, UnionCrestRev: p.UnionCrestRev}
 	return &proto.Packet{Opcode: OpEntityGuildUpdate, Data: msg.Encode()}
 }

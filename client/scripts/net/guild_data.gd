@@ -14,7 +14,9 @@ const OP_END := 0x34B4
 ## Round 822: the guild's piecewise changes (NetProcessInInterface::
 ## FUN_00887330; GuildOpsNet has the types and masks).
 const OP_UPDATE := 0x38F5
-const SERVER_OPCODES := [OP_BEGIN, OP_CHUNK, OP_END, OP_UPDATE]
+## Round 842: the union record (UnionData).
+const OP_UNION_INFO := UnionData.OP_UNION_INFO
+const SERVER_OPCODES := [OP_BEGIN, OP_CHUNK, OP_END, OP_UPDATE, OP_UNION_INFO]
 
 ## Member classes (the row fill 0x5b6b40, READ).
 const CLASS_MASTER := 0
@@ -64,6 +66,9 @@ var notice_body := ""
 var crest_rev := 0
 var soldier_flags := 0
 var members: Array[Member] = []
+## Round 842: the guild's union (0x3102, 0x38F5 types 0x0d / 0x12), which
+## guild lines are coloured by (GuildLineColour).
+var union := UnionData.new()
 
 ## The buffer between 0x34B3 and 0x34B4.
 var _buffer := PackedByteArray()
@@ -102,6 +107,9 @@ func handle(data: PackedByteArray, op: int) -> void:
 			_buffer = PackedByteArray()
 		OP_UPDATE:
 			apply_update(data)
+		OP_UNION_INFO:
+			if not union.parse_info(data):
+				print("GuildData: malformed union record (%d bytes)" % data.size())
 
 ## One 0x38F5 (FUN_00887330's switch on the u8 type; READ, docs/protocol/
 ## guild.md "Membership (round 822)"). Types it does not know, and any
@@ -143,6 +151,16 @@ func apply_update(data: PackedByteArray) -> void:
 			_guild_fields(r)
 		GuildOpsNet.UPDATE_MEMBER:
 			_member_fields(r)
+		UnionData.UPDATE_JOINED:
+			# Round 842: a guild joined the union (FUN_00580650's line).
+			var joined := union.apply_joined(r)
+			if joined != "":
+				line.emit("UIIT_MSG_GUILD_ALLY_JOIN_RESULT", [joined])
+		UnionData.UPDATE_OUT:
+			# Round 842: one left, was expelled, or the union broke.
+			var said := union.apply_out(r, guild_name)
+			if not said.is_empty():
+				line.emit(String(said[0]), said[1] as Array)
 
 ## Type 3: u32 id, u8 reason (read after the removal, 0x8877fe).
 func _member_out(r: _Reader) -> void:
@@ -269,6 +287,8 @@ func clear() -> void:
 	crest_rev = 0
 	soldier_flags = 0
 	members.clear()
+	# Round 842: no guild, no union (FUN_009990f0 clears the whole record).
+	union.clear()
 	changed.emit()
 
 class _Reader:

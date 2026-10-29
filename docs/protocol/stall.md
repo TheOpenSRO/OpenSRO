@@ -232,7 +232,13 @@ ref's AssocFileObj128 (`item\Avatar\booth_*.bsr`, ItemData 3847..3850), else by 
   slot put on the bag -> type 3; a visitor's slot put on the bag -> the buy box -> 0x70B4; X: the owner
   0x70B2, a visitor 0x70B5.
 - **The world:** the title "[name]" in the plate item +0x474 in 0xFFFEB5FF, drawn boxed over the head
-  (c:0x9c89a0, 0x9d0d3c..0x9d0d86), 37 px over the name's point (round 840, section 11); the booth drawn with the character's world matrix every frame
+  (c:0x9c89a0, 0x9d0d3c..0x9d0d86), 37 px over the name's point (round 840, section 11); round 842: the box is the title item's own
+  (c:0x9c89c2 colour, c:0x9c89ca FUN_008b3bd0 text + the 0x40000000 box), so it is drawn where the
+  title is; OpenSRO had fitted it once at the name's line, where it widened the name's box. The
+  default name is the archive's UIIT_STT_STALL_DEFAULT_TITLE "[%s]'s stall." formatted with the own
+  name (c:0x641f40 purpose 0, +0x114), and the plate wraps it again (c:0x9dc3a0), so the original
+  shows "[[Tobi]'s stall.]" too; a rename's box is prefilled with the stored title less its first
+  and last character (FUN_004779f0(1, len - 2)); the booth drawn with the character's world matrix every frame
   (CICUser::vslot_010 c:0x9dd350); state 0xF, animation type 80 (`chinaman_vendor01.ban`,
   `chinawoman_vendor01.ban`); the cursor 0xa3; a click within 100.0 sends 0x70B3, farther walks there
   first (c:0x7938d5).

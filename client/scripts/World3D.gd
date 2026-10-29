@@ -2321,6 +2321,8 @@ func _ready() -> void:
 	NetClient.guild_info_result.connect(_on_guild_result)
 	# Round 814: a character's guild line changed (0x30FF / 0x3256).
 	NetClient.guild_line_changed.connect(_on_guild_line_changed)
+	# Round 842: the union changed -- every line recoloured (FUN_009a4450).
+	NetClient.guild_data.union.changed.connect(_recolour_guild_lines)
 	NetClient.crest_cache.changed.connect(_on_guild_crest_changed)
 	NetClient.guild_grant_result.connect(_on_guild_grant_result)
 	NetClient.guild_points_result.connect(_on_guild_points_result)
@@ -9775,19 +9777,41 @@ func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level:
 ##   rides a mount with the name (_set_plate_y);
 ## - only while the job state is 4 (no suit; vslot 0xac at 0x9df099) -- a
 ##   suit's record carries no guild block either;
-## - the own player's in GUILD_LINE_OWN_COLOUR (an exact CICPlayer,
-##   0x9dc4d4), another's in GUILD_LINE_COLOUR. The original's green
-##   0xffa0fe68 and red 0xffff0000 are for guild names in two lists of its
-##   guild manager (+0x98, FUN_00996d60; +0xa4, FUN_00992a90) -- INFERRED
-##   allies and war enemies; OpenSRO forms neither, so they are OPEN;
+## - round 842: its colour is GuildLineColour's -- the own guild's lines
+##   (the player's and every fellow member's: one shared plate item per guild
+##   name, recoloured orange by the own player's) GUILD_LINE_OWN_COLOUR, a
+##   union guild's green, a war enemy's red (no wars: OPEN), the rest
+##   GUILD_LINE_COLOUR; all recoloured when the own line or the union
+##   changes (_recolour_guild_lines, the original's FUN_009a4450);
 ## - the option byte that also gates it (FUN_004f9d00()+0x10) is OPEN: on;
 ## - round 824: the crest drawn left of it (_fit_guild_crest; the entry's
 ##   guild texture +0x34 -- the union's +0x38 is OPEN, no unions).
 const GUILD_LINE_RAISE_PX := 20.0
 ## Round 823, OURS: the guild line has no box (retail's has one; see above).
 const GUILD_LINE_BOX := false
-const GUILD_LINE_OWN_COLOUR := Color8(254, 173, 46)
-const GUILD_LINE_COLOUR := Color8(102, 185, 255)
+const GUILD_LINE_OWN_COLOUR := GuildLineColour.OWN
+const GUILD_LINE_COLOUR := GuildLineColour.OTHER
+
+## Round 842: the line colour for a character of guild_name (own: the
+## player's own line).
+func _guild_line_colour(guild_name: String, own: bool) -> Color:
+	if own:
+		return GUILD_LINE_OWN_COLOUR
+	return GuildLineColour.colour_for(guild_name, String(NetClient.own_guild_line.get("guild_name", "")),
+		NetClient.guild_data.union.is_allied)
+
+## Round 842: every other player's guild line recoloured (FUN_009a4450, after
+## the own line or the union changed).
+func _recolour_guild_lines() -> void:
+	for id in _other_bodies:
+		var node = _other_bodies[id]
+		if node == null or not is_instance_valid(node):
+			continue
+		var g := (node as Node).get_node_or_null("GuildLine") as Label3D
+		if g == null:
+			continue
+		var line: Dictionary = NetClient.user_guilds.get(int(id) & 0xffffffff, {})
+		g.modulate = _guild_line_colour(String(line.get("guild_name", "")), false)
 
 ## Re-makes the guild line under `holder` for `label` (the "Name" plate) from
 ## `line` ({guild_name, nickname}); none without a guild or in a job suit.
@@ -9807,7 +9831,7 @@ func _apply_guild_line(label: Label3D, holder: Node3D, line: Dictionary, job_sta
 	g.name = "GuildLine"
 	g.remove_from_group("name_plates")
 	g.position = label.position if holder != label else Vector3.ZERO
-	_retail_plate_look(g, GUILD_LINE_OWN_COLOUR if own else GUILD_LINE_COLOUR, GUILD_LINE_BOX)
+	_retail_plate_look(g, _guild_line_colour(String(line.get("guild_name", "")), own), GUILD_LINE_BOX)
 	if not GUILD_LINE_BOX:
 		# No box anywhere: the batch draws one for a label carrying the meta.
 		g.remove_meta(NamePlates.BOX_META)
@@ -9997,6 +10021,8 @@ func _own_plate_colours_told() -> void:
 func _on_guild_line_changed(uid: int) -> void:
 	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
 		_refresh_player_name_plate()
+		# Round 842: the own guild's lines are the own colour.
+		_recolour_guild_lines()
 		return
 	for id in _other_bodies:
 		if (int(id) & 0xffffffff) != uid:
@@ -30143,6 +30169,7 @@ func _qa_guild_report() -> void:
 	for h in holders:
 		if h == null or not is_instance_valid(h):
 			continue
+		_qa_plate_boxes(h as Node)
 		var g := (h as Node).find_child("GuildLine", true, false) as Label3D
 		if g == null:
 			continue
@@ -30155,6 +30182,24 @@ func _qa_guild_report() -> void:
 		print("QA GUILD: %s '%s' colour (%d, %d, %d) %.1f px above its name (fixed size %s), shown %s" % [
 			"own" if h == player else String((h as Node).name), g.text, roundi(c.r8), roundi(c.g8), roundi(c.b8),
 			gap, g.fixed_size, g.is_visible_in_tree()])
+
+## Round 842 (QA only, with OPENSRO_QA_GUILD): a holder's name box and its
+## stall title's box -- text, box size and box centre in plate pixels -- so a
+## run can tell whether a box widened.
+func _qa_plate_boxes(h: Node) -> void:
+	var parts: PackedStringArray = []
+	for n in ["Name", StallWorld.TITLE_NODE]:
+		var l := h.get_node_or_null(n) as Label3D
+		if l == null:
+			continue
+		var b := l.get_node_or_null("NameBox") as Sprite3D
+		var fk := _plate_fk(l)
+		var r := NamePlates.box_rect(l)
+		parts.append("%s '%s' box %s at y %.1f px (rect %.0fx%.0f)" % [n, l.text,
+			str(b.texture.get_size()) if b != null and b.texture != null else "none (batched)",
+			(b.offset.y if b != null else r.position.y) / fk, r.size.x / fk, r.size.y / fk])
+	if not parts.is_empty():
+		print("QA PLATE: frame %d %s %s" % [Engine.get_frames_drawn(), "own" if h == player else String(h.name), "; ".join(parts)])
 
 ## OPENSRO_QA_SLOPE: every 60 frames, the tilting bodies nearest the player --
 ## the ground's normal, the eased one, the factors and the model's lean.

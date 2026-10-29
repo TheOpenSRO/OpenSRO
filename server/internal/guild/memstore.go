@@ -25,6 +25,10 @@ type MemStore struct {
 	// (round 824).
 	crests    map[int64][]byte
 	lastCrest map[int64]uint32
+	// unions are the alliances by id, unionOf each guild's (round 842).
+	unions    map[int64]*Union
+	unionOf   map[int64]int64
+	nextUnion int64
 }
 
 // NewMemStore returns an empty MemStore.
@@ -37,6 +41,8 @@ func NewMemStore() *MemStore {
 		penalty:   make(map[int64]time.Time),
 		crests:    make(map[int64][]byte),
 		lastCrest: make(map[int64]uint32),
+		unions:    make(map[int64]*Union),
+		unionOf:   make(map[int64]int64),
 	}
 }
 
@@ -132,6 +138,7 @@ func (m *MemStore) Leave(_ context.Context, characterID int64) (int64, *Guild, e
 	if len(g.Members) == 0 {
 		delete(m.byID, guildID)
 		delete(m.names, strings.ToLower(g.Name))
+		m.leaveUnionLocked(guildID)
 		return guildID, nil, nil
 	}
 
@@ -309,6 +316,7 @@ func (m *MemStore) Disband(_ context.Context, guildID int64) (*Guild, error) {
 	}
 	delete(m.byID, guildID)
 	delete(m.names, strings.ToLower(g.Name))
+	m.leaveUnionLocked(guildID)
 	return out, nil
 }
 

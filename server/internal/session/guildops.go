@@ -240,11 +240,14 @@ func handleGuildDisband(ctx context.Context, sess *gateway.Session, p *proto.Pac
 		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guild.CodeNotInRange))
 		return nil
 	}
+	unionBefore := unionBeforeDisband(ctx, g.ID)
 	was, err := d.guilds.Disband(ctx, g.ID)
 	if err != nil {
 		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guild.CodePermissionDenied))
 		return nil
 	}
+	// Round 842: the store freed its union slot; the union is told.
+	unionLeft(ctx, unionBefore, was.ID, guild.UnionOutLeft, was)
 	sendGuild(sess, guild.OpDisbandResult, guild.EncodeOK())
 	d.toMembers(was, guild.OpUpdate, guild.EncodeDisbanded(), 0)
 	d.penalize(ctx, e.CharacterID)

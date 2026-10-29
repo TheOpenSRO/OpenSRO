@@ -111,11 +111,15 @@ type Record struct {
 	// crest revision (round 824: CrestRev; the client's GlobalDataManager::
 	// FUN_009ddc40 hands it to the crest cache 0x9a4780), the union id and
 	// the union's crest revision; then FUN_005cffe0's byte and the fortress
-	// role. The union fields, the byte and the role are written 0: OpenSRO
-	// has no unions or fortress roles (OPEN).
-	GuildID  uint32
-	Nickname string
-	CrestRev uint32
+	// role. Round 842: UnionID and UnionCrestRev are the union's (0: none;
+	// the client hands them to its crest cache 0x9a4780 with the guild's).
+	// The byte and the role are written 0: OpenSRO has no fortress roles
+	// (OPEN).
+	GuildID       uint32
+	Nickname      string
+	CrestRev      uint32
+	UnionID       uint32
+	UnionCrestRev uint32
 	// JobState is the job state the slot-8 suit gives; the guild block is
 	// written only for JobStateNone. 0, the zero value, is no job state the
 	// engine has and is written as JobStateNone (round 737's review).
@@ -213,8 +217,8 @@ func Append(out []byte, r Record) ([]byte, error) {
 		out = binary.LittleEndian.AppendUint32(out, r.GuildID)
 		out = appendString(out, r.Nickname)
 		out = binary.LittleEndian.AppendUint32(out, r.CrestRev)
-		out = binary.LittleEndian.AppendUint32(out, 0)
-		out = binary.LittleEndian.AppendUint32(out, 0)
+		out = binary.LittleEndian.AppendUint32(out, r.UnionID)
+		out = binary.LittleEndian.AppendUint32(out, r.UnionCrestRev)
 		out = append(out, 0, 0)
 	}
 	if r.InteractMode == 4 {
@@ -379,9 +383,10 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 		d.GuildID = r.u32()
 		d.Nickname = r.str()
 		d.CrestRev = r.u32()
-		if r.u32() != 0 || r.u32() != 0 || r.u8() != 0 || r.u8() != 0 {
+		d.UnionID, d.UnionCrestRev = r.u32(), r.u32()
+		if r.u8() != 0 || r.u8() != 0 {
 			if r.err == nil {
-				return d, nil, fmt.Errorf("pcspawn: unions and fortress roles are not OpenSRO's")
+				return d, nil, fmt.Errorf("pcspawn: fortress roles are not OpenSRO's")
 			}
 		}
 	}
