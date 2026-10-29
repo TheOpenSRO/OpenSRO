@@ -105,6 +105,14 @@ var sort_key := 0
 var item_icon := Callable()
 var item_name := Callable()
 var repairable := Callable()
+## Round 842 (lane T): the row's icon slot given its item, or null when the
+## row is cleared -- `item_slot.call(i, icon_host, record_or_null)`. Retail's
+## row fill (c:0x6caa40) and clear (c:0x6cb190) put the record's item into
+## the CIFSlotWithHelp inside the row's CIFSlotWithHelpEx (+0x348) with its
+## SetItem 0x6871d0 (the item, or 0), slot kind 0x0f (+0x36c, 0x6666f0) and
+## window 0x96 (+0x370, 0x666710); its hover help is the bag's item help
+## (StallNetworkController._item_slot).
+var item_slot := Callable()
 
 func _init(builder: UiBuilder = null) -> void:
 	super._init()
@@ -372,6 +380,8 @@ func _clear_rows() -> void:
 		var icon := _icon_rect(i)
 		if icon != null:
 			icon.texture = null
+		if item_slot.is_valid():
+			item_slot.call(i, control([int(ROW_IDS[i]), ROW_ICON]), null)
 		_set_bar(i, false)
 
 func _fill_row(i: int, r: StallNetworkNet.Record) -> void:
@@ -391,6 +401,8 @@ func _fill_row(i: int, r: StallNetworkNet.Record) -> void:
 	var icon := _icon_rect(i)
 	if icon != null and item_icon.is_valid() and r.item != null:
 		icon.texture = item_icon.call(r.item.ref_item_id)
+	if item_slot.is_valid():
+		item_slot.call(i, control([rid, ROW_ICON]), r)
 
 func _icon_rect(i: int) -> TextureRect:
 	var host := control([int(ROW_IDS[i]), ROW_ICON])

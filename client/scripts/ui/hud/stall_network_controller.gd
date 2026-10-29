@@ -22,6 +22,9 @@ class_name StallNetworkController
 
 ## The window the client loads it as (0x799020's FUN_00469140 id).
 const WINDOW_ID := 0x96
+## Round 842 (lane T): the tooltip site of a row's icon (HudPanels.item_tip_lines;
+## the slot index is the shown row).
+const TIP_SITE := "stall_network"
 
 var panels
 ## NetClient, or a test's stand-in.
@@ -68,6 +71,7 @@ func open(in_town: bool, busy: bool) -> String:
 	w.item_icon = func(ref: int) -> Texture2D: return panels._item_icon(ref)
 	w.item_name = func(ref: int) -> String: return panels.item_name(ref)
 	w.repairable = func(it) -> bool: return panels.stall_network_repairable(it)
+	w.item_slot = _item_slot
 	w.search_requested.connect(_on_search_requested)
 	w.buy_requested.connect(_on_buy_requested)
 	w.whisper_requested.connect(func(seller: String) -> void: panels._party_match_whisper(seller))
@@ -171,6 +175,39 @@ func on_bought(code: int) -> void:
 	panels.refresh_bag_after_exchange()
 	if is_open():
 		window.set_gold(panels.carried_gold())
+
+## Round 842 (lane T): a row's icon slot given its record's item, or emptied
+## (StallNetworkWindow.item_slot; docs/protocol/stall_network.md §3a). READ:
+## the row's CIFSlotWithHelpEx (c:0x687d40) holds a CIFSlotWithHelp (class
+## 0xee9b18, vtable 0xda18e4) whose vslot_019 (c:0x667820) answers the hover
+## 0x4009 with vslot_048 (c:0x686db0) -> 0x686c50, the item help every bag,
+## stall and storage slot shows (kind 0x0f is in 0x686db0's list), and hides
+## it on the leave 0x400a; SetItem (c:0x6871d0) rebuilds the help at once when
+## the slot is the one under the pointer (0xb9dc00 == this -> vslot_048), so a
+## page shown under a still pointer shows the new row's item, an emptied row
+## none. The same SetItem starts the seal star (0x666610) for a seal item off
+## the wire (SOItem +0x28 = 1, 0x8be4f0(stream, 1) at c:0x6c993d).
+func _item_slot(i: int, host: Control, r) -> void:
+	if host == null:
+		return
+	var icon := host.get_node_or_null("Icon") as Control
+	var rec := r as StallNetworkNet.Record
+	if rec == null or rec.item == null:
+		panels._set_item_tip(host, -1)
+		ItemSealEdge.show_on(icon, panels._builder, false, -1)
+		return
+	panels._set_item_tip(host, rec.item.ref_item_id, TIP_SITE, i)
+	if icon != null:
+		panels._set_item_seal_edge(icon, rec.item.ref_item_id)
+	var vp := host.get_viewport() if host.is_inside_tree() else null
+	if vp != null and host.is_visible_in_tree() and vp.gui_get_hovered_control() == host:
+		panels._show_item_tip(host)
+
+## The item a shown row lists (the tooltip's instance), or null.
+func instance_at(i: int) -> Object:
+	if not is_open() or i < 0 or i >= window.shown_records.size():
+		return null
+	return (window.shown_records[i] as StallNetworkNet.Record).item
 
 ## The gold changed (0x304E): the window's gold line (c:0x6becb0 runs at
 ## every gold update the window hears, INFERRED).
