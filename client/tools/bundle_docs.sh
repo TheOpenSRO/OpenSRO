@@ -31,21 +31,24 @@ notes="$dst/RELEASE_NOTES.md"
   echo "committed snapshot rather than an empty file._"
   echo
   if git -C "$repo_root" tag >/dev/null 2>&1 && [ -n "$(git -C "$repo_root" tag)" ]; then
-    # Newest first: the last ~20 version tags with their FULL messages -- the
-    # subject line and every bullet under it. This used to print only the
-    # subject, which left testers one line per version in the Help window and
-    # sent them to GitHub for the actual changes (playtest feedback,
-    # 2026-09-25). The tag message is the changelog; print all of it.
+    # Newest first: the last ~20 version tags, each with its full changelog --
+    # the title and every change under it -- from docs/release_notes/<tag>.md,
+    # or the tag's own message for releases older than those files
+    # (client/tools/release_notes.sh). Testers read the changes here, not on
+    # GitHub (playtest feedback, 2026-09-25; the user, 2026-10-28: "include
+    # the changes in the changelog in the game").
     while IFS= read -r tag; do
-      subject="$(git -C "$repo_root" tag -l --format='%(contents:subject)' "$tag")"
-      body="$(git -C "$repo_root" tag -l --format='%(contents:body)' "$tag" | sed -e 's/[[:space:]]*$//' | awk 'NF{p=1} p' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
+      notes_md="$(bash "$repo_root/client/tools/release_notes.sh" "$tag")"
+      subject="$(printf '%s\n' "$notes_md" | head -n1)"
+      body="$(printf '%s\n' "$notes_md" | tail -n +2 | awk 'NF{p=1} p')"
       date="$(git -C "$repo_root" log -1 --format=%ad --date=short "$tag" 2>/dev/null || true)"
       echo "## $tag${date:+ ($date)}"
       echo
-      # The subject usually begins with the tag itself ("v0.1.439: rounds
+      # The title usually begins with the tag itself ("v0.1.439: rounds
       # 549-551"); under a heading that already names the tag, print the rest.
       subject="${subject#"$tag": }"
       subject="${subject#"$tag" }"
+      [ "$subject" = "$tag" ] && subject=""
       echo "${subject:-(no message)}"
       if [ -n "$body" ]; then
         echo
