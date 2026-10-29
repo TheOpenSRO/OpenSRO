@@ -48,6 +48,10 @@ type Filter struct {
 	// 0x6df010 lower-cased it.
 	substr []string
 	whole  map[string]struct{}
+	// stallSubstr and stallWhole are f4's lists (round 840): the stall
+	// title's (+0x203c list, +0x20c0 set), as the loader lower-cased them.
+	stallSubstr []string
+	stallWhole  map[string]struct{}
 	// allowRows counts the #ALLOW_ID_TABLE rows taken (for the boot log).
 	allowRows int
 }
@@ -62,7 +66,7 @@ type Filter struct {
 // is read as a code >= 0x8000; MEASURED on the retail file). The space,
 // quote and SQL-word tests apply as always.
 func Default() *Filter {
-	f := &Filter{group: GroupEnglish, whole: map[string]struct{}{}}
+	f := &Filter{group: GroupEnglish, whole: map[string]struct{}{}, stallWhole: map[string]struct{}{}}
 	for i := range f.refused {
 		f.refused[i] = 0xff
 	}
@@ -98,6 +102,33 @@ func (f *Filter) NameOK(name string) bool {
 		return false
 	}
 	return f.filterOK(name)
+}
+
+// StallCounts is how many stall-title words the filter holds (f4's
+// substring list and whole-word set), for the boot log.
+func (f *Filter) StallCounts() (substr, whole int) { return len(f.stallSubstr), len(f.stallWhole) }
+
+// StallTitleOK is the stall title's word test (round 840): the client's
+// c:0x8c3f10 on f4's lists, which the original runs only in the client (the
+// title box's OK, c:0x6bb159; SR_GameServer's CStringCheck loads f4's lists,
+// s:0x9881f7, and no test reads them -- READ). On the title lower-cased (A-Z
+// only, c:0x8c1660; here lowerDBCS on the narrow bytes): no f4 substring word
+// found in it (c:0x8c3200, std::wstring::find, case-sensitive), then the
+// title split on spaces (c:0x8c3060) with no token an f4 whole word
+// (c:0x8c3ae0). No character bitmap, no SQL words, no length (the caller's).
+// OURS: the server runs it too (session.stallTitleRefused), on the bytes the
+// client sent.
+func (f *Filter) StallTitleOK(title string) bool {
+	low := lowerDBCS(title)
+	for _, w := range f.stallSubstr {
+		if strings.Contains(low, w) {
+			return false
+		}
+	}
+	if len(low) == 0 || len(f.stallWhole) == 0 {
+		return true
+	}
+	return !tokensHit(low, f.stallWhole)
 }
 
 // SQLHit is 0x527390's verdict (READ; returns 1 on a hit): the name
@@ -197,6 +228,12 @@ func (f *Filter) wholeHit(low string) bool {
 	if len(low) == 0 || len(f.whole) == 0 {
 		return false
 	}
+	return tokensHit(low, f.whole)
+}
+
+// tokensHit is the space split (0x6df660 / c:0x8c3060) of low, each token
+// looked up exactly in set.
+func tokensHit(low string, set map[string]struct{}) bool {
 	rest := low
 	for {
 		tok := rest
@@ -205,7 +242,7 @@ func (f *Filter) wholeHit(low string) bool {
 		} else {
 			rest = ""
 		}
-		if _, hit := f.whole[tok]; hit {
+		if _, hit := set[tok]; hit {
 			return true
 		}
 		rest = strings.TrimLeft(rest, " ")

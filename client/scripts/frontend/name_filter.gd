@@ -77,6 +77,9 @@ const CP1252_HIGH := [
 ## The flag columns (0-based: f1 = 0, f3 = 2).
 const FLAG_NAME := 0
 const FLAG_GUILD := 2
+## Round 840: f4, the stall title's (c:0x8c3f10: the list at +0x203c, the set
+## at +0x20c0).
+const FLAG_STALL := 3
 
 var language := LANGUAGE_ENGLISH
 ## True when a file was read; false is the no-file filter (see no_file()).
@@ -280,6 +283,24 @@ func name_ok(name: String) -> bool:
 func guild_name_ok(name: String) -> bool:
 	return _test(name, FLAG_GUILD)
 
+## Round 840, 0x8c3f10 (READ, called by the stall's title box OK,
+## c:0x6bb159): the title lower-cased (A-Z only, 0x8c1660), no f4 substring
+## word found in it (0x8c3200), then no space-split token an f4 whole word
+## (0x8c3ae0). Unlike the name tests, no character table: any character
+## passes. False refuses the title (category 10, 0x3c38).
+func stall_title_ok(title: String) -> bool:
+	var low := lower_ascii(utf16_units(title))
+	for w in substr[FLAG_STALL]:
+		if _find(low, w) >= 0:
+			return false
+	var words: Dictionary = whole[FLAG_STALL]
+	if low.is_empty() or words.is_empty():
+		return true
+	for tok in _split_spaces(low):
+		if words.has(_key(tok)):
+			return false
+	return true
+
 func _test(name: String, col: int) -> bool:
 	var low := lower_ascii(utf16_units(name))
 	for u in low:
@@ -331,6 +352,7 @@ func counts() -> Dictionary:
 		"allow_rows": allow_rows,
 		"name_substr": (substr[FLAG_NAME] as Array).size(), "name_whole": (whole[FLAG_NAME] as Dictionary).size(),
 		"guild_substr": (substr[FLAG_GUILD] as Array).size(), "guild_whole": (whole[FLAG_GUILD] as Dictionary).size(),
+		"stall_substr": (substr[FLAG_STALL] as Array).size(), "stall_whole": (whole[FLAG_STALL] as Dictionary).size(),
 	}
 
 # --- the tokenizer ----------------------------------------------------------------

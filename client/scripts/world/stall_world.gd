@@ -23,16 +23,38 @@ class_name StallWorld
 ##
 ## OURS, disclosed: the booth is the body's sibling of its skeleton, with the
 ## skeleton's own local turn (PI) and mirror (BodyMirror) -- the character's
-## world matrix as this client draws a body; the title is a plate of its own
-## 22 px over the name plate (how retail stacks the two is OPEN); a far
-## stall's walk ends when it is in reach, then sends.
+## world matrix as this client draws a body; a far stall's walk ends when it
+## is in reach, then sends.
+##
+## Round 840 (lane B), READ:
+## - The booth moves: FUN_009dd040 builds it as a CCObjAnimation and plays it
+##   at once through its slot 3 (c:0x9dd14f..0x9dd16a, `(0, 0, 0, 0, 1.0,
+##   1.0)` -> FUN_00a5b550 on group 0, `default`): action type 0, no fade,
+##   speed 1.0, looping as its `.ban` says -- the map objects' own clip
+##   (MapAnimation.clip_entry), which ObjectLoader already builds for a
+##   `.bsr` with a skeleton. Its clock is ticked with the character
+##   (CICUser vslot_009), with no range test of its own. MEASURED on the
+##   box's Data.pk2: the four decoration booths (`booth_mob_bigeyeghost`,
+##   `_earthghost`, `_mangyang`, `booth_special_monster_01`) each carry one
+##   cyclic `default` type-0 clip (5000, 5000, 3333, 5000 ms); the two
+##   default stalls (`cj_store`, `euro_streetstall01`) have no skeleton and
+##   stand still.
+## - The title over the name (GlobalDataManager::FUN_009d0a80, c:0x9d0d4d..
+##   0x9d0d78): its item drawn centred on the name's point less half the
+##   item's height (+0x4e, 14 for font 0, round 817) plus 10 px -- after the
+##   name pass's event 4 (GlobalDataManager::FUN_009dea30, c:0x9df0b2..
+##   0x9df0cd) has moved that point up 20 px for a character out of a job
+##   suit (an owner always is: a suit refuses the stall, 0x3c3b), the guild
+##   line's place. So the title stands 20 + 7 + 10 = 37 px over the name,
+##   17 over the guild line, whether the owner has a guild or not.
 
 ## Animation type 80, the vendor loop (c:0xa5a330).
 const VENDOR_ACTION := 80
 const BOOTH_NODE := "StallBooth"
 const TITLE_NODE := "StallTitle"
-## The title over the name plate, in plate pixels (OURS).
-const TITLE_RAISE_PX := 22.0
+## The title over the name plate's point, in plate pixels (READ, above): the
+## guild line's 20 px, then half the item's 14 rows and 10.
+const TITLE_RAISE_PX := 20.0 + 14.0 * 0.5 + 10.0
 
 ## The World3D this serves (its helpers: _name_plate, _retail_plate_look,
 ## _item_rows, _data_pk2, _race_of_body).
@@ -83,24 +105,64 @@ func apply(uid: int, node: Node3D, race: int, top: float) -> void:
 	if booth == null:
 		var path := StallBooth.model_path(world._item_rows.get(deco), race)
 		booth = StallBooth.build(world._data_pk2, path)
+		var moving := 0
 		if booth != null:
 			booth.name = BOOTH_NODE
 			booth.set_meta("decoration", deco)
 			booth.rotation.y = PI
 			BodyMirror.apply(booth)
 			node.add_child(booth)
-		print("STALL: booth for %d (decoration %d, race %d) -> %s (%s)" % [uid, deco, race, path,
-			"built" if booth != null else "not found"])
+			moving = start_booth(booth)
+		print("STALL: booth for %d (decoration %d, race %d) -> %s (%s, %d clip(s) playing)" % [uid, deco, race, path,
+			"built" if booth != null else "not found", moving])
 	var text := StallNet.plate_title(String(st.get("name", "")))
 	if title == null:
 		title = world._name_plate(text, top, true)
 		title.name = TITLE_NODE
 		world._retail_plate_look(title, StallNet.TITLE_COLOUR)
-		title.offset.y += TITLE_RAISE_PX
 		node.add_child(title)
 	else:
 		title.text = text
 		title.position.y = top * (1.0 + world.NAME_PLATE_CLEARANCE_FRACTION)
+	# Round 840: TITLE_RAISE_PX over the name's point, in its font pixels as
+	# the guild line is placed (World3D._layout_guild_line).
+	var name_plate := node.get_node_or_null("Name") as Label3D
+	title.offset.y = (name_plate.offset.y if name_plate != null else 0.0) + TITLE_RAISE_PX * world._plate_fk(title)
+	print("STALL: %d's title '%s' %.1f plate px over its name (%s)" % [uid, text,
+		(title.offset.y - (name_plate.offset.y if name_plate != null else 0.0)) / world._plate_fk(title),
+		"name plate found" if name_plate != null else "no name plate"])
+
+## Round 840: plays the booth's own clip from t = 0 at speed 1.0, looping as
+## its `.ban` says (c:0x9dd16a, READ above); returns how many players run.
+## A booth with no skeleton has none and stands still.
+static func start_booth(booth: Node3D) -> int:
+	var n := 0
+	for p in MapAnimation.players_of(booth):
+		var player := p as AnimationPlayer
+		player.active = true
+		player.speed_scale = 1.0
+		player.play(MapAnimation.CLIP_NAME)
+		player.seek(0.0, true)
+		n += 1
+	return n
+
+## QA (round 840): the booth's clip clock and its first bone's pose, for
+## the QA BOOTH log line.
+static func booth_state(booth: Node3D) -> String:
+	var players := MapAnimation.players_of(booth)
+	var skel := booth.get_node_or_null(MapAnimation.SKELETON_NODE) as Skeleton3D
+	if players.is_empty() or skel == null or skel.get_bone_count() == 0:
+		return "still (no clip)"
+	var p := players[0] as AnimationPlayer
+	var moving := -1
+	var anim := p.get_animation(MapAnimation.CLIP_NAME) if p.has_animation(MapAnimation.CLIP_NAME) else null
+	if anim != null and anim.get_track_count() > 0:
+		moving = skel.find_bone(String(anim.track_get_path(0).get_concatenated_subnames()))
+	var b := moving if moving >= 0 else 0
+	var q := skel.get_bone_pose_rotation(b)
+	return "clip %s t=%.2f/%.2f playing=%s bone %s rot (%.3f, %.3f, %.3f, %.3f)" % [
+		p.current_animation, p.current_animation_position, anim.length if anim != null else 0.0,
+		str(p.is_playing()), skel.get_bone_name(b), q.x, q.y, q.z, q.w]
 
 ## A click on a stalling player (c:0x7938d5): 0x70B3 within reach, else the
 ## walk there first.

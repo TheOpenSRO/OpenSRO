@@ -126,6 +126,18 @@ original game blocked accounts from its operator console, outside the game.
 Every block records who set it (your account name) and when, and the server
 logs the command line.
 
+### Chat and trade bans (round 840)
+
+| Command | What it does |
+|---|---|
+| `/chatban <character\|@account> <duration> [reason...]` | Bans the account from chat (the operator console's "block chat", kind 4), in the same records `/block` writes. While it holds, every chat line the player sends -- all, whisper, party, guild, union, academy, the stall's chat -- and the global chatting item are dropped, and the player sees "Chat restricted by GM. Can chat from ..." with the end time, in the blue banner and the system window. A stall the player opens takes the character's name and one of the original's eleven suffixes ("'s Shop", " ^_^;", ...) instead of the title typed. Duration as `/block`'s. Refused while one holds. Takes effect at once. |
+| `/tradeban <character\|@account> <duration> [reason...]` | Bans the account from trading ("block p2p trade", kind 3): an exchange request, opening a stall and entering one are dropped. The original client's archive misspells the trade line's text key, so with the retail Media.pk2 the player sees no message (as in the original); an archive with the right key shows "Trading restricted by GM. ...". |
+| `/unchatban`, `/untradeban <character\|@account>` | Ends the ban. Refused when there is none. |
+| `/questblock <character> <mask>` / `/questblock <character> clear [mask]` | Sets (or releases) bits of an in-world character's quest block, the mask the original's quests set to stop actions (a test tool, not a retail command). `0x200` is the stall's: opening a stall is refused (code 0x3c32) and entering one (0x3c33); no quest of the original sets it. The block goes when the character logs out. |
+
+Unlike `/block`, the two bans may be put on a GM's account (neither keeps
+anyone out). `/blockinfo` lists them with the login blocks.
+
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item
 code to its id when you hover it in a window.

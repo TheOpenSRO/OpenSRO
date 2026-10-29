@@ -269,6 +269,11 @@ type Deps struct {
 	// Lottery is what /lottery reads and draws (round 838, lottery.go); nil
 	// refuses it. The session layer fills it in.
 	Lottery LotteryControl
+	// Restrictions is the chat and trade bans' cache and the quest block
+	// (round 840, restrict.go): /chatban and /tradeban drop the cache
+	// through it, /questblock sets the block; nil leaves the cache to time
+	// out and refuses /questblock. The session layer fills it in.
+	Restrictions RestrictionControl
 }
 
 // ClockControl is /hour's hook into the game clock (round 786): retail's
@@ -316,7 +321,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /jobexp <n>, /jobweek, /guildlevel <1-5>, /silk <n> [own|gift|point], /lottery [draw [prize]]"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /chatban|/tradeban <name|@account> <30m|12h|7d|forever> [reason], /unchatban|/untradeban <name|@account>, /questblock <name> <mask>|clear, /jobexp <n>, /jobweek, /guildlevel <1-5>, /silk <n> [own|gift|point], /lottery [draw [prize]]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -383,6 +388,16 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.unblock(ctx, args)
 	case "blockinfo":
 		res = d.blockInfo(ctx, args)
+	case "chatban":
+		res = d.restrict(ctx, actor, line, args, chatBan)
+	case "unchatban":
+		res = d.unrestrict(ctx, args, chatBan)
+	case "tradeban":
+		res = d.restrict(ctx, actor, line, args, tradeBan)
+	case "untradeban":
+		res = d.unrestrict(ctx, args, tradeBan)
+	case "questblock":
+		res = d.questBlock(args)
 	case "jobexp":
 		res = d.jobExp(ctx, actor, args)
 	case "jobweek":

@@ -53,9 +53,9 @@ package session
 //     both are sent 0x3088 {0x1811} (no client text) and stay connected.
 //   - The database step runs before 0xB083 {1} rather than after it, so the
 //     second approver's {1} and the 0x3087 come together.
-//   - The request's first two checks (FUN_004f0a00's restriction slot, which
-//     answers 0x3405; vslot 0x244, 0x185f) and GROUPMODE have no OpenSRO
-//     state and are not made. DealIt's COS check (exchange.md OPEN 3) is
+//   - The request's second check (vslot 0x244, the quest block 0x100,
+//     0x185f) and GROUPMODE are not made; its first, the trade ban (0x3405),
+//     is since round 840 (restriction.go). DealIt's COS check (exchange.md OPEN 3) is
 //     not made.
 //   - A pending party or guild invitation counts as busy (0x181e / 0x181d)
 //     because every request box answers on 0x3080 with the same bytes;
@@ -326,6 +326,11 @@ func (d *ExchangeDeps) request(sess *gateway.Session, data []byte) {
 		return
 	}
 	fail := func(code uint16) { sendExchange(sess, OpExchangeRequestResult, exchangeResult(code)) }
+	// Round 840: the trade ban first -- 0x3405 {1, end} and no 0xB081 (W1,
+	// s:0x515530).
+	if restricted(context.Background(), sess, RestrictTrade) {
+		return
+	}
 	tid := binary.LittleEndian.Uint32(data)
 	if tid == uint32(me.CharacterID) || tid >= npcspawn.UIDBase {
 		fail(ExchangeErrTarget)

@@ -531,6 +531,9 @@ signal stall_renamed(d: Dictionary)
 signal stall_net_searched(d: Dictionary)
 signal stall_net_left(code: int)
 signal stall_net_bought(code: int)
+## Round 840: 0x3405, a GM's chat or trade ban refused a request
+## (PunishNet.decode's dictionary).
+signal restriction_notice(d: Dictionary)
 ## Round 837: the item mall (MallNet). 0xB121's result; a mall buy's 0xB034
 ## (MallNet.decode_buy_result's dictionary, or {"ok": false, "code"}); the
 ## silk balances (0x3153) and an outside change (0x3154); the silk history
@@ -929,7 +932,7 @@ func _passes_group(p: Packet) -> bool:
 				ExchangeNet.OP_DONE, ExchangeNet.OP_CLOSED, StallNet.OP_OPEN_RESULT, StallNet.OP_CLOSE_RESULT, \
 				StallNet.OP_ENTER_RESULT, StallNet.OP_BUY_RESULT, StallNet.OP_LEAVE_RESULT, StallNet.OP_UPDATE_RESULT, \
 				StallNet.OP_EVENT, StallNetworkNet.OP_SEARCH_RESULT, StallNetworkNet.OP_LEAVE_RESULT, \
-				StallNetworkNet.OP_BUY_RESULT, \
+				StallNetworkNet.OP_BUY_RESULT, PunishNet.OP_RESTRICTION, \
 				FriendNet.OP_DELETE_RESULT, FriendNet.OP_LIST, FriendNet.OP_PUSH, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
 				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE, \
@@ -3309,6 +3312,10 @@ func _dispatch(p: Packet) -> void:
 			stall_net_left.emit(int(p.data[0]) if p.data.size() >= 1 else -1)
 		StallNetworkNet.OP_BUY_RESULT:
 			stall_net_bought.emit(StallNetworkNet.decode_result(p.data))
+		PunishNet.OP_RESTRICTION:
+			var rn := PunishNet.decode(p.data)
+			if not rn.is_empty():
+				restriction_notice.emit(rn)
 		StallNet.OP_RENAMED:
 			var sr := StallNet.decode_renamed(p.data)
 			if not sr.is_empty():

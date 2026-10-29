@@ -45,10 +45,18 @@ class_name StallController
 ##
 ## OURS, disclosed: after a sale this client asks the server for its bag list
 ## (as the exchange does) where the original moves the stack in its own copy
-## (0xB0B4 -> c:0x6bc0c0; 0x30B7 kind 3 for the owner). The name filter the
-## title passes (c:0x8c3f10's two word lists, 0x3c38) is not run: OpenSRO's
-## server takes any 1..64 bytes. The 0x3c42 refusal is the original's own for
-## an item its group table does not name.
+## (0xB0B4 -> c:0x6bc0c0; 0x30B7 kind 3 for the owner). The 0x3c42 refusal
+## is the original's own for an item its group table does not name.
+##
+## Round 840 (lane B), READ: the title box's OK runs the title through the
+## abuse filter's stall lists first (c:0x6bb159 -> NameFilter.stall_title_ok,
+## c:0x8c3f10), for the first title and a rename alike; a refused title shows
+## category 10's 0x3c38 ("Invalid letters are included. Invalid name for the
+## shop."), and the window's own X (slot 43, c:0x6b96a0, at c:0x6bb18e) sends
+## 0x70B2 before the window goes (c:0x79be20(0)) -- even when
+## no 0x70B1 went before it (stall.md's quirk), and a rename's stall closes.
+## OURS: a trade ban's 0x3405 while no window is shown frees the controller
+## for another try (the original's own 0xB0B1 never comes then).
 
 const WINDOW := "stall"
 const LAYOUT := "resinfo\\ifstall.txt"
@@ -69,6 +77,8 @@ const OPEN_SHIFT := Vector2(0, -60)
 ## The chat module's lines (0x778a10's colour for the state lines, 0xffdbc99b).
 const STATE_LINE_COLOUR := Color8(0xdb, 0xc9, 0x9b)
 const DIM_ALPHA := 128.0 / 255.0
+## The title word filter's code (category 10, c:0x6bb171..0x6bb178).
+const CODE_TITLE_FILTER := 0x3c38
 ## Round 840: the send's net u16 (c:0x6b9940 and the others) is 0 off the
 ## stall network, else StallNetworkNet.NET_* (`_net_value`).
 
@@ -94,6 +104,9 @@ var entries := {}
 ## this player.
 var users: Array = []
 var user_ids: Array = []
+## Round 840: the abuse filter the title is tested with; null: the
+## process's (NameFilter.shared on the HUD's Media.pk2). A test sets it.
+var name_filter: NameFilter = null
 ## The last greeting this player set (+0x82c / +0x830), kept for the next
 ## stall.
 var saved_greeting := ""
@@ -198,6 +211,12 @@ func title_entered(t: String) -> void:
 	if t == "":
 		return
 	var n = _net()
+	if not _filter().stall_title_ok(t):
+		print("StallController: title refused by the stall word filter (0x3c38)")
+		panels.stall_code_message(CODE_TITLE_FILTER)
+		active = shown()
+		n.stall_close()
+		return
 	if not shown():
 		active = true
 		title = t
@@ -209,6 +228,20 @@ func title_entered(t: String) -> void:
 		n.stall_update(StallNet.encode_greeting(g))
 	else:
 		n.stall_update(StallNet.encode_rename(t))
+
+func _filter() -> NameFilter:
+	if name_filter != null:
+		return name_filter
+	var media: Pk2Reader = null
+	if panels != null and panels.get("_builder") != null:
+		media = panels._builder._media_pk2
+	return NameFilter.shared(media)
+
+## Round 840 (OURS): a trade ban answered the open (0x3405, no 0xB0B1): with
+## no window shown, the stall is not waiting any more.
+func on_restricted(kind: int) -> void:
+	if kind == 1 and active and not shown():
+		active = false
 
 func open_greeting_box() -> void:
 	if not own or box_open:

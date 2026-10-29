@@ -276,3 +276,46 @@ func TestFirstUnitIsAlwaysSkipped(t *testing.T) {
 		t.Errorf("a row that lost its '#' still counted (%d)", rows)
 	}
 }
+
+// flags is a word with all four flag cells (f1 name, f2 chat, f3 guild, f4
+// stall).
+func flags(w, f1, f2, f3, f4 string) []string { return []string{w, f1, f2, f3, f4, ""} }
+
+// Round 840: the stall title's word test is f4's lists (c:0x8c3f10), with no
+// character bitmap: the substring list found anywhere in the lower-cased
+// title, the whole-word set against each space-separated token.
+func TestStallTitleUsesTheFourthFlag(t *testing.T) {
+	lines := append([]string{}, english...)
+	lines = append(lines,
+		row(map[int][]string{4: flags("Scam", "0", "0", "0", "2")}),
+		row(map[int][]string{4: flags("cheap", "0", "0", "0", "1")}),
+		row(map[int][]string{4: flags("gm", "2", "0", "0", "0")}),
+		row(map[int][]string{4: flags("guildword", "0", "0", "1", "0")}),
+	)
+	f := mustLoad(t, 4, lines...)
+	if sub, whole := f.StallCounts(); sub != 1 || whole != 1 {
+		t.Fatalf("StallCounts() = %d, %d; want 1 and 1", sub, whole)
+	}
+	for title, want := range map[string]bool{
+		"My stall":         true,
+		"No SCAMS here":    false, // f4 substring, case folded by the lower-casing
+		"Cheap":            false, // f4 whole word, the whole title
+		"all cheap stuff":  false, // a token
+		"cheaper goods":    true,  // not the whole token
+		"GM's goods":       true,  // f1's word is not the stall's
+		"guildword":        true,  // f3's whole word is not the stall's
+		"[Aria]'s stall!!": true,  // no character bitmap
+		"":                 true,
+	} {
+		if got := f.StallTitleOK(title); got != want {
+			t.Errorf("StallTitleOK(%q) = %v, want %v", title, got, want)
+		}
+	}
+	if !Default().StallTitleOK("Scam cheap") {
+		t.Error("the no-file filter refused a title")
+	}
+	// f1 still reads as before.
+	if f.NameOK("Gmbob") || !f.NameOK("Scambob") {
+		t.Error("the name test changed")
+	}
+}

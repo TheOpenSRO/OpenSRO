@@ -33511,6 +33511,23 @@ func _wire_stalls() -> void:
 	NetClient.stall_net_searched.connect(sn.on_searched)
 	NetClient.stall_net_bought.connect(sn.on_bought)
 	_hud_panels.stall_network_town = _stall_network_in_town
+	NetClient.restriction_notice.connect(_on_restriction_notice)
+
+## Round 840 (lane B): 0x3405, a GM's chat or trade ban (PunishNet): its line
+## in GDR_WARNING_WND and the system window, type 5, as c:0x86e5b0 shows it;
+## a key the archive lacks shows nothing (the client's empty string).
+func _on_restriction_notice(d: Dictionary) -> void:
+	var table := _ui_text_table
+	var line := PunishNet.text(d, func(k: String) -> String:
+		return table.get_text(k, "") if table != null and table.has(k) else "")
+	print("RESTRICTION: kind %d until %04d-%02d-%02d %02d:%02d -> '%s'" % [int(d["kind"]), int(d["year"]),
+		int(d["month"]), int(d["day"]), int(d["hour"]), int(d["minute"]), line])
+	if _hud_panels != null:
+		_hud_panels._stall().on_restricted(int(d["kind"]))
+	if line == "":
+		return
+	_log_system(line, PunishNet.SYSTEM_TYPE)
+	_show_banner("restriction", line)
 
 ## The booth, title and loop of uid's body as its stall state says. Nothing
 ## is done for a body that neither stalls nor carries a booth (every spawn
@@ -33537,6 +33554,8 @@ func _stall_refresh(uid: int) -> void:
 	if top <= 0.0:
 		top = 1.8 * PLAYER_SCALE_RATIO
 	_stall_world.apply(uid, node, _race_of_body(body), top)
+	if own:
+		_stall_own_pets(stalling)
 	if stalling:
 		var group := _player_anim_group() if own else String((_other_gaits.get(uid, {}) as Dictionary).get("group", "default"))
 		print("STALL: %d's vendor clip (type %d, %s, group %s): %s" % [uid, StallWorld.VENDOR_ACTION, body, group,
@@ -33583,7 +33602,56 @@ func _stall_network_in_town() -> bool:
 	var zi := table.zone_for_position(parts[0].to_int(), parts[1].to_int(), local.x, local.z)
 	return zi >= 0 and zi < table.zones.size() and table.zones[zi].kind == RegioninfoReader.KIND_TOWN
 
+## Round 840 (lane B): this player's own summoned COS take the stall's state
+## too. READ FUN_009dd040 (c:0x9dd189..0x9dd226 at the open, c:0x9dd29a..
+## 0x9dd320 at the close): only when the stalling character is this client's
+## own player (IsKindOf CICPlayer, c:0x9dd190 on 0xef1b44), each COS in the
+## player's COSDataMgr (CICPlayer +0x20d4, c:0x9d4c70; NetClient.cos_own)
+## that is in the world (FindObjectByID, c:0x9dd1e0) enters state 0xF -- the
+## vendor loop, animation type 80 -- when its animation set's group 0
+## (`default`) has a type-80 entry (c:0x9dd1fd, FUN_00a5a900); at the close
+## each enters state 3, the stand, with no such test. Nobody else's pets are
+## touched, in this client or another's. MEASURED on the box's Data.pk2: the
+## only COS models with a type-80 entry are `cos\p_jinn.bsr` and
+## `p_jinn_02.bsr` (`p_jinn_cart_stand01.ban`; the COS_P_JINN growth pets,
+## ITEM_COS_P_JINN_SCROLL); every other pet and ride keeps its pose.
+var _stall_pets_on := false
+
+func _stall_own_pets(on: bool) -> void:
+	if on == _stall_pets_on:
+		return
+	_stall_pets_on = on
+	for uid in NetClient.cos_own:
+		var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(int(uid))
+		if not _cos_bodies.has(int(uid)) or assembled == null or not is_instance_valid(assembled.skeleton):
+			continue
+		if not on:
+			_cos_gait(int(uid), BsrReader.AnimationEntry.TYPE_STAND)
+			print("STALL: own COS %d back to its stand (state 3)" % int(uid))
+			continue
+		var clip := SkinnedBsrAssembler.animation_for(_data_pk2, assembled, StallWorld.VENDOR_ACTION, "default") \
+			if _data_pk2 != null else null
+		if clip == null:
+			print("STALL: own COS %d has no type-80 clip: it keeps its pose" % int(uid))
+			continue
+		_end_body_fidget(assembled.skeleton)
+		MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [],
+			_pose_fades, _loop_in_ms(StallWorld.VENDOR_ACTION))
+		print("STALL: own COS %d takes the vendor loop (state 0xF, type 80, %s)" % [int(uid),
+			String(clip.get_meta(SkinnedBsrAssembler.CLIP_PATH_META, "?"))])
+
+## QA (round 840): OPENSRO_QA_STALL_LOG=1 prints every 30 ticks each booth's
+## clock and first moving bone (`QA BOOTH` lines) -- the measurement that a
+## booth's own clip runs.
+var _qa_stall_log := OS.get_environment("OPENSRO_QA_STALL_LOG") != ""
+
 func _stall_tick() -> void:
+	if _qa_stall_log and _stall_world != null and _qa_tick % 30 == 0:
+		for uid in _other_bodies:
+			var n: Node3D = _other_bodies[uid]
+			var b := n.get_node_or_null(StallWorld.BOOTH_NODE) as Node3D if n != null and is_instance_valid(n) else null
+			if b != null:
+				print("QA BOOTH tick %d: %d %s" % [_qa_tick, int(uid), StallWorld.booth_state(b)])
 	if _stall_world == null or _stall_world.pending_owner < 0 or player == null:
 		return
 	var body: Node3D = _other_bodies.get(_stall_world.pending_owner)
