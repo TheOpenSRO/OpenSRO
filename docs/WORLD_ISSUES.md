@@ -7483,6 +7483,107 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-second round, lane T: the stall network's item tooltips
+
+The user's asks: "when using the stall network you should be able to hover over the item icon and
+see its stats", then (the coordinator's brief) match the original exactly, and "the stall log should
+be wiped after a stall is full closed. When a stall is sold out and I open a new stall I can see the
+logs from the previous stall." Labels: READ (sro_client.exe on the render box, `c:`), MEASURED,
+INFERRED, OURS, OPEN. The reading with every address is `docs/protocol/stall_network.md` §3a and
+`docs/protocol/stall.md` §8 ("The log").
+
+**What the original does: the tooltip (READ).**
+- A row's icon (record 124, `CIFSlotWithHelpEx` 16 x 16, MEASURED in `stallnetwork.2dt`) is a
+  `CNIFWnd` holding a `CIFSlotWithHelp` (c:0x687d40 creates class 0xee9b18 at +0x348). The row fill
+  (c:0x6caa40) gives it the record's whole item -- SetItem 0x6871d0 with the SOItem read by
+  0x8be4f0(stream, 1) (c:0x6c993d): plus, variance, durability, blue options, bindings -- slot kind
+  0x0f (c:0x6cad05) and window 0x96 (c:0x6cad18); the clear (c:0x6cb190) SetItem(0).
+- Hover: CIFSlotWithHelp::vslot_019 (c:0x667820) runs vslot_048 (c:0x686db0) on 0x4009 and hides
+  both bubbles on 0x400a. Kind 0x0f takes UI_SILKMALL::0x686c50, **the same item help as a bag
+  slot** (the builders 0x685f20 / 0x6860a0, then 0x66ec40 and 0x672990). No delay of its own.
+- Kind 0x0f differs from a bag slot in one line: durability prints the maximum twice (c:0x66d338..
+  0x66d39c) and is never red (c:0x66d415..0x66d44c). There is no price line: the price block
+  0x6784a0 prints for kind 0x0f only from the package pointer +0x568, which only the mall's slot sets
+  (0x6667a0 from c:0x68a9e5 / 0x68aa3b).
+- SetItem re-shows the help when the slot is under the pointer (c:0x687685..0x6876ee), so a new page, a
+  sort or a bought row under a still pointer shows the new row's item, and an emptied row hides it.
+  The same SetItem starts the seal star (0x666610) for a seal item off the wire (+0x28, c:0x8be546).
+- Other columns and the selection have no help. The only help setter in c:0x6bc000..0x6cd400 is
+  Search's (0x46d7d0 at c:0x6c535b). The selection (0x6cb110) only changes the bar.
+- The buy box shows no tooltip. Its icon is record 26, a `CNIFStatic` (MEASURED), given a texture
+  only (c:0x6bc7a0, 0x6bf370). Record 27 is a plain `CNIFWnd` that is never fetched.
+
+**What the original does: the stall log (READ).** STALL_CHAT (the CIFChatModule) lives as long as
+the window. Every close is 0x79be20(0): it hides the window, then 0x8b59f0("IFStall") deletes every
+control in the section (c:0x79bec3..0x79bf09). The next open loads the section again (0x8b5580).
+The window closes on:
+- the owner's 0xB0B2, whatever the answer (c:0x8720f0). A sold-out stall reaches this too, because
+  the owner's client sends 0x70B2 itself (c:0x87a6f0);
+- a visitor's 0xB0B5, likewise (c:0x872450);
+- 0x30B9 for the window's own stall (c:0x872228);
+- the title box's refusal or cancel before the window shows (c:0x6bb198, 0x6bb307);
+- OnResetClient's teardown (c:0x86dab0 -> 0x787860 -> 0x7879c6).
+
+The owner and a visitor behave the same, since it is one class. A modify only adds its state line
+(c:0x878486).
+
+**What we built.**
+- `StallNetworkWindow.item_slot` -> `StallNetworkController._item_slot`: the icon host gets
+  `HudPanels._set_item_tip(host, ref, "stall_network", row)`. That is the bag's `ItemTooltipBubble` /
+  `ItemTooltipLines`, with the shown record's instance (`instance_at`) and the seal star. A fill under
+  the pointer (`gui_get_hovered_control`) shows the help at once. `item_tip_lines` drops the current
+  durability for that site, so the line is max/max and white. hud_panels: two local branches.
+- The server is unchanged: 0xB461's record is `exchangeRecord`, the stall list's
+  (`stallnet842_test.go`: plus 7, the variance, durability 20, both options, adv 2, the potions'
+  count, byte for byte the stall list's).
+- `HudPanels.close_stall_window` (every one of this client's closes) calls `StallWindowView.chat_clear`:
+  the lines and the input box are emptied, where the original deletes the window.
+- QA steps `nethover:<id,..>`, `tipshown`, `stallhover:<i>`, `baghover:<id>` and `stalllog` (World3D,
+  pushes in UI units).
+
+**Live (render box, lane server 16980 in memory with the region table, client
+`/opt/opensro-client-r842t` from git, real input through OPENSRO_QA_INPUT, partybots SellA / SellB /
+SellC / Buyer; evidence in `/var/tmp/r842t/keep`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| CHN weapon / Sword / 1 Degree: row 0 hovered shows Long Copper Sword's help; "Required level 5" red at level 1 | PASS | runA_row0_long_sword_red_level_f391.png, runA_client_qa_lines.txt (QA INPUT 10) |
+| Row 1, the bot's +7 Copper Sword with STR 3 / INT 2: name "(+7)" cyan, the white stats with (+x%), "Durability 64/64", "Str 3 Increase (+100%)", "Int 2 Increase (+50%)" in cyan | PASS | runA_plus7_sword_options_maxdur_f398.png (QA INPUT 12) |
+| The pointer away: no help | PASS | QA INPUT 14-15 |
+| Expendables / Recovery Potion: 25 listings, row 0's potion help; page 2 by its button, the pointer back on row 0: page 2's item (Vigor Recovery Potion (Large)) | PASS | runA_potion_row0_f1118.png, runA_page2_row0_under_pointer_f1178.png (QA INPUT 21-25) |
+| An empty row (11 of page 2): no help | PASS | runA_empty_row_no_tip_f1208.png (QA INPUT 26-27) |
+| F closes the window under a shown help: nothing left on screen | PASS | runA_F_closes_no_tip_f1258.png (QA INPUT 29-30) |
+| The same +7 sword bought through the network (row, Purchase, Buy) and hovered in the bag: the same text, line for line | PASS | runC_network_plus7_f396.png, runC_bought_same_sword_in_bag_f672.png, runC_client_qa_lines.txt (QA INPUT 10 against 18) |
+| Sell-out: the client's stall with two potion stacks; Buyer enters, chats, buys both; the client sends 0x70B2 itself (server: closed 0x3c17); "Second stall" opened: an empty log | PASS | runB_new_stall_after_sellout_empty_log_f2620.png, runB_client_qa_lines.txt (QA INPUT 30-31), runB_server_stall.txt, runB_buyer.txt |
+| The compare in the bot's own stall window (playerclick on SellC) | not run | the click never found SellC drawn (`no such player drawn`, three runs); the bag compare above stands in for it |
+
+**Tests.**
+- `stall_network842_test`, on the real Media.pk2, at UI scale 1.0 and 1.5 with real motion events:
+  - the wire bytes of a +7 ITEM_CH_SWORD_01_A with MATTR_STR 3 / MATTR_INT 2 and 20 durability, 30
+    HP potions, an avatar and a seal sword, through `decode_search`;
+  - each hover equals the bag's help with the durability line max/max (the bag's says 20/71);
+  - cyan name and options; the bubble right of the icon; a click selects and keeps the help;
+  - the seal star; an empty row shows nothing; paging and the price sort under a still pointer; the
+    leave; the buy box has no help; the close hides it.
+- `stall_log842_test`, on the real Media.pk2:
+  - a sell-out, then a new stall;
+  - close then reopen; 0xB0B2 {2, code};
+  - a modify keeps the log;
+  - a visitor's 0xB0B5 and re-entry; 0x30B9 for the stall shown and for another.
+- `go test ./...` passes. `remote_godot.sh check` gives ALL LOAD (1037 scripts); `tests` reports
+  "ran 392 suite(s), 0 failing".
+- No perf gate: a UI round.
+
+**OPEN.**
+- The second help bubble (sockets, c:0x798dc0 with 0x672740 / 0x67a330) is not built anywhere in this
+  client.
+- The non-equipment builders (0x6860a0) are round 731's: a potion shows its name and sort only, in
+  the bag and here alike.
+- The NPC store's listed instances (round 786) are kind 0x0f too, but still print cur/max.
+- Whether this client hides a visitor's stall window on its own warp (retail's OnResetClient path) is
+  not checked.
+- The +0x6c0 flag that vslot_019 tests: its setter was not traced.
+
 ## Eight-hundred-and-forty-first round, lane K: the stall network's key
 
 The user's ask: "The stall network should have a default bind to the F key and should show in the

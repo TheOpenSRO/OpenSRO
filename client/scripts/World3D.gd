@@ -18045,6 +18045,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   tipshown            report the item tooltip shown now (round 842)
 #   stallhover:<i>      move the mouse over stall slot i's icon, in UI units;
 #                       the report adds the tooltip (round 842)
+#   baghover:<id>       move the mouse over the shown bag cell holding that
+#                       item id; the report adds the tooltip (round 842)
 #   stalllog            report the stall window's log (its chat module's
 #                       lines; round 842)
 #   worn:<slot>         left click that worn slot's icon (round 838)
@@ -19299,6 +19301,18 @@ func _qa_input_step() -> void:
 				sm.global_position = sm.position
 				get_viewport().push_input(sm, true)
 				_qa_input_report = "%s at %s tip=[%s]" % [action, sm.position,
+					ItemTooltipLines.as_text(_hud_panels.item_tip_shown()).replace("\n", " | ")]
+		"baghover":
+			# Round 842: the pointer onto a bag cell (its item's tooltip).
+			var bhc := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
+			if bhc == null:
+				_qa_input_report = action + " (not on the shown bag page)"
+			else:
+				var bm := InputEventMouseMotion.new()
+				bm.position = bhc.get_global_rect().get_center()
+				bm.global_position = bm.position
+				get_viewport().push_input(bm, true)
+				_qa_input_report = "%s at %s tip=[%s]" % [action, bm.position,
 					ItemTooltipLines.as_text(_hud_panels.item_tip_shown()).replace("\n", " | ")]
 		"stalllog":
 			var slw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null

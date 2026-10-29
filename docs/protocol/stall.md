@@ -228,6 +228,17 @@ ref's AssocFileObj128 (`item\Avatar\booth_*.bsr`, ItemData 3847..3850), else by 
   UIIT_STT_STALL_DEFAULT_OWNERMSG "Welcome to [%s]'s stall."); OK on the title before the window is
   shown sends 0x70B1 and type 6 at once. The register and price boxes (MsgBoxStoreMoney purpose 10,
   "Register"), the buy box (purpose 11, "Agreement window", "Buy").
+- **The log** (round 842, lane T): STALL_CHAT's lines -- the chat, the state lines, the sale lines --
+  live as long as the window, which every close deletes: 0x79be20(0) hides it, then 0x8b59f0("IFStall")
+  deletes every control of the section (0x8b5510, 0xba0e40; c:0x79bec3..0x79bf09); 0x79be20(1) loads it
+  afresh (0x8b5580) when it does not exist. The closes: the owner's 0xB0B2 whatever the answer
+  (c:0x8720f0, jmp 0x87215c / 0x87219f) -- so also a sold-out stall, whose owner's client sends 0x70B2
+  itself (c:0x87a6f0) --, a visitor's 0xB0B5 likewise (c:0x872450, 0x8724b3 / 0x8724f6), 0x30B9 for
+  the window's own stall (c:0x8721b0 -> 0x872228), the title box's refusal or cancel before the window
+  is shown (c:0x6bb198, 0x6bb307) and OnResetClient's teardown (c:0x86dab0 -> 0x787860 -> 0x7879c6).
+  Owner and visitor alike (one class). A modify only adds its state line (0xB0BA type 5, c:0x878486).
+  OpenSRO keeps one window and hides it, so `HudPanels.close_stall_window` empties the lines and the
+  input box (`StallWindowView.chat_clear`).
 - **Moves:** a bag item put on an empty slot (owner, modifying) -> the register box -> type 2; an own
   slot put on the bag -> type 3; a visitor's slot put on the bag -> the buy box -> 0x70B4; X: the owner
   0x70B2, a visitor 0x70B5.

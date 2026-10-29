@@ -207,6 +207,64 @@ the icon 27; the name 20 (275 wide, centred) in `frame_msg_` 14; the count 21 an
 (UIIT_STT_AMOUNT) 12; the price 22 (right) and "Gold" (UIIT_STT_GOLD) 13; Buy 4
 (UIIT_STT_BUY) and Cancel 7 (UIIT_CTL_CANCEL), `com_button` 76 x 24.
 
+## 3a. The row icons' tooltips (round 842, lane T)
+
+**What the original does (READ unless marked).**
+
+- **The control.** A row's icon, record 124 of each `CNIFStallNetworkSlot`, is a `CIFSlotWithHelpEx`
+  16 x 16 (the record's class name, MEASURED in `stallnetwork.2dt`). It is a `CNIFWnd` (RTTI) whose
+  Create (vslot_010 c:0x687d40) makes one child of the class at 0xee9b18 -- `CIFSlotWithHelp`
+  (CIFSlotWithHelp::vslot_000 c:0x66b430 returns it; vtable 0xda18e4) -- and keeps it at +0x348.
+- **Its item.** The row fill (c:0x6caa40, from the page show 0x6c6f70 at c:0x6c7017 / 0x6c70a1) gives
+  that slot the record's item: SetItem 0x6871d0 (c:0x6caca5) with rec+0x48, the item the record read
+  with SOItem::FUN_008be4f0(stream, 1) (c:0x6c993d) -- so its plus, variance, durability, blue options
+  and binding blocks; the icon texture from the ref (+0x15c, c:0x6cacd7..0x6cacf7); the slot kind
+  +0x36c = 0x0f (0x6666f0, c:0x6cad05) and its window +0x370 = 0x96 (0x666710, c:0x6cad18). The row
+  clear (c:0x6cb190) calls SetItem(0) (c:0x6cb26f).
+- **The hover.** CIFSlotWithHelp::vslot_019 (c:0x667820) answers the hover message 0x4009 (when
+  +0x6c0 is 0, which nothing in the network's code sets) with vslot_048 (c:0x686db0) and the leave
+  0x400a by hiding both help bubbles (0x798db0 / 0x798dc0 -> vslot 0x5c(0)). vslot_048: kind 0x0f is in
+  its list, so it runs UI_SILKMALL::0x686c50 -- **the same item help the bag, storage and stall slots
+  show**: the equipment builders through 0x685f20 (name, seal and set, sort and degree, description,
+  the stat block 0x66c5b0, requirements, max magic options, the blue lines, the advanced elixir), the
+  others through 0x6860a0, then 0x66ec40 and the rent block 0x672990; the socket block 0x672740 goes
+  to the second bubble (c:0x68600c..0x686058). No delay of its own: the help is whatever the 0x4009
+  dispatch gives every slot (the same path as the bag's, so this client's bag trigger).
+- **Kind 0x0f's differences from a bag slot.** (1) The durability line (c:0x66d338..0x66d39c): for kind
+  0x0f with a window other than 0xbe, or kind 0xbc, `"%s %d/%d (+%d%%)"` takes the stat block's
+  maximum (`[item+0xe0+0x14]`) for both figures, where any other slot prints the current durability
+  (`[item+0x98]`) first; its colour (c:0x66d415..0x66d44c) is red 0xffff4a4a only when the current
+  durability is 0 and the kind is neither 0x0f nor 0xbc -- so here always white. (2) The price block
+  (0x6784a0) prints nothing for it: with no store open, only kinds 0x46 / 0x47 / 0x21 (the store's
+  purchase price) and 0x130 (forge) print; with a store open, kind 0x0f prints only from the slot's
+  package pointer +0x568, which only the mall's package slot sets (its setter 0x6667a0, called from
+  c:0x68a9e5 / 0x68aa3b). The other kind tests in the builders (0xbc, 0xa8, 0xa7, 0x34, window 0x8c)
+  do not touch kind 0x0f.
+- **SetItem under the pointer.** SetItem ends (c:0x687685..0x6876ee) with: if this slot is the one
+  under the pointer (0xb9dc00 == this), vslot_048 at once. So a page shown, a sort, or a bought row
+  leaving its page under a still pointer shows the new record's item at once; an emptied row's
+  help builds nothing and the bubble hides (`[bubble+499*4] == 0 -> 0x5c(0)`). The same SetItem starts
+  the seal star (0x666610) for a seal item off the wire (SOItem +0x28 = 1, c:0x8be546).
+- **Other columns, the selection.** The row's Number, Level, Name, Quantity and Price are
+  `CNIFStatic`s with no help: the only help setter in the network's code (0x46d7d0) is Search's
+  (c:0x6c535b, UIIT_MSG_WARENETWORK_SCAN_TOOLTIP) -- a scan of c:0x6bc000..0x6cd400. Selecting a row
+  (0x6cb110) changes its bar only.
+- **The buy box.** Its icon is drawn on record 26, a `CNIFStatic` (type 5, at 27's rect; MEASURED),
+  fetched by its OnCreate (c:0x6bc7a0: +0x850 = control 0x1a) and given only the texture (c:0x6bf370);
+  record 27 (type 18, no class name: a plain `CNIFWnd`) is never fetched and no SetItem runs in the
+  box's code. **The buy box shows no tooltip.**
+
+**What OpenSRO builds.** `StallNetworkWindow.item_slot` (the fill and clear) ->
+`StallNetworkController._item_slot`: the icon host gets `HudPanels._set_item_tip(host, ref,
+"stall_network", row)` -- the bag's `ItemTooltipBubble` and `ItemTooltipLines` -- with the instance from
+the shown record (`instance_at`), and the seal star; a fill under the pointer shows the help at once. In
+`item_tip_lines`, the site `stall_network` drops the current durability so the line prints max/max and
+stays white. No wire change: the server's 0xB461 record is `exchangeRecord`, the stall list's
+(`stallnet842_test.go`). OPEN: the second bubble (sockets, 0x672740 / 0x67a330) is not built anywhere
+in this client; the non-equipment builders (0x6860a0) remain round 731's (a potion shows its name and
+sort only, as in the bag); the store's listed instances (round 786, also kind 0x0f) still print
+cur/max.
+
 ## 4. The owner's side (READ unless marked)
 
 - **0x70BA's `u16 net`** (c:0x6b99a0, 0x6b4bb6, 0x6b5ed1, 0x6b9940, 0x6b9a20): 0 while the stall is
