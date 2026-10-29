@@ -18039,6 +18039,16 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   boxyes:<name> / boxno:<name>  a question box's Yes / No (round 840)
 #   netpage:<i> / netprev / netnext / netlist:<i> / netclose  the network's
 #                       page buttons, the open combo list's row i, its X
+#   nethover:<id>[,..]  move the mouse over a stall network control (in UI
+#                       units), e.g. 120,124 row 0's icon; the report adds
+#                       the item tooltip then shown (round 842)
+#   tipshown            report the item tooltip shown now (round 842)
+#   stallhover:<i>      move the mouse over stall slot i's icon, in UI units;
+#                       the report adds the tooltip (round 842)
+#   baghover:<id>       move the mouse over the shown bag cell holding that
+#                       item id; the report adds the tooltip (round 842)
+#   stalllog            report the stall window's log (its chat module's
+#                       lines; round 842)
 #   worn:<slot>         left click that worn slot's icon (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
@@ -19267,6 +19277,50 @@ func _qa_input_step() -> void:
 				motion.global_position = motion.position
 				_qa_input_report = "%s at %s" % [action, motion.position]
 				get_viewport().push_input(motion, true)
+		"nethover":
+			# Round 842: the pointer onto a stall network control (a row's
+			# icon slot), in UI units so it lands at any UI scale.
+			var nhc := _qa_net_control("netnode", arg)
+			if nhc == null:
+				_qa_input_report = action + " (not shown)"
+			else:
+				var nm := InputEventMouseMotion.new()
+				nm.position = nhc.get_global_rect().get_center()
+				nm.global_position = nm.position
+				get_viewport().push_input(nm, true)
+				_qa_input_report = "%s at %s tip=[%s]" % [action, nm.position,
+					ItemTooltipLines.as_text(_hud_panels.item_tip_shown()).replace("\n", " | ")]
+		"stallhover":
+			# Round 842: the pointer onto a stall slot's icon (its tooltip).
+			var shc := _hud_panels.qa_stall_slot_control(int(arg), "icon") if _hud_panels != null else null
+			if shc == null:
+				_qa_input_report = action + " (no stall slot shown)"
+			else:
+				var sm := InputEventMouseMotion.new()
+				sm.position = shc.get_global_rect().get_center()
+				sm.global_position = sm.position
+				get_viewport().push_input(sm, true)
+				_qa_input_report = "%s at %s tip=[%s]" % [action, sm.position,
+					ItemTooltipLines.as_text(_hud_panels.item_tip_shown()).replace("\n", " | ")]
+		"baghover":
+			# Round 842: the pointer onto a bag cell (its item's tooltip).
+			var bhc := _hud_panels._bag_cell_of_item(int(arg)) if _hud_panels != null else null
+			if bhc == null:
+				_qa_input_report = action + " (not on the shown bag page)"
+			else:
+				var bm := InputEventMouseMotion.new()
+				bm.position = bhc.get_global_rect().get_center()
+				bm.global_position = bm.position
+				get_viewport().push_input(bm, true)
+				_qa_input_report = "%s at %s tip=[%s]" % [action, bm.position,
+					ItemTooltipLines.as_text(_hud_panels.item_tip_shown()).replace("\n", " | ")]
+		"stalllog":
+			var slw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null
+			_qa_input_report = "stalllog shown=%s log=[%s]" % [slw != null and slw.visible,
+				StallWindowView.chat_text(slw).strip_edges().replace("\n", " | ")]
+		"tipshown":
+			_qa_input_report = "tipshown tip=[%s]" % ItemTooltipLines.as_text(
+				_hud_panels.item_tip_shown() if _hud_panels != null else []).replace("\n", " | ")
 		"hover":
 			var hv := arg.split(",")
 			var motion := InputEventMouseMotion.new()

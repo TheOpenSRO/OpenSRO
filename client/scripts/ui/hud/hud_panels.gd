@@ -4160,6 +4160,8 @@ func close_stall_window() -> void:
 	var window: HudWindow = _windows.get(StallController.WINDOW)
 	if window != null:
 		window.hide()
+		# Round 842: the original deletes the window here, its log with it.
+		StallWindowView.chat_clear(window)
 	for box_name in ["StallTitleInput", "StallGreetingInput"]:
 		var b := get_node_or_null(box_name)
 		if b != null:
@@ -6552,6 +6554,12 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		if not extra.is_empty():
 			instance.erase("unknown_variance")
 			instance.merge(extra, true)
+	# Round 842: the stall network's rows are slots of kind 0x0f (c:0x6cad05),
+	# whose durability line prints the maximum for both figures, white
+	# (c:0x66d338..0x66d39c, the colour test 0x66d415..0x66d44c).
+	if where == StallNetworkController.TIP_SITE:
+		instance.erase("durability")
+		instance.erase("durability_cur")
 	var ctx := {
 		"text": Callable(self, "_tip_text"),
 		"names": _object_names,
@@ -6658,6 +6666,9 @@ func _item_instance(where: String, slot: int) -> Object:
 	# Round 839: the stall's slots (StallController).
 	if where == "stall":
 		return stall.instance_at(slot) if stall != null else null
+	# Round 842: the stall network's shown rows (StallNetworkController).
+	if where == StallNetworkController.TIP_SITE:
+		return stall_network.instance_at(slot) if stall_network != null else null
 	if slot < 0 or not _INSTANCE_LISTS.has(where):
 		return null
 	var list = NetClient.get(_INSTANCE_LISTS[where])

@@ -239,6 +239,28 @@ static func _draw_slots(panels, window: HudWindow, builder: UiBuilder, c: StallC
 				pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 				pl.add_theme_color_override("font_color", StallNet.price_colour(e.price))
 
+## Round 842 (lane T): the window going takes its chat module with it. Every
+## close of CIFStall is 0x79be20(0) (READ c:0x79bec3..0x79bf09): the window
+## hidden, then 0x8b59f0("IFStall") deletes every control of the IFStall
+## section (0x8b5510 out of the map, 0xba0e40), the CIFChatModule
+## (STALL_CHAT) among them; the next stall's 0x79be20(1) loads the section
+## afresh (0x8b5580). This client keeps one window and hides it, so the
+## lines and the input box's text are emptied here instead.
+static func chat_clear(window: HudWindow) -> void:
+	if window == null:
+		return
+	var rt := window.find_child("Lines", true, false) as RichTextLabel
+	if rt != null:
+		rt.clear()
+	var input := window.find_child("GDR_CHAT_INPUTBOX", true, false) as LineEdit
+	if input != null:
+		input.text = ""
+
+## The chat module's lines as text (tests and QA).
+static func chat_text(window: HudWindow) -> String:
+	var rt := window.find_child("Lines", true, false) as RichTextLabel if window != null else null
+	return rt.get_parsed_text() if rt != null else ""
+
 ## A line in the chat module.
 static func chat_add(window: HudWindow, text: String, colour: Color) -> void:
 	if window == null:
