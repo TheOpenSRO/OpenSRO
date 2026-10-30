@@ -211,6 +211,9 @@ func control(path: Array) -> Control:
 ## one that adds or removes a quest starts from the first.
 signal quest_selected(quest_id: int)
 signal detail_requested(quest_id: int)
+## The row's world-map button 18 (CNIFQuestSlot's message map 0xeb98d0:
+## control 18 -> 0x6e51e0, READ round 845; QuestMapGuide has the handler).
+signal map_requested(quest_id: int)
 
 ## [quest_id, View] pairs.
 var _views: Array = []
@@ -327,6 +330,7 @@ func refresh() -> void:
 				if mark != null:
 					mark.visible = false
 			_set_view_art(row, quest_id)
+			_wire_map_button(row)
 		else:
 			_objective_mode(row)
 			var m := d[3] as QuestNet.Mission
@@ -341,6 +345,17 @@ func refresh() -> void:
 				if label != null:
 					label.add_theme_color_override("font_color", TwoDtBuilder.argb(COLOUR_ING if m.open else COLOUR_END))
 		row.visible = true
+
+## Button 18 asks for the row's quest on the world map (0x6e51e0).
+func _wire_map_button(row: Control) -> void:
+	var button := TwoDtBuilder.child(row, ROW_WORLD_MAP) as BaseButton
+	if button == null or button.has_meta("quest_wired"):
+		return
+	button.set_meta("quest_wired", true)
+	button.pressed.connect(func() -> void:
+		var id := int(row.get_meta("quest_id", 0))
+		if id != 0:
+			map_requested.emit(id))
 
 func _set_view_art(row: Control, quest_id: int) -> void:
 	var button := TwoDtBuilder.child(row, ROW_CONTENT_VIEW) as TextureButton

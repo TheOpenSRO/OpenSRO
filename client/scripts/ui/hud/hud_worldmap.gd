@@ -730,6 +730,7 @@ func _show_map(info: WorldmapInfoReader.MapInfo) -> void:
 	_refresh_caption()
 	_refresh_world_button()
 	_set_visible(ID_FLOOR, false)
+	_refresh_quest_marks()
 	_centre_on_player()
 	_refresh_tiles()
 	_place_marker()
@@ -767,6 +768,7 @@ func show_dungeon(id: int) -> bool:
 	_build_signs(id)
 	_build_place_labels(null)
 	_set_visible(ID_FLOOR, d.total_layers > 1)
+	_refresh_quest_marks()
 	_centre_on_player()
 	_refresh_tiles()
 	_place_marker()
@@ -880,6 +882,7 @@ func _build_signs(id: int) -> void:
 			if (pair[0] as WorldmapLocalInfoReader.Sign).type == pass_type:
 				_sign_layer.add_child(pair[1])
 	_canvas.move_child(_sign_layer, -1)
+	_order_quest_layers()
 	if _party_layer != null:
 		_canvas.move_child(_party_layer, -1)
 	if _marker != null:
@@ -1982,6 +1985,8 @@ func in_select_mode() -> bool:
 func enter_select_mode() -> void:
 	_teleport_select = true
 	_select_sent = false
+	# 0x622dd0's entry branch clears the quest marks (0x61a620 at 0x622e66).
+	clear_quest_marks()
 	set_auto_move(false)
 	if _small:
 		toggle_size()
@@ -2317,3 +2322,303 @@ static func dof_room_key(dof: DofReader.Dof, block: int) -> String:
 		return ""
 	var r: int = (dof.blocks[block] as DofReader.Block).room_index
 	return dof.room_names[r] if r >= 0 and r < dof.room_names.size() else ""
+
+# --- Quest marks (round 845, lane K): NIFWorldMap 0x6256e0 --------------------
+#
+# The quest list's world-map button puts its quest on this map (QuestMapGuide
+# has the button and the test; docs/protocol/quests.md section 9 the reading).
+# READ unless marked:
+# - 0x6256e0 turns auto-move off with the stale flag (+0x7b1 / +0x229ac, as
+#   a press on the map does) and clears the last quest's marks (0x61a620,
+#   when +0x229ad is set: the signs at +0x229d0, the area pictures at
+#   +0x229c0 and the colours painted, +0x229b0).
+# - A quest at status 8 (QUEST_STATUS_ACHIEVED_KILL_MONSTER): for each NPC of
+#   its 0x30D5 list, the NPC's npcpos spot (0x938260). A local map that holds
+#   it (0x610d30) is shown (0x622b60(index, 1)) and scrolled to the spot as
+#   the player's arrow is placed there (0x610980's formula); otherwise the
+#   world map is, through 0x622f00("field", x, y, x / 10, z / 10) -- whose
+#   pixel is (x - left) * 32 + x / 10: the in-region offset in tenths, not
+#   the map's thirty-seconds, so the spot lands up to 160 px off (READ, kept).
+# - Any other status: the guide table's QUEST rows of the quest's code name.
+#   Kind 0, for each monster code: 0x624f40(monster, 1, 0x80e9c624) -- the
+#   monster's icon `wmap_monster_icon.ddj` at its MONSTER row's place, with
+#   its name, the map scrolled there (0x622f00), and each tile of its mask
+#   (worldmapguidedata_region.txt) drawn over the map tile it names:
+#   `interface\worldmap\monster\<area>_<A>x<B>.ddj`, every texel of one of
+#   the monster's colours not already painted made 0x80e9c624 (half-alpha
+#   gold), every other non-empty texel 0x00ffffff (clear); then its colours
+#   join the painted set. Kind 1, for each tooltip key: the icon
+#   `wmap_quest_icon.ddj` (32x32, its top-left at the place) with that text,
+#   and the map scrolled there.
+# - 0x622f00(area, x, y, px, py): the MAP_MANAGER row's map id; 0 shows the
+#   world map and the point is (x - left) * 32 + px, (top - y) * 32 + py;
+#   above 2000 shows that dungeon floor and the point is (px, py); 1..2000
+#   keeps the map. The scroll then puts the point at the map area's
+#   (304, 176) -- (104, 104) in the small size -- so the 32-pixel icon's
+#   middle is the area's middle (0x61c5a0's clamp keeps the map's edges in).
+# - The draw: the area pictures over the map tiles (0x61e700, mode 0 on the
+#   map of their id, mode 2 on their floor), then the place signs (0x61c360),
+#   then the quest and monster icons (0x61e890), each only on its own map.
+# OURS: an icon's text is a Godot tooltip (the client's hover box for these
+# signs was not read).
+
+const QUEST_ICON_DDJ := "interface\\worldmap\\wmap_quest_icon.ddj"
+const MONSTER_ICON_DDJ := "interface\\worldmap\\wmap_monster_icon.ddj"
+const MONSTER_MASK_FMT := "interface\\worldmap\\monster\\%s_%dx%d.ddj"
+## 0x6256e0's colour for a monster's area (0x624f40's third argument).
+const QUEST_AREA_ARGB := 0x80e9c624
+## The mask texel 0x624f40 skips (with 0) and the one it clears to.
+const MASK_CLEAR_ARGB := 0x00ffffff
+## 0x619ae0: a sign's quad, `+0xa0 = +0xa4 = 0x20` and 32.0 (0xd99a60).
+const QUEST_SIGN_SIZE := 32.0
+## 0x622f00 / 0x6256e0: where the scroll puts the point, by size (+0x97cc).
+const QUEST_FOCUS_BIG := Vector2(304, 176)
+const QUEST_FOCUS_SMALL := Vector2(104, 104)
+## The map name 0x6256e0 passes for an NPC off every local map.
+const QUEST_FIELD_AREA := "field"
+## A mark's map id (meta): the world 0, a dungeon floor's id.
+const QUEST_MAP_META := "quest_map_id"
+
+## The guide the marks come from (QuestMapGuide).
+var quest_guide: QuestMapGuide
+## +0x229ad: marks are up.
+var quest_marks_on := false
+var _quest_area_layer: Control
+var _quest_sign_layer: Control
+## +0x229b0: the colours painted since the last clear.
+var _quest_painted := {}
+## Last focus, for the QA log: [map id, point].
+var _quest_focus: Array = []
+
+func _ensure_quest_layers() -> void:
+	if _canvas == null or _quest_area_layer != null:
+		return
+	_quest_area_layer = Control.new()
+	_quest_area_layer.name = "QuestAreas"
+	_quest_area_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.add_child(_quest_area_layer)
+	_quest_sign_layer = Control.new()
+	_quest_sign_layer.name = "QuestSigns"
+	_quest_sign_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.add_child(_quest_sign_layer)
+	_order_quest_layers()
+
+## The areas just under the place signs, the icons just over them (the
+## render's order: 0x61e700, 0x61c360, 0x61e890).
+func _order_quest_layers() -> void:
+	if _quest_area_layer == null or _sign_layer == null:
+		return
+	_canvas.move_child(_quest_area_layer, _sign_layer.get_index())
+	_canvas.move_child(_quest_sign_layer, _sign_layer.get_index() + 1)
+
+## 0x61a620: the marks and the painted colours thrown away.
+func clear_quest_marks() -> void:
+	if not quest_marks_on:
+		return
+	quest_marks_on = false
+	_quest_painted.clear()
+	for layer in [_quest_area_layer, _quest_sign_layer]:
+		if layer == null:
+			continue
+		for c in (layer as Control).get_children():
+			(layer as Control).remove_child(c)
+			c.queue_free()
+
+## 0x6256e0 for quest `view` of code name `code` (see the section's notes).
+func show_quest(view: QuestNet.View, code: String) -> void:
+	_ensure_quest_layers()
+	if _quest_area_layer == null:
+		return
+	if _auto:
+		_auto_art_stale = true
+		_auto = false
+	clear_quest_marks()
+	if view != null and view.status == QuestMapGuide.STATUS_ACHIEVED_KILL:
+		for npc in view.npcs:
+			_focus_npc(int(npc))
+	elif quest_guide != null:
+		for row: WorldmapGuideReader.GuidePoint in quest_guide.quest_rows(code):
+			for c in row.codes():
+				if row.kind == 0:
+					var m := quest_guide.monster(c)
+					if m != null:
+						_mark_monster(m)
+				else:
+					_add_quest_sign(QUEST_ICON_DDJ, row.region, row.pos, row.area, _builder.resolve_text(c))
+					_focus_named(row.area, row.region.x, row.region.y, row.pos.x, row.pos.y)
+	quest_marks_on = true
+	_refresh_quest_marks()
+	_refresh_tiles()
+	_place_marker()
+	print("QA WORLDMAP quest %s: %s" % [code, quest_report()])
+
+## An NPC of a status-8 quest (0x6256e0's first branch).
+func _focus_npc(npc_id: int) -> void:
+	if quest_guide == null or _table == null:
+		return
+	var row: Variant = quest_guide.npc_position(npc_id)
+	if row == null:
+		return
+	var rid := int(row[0])
+	var lp: Vector3 = row[1]
+	var lo := rid & 0xff
+	var hi := (rid >> 8) & 0xff
+	var local := _table.local_for_region(hi, lo)
+	if local != null:
+		_show_map(local)
+		var world := Vector2(
+			(lo - WorldmapInfoReader.REGION_Y_ORIGIN) * WorldmapInfoReader.REGION_SPAN + lp.x / 10.0,
+			(hi - WorldmapInfoReader.REGION_X_ORIGIN) * WorldmapInfoReader.REGION_SPAN + lp.z / 10.0)
+		_scroll_to_point(local.pixel_for_world(world).floor(), local.id)
+		return
+	_focus_named(QUEST_FIELD_AREA, lo, hi, int(lp.x / 10.0), int(lp.z / 10.0))
+
+## 0x622f00 (see the section's notes).
+func _focus_named(area: String, rx: int, ry: int, px: int, py: int) -> void:
+	var mp := quest_guide.map_named(area) if quest_guide != null else null
+	if mp == null or _table == null:
+		return
+	var at := Vector2(px, py)
+	if mp.map_id > 2000:
+		if _mode != MODE_DUNGEON or _dungeon_map == null or _dungeon_map.id != mp.map_id:
+			show_dungeon(mp.map_id)
+	elif mp.map_id == 0:
+		var world := _table.world()
+		if world == null:
+			return
+		_show_map(world)
+		at = Vector2((rx - world.region_left) * 32 + px, (world.region_top - ry) * 32 + py)
+	_scroll_to_point(at, mp.map_id)
+
+func _scroll_to_point(at: Vector2, map_id: int) -> void:
+	var focus := QUEST_FOCUS_SMALL if _small else QUEST_FOCUS_BIG
+	_canvas.position = _clamp_scroll(focus - at)
+	_quest_focus = [map_id, at]
+	_refresh_tiles()
+	_place_marker()
+
+## 0x619ae0: a 32x32 sign on map `area` -- the world's at (x - left) * 32 +
+## px, (top - y) * 32 + py, another's at (px, py).
+func _add_quest_sign(ddj: String, region: Vector2i, pos: Vector2i, area: String, text: String) -> void:
+	var mp := quest_guide.map_named(area) if quest_guide != null else null
+	if mp == null or _table == null:
+		return
+	var at := Vector2(pos)
+	if mp.map_id == 0:
+		var world := _table.world()
+		if world == null:
+			return
+		at = Vector2((region.x - world.region_left) * 32 + pos.x, (world.region_top - region.y) * 32 + pos.y)
+	var sign := TextureRect.new()
+	sign.name = "QuestSign%d" % _quest_sign_layer.get_child_count()
+	sign.texture = _builder.load_texture(ddj)
+	sign.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	sign.stretch_mode = TextureRect.STRETCH_SCALE
+	sign.position = at
+	sign.size = Vector2(QUEST_SIGN_SIZE, QUEST_SIGN_SIZE)
+	sign.tooltip_text = text
+	sign.mouse_filter = Control.MOUSE_FILTER_PASS
+	sign.set_meta(QUEST_MAP_META, mp.map_id)
+	sign.set_meta("quest_icon", ddj)
+	_quest_sign_layer.add_child(sign)
+
+## 0x624f40(monster, 1, QUEST_AREA_ARGB).
+func _mark_monster(m: WorldmapGuideReader.GuidePoint) -> void:
+	_add_quest_sign(MONSTER_ICON_DDJ, m.region, m.pos, m.area, _text("SN_" + m.code, true))
+	_focus_named(m.area, m.region.x, m.region.y, m.pos.x, m.pos.y)
+	var mp := quest_guide.map_named(m.area)
+	if mp == null:
+		return
+	var colours := m.colours()
+	var step := maxi(1, mp.regions_per_tile.x)
+	for t: Vector2i in quest_guide.tiles_of(m.code):
+		var tex := _builder.load_texture(MONSTER_MASK_FMT % [m.area, t.x, t.y])
+		var src := tex.get_image() if tex != null else null
+		if src == null:
+			continue
+		# A copy: the cached mask stays as the archive has it (the headless
+		# renderer hands back its own image, not a copy).
+		var img := src.duplicate() as Image
+		var painted := paint_mask(img, colours, _quest_painted, QUEST_AREA_ARGB)
+		var pic := TextureRect.new()
+		pic.name = "QuestArea_%s_%dx%d" % [m.code, t.x, t.y]
+		pic.texture = ImageTexture.create_from_image(img)
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_SCALE
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pic.set_meta(QUEST_MAP_META, mp.map_id)
+		pic.set_meta("tile", Vector2i((t.x - mp.start_region.x) / step, (mp.start_region.y - t.y) / step))
+		pic.set_meta("painted", painted)
+		_quest_area_layer.add_child(pic)
+	for c in colours:
+		_quest_painted[int(c)] = true
+
+## 0x624f40's texel pass over one mask (its own copy, OURS: whether the
+## client's texture loader shares one mask between two monsters was not
+## traced): 0 and 0xffffff stay; a texel of one of `colours` not in
+## `painted` becomes `argb`; every other one 0x00ffffff. Returns how many
+## were painted.
+static func paint_mask(img: Image, colours: PackedInt64Array, painted: Dictionary, argb: int) -> int:
+	if img.is_compressed():
+		img.decompress()
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	var data := img.get_data()
+	var want := {}
+	for c in colours:
+		want[int(c)] = true
+	var n := 0
+	for i in range(0, data.size(), 4):
+		var v: int = (data[i + 3] << 24) | (data[i] << 16) | (data[i + 1] << 8) | data[i + 2]
+		if v == 0 or v == MASK_CLEAR_ARGB:
+			continue
+		var out := MASK_CLEAR_ARGB
+		if want.has(v) and not painted.has(v):
+			out = argb
+			n += 1
+		data[i] = (out >> 16) & 0xff
+		data[i + 1] = (out >> 8) & 0xff
+		data[i + 2] = out & 0xff
+		data[i + 3] = (out >> 24) & 0xff
+	img.set_data(img.get_width(), img.get_height(), false, Image.FORMAT_RGBA8, data)
+	return n
+
+## Each mark shown only on its own map (0x61e700 / 0x61e890), the areas laid
+## on that map's tiles.
+func _refresh_quest_marks() -> void:
+	if _quest_area_layer == null:
+		return
+	var id := -1
+	var tile := Vector2.ZERO
+	if _mode == MODE_DUNGEON and _dungeon_map != null:
+		id = _dungeon_map.id
+		tile = Vector2.ONE * _dungeon_map.tile_side()
+	elif _current != null:
+		id = _current.id
+		tile = Vector2(_current.texture_size)
+	for c in _quest_area_layer.get_children():
+		var pic := c as Control
+		pic.visible = quest_marks_on and int(pic.get_meta(QUEST_MAP_META, -2)) == id
+		var t: Vector2i = pic.get_meta("tile", Vector2i.ZERO)
+		pic.position = Vector2(t) * tile
+		pic.size = tile
+	for c in _quest_sign_layer.get_children():
+		(c as Control).visible = quest_marks_on and int(c.get_meta(QUEST_MAP_META, -2)) == id
+
+## The quest marks in one line, for the QA log and the tests.
+func quest_report() -> String:
+	var signs := []
+	if _quest_sign_layer != null:
+		for c in _quest_sign_layer.get_children():
+			var sc := c as Control
+			signs.append("%s@(%d,%d)%s'%s'" % [str(sc.get_meta("quest_icon", "")).get_file(), int(sc.position.x), int(sc.position.y),
+				"" if sc.visible else " hidden", sc.tooltip_text])
+	var areas := []
+	if _quest_area_layer != null:
+		for c in _quest_area_layer.get_children():
+			var pc := c as Control
+			areas.append("%s tile %s painted %d%s" % [pc.name, str(pc.get_meta("tile", Vector2i.ZERO)), int(pc.get_meta("painted", 0)),
+				"" if pc.visible else " hidden"])
+	return "on=%s auto=%s focus=%s canvas=(%d,%d) signs=%s areas=%s | %s" % [quest_marks_on, _auto, str(_quest_focus),
+		int(_canvas.position.x) if _canvas != null else 0, int(_canvas.position.y) if _canvas != null else 0,
+		str(signs), str(areas), qa_report()]
