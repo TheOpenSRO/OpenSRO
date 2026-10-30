@@ -448,6 +448,8 @@ var quest := QuestState.new()
 var guild_data := GuildData.new()
 ## Round 822: the membership replies and the invitation (GuildOpsState).
 var guild_ops := GuildOpsState.new()
+## Round 844 lane G part 2: the vote, the GP history, the recall.
+var guild_part2 := GuildPart2Net.new()
 ## Round 844: the guild storage's messages and its kept list (GuildStorageState).
 var guild_storage := GuildStorageState.new()
 ## Round 844: the union requests, their replies and the request box
@@ -1858,6 +1860,13 @@ func _init() -> void:
 	guild_storage.register_with(self)
 	# Round 844: the notice, level-up, hand-over, permission and donation
 	# replies.
+	for op in GuildPart2Net.SERVER_OPCODES:
+		register_handler(op, func(data: PackedByteArray) -> void: guild_part2.handle(op, data))
+	# The block's vote tail follows each parse; a vote ended clears it.
+	guild_data.changed.connect(func() -> void: guild_part2.set_from_block(guild_data.votes))
+	guild_part2.vote_changed.connect(func() -> void:
+		if guild_part2.vote_id == 0:
+			guild_data.votes = [])
 	for op in GuildManageNet.RESULT_OPCODES:
 		register_handler(op, func(data: PackedByteArray) -> void:
 			var r := GuildManageNet.decode_result(op, data)

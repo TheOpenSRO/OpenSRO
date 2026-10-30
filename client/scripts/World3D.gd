@@ -2903,6 +2903,7 @@ func _try_initialize_pk2_ui() -> void:
 		if _npc_talk != null and _npc_talk.end():
 			print("NPC end 0x704B: the guild storage's talk")
 	_wire_guild_manage_844()
+	_wire_guild_part2_844()
 	_hud_panels.guild_expel_refused.connect(func(code: int) -> void:
 		_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code))
 	_hud_panels.guild_invitation_answered.connect(_on_guild_invitation_answered)
@@ -18174,6 +18175,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       underbar by GetChild path (round 840)
 #   guildnode:<id>[,..] / rguildnode:..  left (right) click a guild window
 #                       control by GetChild path (round 844)
+#   storebuy:<id> / storetip:<id>  the store's buy box for a good (as its
+#                       drop on the bag opens it) / its tooltip lines (round 844)
 #   hudnode:<path>      left click a control by node path under HudPanels
 #                       (round 844)
 #   guildreport         report the guild window's selection, row art, order,
@@ -19217,6 +19220,15 @@ func _qa_input_step() -> void:
 				var hh := get_viewport().gui_get_hovered_control()
 				_qa_input_report = "%s at %s (hovered %s; pressed %s)" % [action, hn.get_global_rect().get_center(),
 					hh.get_path() if hh != null else "nothing", (hn as BaseButton).button_pressed if hn is BaseButton else "-"]
+		"storebuy":
+			# Round 844 part 2: the buy box for a store good, as putting it
+			# down on the bag opens it (HudPanels._confirm_buy; not a drag).
+			if _hud_panels != null:
+				_hud_panels._confirm_buy(int(arg))
+		"storetip":
+			# Round 844 part 2: a store good's tooltip lines, for the log.
+			var tl: Array = _hud_panels.item_tip_lines(int(arg), "store", 0, -1, -1, int(_hud_panels._shop_prices.get(int(arg), 0))) if _hud_panels != null else []
+			_qa_input_report = "%s %s" % [action, JSON.stringify(tl.map(func(l) -> String: return String(l["text"])))]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
 			_qa_input_report = "%s %s" % [action, _hud_panels.qa_guild_report() if _hud_panels != null else "{}"]
@@ -28742,6 +28754,16 @@ func _on_npc_service_selected(key: String) -> void:
 	# request 0x7046 with the line's id (CIF_NPCTalk::FUN_007020c0: kind 1 ->
 	# 1, kind 3 -> 3, kind 4 -> 2); the windows open on its reply
 	# (_on_npc_opened).
+	# Round 844 lane G part 2: a guild manager's store below guild level 3
+	# does not open (CIF_NPCTalk::FUN_007020c0 item 1, c:0x702161..0x7021ef:
+	# interaction 0x0f and the guild record's level < 3 ->
+	# UIIT_MSG_GUILD_STORE_LIMIT on the big notice and the system window).
+	if NpcServiceReader.is_shop_key(key) and _talk_ids.has(0x0f) and NetClient.guild_data.in_guild \
+			and NetClient.guild_data.level < 3:
+		var limit := _resolve_any_text("UIIT_MSG_GUILD_STORE_LIMIT", "Guild level must be 3 or higher to use guild store.")
+		_show_banner("system", limit)
+		_log_system(limit)
+		return
 	if _talk_server and _npc_talk != null:
 		if NpcServiceReader.is_shop_key(key):
 			_talk_pending_tabgroup = NpcServiceReader.tabgroup_of(key)
@@ -28811,6 +28833,21 @@ func _on_npc_service_selected(key: String) -> void:
 				_hud_panels.open_guild_leave_prompt(_talk_npc_name)
 			else:
 				_log_system("Leaving a guild needs the server.")
+		"guild_master_release":
+			# Round 844 part 2: line 0x19's box; its OK sends 0x7105.
+			_hud_panels.open_guild_vote_confirm(_talk_npc_uid())
+		"guild_vote":
+			# Line 0x1a (c:0x702f1d): the state asked for first, else the
+			# window from the cache.
+			var gp2 := NetClient.guild_part2
+			if gp2.vote_loaded:
+				_hud_panels.open_guild_election(_talk_npc_uid(), gp2)
+			else:
+				_guild_vote_npc = _talk_npc_uid()
+				NetClient.guild_manage(GuildPart2Net.OP_VOTE_STATE, GuildPart2Net.encode_vote_state(gp2.vote_id))
+		"guild_gp_history":
+			# Line 0x43 (c:0x7020c0 case 0x43): 0x7501 {npc}.
+			NetClient.guild_manage(GuildPart2Net.OP_GP_HISTORY, GuildPart2Net.encode_gp_history(_talk_npc_uid()))
 		"guild_level_up":
 			# Round 844: line 0x17 opens CIFGuildLevelUp; its Confirm sends 0x70FA.
 			_hud_panels.open_guild_level_up(_talk_npc_uid())
@@ -36479,6 +36516,10 @@ func _on_shop_buy_pressed() -> void:
 
 func _on_shop_buy_result(ok: bool, reason: String) -> void:
 	shop_status_label.text = "Purchased." if ok else "Purchase failed: %s" % reason
+	# Round 844 lane G part 2: the guild goods' refusals, the 0xB034 switch's
+	# system line (c:0x7b93d7 / 0x7b94cb -> 0x7781b0(5, text)).
+	if not ok and reason in GUILD_GOODS_REASONS:
+		_log_system(_resolve_any_text(String(GUILD_GOODS_REASONS[reason]), reason), HudSystemMessage.TYPE_GAME)
 	if ok:
 		NetClient.list_inventory(NetClient.current_character_name)
 
@@ -36504,6 +36545,76 @@ func _wire_party_state() -> void:
 	NetClient.self_id_received.connect(_on_party_self_id)
 
 # --- The guild's membership (round 822; GuildOpsState, GuildData) -----------
+
+## The NPC line 0x1a's talk target, for the window B106 opens.
+var _guild_vote_npc := 0
+
+## Round 844 lane G part 2: the vote's requests and texts, the GP history,
+## the recall (GuildPart2Net has the READ notes).
+func _wire_guild_part2_844() -> void:
+	var h := _hud_panels
+	var gp2 := NetClient.guild_part2
+	h.guild_vote_start_confirmed.connect(func(npc: int) -> void:
+		NetClient.guild_manage(GuildPart2Net.OP_VOTE_START, GuildPart2Net.encode_vote_start(npc)))
+	h.guild_vote_cast.connect(func(npc: int, v: int, i: int) -> void:
+		NetClient.guild_manage(GuildPart2Net.OP_VOTE_BALLOT, GuildPart2Net.encode_ballot(npc, v, i)))
+	h.guild_recall_answered.connect(func(job: int, caster: int, yes: bool) -> void:
+		NetClient.guild_manage(GuildPart2Net.OP_RECALL_ANSWER, gp2.encode_recall_answer(job, caster, yes)))
+	gp2.vote_state_loaded.connect(func() -> void:
+		h.open_guild_election(_guild_vote_npc if _guild_vote_npc != 0 else _talk_npc_uid(), gp2))
+	gp2.vote_changed.connect(func() -> void:
+		NpcServiceReader.guild_vote_running = gp2.vote_id != 0
+		if gp2.vote_id == 0:
+			h.close_guild_election()
+		elif h.guild_election_window != null and is_instance_valid(h.guild_election_window):
+			h.guild_election_window.fill())
+	gp2.gp_history.connect(func(entries: Array) -> void: h.open_guild_gp_history(entries))
+	gp2.recall_asked.connect(func(job: int, caster: int, secs: int) -> void: h.open_guild_recall_box(job, caster, secs))
+	gp2.recall_accepted.connect(func(secs: int) -> void:
+		var bar := h.open_cast_bar(0, secs * 1000, _resolve_any_text("UIIT_MSG_GUILD_RECALL_MESSAGE", "Guild member recall"))
+		if bar != null:
+			bar.kind = 2)
+	gp2.shown.connect(_on_guild_part2_shown)
+	# The block brings a running vote: "Vote for a leader is in progress."
+	# (c:0x8856e9..0x88578a) once per vote.
+	var seen := [0]
+	NetClient.guild_data.changed.connect(func() -> void:
+		var vid := gp2.vote_id
+		if vid != 0 and vid != seen[0] and not NetClient.guild_data.votes.is_empty():
+			seen[0] = vid
+			h.open_guild_event_box(_resolve_any_text("UIIT_CTL_MASTERRELEASE_NOTICE", "Vote for a leader is in progress.")))
+
+func _on_guild_part2_shown(where: String, key: String, args: Array) -> void:
+	print("GUILD844B %s %s %s" % [where, key, args])
+	match where:
+		"box":
+			var text := _resolve_any_text(key, key)
+			if key == "UIIT_MSG_MRELEASE_BEELETED":
+				var m := NetClient.guild_data.member(int(args[0])) if not args.is_empty() else null
+				for v in [NetClient.guild_data.guild_name, m.member_name if m != null else ""]:
+					var at := text.find("%s")
+					if at >= 0:
+						text = text.substr(0, at) + v + text.substr(at + 2)
+			_hud_panels.open_guild_event_box(text)
+			_log_system(text)
+		"line":
+			_log_system(_resolve_any_text(key, key))
+		"code":
+			var code := int(args[0])
+			if int(args[1]) == 0x10:
+				_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code)
+			else:
+				var k := GUILD_RECALL_CODE_KEYS.get(code, "") as String
+				if k != "":
+					_log_system(_resolve_any_text(k, k))
+
+## The server's guild-goods refusal words and the texts they stand for.
+const GUILD_GOODS_REASONS := {"You are not qualified to purchase the item.": "UIIT_MSG_GUILD_STORE_BUY_LIMIT",
+	"Item cannot be purchased due to lack of guild points.": "UIIT_MSG_GUILD_LACK_GP"}
+
+## The recall's refusals (category 1, READ).
+const GUILD_RECALL_CODE_KEYS := {0x18c1: "UIIT_MSG_GUILD_RECALL_ERROR", 0x18c2: "UIIT_MSG_GUILD_RECALL_ERROR",
+	0x18c7: "UIIT_MSG_GUILD_RECALL_LIMIT", 0x18bc: "UIIT_MSG_GUILD_ITEM_RIGHT_LIMIT", 0x185b: "UIIT_MSG_WAIT_FOR_REUSE_DELAY"}
 
 ## Round 844 (lane G): the guild window's notice, permissions and GP
 ## donation, the guild manager's level-up and hand-over windows: their
@@ -37761,6 +37872,10 @@ func _on_use_item_result(result) -> void:
 		var ut := _hud_panels.item_types(result.item_id)
 		if ut.size() >= 4 and ut[0] == 3 and ut[1] == 3 and ut[2] == 13 and ut[3] == 16:
 			_log_system(_resolve_any_text("UIIT_MSG_NASRUN_AWAKE_RENEW", "Awaken period is extended."), HudSystemMessage.TYPE_GAME)
+	# Round 844 lane G part 2: the recall scroll's accepted use (c:0x87b0ca):
+	# UIIT_MSG_GUILD_RECALL_CONFIRM.
+	if result.item_id != 0 and _hud_panels != null and HudPanels.is_guild_recall_item(_hud_panels.item_types(result.item_id)):
+		_log_system(_resolve_any_text("UIIT_MSG_GUILD_RECALL_CONFIRM", "Recall has been requested to all guild members."), HudSystemMessage.TYPE_GAME)
 	# Round 824: a crest item's accepted use opens its result box.
 	if result.item_id != 0 and _hud_panels != null:
 		var code := _hud_panels.item_code_for_id(result.item_id)

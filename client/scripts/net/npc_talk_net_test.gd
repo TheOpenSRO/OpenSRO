@@ -105,7 +105,8 @@ func _test_menus() -> void:
 	var all := NpcServiceReader.services_from_ids(PackedByteArray([1, 2, 3, 7, 8, 9, 10, 0x0c, 0x0f, 0x11, 0x12, 0x13,
 		0x14, 0x15, 0x16, 0x20, 0x23, 0x27, 0x29]), lines, 7, false, 0, 60)
 	_check(_keys(all) == ["talk", "shop:STORE_CH_POTION_GROUP1", "storage", "academy_open", "honor_rank",
-			"avatar_magic_option", "recall_designate", "recall_return", "teleport", "guild_leave", "guild_storage", "xmas_change",
+			"avatar_magic_option", "recall_designate", "recall_return", "teleport", "guild_leave", "guild_master_release", "guild_storage",
+			"guild_gp_history", "xmas_change",
 			"withdraw_skill",
 			"job_join:1", "job_rank_contribution:1", "job_rank_activity:1", "job_prev:1",
 			"job_join:3", "job_rank_contribution:3", "job_rank_activity:3", "job_prev:3",

@@ -177,8 +177,17 @@ func build(builder: UiBuilder, box_kind: int, opts: Dictionary = {}) -> bool:
 
 # --- CItemMallConfirmBuy ------------------------------------------------------
 
+## Round 844 lane G part 2: a guild store good's GP cost and its row.
+var gp_unit_price := 0
+var _gp_edit: LineEdit
+
 func _build_confirm_buy(opts: Dictionary) -> bool:
-	var box_size := CONFIRM_BUY_BASE + Vector2(0, CONFIRM_ROW_GROWTH)
+	# Round 844 lane G part 2: a second row for a GP price (c:0x7c4276 `test
+	# bl,0x8`, 0x7c1a80 kind 3: UIIT_STT_GUILD_POINT / UIIT_STT_GUILD_POINT_GP,
+	# the count times the cost, one more CONFIRM_ROW_GROWTH).
+	gp_unit_price = int(opts.get("gp_unit_price", 0))
+	var rows := 2 if gp_unit_price > 0 else 1
+	var box_size := CONFIRM_BUY_BASE + Vector2(0, CONFIRM_ROW_GROWTH * rows)
 	_set_box_size(box_size)
 	_add_frame(box_size)
 	var layout := _builder.load_layout(CONFIRM_BUY_LAYOUT, PackedStringArray(DEFINES), true) if _builder != null else null
@@ -191,7 +200,7 @@ func _build_confirm_buy(opts: Dictionary) -> bool:
 	var bg := _root.get_node_or_null("GDR_ITEMMALL_CONFIRM_BUY_BG") as Control
 	if bg != null:
 		var r := _authored(bg)
-		_place(bg, Rect2(r.position, r.size + Vector2(0, CONFIRM_ROW_GROWTH)))
+		_place(bg, Rect2(r.position, r.size + Vector2(0, CONFIRM_ROW_GROWTH * rows)))
 	var slot_layout := _builder.load_layout(CONFIRM_SLOT_LAYOUT, PackedStringArray(DEFINES), true)
 	if slot_layout != null:
 		var row := _builder.build_section(slot_layout, "Create")
@@ -204,6 +213,17 @@ func _build_confirm_buy(opts: Dictionary) -> bool:
 			_static_text(row.get_node_or_null("GDR_ITEMMALL_CONFIRM_STA_2"), _text("UIIT_STT_GOLD", "Gold"))
 			_price_edit = _readonly(row.get_node_or_null("GDR_ITEMMALL_CONFIRM_EDIT"))
 			UiBuilder.settle_authored_rects(row)
+		if gp_unit_price > 0:
+			var gp_row := _builder.build_section(slot_layout, "Create")
+			if gp_row != null:
+				gp_row.name = "GPRow"
+				gp_row.position = Vector2(0, CONFIRM_ROW_Y + CONFIRM_ROW_GROWTH)
+				gp_row.size = Vector2(box_size.x, CONFIRM_ROW_GROWTH)
+				add_child(gp_row)
+				_static_text(gp_row.get_node_or_null("GDR_ITEMMALL_CONFIRM_STA_1"), _text("UIIT_STT_GUILD_POINT", "Guild point (GP)"))
+				_static_text(gp_row.get_node_or_null("GDR_ITEMMALL_CONFIRM_STA_2"), _text("UIIT_STT_GUILD_POINT_GP", "GP"))
+				_gp_edit = _readonly(gp_row.get_node_or_null("GDR_ITEMMALL_CONFIRM_EDIT"))
+				UiBuilder.settle_authored_rects(gp_row)
 	_icon(_root.get_node_or_null("GDR_ITEMMALL_CONFIRM_BUY_ITEM_ICON"), opts.get("icon"))
 	var name_edit := _readonly(_root.get_node_or_null("GDR_ITEMMALL_CONFIRM_EDIT_ITEM_NAME"))
 	if name_edit != null:
@@ -706,6 +726,8 @@ func price_text() -> String:
 func _refresh_price() -> void:
 	if _price_edit != null:
 		_price_edit.text = price_text()
+	if _gp_edit != null:
+		_gp_edit.text = str(gp_unit_price * count)
 
 func _on_ok() -> void:
 	# The count as typed when it is still being edited.
