@@ -194,11 +194,12 @@ func _item_slot(i: int, host: Control, r) -> void:
 	var rec := r as StallNetworkNet.Record
 	if rec == null or rec.item == null:
 		panels._set_item_tip(host, -1)
-		ItemSealEdge.show_on(icon, panels._builder, false, -1)
+		panels._set_item_slot_fx(icon, -1)
 		return
 	panels._set_item_tip(host, rec.item.ref_item_id, TIP_SITE, i)
 	if icon != null:
-		panels._set_item_seal_edge(icon, rec.item.ref_item_id)
+		# Round 843: every per-item effect, from the row's own record.
+		panels._set_item_slot_fx(icon, rec.item.ref_item_id, rec.item)
 	var vp := host.get_viewport() if host.is_inside_tree() else null
 	if vp != null and host.is_visible_in_tree() and vp.gui_get_hovered_control() == host:
 		panels._show_item_tip(host)

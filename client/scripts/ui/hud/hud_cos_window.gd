@@ -728,6 +728,12 @@ func refresh_inventory() -> void:
 		slot.set_meta("cos_locked", locked)
 		if icon == null:
 			continue
+		# Round 843 (lane S): the item's slot effects (the seal star, a pet's
+		# edge or wash, a spirit's edge) as on every CIFSlotWithHelp: the COS
+		# inventory's slots take SetItem (0x6871d0, from IFCOSInventory
+		# c:0x7a75b4 and the 0x7a7c10 fills), whose 0x666610 starts the star.
+		ItemSealEdge.show_on(icon, _builder, false, -1)
+		ItemStateEdge.show_on(icon, _builder, null, null, -1)
 		if locked:
 			icon.texture = block
 			continue
@@ -738,6 +744,8 @@ func refresh_inventory() -> void:
 		var row = item_row.call(it.ref_item_id) if item_row.is_valid() else null
 		if row is ItemTableReader.Item and _builder != null:
 			icon.texture = _builder.load_texture((row as ItemTableReader.Item).icon_path)
+			ItemSealEdge.show_on(icon, _builder, ItemTooltipLines.is_seal(row), it.ref_item_id)
+			ItemStateEdge.show_on(icon, _builder, row, it, it.ref_item_id)
 		if count_lbl != null and not it.is_equipment and it.count > 1:
 			count_lbl.text = str(it.count)
 	_refresh_trade()

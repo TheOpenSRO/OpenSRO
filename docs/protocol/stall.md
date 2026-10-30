@@ -221,7 +221,8 @@ ref's AssocFileObj128 (`item\Avatar\booth_*.bsr`, ItemData 3847..3850), else by 
   by amount, c:0x5d3df0), the modify button (183, 0).
 - **State** (c:0x6bab20): open -- icon `_01`, UIIT_STT_TRADING_NOW, button UIIT_STT_END_STALL, title
   button off, modify buttons off; modifying -- `_02`, UIIT_STT_STALL_MODIFYING, UIIT_STT_START_STALL,
-  the owner's title and modify buttons on, a visitor's icons at alpha 0x80. The 0xB0BA type 5 reply
+  the owner's title and modify buttons on, a visitor's icons at alpha 0x80 (the icon only: its
+  effects are not dimmed, section 12). The 0xB0BA type 5 reply
   prints UIIT_STT_STALL_CONDITION_START / _END in the window's chat (0xffdbc99b).
 - **Boxes:** the title and greeting boxes (MsgBoxInsertMsg, 280x144 and 420x144, prefilled with the
   old title or UIIT_STT_STALL_DEFAULT_TITLE "[%s]'s stall.", and the saved greeting or
@@ -378,3 +379,35 @@ c:0x6bb18e) sends 0x70B2 before the window goes (c:0x79be20(0)); for the first t
 before any 0x70B1, for a rename it closes the stall. SR_GameServer loads f4's lists too but no test reads
 them (+0x20c0 / +0x203c appear only in its constructor, destructor and loader). MEASURED with the box's
 archive file (group 4, English): 82 f4 substring words, 0 f4 whole words (the server's boot log).
+
+## 12. Round 843 (lane S): the slots' item effects
+
+The user (2026-10-29): "make sure item icons show any effects in the stall, so if it's a seal weapon
+show the spinning stars. It shows it in the stall network but not the stall itself."
+
+- **READ: a stall slot is an item slot like the bag's.** CIFStallSlot's fill (c:0x6cada0) calls the
+  CIFSlotWithHelp's SetItem (`0x6871d0`, c:0x6cb011) on the entry's record (+0x48), then sets the slot
+  kind 0x0f and window 0x96 (`0x6666f0`, `0x666710`). SetItem starts every per-item effect: the seal
+  star (`0x666610`, a Rarity 2 or 6 item whose record's +0x28 is set), the devil's spirit's edge, the
+  summoned pet's edge and the dead pet's wash (`docs/protocol/item_seal_edge.md` §6). A visitor's
+  records come off 0xB0B3 through `0x8be4f0(stream, 1)` (c:0x874208), so +0x28 is set; the owner's
+  list (0xB0BA types 2 and 3, c:0x878230 -> 0x872290) reads them the same way, `0x8be4f0(stream, 1)`. The clear runs SetItem(0) (c:0x6cb190), which draws
+  nothing.
+- **READ: the visitor's dim is the icon's.** 0x6bab20 gives each slot alpha 0x80 while the stall is
+  modified (c:0x6bad9a; vtable 0xda189c +0x24 = `0x655460`, the slot's alpha byte +0x12d). The icon's
+  draw (`0x655d50`) puts that alpha in TFACTOR (`0x655ca0`: ALPHAOP MODULATE, ALPHAARG1 TFACTOR) and
+  resets ALPHAOP to SELECTARG1(TEXTURE) when it ends (`0x6554c0`); the overlays (`0x67cfb0`) are drawn
+  after it on FVF 0x104 vertices (no vertex colour). So the star stays at full strength over a
+  half-faded icon.
+- **Built.** `StallWindowView._draw_slots` calls `HudPanels._set_item_slot_fx(icon, ref, entry.item)`
+  for a filled slot and `(icon, -1)` for an empty one (every redraw: a list, a Modify, a sale, a
+  close, a reopen), and the visitor's alpha is `self_modulate`, which the effect nodes do not inherit.
+  The same refill keeps a star's phase (ItemSealEdge's rule); no node is added twice.
+- **MEASURED live** (render box, lane server 17010, real input; `/var/tmp/r843s/keep`): the owner's
+  slot with a Seal of Star sword (ITEM_CH_SWORD_08_A_RARE, 4035) has the star after the listing, the
+  Open, the Modify; taking it back to the bag empties the slot's effects; listed again in slot 2,
+  then in a new stall's slot 0, one star each time (`stallfx` lines). A visitor (Seller's stall left
+  in the modify state) sees the sword's and blade's stars over icons at alpha 0.50; the icon pixels
+  of a seal slot change every frame (96-114 of 1,024 between frames), a potion slot's never (0).
+- **Tests.** `slot_fx843_test.gd`: the ten slots (seal weapons in the even ones), a Modify, a dead
+  pet's wash, a sale, a close and a reopen, the visitor's dim and a summoned pet's edge.

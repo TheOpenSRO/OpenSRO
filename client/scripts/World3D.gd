@@ -14211,6 +14211,7 @@ func _refresh_quickslot_counts() -> void:
 			var icon := _hud_underbar.slot_icon_rect(int(qs))
 			if icon != null:
 				panels.mark_quick_slot(icon, int(_quickslot_items[qs]["slot"]))
+	_refresh_quickslot_states()
 
 ## Round 829: the worn-out gear figure (EquipStateImg): worn slots 0..7.
 var _equip_state_img: EquipStateImg = null
@@ -14236,6 +14237,23 @@ func _refresh_quickslot_seals() -> void:
 		if _hud_panels.is_seal_item(id):
 			seals[slot] = id
 	_hud_underbar.set_slot_seals(seals)
+	_refresh_quickslot_states()
+
+## Round 843 (lane S): the bar's items' state effects (a summoned pet's edge,
+## a dead pet's wash, an awake spirit's edge) from their bag records, on
+## every bar change and every bag list (with the counts).
+func _refresh_quickslot_states() -> void:
+	if _hud_underbar == null or _hud_panels == null:
+		return
+	var states := {}
+	for slot in _quickslot_items:
+		var id := int(_quickslot_items[slot]["item"])
+		var bag := int(_quickslot_items[slot]["slot"])
+		var inst: ItemInstance = NetClient.last_inventory_instances.get(bag) if bag >= 0 else null
+		if inst != null and inst.ref_item_id != id:
+			inst = null
+		states[slot] = [_hud_panels.item_row(id), inst, id]
+	_hud_underbar.set_slot_states(states)
 
 ## OPENSRO_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
 ## raises that mastery n times, "<id>" learns that skill; each waits for its
@@ -18075,6 +18093,9 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       item id; the report adds the tooltip (round 842)
 #   stalllog            report the stall window's log (its chat module's
 #                       lines; round 842)
+#   stallfx / bagfx     report each filled stall slot's (shown bag cell's)
+#                       visible item effects, their counters and the icon's
+#                       own alpha (round 843)
 #   worn:<slot>         left click that worn slot's icon (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
@@ -19344,6 +19365,34 @@ func _qa_input_step() -> void:
 			var slw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null
 			_qa_input_report = "stalllog shown=%s log=[%s]" % [slw != null and slw.visible,
 				StallWindowView.chat_text(slw).strip_edges().replace("\n", " | ")]
+		"stallfx", "bagfx":
+			# Round 843: the item effects each stall slot (or shown bag cell)
+			# draws -- slot: item id, the visible effect nodes and their
+			# counters, the icon's own alpha -- as the live window holds them.
+			var fx_out := PackedStringArray()
+			var fx_icons := {}
+			if kind == "stallfx":
+				for si in StallNet.SLOTS:
+					var sic := _hud_panels.qa_stall_slot_control(si, "icon") if _hud_panels != null else null
+					if sic != null:
+						fx_icons[si] = sic
+			else:
+				var biw: HudWindow = _hud_panels._windows.get("inventory") if _hud_panels != null else null
+				var blat := biw.node("GDR_INVENTORY_LATTICE") as Control if biw != null else null
+				if blat != null:
+					for bi in blat.get_child_count():
+						fx_icons[bi] = blat.get_child(bi).get_node_or_null("ItemIcon")
+			for si in fx_icons:
+				var sic: Control = fx_icons[si]
+				if sic == null or (sic as TextureRect).texture == null:
+					continue
+				var parts := PackedStringArray()
+				for fxn in sic.get_children():
+					if fxn is ItemSealEdge or fxn is ItemStateEdge or String(fxn.name) == ItemStateEdge.WASH_NAME:
+						if (fxn as CanvasItem).visible:
+							parts.append("%s%s" % [fxn.name, ("(c%d)" % int(fxn.get("counter"))) if "counter" in fxn else ""])
+				fx_out.append("%d:[%s] a%.2f" % [si, ",".join(parts), sic.self_modulate.a])
+			_qa_input_report = "%s %s" % [kind, " ".join(fx_out)]
 		"tipshown":
 			_qa_input_report = "tipshown tip=[%s]" % ItemTooltipLines.as_text(
 				_hud_panels.item_tip_shown() if _hud_panels != null else []).replace("\n", " | ")
@@ -38874,14 +38923,34 @@ func _on_cos_update_hud(u: CosNet.Update) -> void:
 
 ## 0x3040: a bag item's COS state or rent (the pet scroll's tooltip reads it).
 func _on_cos_item_state(d: Dictionary) -> void:
+	# Round 843 (lane S): a new RefItemID (mask 1, a switcher's result)
+	# flashes its slot, worn or in the bag (c:0x88bf30 -> 0x6ab8c0 /
+	# 0x6b44d0 -> 0x6665f0, icon_mall_transgender).
+	if int(d.get("mask", 0)) & 0x01 and _hud_panels != null:
+		_hud_panels.flash_switched(int(d.get("slot", -1)) + CosNet.BAG_WIRE_OFFSET)
 	var it: ItemInstance = NetClient.last_inventory_instances.get(int(d.get("slot", -1)))
 	if it == null:
 		return
+	# Round 843 (lane S): the slot's effects follow the state (c:0x88c637..,
+	# 0x6b4390 -> the bag slot's 0x667ac0(state), then the quick bar's,
+	# 0x60a940): a pet out gets its edge, a dead one the blue wash. A revival
+	# (state 3 over a record still at 4, 0x667ac0 -> 0x6666d0) or a rent
+	# made longer (more seconds than a record with some left,
+	# c:0x88c6dc..0x88c701 -> 0x6b4500) flashes the bag slot once.
+	var life := false
 	if int(d.get("state", -1)) >= 0:
-		it.cos_state = int(d["state"])
+		var state := int(d["state"])
+		life = state == CosNet.ITEM_STATE_STORED and it.cos_state == CosNet.ITEM_STATE_DEAD
+		it.cos_state = state
 	if int(d.get("rent_secs", -1)) >= 0:
-		it.cos_rent_secs = int(d["rent_secs"])
+		var old_left := it.rent_left_secs()
+		var new_left := int(d["rent_secs"])
+		life = life or (old_left > 0 and new_left > old_left)
+		it.cos_rent_secs = new_left
 		it.rent_read_msec = Time.get_ticks_msec()
+	if _hud_panels != null:
+		_hud_panels.bag_item_state_changed(int(d.get("slot", -1)), life)
+	_refresh_quickslot_states()
 
 ## A HudCos command (0x7a0980's numbering) sent for uid.
 func _on_hud_cos_command(uid: int, cmd: int) -> void:

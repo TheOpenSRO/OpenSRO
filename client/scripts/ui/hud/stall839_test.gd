@@ -148,7 +148,8 @@ func _run() -> void:
 	_check((w.node("GDR_BTN_TRADINGSTATE") as BaseButton).disabled and (w.node("GDR_BTN_OWNERMSG") as BaseButton).disabled,
 		"a visitor's buttons off")
 	var icon4 := display.get_node("StallSlot4/Body/GDR_STALLSLOT_ICON/ItemIcon") as TextureRect
-	_check(icon4 != null and is_equal_approx(icon4.modulate.a, 128.0 / 255.0), "modifying: a visitor's icons at alpha 0x80")
+	_check(icon4 != null and is_equal_approx(icon4.self_modulate.a, 128.0 / 255.0) and icon4.modulate == Color.WHITE,
+		"modifying: a visitor's icons at alpha 0x80 (the icon's own, not its effects', round 843)")
 	_check(c.users.size() == 3 and c.users[2] == "Aria", "the user list: owner, visitor, self")
 	_check(c.slot_to_bag(4) == "buy box for slot 4", "a visitor's slot put on the bag: the buy box")
 	await process_frame

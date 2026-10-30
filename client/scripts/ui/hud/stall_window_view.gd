@@ -220,13 +220,26 @@ static func _draw_slots(panels, window: HudWindow, builder: UiBuilder, c: StallC
 			if icon != null:
 				icon.texture = null
 				panels._set_item_tip(icon, -1)
+				panels._set_item_slot_fx(icon, -1)
 			continue
 		if icon != null:
 			icon.texture = panels._item_icon(e.item.ref_item_id)
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
-			# A visitor's icons at alpha 0x80 while the stall is modified.
-			icon.modulate.a = StallController.DIM_ALPHA if (not c.own and not c.open) else 1.0
+			# A visitor's icons at alpha 0x80 while the stall is modified
+			# (c:0x6bad9a, the slot's alpha +0x12d through 0x655460). The
+			# alpha is the icon's own: the icon's draw puts stage 0's alpha
+			# op back to SELECTARG1(TEXTURE) when it ends (0x655d50 ->
+			# 0x6554c0), so the effects drawn after it (0x67cfb0) are not
+			# dimmed -- self_modulate, which the effect children do not
+			# inherit.
+			icon.modulate = Color.WHITE
+			icon.self_modulate.a = StallController.DIM_ALPHA if (not c.own and not c.open) else 1.0
 			panels._set_item_tip(icon, e.item.ref_item_id, "stall", i)
+			# Round 843 (lane S): the stall slot is a CIFSlotWithHelp
+			# (CIFStallSlot c:0x6cada0 -> SetItem 0x6871d0 on the entry's
+			# record, +0x48), so its item's effects show as in the bag: the
+			# seal star, a pet's edge or wash, a spirit's edge.
+			panels._set_item_slot_fx(icon, e.item.ref_item_id, e.item)
 		if builder != null:
 			var nl := builder.set_static_text(name_n, panels.item_name(e.item.ref_item_id)) if name_n != null else null
 			if nl != null:

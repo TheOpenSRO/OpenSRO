@@ -521,6 +521,13 @@ func _refresh_slots() -> void:
 			if _builder != null:
 				ItemSealEdge.show_on(icon, _builder, it != null and bool((it as Dictionary).get("seal", false)),
 					int((it as Dictionary).get("item_id", -1)) if it != null else -1)
+				# Round 843: the item's other slot effects (an awake devil's
+				# spirit's edge) as on every CIFSlotWithHelp.
+				if it != null:
+					ItemStateEdge.show_on(icon, _builder, (it as Dictionary).get("_row"), (it as Dictionary).get("_inst"),
+						int((it as Dictionary).get("item_id", -1)))
+				else:
+					ItemStateEdge.show_on(icon, _builder, null, null, -1)
 		c.tooltip_text = _builder.resolve_text(SLOT_TIPS[i]) if (_open[i] and _builder != null) else ""
 	for id in UNUSED_SLOTS:
 		var c := _at([ID_ALCHEMY, ID_PANE_TYPE1, id])

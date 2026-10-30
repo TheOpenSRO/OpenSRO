@@ -7562,6 +7562,107 @@ Evidence: `/var/tmp/r843q/keep` on the render box (crops, the full view, the A/B
 - The flip itself was not reproduced on the box (its still scenes give the sort the same input every
   frame); the cause stands on the two runs' opposite orders and the clip's two looks.
 
+## Eight-hundred-and-forty-third round, lane S: the item slots' effects in the stall and everywhere
+
+The user (2026-10-29): "one other bug to report, make sure item icons show any effects in the stall, so
+if it's a seal weapon show the spinning stars. It shows it in the stall network but not the stall
+itself", with the standing rule to match the original's colours and behaviour exactly. Labels: READ
+(sro_client.exe, `c:`), MEASURED, INFERRED, OURS, OPEN. The reading is `docs/protocol/item_seal_edge.md`
+§6-7 and `docs/protocol/stall.md` §12.
+
+**What the original does (READ).**
+- A stall slot is an ordinary item slot. CIFStallSlot's fill (c:0x6cada0) runs the CIFSlotWithHelp's
+  SetItem (`0x6871d0`, c:0x6cb011) on the entry's record. The owner's list (0xB0BA types 2/3 ->
+  0x872290) and a visitor's (0xB0B3, c:0x874208) both read records with `0x8be4f0(stream, 1)`, so
+  `+0x28` is set and SetItem starts the seal star (`0x666610`), owner and visitor alike. The user's
+  report matches the original; nothing differs.
+- The visitor's dim while the stall is modified is the icon's alone. The slot alpha 0x80
+  (c:0x6bad9a -> `0x655460`, byte +0x12d) goes through TFACTOR in the icon's draw (`0x655ca0`), and
+  `0x6554c0` resets the alpha op before the overlay pass `0x67cfb0`. That pass draws on FVF 0x104
+  (no vertex colour), so the star is not dimmed.
+- "Any effects": `0x67cfb0` draws four more from the item itself, on every slot kind, for a record
+  whose `+0x28` is set:
+  - the awake devil's spirit's edge: `icon_edge_nasrun.ddj`, 12 cells, 80 ms, any slot but the
+    mall's 0xa7;
+  - the summoned pet's edge: `pt_edge_effect.ddj`, 9 cells, 50 ms;
+  - the blue wash `0x80004b7e`: RGB (0, 0x4b, 0x7e) at half alpha, for a dead pet or a spirit whose
+    awakening ran out;
+  - the pet's one-shot life flash: `pt_life_effect.ddj`, 8 cells, 80 ms, bag and bag quick slots
+    only; on a revival or a longer rent.
+  0x3040 drives them: mask 0x40 via `0x6b4390` and `0x60a940`, mask 0x80 via `0x6b4500`. Mask 1 (a
+  switcher's new RefItemID) flashes the bag or worn slot with `icon_mall_transgender.ddj` (16
+  cells, 48 x 48 at -8).
+- No plus glow: nothing in SetItem or the pass reads OptLevel. One sheet serves every seal, Star to
+  Nova.
+- A rental's half-black wash exists, but OpenSRO has no rentals.
+
+**MEASURED (the archive, through the client's own loader).** `icon_edge_nasrun` 512 x 32,
+`pt_edge_effect` 288 x 32, `pt_life_effect` 256 x 32, `icon_mall_transgender` 128 x 128: each matches
+its draw's divisor (1/512, 32/288, 1/256, 1/128).
+
+**What we built.**
+- The stall: `StallWindowView._draw_slots` gives each of the ten slots its effects on every redraw
+  (`HudPanels._set_item_slot_fx`) and clears them on an empty one. The visitor's 0x80 is
+  `self_modulate`, so the star stays bright.
+- `ItemStateEdge` (new) draws the spirit's edge, the pet's edge, the life flash and the wash with
+  the original's sheets, cells, timers, phases and order.
+- `HudPanels._set_item_slot_fx(icon, id, inst)` puts the star and those on a slot from its
+  ItemInstance. It is used by the bag, the worn and avatar slots, the warehouse, the exchange, the
+  stall, the stall network, the alchemy and grant windows and the pet / transport bag, which had no
+  star before.
+- The quick slots: `HudUnderbar.set_slot_states` on every bar change and bag list. The held icon
+  copies the slot's effects.
+- 0x3040 redraws the bag and the bar, plays the life flash (`HudPanels.bag_item_state_changed`) and,
+  for mask 1, the switch flash (`HudPanels.flash_switched`, `RepairFlash.play_switch_on`;
+  `CosNet.decode_item_state` now returns the ref).
+- QA steps `stallfx` and `bagfx` print each slot's live effects.
+
+**Census** (the full table is item_seal_edge.md §7):
+- Every window below is a CIFSlotWithHelp window in the original.
+- Before this round, the stall (owner and visitor) and the pet / transport bags drew nothing.
+- The bag, worn slots, warehouse, store goods, buy-back, exchange, stall network, alchemy, grant
+  window, quick slots and held icon drew the star only. All of them now draw the star and the four
+  state effects; the store goods and the buy-back stay at the star (no record).
+- The item mall's goods draw nothing, as in the original. Their record is built from the ref with
+  `+0x28` 0 (c:0x7cf9a0, `0x8bcbc0`), and kind 0xa7 never starts the spirit's edge.
+- The store's confirm boxes are CIFStatics: no effects in either client.
+
+**Live** (render box, lane server 17010 in memory, client `/opt/opensro-client-r843s` from this branch,
+real input through OPENSRO_QA_INPUT; evidence in `/var/tmp/r843s/keep`).
+
+| Check | Result | Evidence |
+|---|---|---|
+| Owner: potions in slot 0, Seal of Star sword (4035) in slot 1, while modifying | slot 1 `SealEdge`, slot 0 none | runO_client_qa_lines.txt (19), runO_owner_listed_f560.png, runO_owner_listed_slot1_x3_f560.png |
+| Open, then Modify again | the star stays (22) | runO_client_qa_lines.txt |
+| The sword taken back to the bag | slot 1 empty, no effect (26) | runO_owner_taken_back_x3_f840.png |
+| Listed again in slot 2; a new stall after a close, slot 0 | one star each (32, 45); the reopened stall empty (39) | runO_owner_relisted_slot2_x3_f970.png, runO_owner_reopened_slot0_x3_f1300.png |
+| Visitor (click on Seller's body), the stall in Modify | the sword's and blade's stars, icons at alpha 0.50, star undimmed | runV_client_qa_lines.txt, runV_visitor_modifying_f360.png, runV_visitor_slots_x3_f360.png, runV_slot0_6frames.png |
+| The star moves | MEASURED: a seal slot's icon changes 96-114 px of 1,024 frame to frame, a potion slot 0 | the frames |
+| Bag: summoned raven's scroll, awake spirit (`/avatar spirit 3 86400`), seal sword | `PetEdge`, `NasrunEdge`, `SealEdge`; the edge goes on unsummon | runG_client_qa_lines.txt, runG_bag_pet_out_spirit_awake_f330.png, runG_bag_6frames.png, runG_bag_pet_back_f600.png |
+
+Not live: the dead pet's wash, the life flash and the switch flash. `slot_fx843_test` covers them.
+
+**Gates.**
+- `remote_godot.sh check`: ALL LOAD (1042 scripts).
+- `tests`: "ran 394 suite(s), 0 failing".
+- New: `slot_fx843_test.gd` (real Media.pk2); `hud_cos_test.gd` gained the pet bag.
+- Server untouched, so no `go test`. A UI round: no perf gate.
+
+**OURS.**
+- The spirit's time is the record's as last read. The original counts it down each second (vslot_005
+  case 200) and washes the icon at 0 by itself.
+- A life flash whose item leaves the slot is not drawn, but its node lives out its 640 ms.
+- A hidden edge does not tick.
+
+**OPEN.**
+- Guild storage is not built.
+- The buy-back row keeps no record, so a dead pet sold there shows no wash. The original keeps the
+  sold record.
+- The Magic POP window's and the item chest's records were not traced. Our chest shows no item
+  icons.
+- The switch flash is built for the bag and the 13 worn slots. Whether 0x3040 mask 1 can name an
+  avatar window's slot is not read.
+
 ## Eight-hundred-and-forty-second round, lane T: the stall network's item tooltips
 
 The user's asks: "when using the stall network you should be able to hover over the item icon and

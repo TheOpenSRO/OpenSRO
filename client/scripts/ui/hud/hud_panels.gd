@@ -475,7 +475,7 @@ func _fill_avatar_slots() -> void:
 		var it: ItemInstance = storage[storage_slot]
 		var ref := it.ref_item_id
 		icon.texture = _item_icon(ref)
-		_set_item_seal_edge(icon, ref)
+		_set_item_slot_fx(icon, ref, it)
 		_set_item_tip(icon, ref, "avatar", storage_slot)
 		icon.modulate = Color.WHITE
 		icon.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1033,6 +1033,9 @@ func pick_up_icon(what: Dictionary, icon: Texture2D, source: CanvasItem, at: Vec
 	if ghost != null:
 		_set_item_seal_edge(ghost, int(what.get("item_id", -1)))
 		ItemSealEdge.copy_phase(source as Node, ghost)
+		# Round 843: the slot's other effects ride along too (a pet's edge
+		# or wash, a spirit's edge), at the slot's phase.
+		ItemStateEdge.copy_from(source as Node, ghost, _builder)
 	# Let go when the window the icon came from goes away (closed, or its
 	# tab switched): a drop after that would act on a slot nobody sees. A
 	# quick slot is exempt -- the bar's page arrows hide the slot while its
@@ -1378,7 +1381,9 @@ func alchemy_item(slot: int) -> Dictionary:
 	return {"bag": slot, "item_id": item_id, "tids": Array(item.type_ids), "item_class": item.item_class,
 		"param1": item.param1, "param2": item.param2, "param5": item.param5, "desc1": item.desc1, "desc4": item.desc4,
 		"code": item.code_name, "plus": inst.opt_level if inst != null else 0,
-		"durability": inst.durability if inst != null else 0, "seal": is_seal_item(item_id)}
+		"durability": inst.durability if inst != null else 0, "seal": is_seal_item(item_id),
+		# Round 843: the slot's state effects (ItemStateEdge) from the record.
+		"_row": item, "_inst": inst}
 
 ## Offers bag `slot` to the alchemy window (Alt+click or a put-down).
 func _alchemy_offer(slot: int) -> void:
@@ -3018,6 +3023,19 @@ func _flash_repaired(key: int) -> void:
 
 var _repair_sheet: Texture2D = null
 
+## Round 843 (lane S): the switchers' flash (RepairFlash.play_switch_on) on
+## the slot of `key` (a worn slot, or bag slot + 13), if shown: 0x3040 mask 1,
+## a new RefItemID (c:0x88bf30 -> 0x6ab8c0 / 0x6b44d0 -> 0x6665f0).
+func flash_switched(key: int) -> void:
+	var icon := _repair_slot_icon(key)
+	if icon == null:
+		return
+	if _switch_sheet == null and _builder != null:
+		_switch_sheet = _builder.load_texture(RepairFlash.SWITCH_DDJ)
+	RepairFlash.play_switch_on(icon, _switch_sheet)
+
+var _switch_sheet: Texture2D = null
+
 ## The icon control of a worn slot (key < 13) or of bag slot key - 13 on the
 ## page shown, or null.
 func _repair_slot_icon(key: int) -> Control:
@@ -3755,7 +3773,7 @@ func _fill_storage_grid(slots: Array) -> void:
 		var item: ItemTableReader.Item = _items.get(entry.item_id)
 		icon.texture = _item_icon(entry.item_id)
 		_set_item_tip(icon, entry.item_id, "storage", index)
-		_set_item_seal_edge(icon, entry.item_id)
+		_set_item_slot_fx(icon, entry.item_id, _item_instance("storage", index))
 		icon.mouse_filter = Control.MOUSE_FILTER_STOP
 		icon.set_meta("wh_slot", index)
 		icon.set_meta("wh_item_id", entry.item_id)
@@ -4076,7 +4094,7 @@ func exchange_draw_grid(own_side: bool, items: Dictionary, blue: bool) -> void:
 		var it: ItemInstance = (o as ExchangeNet.Offered).item
 		icon.texture = _item_icon(it.ref_item_id)
 		_set_item_tip(icon, it.ref_item_id, where, i)
-		_set_item_seal_edge(icon, it.ref_item_id)
+		_set_item_slot_fx(icon, it.ref_item_id, it)
 		icon.mouse_filter = Control.MOUSE_FILTER_STOP
 		if count != null:
 			count.text = str(it.count) if not it.is_equipment and _shows_count(it.ref_item_id, it.count) else ""
@@ -6321,6 +6339,36 @@ func _item_icon(item_id: int) -> Texture2D:
 ## quick slots go through is_seal_item). item_id < 0 clears it.
 func _set_item_seal_edge(icon: Control, item_id: int) -> void:
 	ItemSealEdge.show_on(icon, _builder, is_seal_item(item_id), item_id)
+	# An emptied slot loses every effect (round 843: ItemStateEdge too).
+	if item_id < 0:
+		ItemStateEdge.show_on(icon, _builder, null, null, -1)
+
+## Round 843 (lane S): every per-item effect the original's slot draws
+## (0x67cfb0), wherever the slot is: the seal star (ItemSealEdge), and from
+## the item's own record (`inst`, an ItemInstance) the awake devil's
+## spirit's edge, the summoned pet's edge and the blue wash of a dead pet or
+## a spirit whose awakening ran out (ItemStateEdge). A slot with no record
+## (a store good, a buy-back row) draws the star only. item_id < 0 clears.
+func _set_item_slot_fx(icon: Control, item_id: int, inst: Object = null) -> void:
+	_set_item_seal_edge(icon, item_id)
+	_load_items()
+	var row = _items.get(item_id) if item_id >= 0 else null
+	ItemStateEdge.show_on(icon, _builder, row, inst, item_id)
+
+## Round 843 (lane S): a bag item's COS state or rent changed (0x3040): the
+## page is drawn again (its slot's edge or wash follows the record), and a
+## revival or a longer rent flashes the slot once (0x6666d0, the life flash,
+## drawn on the bag only -- 0x67cfb0 tests kind 0x46 or 0x0c over 0x46).
+func bag_item_state_changed(slot: int, life: bool) -> void:
+	_draw_bag_page()
+	if not life:
+		return
+	var window: HudWindow = _windows.get("inventory")
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control if window != null else null
+	var cell_index := slot - _bag_page * BAG_PAGE_SLOTS
+	if grid == null or cell_index < 0 or cell_index >= grid.get_child_count():
+		return
+	ItemStateEdge.flash_life(grid.get_child(cell_index).get_node_or_null("ItemIcon") as Control, _builder)
 
 ## Whether an item id is a seal item (0x8ba600: Rarity 2 or 6).
 func is_seal_item(item_id: int) -> bool:
@@ -6596,7 +6644,7 @@ func open_grant_window() -> GrantMagicAttributeWindow:
 		c.show_icon = func(icon: TextureRect, item_id: int, bag_slot: int) -> void:
 			icon.texture = _item_icon(item_id) if item_id >= 0 else null
 			_set_item_tip(icon, item_id, "bag", bag_slot)
-			_set_item_seal_edge(icon, item_id)
+			_set_item_slot_fx(icon, item_id, _item_instance("bag", bag_slot) if item_id >= 0 else null)
 		# Cancel (ID 6, c:0x808cb0): hidden and the talk ended (0x704B, through
 		# npc_window_hidden).
 		var cancel_btn := window.node(GrantMagicAttributeWindow.N_CANCEL) as BaseButton
@@ -7031,7 +7079,7 @@ func _draw_bag_page() -> void:
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
-			_set_item_seal_edge(icon, int(item_id))
+			_set_item_slot_fx(icon, int(item_id), _item_instance("bag", index))
 			# The hover tooltip (round 731, _set_item_tip). STOP so the
 			# hover registers; the cell behind it still takes clicks.
 			var dur: Array = durability.get(index, [])
@@ -8979,7 +9027,7 @@ func _fill_equipment_slots(items: Array) -> void:
 		var icon := slot.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
-			_set_item_seal_edge(icon, int(item_id))
+			_set_item_slot_fx(icon, int(item_id), _item_instance("equipment", int(slot_index)))
 			var dur: Array = durability.get(int(slot_index), [])
 			if dur.size() == 2:
 				_set_item_tip(icon, int(item_id), "equipment", int(slot_index), dur[0], dur[1])

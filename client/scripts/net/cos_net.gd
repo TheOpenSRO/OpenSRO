@@ -202,15 +202,17 @@ static func decode_owner_state(data: PackedByteArray) -> Dictionary:
 		out["pvp"] = r.u8()
 	return out
 
-## 0x3040 (s:GObjPC::FUN_004efa00): {slot (bag index), mask, state, rent_secs}
-## -- the COS fields; the others are read past.
+## 0x3040 (s:GObjPC::FUN_004efa00): {slot (bag index), mask, state, rent_secs,
+## ref} -- the COS fields and mask 1's RefItemID; the others are read past.
 static func decode_item_state(data: PackedByteArray) -> Dictionary:
 	var r := NpcSpawnNet.Reader.new(data)
-	var out := {"slot": r.u8() - BAG_WIRE_OFFSET, "mask": 0, "state": -1, "rent_secs": -1}
+	var out := {"slot": r.u8() - BAG_WIRE_OFFSET, "mask": 0, "state": -1, "rent_secs": -1, "ref": -1}
 	var mask := r.u8()
 	out["mask"] = mask
+	# Round 843: mask 1's new RefItemID (a switcher's result) -- its slot
+	# flashes (RepairFlash.play_switch_on).
 	if mask & 0x01:
-		r.u32()
+		out["ref"] = r.u32()
 	if mask & 0x02:
 		r.u8()
 	if mask & 0x04:

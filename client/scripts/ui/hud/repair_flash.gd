@@ -26,9 +26,53 @@ const COLUMNS := 8
 const DRAWN := Vector2(72, 72)
 const OFFSET := Vector2(-20, -20)
 
+## Round 843 (lane S): the switchers' flash (icon_mall_transgender), the
+## same draw with its own sheet, count and quad, READ:
+## - 0x3040 mask 1 (a new RefItemID: a gender, model or weapon switcher's
+##   result, c:0x88bf30 lines `local_405 & 1`) runs 0x6ab8c0 on the worn slot
+##   or 0x6b44d0 on the bag slot; either calls 0x6665f0: +0x664 = 16 and
+##   timer 2 at 0x32 ms; vslot_005 case 2 counts it down and kills the timer
+##   at 0.
+## - The draw (0x67cfb0 from 0x67e2c7: the bag 0x46, the worn slots 0x47 and
+##   the pet bag 0x8c, with a record; the repair flash's same test):
+##   `icon\icon_mall_transgender.ddj` (+0x638, loaded by vslot_010
+##   0x66b460), frame f = 16 - counter is cell (f & 3, f >> 2) of 32 x 32 in
+##   UV steps of 32 / 128 (1/128 at 0xda3770), drawn at the slot's (x - 8,
+##   y - 8), 48 x 48 (the doubles 8.0 at 0xd89240, 48.0 at 0xda3740).
+const SWITCH_DDJ := "icon\\icon_mall_transgender.ddj"
+const SWITCH_FRAMES := 16
+const SWITCH_COLUMNS := 4
+const SWITCH_DRAWN := Vector2(48, 48)
+const SWITCH_OFFSET := Vector2(-8, -8)
+
 var sheet: Texture2D
+var frames := FRAMES
+var columns := COLUMNS
+var drawn := DRAWN
 var _counter := FRAMES
 var _acc_ms := 0.0
+
+## Plays the switchers' flash over `icon`. Null without the sheet.
+static func play_switch_on(icon: Control, tex: Texture2D) -> RepairFlash:
+	if icon == null or tex == null or not is_instance_valid(icon):
+		return null
+	var old := icon.get_node_or_null("SwitchFlash")
+	if old != null:
+		(old as RepairFlash).restart()
+		return old as RepairFlash
+	var f := RepairFlash.new()
+	f.name = "SwitchFlash"
+	f.sheet = tex
+	f.frames = SWITCH_FRAMES
+	f.columns = SWITCH_COLUMNS
+	f.drawn = SWITCH_DRAWN
+	f._counter = SWITCH_FRAMES
+	f.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	f.position = SWITCH_OFFSET
+	f.size = SWITCH_DRAWN
+	f.z_index = 1
+	icon.add_child(f)
+	return f
 
 ## Plays the flash over `icon` (a slot's 32 x 32 icon). Null without the sheet.
 static func play_on(icon: Control, tex: Texture2D) -> RepairFlash:
@@ -50,13 +94,13 @@ static func play_on(icon: Control, tex: Texture2D) -> RepairFlash:
 	return f
 
 func restart() -> void:
-	_counter = FRAMES
+	_counter = frames
 	_acc_ms = 0.0
 	queue_redraw()
 
-## The frame shown now, 0..19.
+## The frame shown now, 0..frames - 1.
 func frame() -> int:
-	return FRAMES - _counter
+	return frames - _counter
 
 ## `ms` of time (the process tick; tests call it).
 func step(ms: float) -> void:
@@ -76,5 +120,5 @@ func _draw() -> void:
 	if sheet == null or _counter <= 0:
 		return
 	var f := frame()
-	var src := Rect2(Vector2(f % COLUMNS, f / COLUMNS) * CELL, CELL)
-	draw_texture_rect_region(sheet, Rect2(Vector2.ZERO, DRAWN), src)
+	var src := Rect2(Vector2(f % columns, f / columns) * CELL, CELL)
+	draw_texture_rect_region(sheet, Rect2(Vector2.ZERO, drawn), src)

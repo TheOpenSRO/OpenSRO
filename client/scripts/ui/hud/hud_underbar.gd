@@ -945,6 +945,22 @@ func set_slot_seals(seals: Dictionary) -> void:
 		var id := int(seals.get(slot_index, -1))
 		ItemSealEdge.show_on(icon, _ui_builder, id >= 0, id)
 
+## Round 843 (lane S): the item's other slot effects on the quick slots
+## (ItemStateEdge): `states` maps a slot index to [row, inst, id] -- the bag
+## item's row, its ItemInstance and ref id -- and every other slot's are
+## taken off. READ: the bar's item is set from its bag record (0x60c430 ->
+## SetItem 0x6871d0), and 0x3040's state change reaches it too (0x60a940 ->
+## 0x667ac0), so a summoned pet's edge or a dead pet's wash shows there as
+## in the bag.
+func set_slot_states(states: Dictionary) -> void:
+	for slot_index in _slot_nodes:
+		var icon := slot_icon_rect(int(slot_index))
+		var st: Array = states.get(slot_index, [])
+		if st.size() == 3:
+			ItemStateEdge.show_on(icon, _ui_builder, st[0], st[1], int(st[2]))
+		else:
+			ItemStateEdge.show_on(icon, _ui_builder, null, null, -1)
+
 func _next_page() -> void:
 	_select_page(_page + 1)
 
