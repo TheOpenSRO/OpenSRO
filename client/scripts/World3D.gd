@@ -17535,7 +17535,7 @@ func _step_click_walk(delta: float) -> bool:
 		player.velocity.z = rv.y
 		return false
 	var to_target := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z)
-	var r := ClickWalk.step(to_target, _gait_speed(), delta, MOVE_TARGET_STOP_DISTANCE)
+	var r := ClickWalk.step(to_target, _gait_speed(), delta, _click_walk_stop())
 	if bool(r["arrived"]):
 		_has_move_target = false
 		player.velocity.x = 0.0
@@ -17548,6 +17548,24 @@ func _step_click_walk(delta: float) -> bool:
 	# follow-up), not snapped: _aim_local_player, _step_local_turn.
 	_aim_local_player(Vector3(to_target.x, 0.0, to_target.y).normalized())
 	return false
+
+## Round 846: how near its point a walk ends. READ (FUN_009e0e60, ClickWalk):
+## retail's mover lands ON its destination, so a walk to a clicked point (the
+## ground, a talk approach's point, a trace's) ends on it -- the point the
+## 0x7021 sent, which the server and every observer walk to as well. Before
+## round 846 every walk ended MOVE_TARGET_STOP_DISTANCE (2.39) short of it
+## (OURS), so a 3-unit click moved this player 0.6 while the others drew it
+## walking 3 (MEASURED, docs/WORLD_ISSUES.md round 846), and a click under 2.39
+## away moved nobody and sent nothing. OURS: the approaches -- an attack's, a
+## friendly cast's, a pick-up's -- keep the early stop their aim is built on
+## (CombatNet.approach_aim), and CLICK_LAND_EPSILON is a float tolerance.
+const CLICK_LAND_EPSILON := 0.01
+
+func _click_walk_stop() -> float:
+	if not _pending_attack.is_empty() or not _pending_friend_cast.is_empty() or not _pending_pvp.is_empty() \
+			or _pending_pickup_id != -1:
+		return MOVE_TARGET_STOP_DISTANCE
+	return CLICK_LAND_EPSILON
 
 ## Ends an order at the wall that blocked its step (round 649; round 653's
 ## follow-up for every order; ClickWalk.blocked_ends, READ): the order cleared
@@ -18195,6 +18213,9 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       <slot> (its page shown) or the card slot (round 843)
 #   gachastate          report the Magic POP window's state (round 843)
 #   playerclick:<name>  left click the middle of that player's body (round 839)
+#   groundclick:<dx>,<dz>  left click the ground that far (world units) from
+#                       where this player stands, at the pixel the camera
+#                       draws it (round 846: small and large steps)
 #   stallicon:<i> / stallmodify:<i> / stallslot:<i>  left click stall slot i's
 #                       icon, modify button or the slot (round 839)
 #   bagempty            left click the shown bag page's first empty cell
@@ -19223,6 +19244,22 @@ func _qa_input_step() -> void:
 				var at := camera_3d.unproject_position(pbody.global_position + Vector3(0, top * 0.5, 0))
 				_qa_input_report = "%s at %s" % [action, at]
 				_qa_push_click(at, MOUSE_BUTTON_LEFT)
+		"groundclick":
+			# Round 846: left click the ground <dx>,<dz> world units from where
+			# this player stands, at the pixel the camera draws that point at
+			# -- a player's own click near the character (the pick decides
+			# where it lands).
+			var gxz := arg.split(",", false)
+			if gxz.size() != 2 or camera_3d == null:
+				_qa_input_report = action + " (needs <dx>,<dz>)"
+			else:
+				# At the player's own height: the ground it stands on (a deck in
+				# a town), which the terrain under a deck is not.
+				var gp := player.global_position + Vector3(float(gxz[0]), 0.0, float(gxz[1]))
+				var gat := camera_3d.unproject_position(gp)
+				_qa_input_report = "%s at %s (world %.2f, %.2f from %.2f, %.2f)" % [action, gat, gp.x, gp.z,
+					player.global_position.x, player.global_position.z]
+				_qa_push_click(gat, MOUSE_BUTTON_LEFT)
 		"stallicon", "stallmodify", "stallslot":
 			# Round 839: left click a stall slot's icon, its modify button, or
 			# the slot itself (an empty one, to put a held item on).
@@ -23153,6 +23190,8 @@ func _physics_step(delta: float) -> void:
 				player.velocity.x = 0.0
 				player.velocity.z = 0.0
 		_walked_since_send += Vector2(player.position.x - walk_from.x, player.position.z - walk_from.z).length()
+		# Round 846: the walk to the Up key's stop point (_own_arrow_stop).
+		_step_own_settle(delta)
 	if FrameSplit.on:
 		var pq := Time.get_ticks_usec()
 		FrameSplit.add("pp_move", pq - pp)
@@ -23458,6 +23497,19 @@ func _sync_move_order() -> void:
 				if _qa_move_log:
 					print("MOVE send t=%d ms=%d 0x7021 to (%.3f,%.3f) from (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(),
 						sent.x, sent.z, player.position.x, player.position.z])
+		"held":
+			# Round 846 (MoveOrderSync.held): a point near the last one, held
+			# back while the server's leg to that ran, and walked here already
+			# -- it goes out now that the server will take it.
+			var held_at := _move_sync.held
+			var sent_held := NetClient.move_order_destination(held_at)
+			if sent_held != Vector3.INF:
+				_move_sync.sent_destination(sent_held, now_ms)
+				_order_end_blocked = false
+				_time_since_send = 0.0
+				if _qa_move_log:
+					print("MOVE send t=%d ms=%d 0x7021 to (%.3f,%.3f) from (%.3f,%.3f) held" % [_qa_move_tick + 1, Time.get_ticks_msec(),
+						sent_held.x, sent_held.z, player.position.x, player.position.z])
 		"heading":
 			NetClient.move_order_heading(SkyRun.COMMAND_FORWARD, wire)
 			_move_sync.sent_heading(wire, now_ms)
@@ -25570,8 +25622,9 @@ func _on_entity_move_echo(echo: DestMoveNet.Echo) -> void:
 	if _own_id() >= 0 and id == (_own_id() & 0xffffffff):
 		if _qa_move_log:
 			print("MOVE echo self ms=%d kind=%d dest=(%.3f,%.3f)" % [Time.get_ticks_msec(), echo.kind, echo.dest_world.x, echo.dest_world.z])
-		# Round 749's review, F3: it confirms the order it names.
-		_move_sync.confirm(echo.kind, echo.dest_world, echo.angle)
+		# Round 749's review, F3: it confirms the order it names; round 846:
+		# and says when the server's leg is over (MoveOrderSync.held).
+		_move_sync.confirm(echo.kind, echo.dest_world, echo.angle, _own_leg_free_ms(echo))
 		return
 	var other := _other_by_uid(id)
 	if other >= 0:
@@ -25596,11 +25649,28 @@ func _on_entity_move_echo(echo: DestMoveNet.Echo) -> void:
 		return
 	var body: Node3D = _other_bodies[id]
 	body.position = OtherWalk.start_at(body.position, echo.source_world, echo.has_source)
+	# Round 846 (READ, FUN_009e0550): a body drawn behind where the server has
+	# its mover walks on from there, faster, to reach the point with it.
+	if echo.kind == DestMoveNet.KIND_DESTINATION:
+		leg["mult"] = OtherWalk.catch_up(body.position, echo.source_world, echo.has_source, echo.dest_world)
+	if _qa_move_log:
+		print("MOVE leg %d ms=%d from (%.3f,%.3f) x%.2f" % [id, Time.get_ticks_msec(), body.position.x, body.position.z, float(leg.get("mult", 1.0))])
 	# A sitter still waiting to be dressed who walks off is on their feet
 	# (round 739's review, F2): the server's move stands them, no 0x30BF.
 	if _other_build_args.has(id):
 		_other_seated.erase(id)
 	_start_other_leg(id, leg)
+
+## Round 846: when the server's leg this player's own 0xB021 names is over at
+## the latest (MoveOrderSync.confirm): now plus its length from the source to
+## the destination at the speed this player walks it; -1 for a heading run or
+## an echo with no source.
+func _own_leg_free_ms(echo: DestMoveNet.Echo) -> int:
+	if echo.kind != DestMoveNet.KIND_DESTINATION or not echo.has_source:
+		return -1
+	var length := Vector2(echo.dest_world.x - echo.source_world.x, echo.dest_world.z - echo.source_world.z).length()
+	var speed := maxf(_gait_speed(), 1.0)
+	return Time.get_ticks_msec() + int(ceil(length / speed * 1000.0))
 
 ## Starts `leg` on another player's body (OtherWalk), turned toward it.
 func _start_other_leg(id: int, leg: Dictionary) -> void:
@@ -25656,6 +25726,8 @@ func _on_entity_move_stop(stop: DestMoveNet.Stop) -> void:
 	var id := int(stop.uid)
 	var h := RemoteFacing.from_wire_angle(stop.angle)
 	if _own_id() >= 0 and id == (_own_id() & 0xffffffff):
+		if _own_arrow_stop(stop.world, h):
+			return
 		_apply_own_correction(stop.world, h)
 		return
 	var other := _other_by_uid(id)
@@ -25674,18 +25746,41 @@ func _on_entity_move_stop(stop: DestMoveNet.Stop) -> void:
 		return
 	if not _other_bodies.has(id):
 		return
+	_other_stop_at(id, stop.world, h)
+
+## Round 846 (READ, c:FUN_008a4f80): a stop ends the mover's movement and
+## snaps its heading to the message's angle (FUN_009e00f0 -> FUN_009e0050), and
+## its point goes through the same placement as 0xB021's source,
+## FUN_009e11e0(..., 0), which re-places the drawn body only when it is more
+## than 50.0 from it (FUN_009e1050, 0xd8f0b0). So a body up to 50 off is not
+## put there: it walks the rest, at OtherWalk.CATCH_UP_MAX times its speed (OURS:
+## the factor FUN_009e0550 gives a mover already on its point, 0xe1b808; how
+## retail's drawn object meets the record after a stop was not read), facing
+## the message's angle, and stands. An arrow key's stop at a raised /speed is
+## the case: the body was within a few units of the server's point, and was
+## put there in one frame (MEASURED, round 846: 0.1-19 units at 7x).
+func _other_stop_at(id: int, at: Vector3, h: float) -> void:
 	var body: Node3D = _other_bodies[id]
 	_other_legs.erase(id)
-	body.position = stop.world
-	_other_body_targets[id] = stop.world
-	_other_awake[id] = true
 	body.rotation.y = RemoteFacing.yaw_of(h, 0.0)
 	_remote_turns.erase(body.get_instance_id())
-	_set_other_gait(id, false)
-	# Standing on its target (round 748: _step_other_bodies passes over it),
-	# and a far body re-read at the flush (round 747).
-	_other_settled[id] = true
+	_other_awake[id] = true
+	var off := Vector2(at.x - body.position.x, at.z - body.position.z).length()
+	if off > OtherWalk.RESYNC_DISTANCE or off < 0.01:
+		body.position = at
+		_other_body_targets[id] = at
+		_set_other_gait(id, false)
+		# Standing on its target (round 748: _step_other_bodies passes over it),
+		# and a far body re-read at the flush (round 747).
+		_other_settled[id] = true
+		_other_moved(body)
+		return
+	_other_legs[id] = OtherWalk.to_point(at, _other_speed(id), OtherWalk.CATCH_UP_MAX)
+	_other_body_targets[id] = body.position
+	_other_settled.erase(id)
 	_other_moved(body)
+	if _qa_move_log:
+		print("MOVE leg %d ms=%d from (%.3f,%.3f) stop %.3f off x%.2f" % [id, Time.get_ticks_msec(), body.position.x, body.position.z, off, OtherWalk.CATCH_UP_MAX])
 
 ## Round 808: 0xB024 (c:0x8a4ec0, READ): another body's new heading, the
 ## arrow keys' turn. This player's own is ignored; another body (or the rider
@@ -29195,6 +29290,10 @@ func _issue_walk(point: Vector3) -> String:
 		return "stand"
 	if _own_move_blocked():
 		return "ignore"
+	# Round 846: whether the walk in effect is an approach (its point re-aims
+	# every tick; the click below supersedes it rather than meeting its point).
+	var was_approach := not _pending_attack.is_empty() or not _pending_friend_cast.is_empty() \
+		or not _pending_pvp.is_empty() or _pending_pickup_id != -1
 	# A click on the ground supersedes an attack that was walking into reach,
 	# and a friendly cast walking to its player (round 622's review) -- even
 	# one the filter below does not send (OURS: where retail drops a pending
@@ -29222,12 +29321,35 @@ func _issue_walk(point: Vector3) -> String:
 			return "ignore"
 		"snap":
 			_player_turn_snap = true
+	# Round 846: a click within 5.0 of the point this walk is still going to.
+	# READ: the server refuses it (GObjPC::FUN_004b0ea0, 0xb45b28, while the
+	# leg runs) and retail's client walks only on its echo, so nothing moves.
+	# This client walked such a click at once and sent nothing (the server
+	# would refuse it), so it stood up to 5 from where the server and every
+	# other player had it, until a stop put it there in one jump.
+	if not was_approach and _move_click_refused(point):
+		print("CLICK: walk to (%.1f, %.1f) ignored -- within %.0f of the point the walk is going to (%.1f, %.1f); the server refuses it" % [
+			point.x, point.z, MoveOrderSync.NEAR_DESTINATION, _move_sync.dest.x, _move_sync.dest.z])
+		return "ignore"
+	_arrow_wait_clear()
 	_player_move_order = true
 	_move_target = point
 	_has_move_target = true
 	_move_heading_run = false
 	_end_own_cast_for_move("a walk order")
 	return "walk"
+
+## Round 846: whether a walk to `point` is one the server refuses: this
+## player's walk to a destination it sent is still in progress (an order, not
+## a heading run; the caller rules out an approach) and `point`, truncated as
+## the wire carries it, is within MoveOrderSync.NEAR_DESTINATION of that
+## destination.
+func _move_click_refused(point: Vector3) -> bool:
+	if not _has_move_target or _move_heading_run or not _move_sync.active or _move_sync.heading_run:
+		return false
+	var q := NetClient.quantize_destination(point)
+	return q != Vector3.INF and _move_sync.dest != Vector3.INF \
+		and Vector2(q.x - _move_sync.dest.x, q.z - _move_sync.dest.z).length() <= MoveOrderSync.NEAR_DESTINATION
 
 ## The abnormal states that refuse a move: freeze, sleep, root (0xc1) and stun
 ## (0x4000). READ: the server's 0x7021 handler (GObjPC::FUN_004b0ea0, `test
@@ -29285,6 +29407,7 @@ func _begin_heading_run(h: float) -> String:
 	# now, so a wall that stops it must not ask for the item from there.
 	_pending_pickup_id = -1
 	var flat := RemoteFacing.facing_of(h)
+	_arrow_wait_clear()
 	_player_move_order = true
 	_move_heading_run = true
 	_move_heading = h
@@ -29363,6 +29486,9 @@ func _arrow_reset() -> void:
 	_turn_sent = NAN
 	_arrow_resend_ms = -1.0
 	_move_send_block_ms = 0.0
+	_arrow_wait = ""
+	_arrow_stop_superseded = false
+	_own_settle = Vector3.INF
 
 ## A key event of the arrows (KeyInput's "arrow" callable): `down` with
 ## `echo` for the OS's repeats, which retail's WM_KEYDOWN runs in full.
@@ -29396,6 +29522,33 @@ func _arrow_send_allowed() -> bool:
 	return not _player_dead and not _sit.sitting and not _motion_locked() and _move_send_block_ms <= 0.0 \
 		and _player_pickup_clip == null and NetClient.is_connected_to_server()
 
+## Round 846: the Up key's stop. READ (sro_client.exe): the press only sends
+## (c:FUN_009ebec0 -> FUN_009ebd10 builds the heading form; the run starts on
+## its echo, 0xB021 -> FUN_008a5750 -> FUN_009e08a0) and the release only
+## sends 0x7023 (FUN_009eb6e0); the run ends on the server's 0xB023
+## (FUN_008a4f80 -> FUN_009e00f0), whose point goes through FUN_009e11e0, the
+## placement that re-places the drawn body only when it is more than 50.0 from
+## it (FUN_009e1050, 0xd8f0b0).
+## OURS, kept: this client runs from the press to the release, as before. The
+## original's client runs from the echo to the stop, one transit later than the
+## server's mover at both ends; this one runs one transit EARLIER at both ends.
+## Either way the two runs differ only by the network's jitter -- MEASURED
+## (round 846, 40 ms +- 20 ms): the stop landed 0-18 units from this client's
+## point at /speed 1-10 both ways -- but an echo-started run reaches a wall one
+## round trip after the server and every observer started it, and the
+## observers, which walk a straight line (OtherWalk), ran that far past it
+## before the stop came: 50-90 units at /speed 10, put back (MEASURED). So the
+## run starts on the press, and the stop that answers its release is not
+## jumped to: within 50 the body walks the difference (_own_settle), more than
+## 50 it is put there, as an observer's is (_other_stop_at).
+## _arrow_wait is "stop" from the release until that 0xB023.
+var _arrow_wait := ""
+## A 0x7021 went out after the 0x7023 (a click, a new Up press): the 0xB023
+## that answers the 0x7023 is not the end of that walk.
+var _arrow_stop_superseded := false
+## The settle walk to a stop's point: the point, or Vector3.INF for none.
+var _own_settle := Vector3.INF
+
 ## Up: the run along the facing, or its stop.
 func _arrow_up(down: bool) -> String:
 	if down:
@@ -29417,13 +29570,82 @@ func _arrow_up(down: bool) -> String:
 	var h := _arrow_facing()
 	NetClient.move_stop_request(SkyRun.wire_angle(h))
 	if was and _has_move_target and _move_heading_run:
-		# Stopped here; the server's 0xB023 puts the body where it has it.
+		# Stopped here; the server's 0xB023 says where it has the body
+		# (_own_arrow_stop).
 		_has_move_target = false
 		_move_heading_run = false
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
 		_move_sync.placed(player.position)
+		_arrow_wait = "stop"
+		_arrow_stop_superseded = false
 	return "0x7023 sent (angle %d)" % SkyRun.wire_angle(h)
+
+## Round 846: this player's own 0xB023 while the Up key's release waits for it
+## (READ, FUN_009e00f0 + FUN_009e11e0): the run is over; within 50 of where it
+## stands the body walks to the server's point (_own_settle), farther it is put
+## there. One a newer order superseded is the end of the run that order
+## replaced: the order goes on. True when it was the arrow's.
+func _own_arrow_stop(at: Vector3, heading: float) -> bool:
+	if _arrow_stop_superseded:
+		_arrow_stop_superseded = false
+		if _qa_move_log:
+			print("MOVE arrow stop at (%.3f,%.3f) after a newer order -- the walk goes on" % [at.x, at.z])
+		return true
+	if _arrow_wait != "stop":
+		return false
+	_arrow_wait = ""
+	var off := Vector2(at.x - player.position.x, at.z - player.position.z).length()
+	print("MOVE arrow stop: the server's point (%.2f, %.2f), this client's (%.2f, %.2f), %.2f apart%s" % [at.x, at.z,
+		player.position.x, player.position.z, off, " -- walked" if off <= OtherWalk.RESYNC_DISTANCE else " -- put there"])
+	_has_move_target = false
+	_move_heading_run = false
+	player.velocity = Vector3.ZERO
+	player.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+	_player_turn_target = NAN
+	if off > OtherWalk.RESYNC_DISTANCE:
+		player.position = _ground_on_walk_surface(at)
+		_own_settle = Vector3.INF
+	elif off >= 0.01:
+		_own_settle = at
+	_move_sync.placed(at)
+	_last_sent_pos = player.position
+	_walked_since_send = 0.0
+	_time_since_send = 0.0
+	return true
+
+## Round 846: one physics step of the settle walk (_own_arrow_stop): the body
+## moves toward the server's point at OtherWalk.CATCH_UP_MAX times its speed
+## on the walkable graph, facing as the stop left it; any order of the
+## player's ends it where it is. True while it moves.
+func _step_own_settle(delta: float) -> bool:
+	if _own_settle == Vector3.INF:
+		return false
+	if _has_move_target:
+		_own_settle = Vector3.INF
+		return false
+	var to := Vector2(_own_settle.x - player.position.x, _own_settle.z - player.position.z)
+	var step := _gait_speed() * OtherWalk.CATCH_UP_MAX * delta
+	var p := player.position
+	if to.length() <= step:
+		p.x = _own_settle.x
+		p.z = _own_settle.z
+		_own_settle = Vector3.INF
+	else:
+		var d := to.normalized() * step
+		p.x += d.x
+		p.z += d.y
+	player.position = _ground_on_walk_surface(p)
+	_last_sent_pos = player.position
+	_walked_since_send = 0.0
+	return true
+
+## Round 846: the Up key's release is no longer waited on (a new order).
+func _arrow_wait_clear() -> void:
+	if _arrow_wait == "stop":
+		_arrow_stop_superseded = true
+	_arrow_wait = ""
+	_own_settle = Vector3.INF
 
 ## Left / Right: the turn bit and the coarse send, or its release.
 func _arrow_turn(bit: int, down: bool) -> String:
@@ -33920,6 +34142,7 @@ func _trace_let_go() -> void:
 func _trace_walk(point: Vector3, run: bool) -> void:
 	if _own_move_blocked() or _wall_root() != 0 or _player_pickup_clip != null or _sit.sitting:
 		return
+	_arrow_wait_clear()
 	_player_move_order = true
 	_move_target = _walkable_point(point)
 	_has_move_target = true
@@ -38730,7 +38953,7 @@ func _cos_rider_of(uid: int) -> int:
 func _cos_move_echo(echo: DestMoveNet.Echo) -> bool:
 	var uid := int(echo.uid)
 	if NetClient.riding_mount != 0 and uid == NetClient.riding_mount:
-		_move_sync.confirm(echo.kind, echo.dest_world, echo.angle)
+		_move_sync.confirm(echo.kind, echo.dest_world, echo.angle, _own_leg_free_ms(echo))
 		return true
 	if not _cos_recs.has(uid):
 		return false
@@ -38740,6 +38963,9 @@ func _cos_move_echo(echo: DestMoveNet.Echo) -> bool:
 			else OtherWalk.on_heading(echo.angle, _other_speed(rider))
 		var rbody: Node3D = _other_bodies[rider]
 		rbody.position = OtherWalk.start_at(rbody.position, echo.source_world, echo.has_source)
+		# Round 846: the rider catches up as a body on foot does (OtherWalk).
+		if echo.kind == DestMoveNet.KIND_DESTINATION:
+			leg["mult"] = OtherWalk.catch_up(rbody.position, echo.source_world, echo.has_source, echo.dest_world)
 		_start_other_leg(rider, leg)
 		return true
 	var rec: CosSpawnNet.Record = _cos_recs[uid]
@@ -38758,10 +38984,20 @@ func _cos_move_echo(echo: DestMoveNet.Echo) -> bool:
 func _cos_move_stop(stop: DestMoveNet.Stop) -> bool:
 	var uid := int(stop.uid)
 	if NetClient.riding_mount != 0 and uid == NetClient.riding_mount:
-		_apply_own_correction(stop.world, RemoteFacing.from_wire_angle(stop.angle))
+		if not _own_arrow_stop(stop.world, RemoteFacing.from_wire_angle(stop.angle)):
+			_apply_own_correction(stop.world, RemoteFacing.from_wire_angle(stop.angle))
 		return true
 	if not _cos_recs.has(uid):
 		return false
+	# Round 846: a ridden COS's stop is its rider's (the rider's root walks the
+	# mount's legs, _cos_move_echo): before, it was dropped, and a rider's run
+	# on the arrow keys never ended on anyone else's screen.
+	var rider := _cos_rider_of(uid)
+	if rider >= 0 and _other_bodies.has(rider):
+		if _qa_move_log:
+			print("MOVE recv %d ms=%d 0xB023 (its mount %d) pos=(%.3f,%.3f)" % [rider, Time.get_ticks_msec(), uid, stop.world.x, stop.world.z])
+		_other_stop_at(rider, stop.world, RemoteFacing.from_wire_angle(stop.angle))
+		return true
 	var body: Node3D = _cos_bodies.get(uid)
 	if body != null and _cos_rider_of(uid) < 0:
 		# Round 796: the stop's own ground, not the height the body had --

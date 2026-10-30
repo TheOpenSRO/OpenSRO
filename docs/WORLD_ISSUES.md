@@ -7483,6 +7483,190 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-sixth round, lane M: every step another player takes, walked
+
+The user: "if I take small steps it doesn't register on another client. It only registers when I take
+a large step and it shows that I teleported away", and "it only seems to happen at a higher /speed but
+it might be part of underlying bug". Labels: READ (`c:` sro_client.exe, `s:` SR_GameServer.exe),
+MEASURED, INFERRED, OURS, OPEN. The reading is `docs/protocol/opcodes/movement.md`, "How an observer
+keeps up, and every step reaches it".
+
+**How it was measured.** A lane server with prod's movement flags (no `-trust-client-positions`,
+`-navmesh-dir` with round 812's meshes, `-full-map`, in memory), two real clients on the render box: a
+headless actor walking real ground clicks (`OPENSRO_QA_WALK_TO` -> `_issue_walk`, the click's own
+path) and arrow keys (`OPENSRO_QA_INPUT down:Up`, `up:Up`, `down:Left`) at `/speed` 1, 2, 5, 7 and
+10, and a rendered observer in real time (`QA_SHOT_REALTIME=1`, 60 fps), each through a delay proxy
+(OURS, QA only: 40 ms ± 20 ms, then 100 ms ± 40 ms each way). Per frame: the actor's position
+(`MOVE self`), what it sent (`MOVE send`), what the observer heard (`MOVE recv`) and drew (`MOVE
+body`), lined up per step on the 0x7021 and the 0xB021 naming the same point
+(`/var/tmp/r846m/keep/ana846.py`). The schedule: per speed a 30-unit click, eight small clicks
+(1-5 units) 1.5 s apart, the same 0.33 s apart, eight 0.1 s apart, a 20-unit click with a click near
+its end, a 40-unit click, three Up taps (0.1 s, 0.25 s, a hold), a Left turn and an Up tap.
+
+**The causes (MEASURED, base `857ec7be`).** The server took and echoed every step that reached it
+(the observer heard 127 of 130 0x7021, the 3 after its run ended), the observer walked every echo it
+heard, at the speed `/speed` set (the token-less `OpBuffEnd`; a late observer reads the spawn record's
+run speed), and no frame jumped further than 3.2x the speed. The faults were in what the mover did
+with its own steps:
+
+1. **The mover's own walk ended 2.39 short of every click** (`MOVE_TARGET_STOP_DISTANCE`, OURS since
+   round 649 for every walk), while the server and every observer walked to the point. Small steps
+   1.5 s apart at 1x: the actor moved 1.17 on average, the observer drew 3.36, all 10 ended apart;
+   2x 1.83 / 3.22, 10 of 10; 5x 2.18 / 2.85, 5 of 11; 10x 2.53 / 2.88, 3 of 11. A click under 2.39 away
+   moved nobody and sent nothing: in the 0.1 s bursts the actor moved 0.00-0.71 while the observer drew
+   2.4-3.2 a click. READ (`c:FUN_009e0e60`, round 649): retail's mover lands on its destination.
+2. **A click within 5.0 of the point still being walked to was walked here and never sent** (the
+   server would refuse it, READ `s:0xb45b28`): the mover stood up to 5 from where the server and the
+   others had it, until a stop put it there in one jump. READ: retail's server refuses it and its
+   client walks only on its echo, so nothing moves.
+3. **A click near the point just reached reached the server while its leg still ran** -- this client
+   walks at once, the server one transit later -- and was refused silently; a second later
+   (`ECHO_TIMEOUT_MS`) the walk stopped and the stop went out as a `0xB023`: no step, then a jump.
+4. **An observer put a body on the 0xB021's source whenever it was more than 32 from it** (the
+   monsters' rule) and walked every leg at the bare speed.
+
+So the difference from the user's words: the observer did draw the small steps it was told of, but
+the mover's own screen and the others' disagreed on almost every small step (by up to the 2.39 stop
+plus a truncation, 1.6-2.7 units), the mover's sub-2.39 clicks did nothing at all, and a click near the
+last point, at any speed, could vanish and come back as a jump a second later. INFERRED: those are
+what read as "doesn't register" and "teleported"; at a raised `/speed` a 30-40 unit step is drawn in
+4-8 frames on every client, the original's included, which reads as a jump by itself.
+
+**What the original does (READ, re-read this round).** `c:NetProcessInNavAndSkill::FUN_008a5750`
+puts the flag-1 source through `FUN_009e11e0`, which moves the mover's record (`+0x4c`) and re-places
+the drawn object only when `FUN_009e1050` finds the two more than 50.0 apart (double `0xd8f0b0`;
+`FUN_009ecdb0`, a 3-D distance); `FUN_009e0550` then sets the mover's speed factor `+0x8c` to the drawn
+object's ground distance to the destination over the record's, at most 3.0 (float `0xd8adc4`; 3.0
+when the record is on the point, `0xe1b808`), 1.0 when the object is no farther; the tick
+`FUN_009e0e60` multiplies the walk/run speed by it. INFERRED: a body drawn behind walks on and arrives
+with the server's mover. The server (`s:GObjPC::FUN_004b0ea0`) refuses a destination within 5.0 of the
+one it walks to and takes every other; nothing is sent per step or on arrival. A correction to
+movement.md: flag 1 does not snap the object or clear its order on the ordinary branch.
+
+**What changed (client only; the server already matched).**
+- `World3D._click_walk_stop`: a walk to a point ends on it (`CLICK_LAND_EPSILON` 0.01). The attack's,
+  friendly cast's and pick-up's approaches keep the early stop (OURS).
+- `World3D._move_click_refused`: a click within 5.0 of the point the walk is still going to is ignored,
+  as the server refuses it; not for an approach.
+- `MoveOrderSync.held` (OURS): a click within 5.0 of the point the server may still be walking to
+  (the echo's time plus the leg at the run speed, `confirm(free_ms)`; before the echo, the echo
+  timeout) is walked at once and sent when the server's leg is over, whether or not the walk here has
+  ended.
+- `OtherWalk.RESYNC_DISTANCE` 50.0 and `OtherWalk.catch_up` (READ), for a body on foot and a rider.
+- QA: `OPENSRO_QA_INPUT groundclick:<dx>,<dz>`, a viewport click on the ground near the player.
+
+**After (MEASURED, head, the same runs; small steps 1.5 s apart, actor / observer mean, ended
+apart).**
+
+| speed | base | head |
+|---|---|---|
+| 1x | 1.17 / 3.36, 10 of 10 | 2.98 / 3.07, 0 of 10 |
+| 2x | 1.83 / 3.22, 10 of 10 | 3.08 / 3.17, 0 of 10 |
+| 5x | 2.18 / 2.85, 5 of 11 | 2.89 / 2.97, 0 of 11 |
+| 7x (100 ms ± 40) | 2.27 / 2.90, 4 of 11 | 2.89 / 4.68*, 3 of 11 |
+| 10x | 2.53 / 2.88, 3 of 11 | 2.89 / 2.89, 0 of 11 |
+
+\* the analyser's per-step windows at 100 ms ± 40 ms of jitter take part of the next step; the raw
+log shows each leg started from the drawn point at x1.00 and ended on the actor's point. Large steps
+(30, 40) end together on both clients at every speed (base 1x 28.06 / 30.26, 3 of 3 apart; head
+29.68 / 29.68, 0 of 3). The 0.1 s bursts now move the actor 2.02 a click (0.00-0.71 before), the
+observer following one transit and one held leg behind and ending on the same point. No step
+unconfirmed, no stop sent for a click (base 1, head 0), 14 near clicks held and sent after the
+server's leg, 2 ignored; no observer frame jumped beyond 3.2x the speed in any run, before or after;
+the catch-up factor ran at x1.01-x1.14 under 40 ms of jitter. `0xB023` jumps on the observer are the
+Up key's stops (READ: the server stops the mover where it has it and the window snaps), 0.1-19 units
+at 7x with 40 ms of jitter, before and after.
+
+**Gates.** `go test ./...` all ok (`TestRound846EveryStepIsEchoedAtAnySpeed`: 1-40 unit steps at
+/speed 1, 2, 5, 10 each echoed from where the last ended, the window told the speed, a near
+destination refused while the leg runs). `remote_godot.sh check` ALL LOAD; `move_order_sync_test`
+(catch_up, held) and `dest_walk_test` (the 50 rule, the catch-up walk, a 2-unit step walked, a click
+walk landing on its point, the refused click) ALL PASS; `remote_godot.sh tests` "ran 402 suite(s), 0
+failing". Perf gate `--base 857ec7be --head 852123fd --sites jangan --frames 24000`, median of 3:
+frame 0.86 / 0.86 ms SAME, entry 8982 / 8822 ms SAME, freeze 2769 / 2763 ms SAME, hitches 5 / 5 SAME.
+
+**Real input.** A rendered actor clicking the viewport (`groundclick`, the mouse press through
+`push_input`, the pick and `_issue_walk`) at 1x with 40 ms ± 20 ms: 18 clicks of 1-12 units, each
+walked the same distance on both clients (3.00 / 3.00, 1.00 / 1.00, 3.61 / 3.61 ...), every end gap
+0.00, no stop, no frame jump; frames of the actor landing on its ring each step:
+`/var/tmp/r846m/keep/h6/h6_montage.png`. Evidence, logs and the analyser: `/var/tmp/r846m/keep`
+(b1/h1 at 40 ms, b2/h2 at 100 ms with 7x, h6 the real clicks).
+
+**Follow-up: the arrow keys' stop (the coordinator: "small steps" are likely arrow-key taps).**
+
+*READ.*
+- `c:FUN_008a4f80` (0xB023) calls `FUN_009e00f0` (ends the movement, snaps the heading) and then
+  `FUN_009e11e0(..., 0)`. That is the same placement as 0xB021's source, so a stop within 50 of
+  the drawn body does not re-place it.
+- The Up press only sends (`FUN_009ebec0` -> `FUN_009ebd10`); the run starts on the echo
+  (`FUN_009e08a0`). The release only sends 0x7023 (`FUN_009eb6e0`).
+- The drawn position `obj+0x74` is written only by vtable slot 37 (`FUN_009cf530`). The mover tick
+  never calls it (OPEN: how the drawn object follows a walk).
+
+*MEASURED* (base `857ec7be` against head; `/speed` 1, 2, 5, 7, 10; 40 ms ± 20 ms; per speed Up
+held 50/100/150/200/500 ms, a turn while running, a click during a run; `keep/b3`, `keep/h10`):
+- Every Up press and release reached the server, and the server's stop point is its run speed times
+  the time between them (`TestRound846AnUpTapStopsWhereTheServersRunHasIt`).
+- The mover and the server disagree by the network's jitter. With run-on-press (base) the mover's
+  own stop snapped 0.3-18 units at taps and holds, and 53 after a turn at 10x.
+- Every observer stop snapped: 26 of 50 stops jumped by more than 1 unit, 9 of them by 10-40.
+
+*Tried and measured.*
+- **Retail's run-on-echo on the mover (`h7`, `h9`):** the jitter error stayed the same (taps 0-17
+  units). But a run now reaches a wall one round trip after the observers started theirs, and
+  observers have no collision of their own, so they ran 50-90 units past the wall at 10x and were put
+  back. Dropped; the run stays on the press (OURS, see movement.md).
+- **Clipping an observer's run at its first wall (`h7`, `h8`):** the probe met walls the mover's
+  carried footing did not. One stop came 0.0 ahead while the mover ran 100 units. Dropped.
+
+*Now (head `b2edf756`, `h10`).*
+- An observer walks a stop within 50 at 3x its speed, facing the message's angle (35 of 50 stops
+  walked, at most 41.9 units off); beyond 50 it puts the body there. The mover walks its own Up stop
+  the same way.
+- A ridden COS's stop now reaches its rider; it was dropped, so a rider's Up run never ended on
+  anyone else's screen.
+- Taps and holds at 1x-10x: both clients end on the same point every time (end gap 0.00). No
+  observer frame moved faster than 3.2x the run speed at any tap or hold.
+- The only such frames left are in a turn while running: 2.6 at 2x (base 10.7) and 7.0 at 7x
+  (base 12.4). The turn reaches the server only in 45° steps (READ, `FUN_009eb470`), so the server, and
+  the observers with it, run a different line until the stop: retail's own limit.
+
+| speed | Up taps 50-200 ms, mover's own stop: base / head | observer frames beyond 3.2x the speed: base / head |
+|---|---|---|
+| 1x | 0.3-2.1, snapped / 0.2-2.1, walked | 0 / 0 |
+| 2x | 0.3-3.3, snapped / 0.8-3.2, walked | 0 / 0 (a turn: 10.7 / 2.6) |
+| 5x | 0.0-11.0, snapped / 0.0-9.0, walked | 0 / 0 |
+| 7x | 0.0-11.3, snapped / 0.0-9.7, walked | 0 / 0 (a turn: 12.4 / 7.0) |
+| 10x | 0.0-9.9, snapped / 0.0-16.6, walked | 0 / 0 (a turn: 0 / 0; a hold: 0 / 0) |
+
+*Other paths checked:*
+- **Turning while running:** bends on 0xB024 and keeps retail's 45° quantization.
+- **A click during a run:** the 0xB021 source keeps the 50 rule and the catch-up.
+- **A run into a wall:** the mover's stop is walked within 50. Observers still do not collide (OPEN).
+- **A mount at speed:** fixed (the ridden stop).
+- **Region borders:** no snap path (refile and spawn records carry the leg).
+
+*Gates (follow-up).*
+- `go test ./...` all ok.
+- `check` ALL LOAD.
+- `tests` "ran 402 suite(s), 0 failing".
+- Perf gate `--base 857ec7be --head b2edf756 --sites jangan --frames 24000`: frame 0.86 / 0.87 ms,
+  entry 8845 / 8689 ms, freeze 2774 / 2777 ms, hitches 5 / 4. All SAME.
+
+**OPEN.**
+- Observers walk a straight line: retail's observers collide on their own (`FUN_009e0e60`'s query
+  runs for every mover). A run into a wall is corrected by the mover's stop, walked within 50.
+- Retail's run-on-echo is not followed (above); the Up stop is walked, not snapped.
+- Where the original's drawn object (`obj+0x74`) follows the mover's record each tick was not read;
+  the catch-up's reading is INFERRED from the factor.
+- Unchanged and READ (round 637): with no movement order in effect -- after a world entry, before the
+  first walk -- a click under 5 units away does nothing on any client (MEASURED again: a first-block
+  run whose opening click hit a HUD window walked none of its small clicks). OpenSRO's order is set by
+  the first accepted walk and kept; retail also clears it on the player's own 0xB023 (an arrow key's
+  stop, `FUN_009e00f0`), which OpenSRO does not model (OPEN).
+- `MoveRefusedNear` compares with the server's clipped wall point for a leg a wall ended, not the
+  client's destination (READ says the one set).
+
 ## Eight-hundred-and-forty-fifth round, lane K: the quest detail's colours and the quest list's map button
 
 The user: "fix the bug where ready quest text on its special window is white and unreadable. It's

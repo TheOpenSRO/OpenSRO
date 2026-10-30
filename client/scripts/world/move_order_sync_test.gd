@@ -142,8 +142,86 @@ func _test_other_walk() -> void:
 	_check((r2["pos"] as Vector3).is_equal_approx(Vector3(51, 2, 3)) and not bool(r2["done"]), "a heading run at wire 0 runs +x and never ends (%s)" % str(r2["pos"]))
 	_check(OtherWalk.facing(run, Vector3.ZERO).is_equal_approx(Vector3(1, 0, 0)), "and faces +x")
 	_check(OtherWalk.start_at(Vector3(0, 0, 0), Vector3(10, 0, 0), true) == Vector3.ZERO, "a source 10 off: the drawn body walks on")
-	_check(OtherWalk.start_at(Vector3(0, 0, 0), Vector3(40, 0, 0), true) == Vector3(40, 0, 0), "a source 40 off: the body is put there")
-	_check(OtherWalk.start_at(Vector3(0, 0, 0), Vector3(40, 0, 0), false) == Vector3.ZERO, "no source: the drawn body")
+	# Round 846 (READ, FUN_009e1050 against 50.0, 0xd8f0b0).
+	_check(OtherWalk.start_at(Vector3(0, 0, 0), Vector3(40, 0, 0), true) == Vector3.ZERO, "a source 40 off: the drawn body still walks on")
+	_check(OtherWalk.start_at(Vector3(0, 0, 0), Vector3(50, 0, 0), true) == Vector3.ZERO, "and at exactly 50")
+	_check(OtherWalk.start_at(Vector3(0, 0, 0), Vector3(51, 0, 0), true) == Vector3(51, 0, 0), "a source 51 off: the body is put there")
+	_check(OtherWalk.start_at(Vector3(0, 0, 0), Vector3(80, 0, 0), false) == Vector3.ZERO, "no source: the drawn body")
+
+## Round 846 (READ, FUN_009e0550): a body drawn behind the server's mover
+## walks faster by its distance to the point over the mover's, at most 3x.
+## NEGATIVES: catch_up returning 1.0 always fails "drawn 30 behind on a
+## 10-unit step is 3x"; without the cap, "never more than 3x".
+func _test_catch_up() -> void:
+	var dest := Vector3(100, 0, 0)
+	_check(OtherWalk.catch_up(Vector3(90, 0, 0), Vector3(90, 0, 0), true, dest) == 1.0, "drawn on the source: its own speed")
+	_check(OtherWalk.catch_up(Vector3(95, 0, 0), Vector3(90, 0, 0), true, dest) == 1.0, "drawn ahead of the source: its own speed")
+	_check(is_equal_approx(OtherWalk.catch_up(Vector3(80, 0, 0), Vector3(90, 0, 0), true, dest), 2.0), "drawn 10 behind on a 10-unit leg: 2x")
+	_check(is_equal_approx(OtherWalk.catch_up(Vector3(60, 0, 0), Vector3(90, 0, 0), true, dest), 3.0), "drawn 30 behind on a 10-unit step is 3x")
+	_check(is_equal_approx(OtherWalk.catch_up(Vector3(0, 0, 0), Vector3(90, 0, 0), true, dest), 3.0), "never more than 3x")
+	_check(is_equal_approx(OtherWalk.catch_up(Vector3(98, 0, 0), dest, true, dest), 3.0), "a source on the point itself: 3x")
+	_check(OtherWalk.catch_up(Vector3(0, 0, 0), Vector3(90, 0, 0), false, dest) == 1.0, "no source: its own speed")
+	_check(is_equal_approx(OtherWalk.catch_up(Vector3(80, 50, 0), Vector3(90, -20, 0), true, dest), 2.0), "on the ground: heights do not count")
+	# Two units a frame at 60 frames a second is 120 a second: x2 on 60.
+	var leg := OtherWalk.to_point(dest, 60.0, 2.0)
+	var r := OtherWalk.step(leg, Vector3(80, 0, 0), 1.0 / 60.0)
+	_check(is_equal_approx(float((r["pos"] as Vector3).x), 82.0), "a leg at 60 with x2 walks 2 a frame (%s)" % str(r["pos"]))
+	leg["speed"] = 120.0
+	r = OtherWalk.step(leg, Vector3(80, 0, 0), 1.0 / 60.0)
+	_check(is_equal_approx(float((r["pos"] as Vector3).x), 84.0), "a new run speed keeps the factor (%s)" % str(r["pos"]))
+
+## Round 846: a click near the point the server may still be walking to is
+## held back until its leg is over, and goes out then, walk ended or not.
+## NEGATIVES: decide without the hold fails "a near click while the server's
+## leg runs is held"; without "held", "the held point goes out once the
+## server's leg is over".
+func _test_held() -> void:
+	var s := MoveOrderSync.new()
+	var a := Vector3(100, 0, 0)
+	s.sent_destination(a, 1000)
+	_check(s.server_free_ms == 1000 + MoveOrderSync.ECHO_TIMEOUT_MS, "until its echo, the server may walk the leg for the echo's timeout")
+	s.confirm(DestMoveNet.KIND_DESTINATION, a, -1, 1300)
+	_check(s.server_free_ms == 1300, "its echo says when the server's leg is over")
+	# The walk here lands on the point and ends first.
+	_check(s.decide(false, false, Vector3.INF, Vector3.INF, -1, a, 1100) == "ended", "the walk ends on the point")
+	s.arrived()
+	var b := Vector3(103, 0, 0)
+	_check(s.decide(true, false, b, b, -1, a, 1150) == "" and s.held == b, "a near click while the server's leg runs is held")
+	_check(s.decide(true, false, b, b, -1, Vector3(102, 0, 0), 1200) == "", "and stays held while it runs")
+	_check(s.decide(false, false, Vector3.INF, Vector3.INF, -1, b, 1250) == "", "its walk ended here: still held")
+	_check(s.decide(false, false, Vector3.INF, Vector3.INF, -1, b, 1300) == "held", "the held point goes out once the server's leg is over")
+	s.sent_destination(s.held, 1300)
+	_check(s.held == Vector3.INF and s.active and s.dest == b, "and is the order the server walks")
+	# Held while the walk to it still runs: it goes out as the order's own.
+	s.confirm(DestMoveNet.KIND_DESTINATION, b, -1, 1400)
+	_check(s.decide(false, false, Vector3.INF, Vector3.INF, -1, b, 1350) == "ended", "that walk ends")
+	s.arrived()
+	var c := Vector3(99, 0, 2)
+	_check(s.decide(true, false, c, c, -1, b, 1360) == "", "a second near click is held")
+	_check(s.decide(true, false, c, c, -1, Vector3(101, 0, 1), 1400) == "dest", "and sent with its walk still going when the leg is over")
+	# A far click is never held, nor one after the leg is over.
+	s.sent_destination(Vector3(200, 0, 0), 2000)
+	s.confirm(DestMoveNet.KIND_DESTINATION, Vector3(200, 0, 0), -1, 4000)
+	s.arrived()
+	_check(s.decide(true, false, Vector3(300, 0, 0), Vector3(300, 0, 0), -1, Vector3(200, 0, 0), 2100) == "dest", "a far click goes out at once")
+	s.sent_destination(Vector3(300, 0, 0), 2100)
+	s.confirm(DestMoveNet.KIND_DESTINATION, Vector3(300, 0, 0), -1, 2200)
+	s.arrived()
+	_check(s.decide(true, false, Vector3(302, 0, 0), Vector3(302, 0, 0), -1, Vector3(300, 0, 0), 2200) == "dest", "a near click after the leg is over goes out at once")
+	# A stop or placement: the server has no leg; a correction drops what is held.
+	s.sent_destination(Vector3(400, 0, 0), 3000)
+	s.arrived()
+	_check(s.decide(true, false, Vector3(402, 0, 0), Vector3(402, 0, 0), -1, Vector3(400, 0, 0), 3010) == "", "held before its echo")
+	s.placed(Vector3(400, 0, 0))
+	_check(s.decide(true, false, Vector3(402, 0, 0), Vector3(402, 0, 0), -1, Vector3(400, 0, 0), 3020) == "dest", "a placement frees it at once")
+	s.sent_destination(Vector3(500, 0, 0), 5000)
+	s.arrived()
+	s.decide(true, false, Vector3(503, 0, 0), Vector3(503, 0, 0), -1, Vector3(500, 0, 0), 5010)
+	s.corrected(Vector3(10, 0, 10))
+	_check(s.held == Vector3.INF, "a correction drops the held point")
+	# A heading run's echo sets nothing to wait for.
+	s.sent_heading(0x4000, 6000)
+	_check(s.server_free_ms == 0, "a heading run refuses no destination")
 
 func _init() -> void:
 	_test_click_walk()
@@ -152,6 +230,8 @@ func _init() -> void:
 	_test_echo()
 	_test_corrections()
 	_test_other_walk()
+	_test_catch_up()
+	_test_held()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
