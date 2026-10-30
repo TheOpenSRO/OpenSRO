@@ -7566,7 +7566,15 @@ and clicks through OPENSRO_QA_INPUT; evidence `/var/tmp/r844u/keep`, logs in `ke
 the No, the 30 s, the Yes, a member guild's master, the target in a union), `TestRound844UnionLeaveExpelChat`,
 `TestRound844UnionChatPermission`; `TestRound842UnionFlow` and `TestChatPartyAndGuild` updated for the break
 and 0x200c. Client: `ui/hud/union844_test.gd` against the real Media.pk2 (UnionOps, the crest cache, the
-tab's every part and button rule, the questions, box 0x1d's geometry, the chat prefix).
+tab's every part and button rule, the questions, box 0x1d's geometry, the chat prefix). Gates: `go test ./...`
+passes; `remote_godot.sh check` ALL LOAD (1046 scripts), `tests` "ran 395 suite(s), 0 failing".
+
+**Perf gate** (`--base 8a92fc80 --head 334659e6 --sites jangan --frames 24000`, median of 3, native readers
+off on both): all SAME.
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.08 -> 1.01 | 11187 -> 9298 | 2958 -> 2934 | 5 -> 5 |
 
 **OPEN.** What the target guild's vslot 0x1c tests (0x4c42; lane V can store its war test in
 `unionHostile`); granting the union chat bit (the permission window, lane G -- masters chat already);
