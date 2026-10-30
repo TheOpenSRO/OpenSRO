@@ -315,9 +315,14 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		})
 	}
 
+	free := freeAtOpenStore(sess.ID(), req.ItemID)
+	// Round 844 lane G part 2 (guildgoods.go): a guild store good costs the
+	// guild's GP as well, the master's alone.
+	if gp := guildGoodsGP(req.ItemID); gp > 0 && !free {
+		return buyGuildGoods(ctx, sess, chars, svc, characterID, req.ItemID, int(req.Quantity), gp)
+	}
 	result := &ShopBuyResult{OK: true}
 	buy := svc.Buy
-	free := freeAtOpenStore(sess.ID(), req.ItemID)
 	if free {
 		// The Test Items NPC's goods (round 783, OURS): free, no gold test;
 		// its equipment +12, full blue, at 100% (round 786, testshopgear.go).

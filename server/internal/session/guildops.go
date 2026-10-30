@@ -248,6 +248,9 @@ func handleGuildDisband(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	}
 	unionBefore := unionBeforeDisband(ctx, g.ID)
 	was, err := d.guilds.Disband(ctx, g.ID)
+	if err == nil {
+		guildVoteDisbanded(g.ID) // round 844 part 2: the vote goes silently
+	}
 	if err != nil {
 		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guild.CodePermissionDenied))
 		return nil
@@ -297,6 +300,11 @@ func handleRetailGuildLeave(ctx context.Context, sess *gateway.Session, p *proto
 		sendGuild(sess, guild.OpLeaveResult, guild.EncodeFail(guildstorage.CodeInUse))
 		return nil
 	}
+	// Round 844 part 2: not a member on a running vote's list (0x4c38, s:0x5d1120).
+	if code := guildVoteBlocks(g.ID, e.CharacterID, false); code != 0 {
+		sendGuild(sess, guild.OpLeaveResult, guild.EncodeFail(code))
+		return nil
+	}
 	return d.removeMember(ctx, g, e.CharacterID, guild.RemovedLeft, sess, guild.OpLeaveResult)
 }
 
@@ -339,6 +347,11 @@ func handleGuildExpel(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// Round 844: not the member using the guild storage (s:0x5c60e6).
 	if guildStorageRefuses(g.ID, target.CharacterID) {
 		sendGuild(sess, guild.OpExpelResult, guild.EncodeFail(guildstorage.CodeInUse))
+		return nil
+	}
+	// Round 844 part 2: not a member on a running vote's list (0x4c39).
+	if code := guildVoteBlocks(g.ID, target.CharacterID, true); code != 0 {
+		sendGuild(sess, guild.OpExpelResult, guild.EncodeFail(code))
 		return nil
 	}
 	if target.CharacterID == e.CharacterID {

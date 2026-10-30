@@ -215,6 +215,10 @@ func (d guildOpsDeps) handleLevelUpNPC(ctx context.Context, sess *gateway.Sessio
 	tellGold(ctx, d.chars, d.hub, e.CharacterID, false)
 	sendGuild(sess, guild.OpLevelUpResult, guild.EncodeOK())
 	guildLevelChanged(ctx, g)
+	// Round 844 part 2: the GP history's "Guild Growth" (sm:0x438bb0).
+	if _, gp, ok := guild.LevelUpCost(g.Level - 1); ok {
+		logGPUse(ctx, d.guilds, g.ID, e.Name, int64(gp), guild.GPUseGuildGrowth)
+	}
 	return nil
 }
 
@@ -251,17 +255,18 @@ func (d guildOpsDeps) handleHandOver(ctx context.Context, sess *gateway.Session,
 	if err != nil {
 		return fail(guild.CodeNotInGuild)
 	}
+	// A master-release vote running: 0x4c1e (s:0x5c6900, CMainProcess::
+	// FUN_005d1060 on the guild's vote list; round 844 part 2).
+	if voteOfGuild(g.ID) != nil {
+		return fail(guild.CodePermissionDenied)
+	}
 	if g.LeaderID != e.CharacterID {
 		return fail(guild.CodePermissionDenied)
 	}
 	if !isMember(g, to) {
 		return fail(guild.CodeCantFindMember)
 	}
-	m := d.manage()
-	if m == nil {
-		return fail(guild.CodeFailed)
-	}
-	after, err := m.TransferMaster(ctx, g.ID, to)
+	after, err := d.handOver(ctx, g, to)
 	if err != nil {
 		if errors.Is(err, guild.ErrNotInGuild) {
 			return fail(guild.CodeCantFindMember)
@@ -269,9 +274,28 @@ func (d guildOpsDeps) handleHandOver(ctx context.Context, sess *gateway.Session,
 		slog.Warn("guild hand-over failed", "guild_id", g.ID, "to", to, "err", err)
 		return fail(guild.CodeFailed)
 	}
+	_ = after
 	sendGuild(sess, guild.OpHandOverResult, guild.EncodeOK())
+	return nil
+}
+
+// handOver makes `to` g's master and tells the members (the ShardManager's
+// hand-over notification, s:0x5c46e0): 0x38F5 type 0x16 mask 0x54 for the
+// new and the old master, then to the new master type 0x16 mask 0x10 with
+// every other member's mask (CGuild::vslot_010 s:0x5c4dc0). The
+// master-release vote's win takes the same path (sm:0x4617b0).
+func (d guildOpsDeps) handOver(ctx context.Context, g *guild.Guild, to int64) (*guild.Guild, error) {
+	m := d.manage()
+	if m == nil {
+		return nil, errors.New("guild: the store keeps no hand-over")
+	}
+	from := g.LeaderID
+	after, err := m.TransferMaster(ctx, g.ID, to)
+	if err != nil {
+		return nil, err
+	}
 	var pair []guild.Member
-	for _, id := range []int64{to, e.CharacterID} {
+	for _, id := range []int64{to, from} {
 		if mm, ok := memberOf(after, id); ok {
 			pair = append(pair, mm)
 		}
@@ -289,8 +313,8 @@ func (d guildOpsDeps) handleHandOver(ctx context.Context, sess *gateway.Session,
 			sendGuild(ne.Session, guild.OpUpdate, guild.EncodeMembersFields(guild.MemberFieldPerm, others, nil))
 		}
 	}
-	slog.Info("guild master handed over", "guild_id", g.ID, "from", e.CharacterID, "to", to)
-	return nil
+	slog.Info("guild master handed over", "guild_id", g.ID, "from", from, "to", to)
+	return after, nil
 }
 
 func isMember(g *guild.Guild, id int64) bool {

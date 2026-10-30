@@ -412,6 +412,14 @@ func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gat
 		// permissions and the donation (guildmanage.go).
 		case guild.OpNotice, guild.OpLevelUp, guild.OpHandOver, guild.OpPermission, guild.OpDonate:
 			return handleGuildManage(ctx, sess, p, ops)
+		// Round 844 part 2: the master-release vote (guildvote.go), the GP
+		// history (guildgphistory.go), the recall's answer (guildrecall.go).
+		case OpVoteStart, OpVoteState, OpVoteBallot:
+			return handleGuildVote(ctx, sess, p.Opcode, p.Data, ops)
+		case OpGPHistory:
+			return ops.handleGPHistory(ctx, sess, p.Data)
+		case OpRecallAnswer:
+			return ops.handleRecallAnswer(ctx, sess, p.Data)
 		// Round 824: a crest's bytes (crest.go, OURS).
 		case OpCrestGet:
 			return handleCrestGet(ctx, sess, guilds, p.Data)
@@ -586,6 +594,10 @@ func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// Round 822: the new level and GP to the members in the world (0x38F5
 	// type 5).
 	guildLevelChanged(ctx, g)
+	// Round 844 part 2: the GP history's "Guild Growth".
+	if _, gp, ok := guild.LevelUpCost(g.Level - 1); ok {
+		logGPUse(ctx, guilds, g.ID, pc.Name, int64(gp), guild.GPUseGuildGrowth)
+	}
 	return reply(guildLevelResult(g, true))
 }
 

@@ -1173,6 +1173,10 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if isSwitchTool(it) {
 			return useSwitchTool(ctx, sess, inv, items, characterID, held, have, it, req.Option)
 		}
+		// Round 844 part 2 (guildrecall.go): the guild recall scroll.
+		if recallItem(it) {
+			return useGuildRecall(ctx, sess, inv, characterID, it, held, have)
+		}
 		// Round 824 (crest.go): a guild or union crest's register or delete.
 		if _, _, ok := crestItem(it); ok {
 			return useCrestItem(ctx, sess, inv, characterID, it, held, have, req)
