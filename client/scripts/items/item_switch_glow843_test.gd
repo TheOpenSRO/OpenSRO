@@ -27,6 +27,11 @@ func _bytes(lines: Array) -> PackedByteArray:
 const LOCKED := "ITEM_TEST_BLADE_11_A_RARE"
 const UNLOCKED := "ITEM_TEST_BLADE_11_A_RARE_ACTIVE"
 const TWIN := "ITEM_TEST_BLADE_11_A_RARE_SWITCH13"
+## The plain row's twin of the same model (the same .bsr, MEASURED), with
+## a glow type of its own; model 14 has none here.
+const PLAIN_TWIN := "ITEM_TEST_BLADE_11_A_SWITCH13"
+const TWIN14 := "ITEM_TEST_BLADE_11_A_RARE_SWITCH14"
+const ID_TWIN14 := 106
 const SET_BASE := "ITEM_TEST_BLADE_11_SET_A_RARE"
 const SET_TWIN := "ITEM_TEST_BLADE_11_SET_A_RARE_SWITCH05"
 const ID_LOCKED := 101
@@ -37,7 +42,7 @@ const ID_SET_TWIN := 105
 
 func _tables() -> ItemGlowTables:
 	var t := ItemGlowTables.new()
-	t.load_options(_bytes(["//_HONOR\ttype_number", UNLOCKED + "\t4", SET_BASE + "\t1", SET_TWIN + "\t3"]))
+	t.load_options(_bytes(["//_HONOR\ttype_number", UNLOCKED + "\t4", SET_BASE + "\t1", SET_TWIN + "\t3", PLAIN_TWIN + "\t3"]))
 	var rows: Array = []
 	for type_number in [1, 3, 4]:
 		for p in [3, 8, 12]:
@@ -56,7 +61,7 @@ func _appearance() -> CharacterAppearance:
 	var a := CharacterAppearance.new()
 	a.glow_tables = _tables()
 	var tids := PackedInt32Array([3, 1, 6, 3])
-	for pair in [[ID_LOCKED, LOCKED], [ID_UNLOCKED, UNLOCKED], [ID_TWIN, TWIN], [ID_SET, SET_BASE], [ID_SET_TWIN, SET_TWIN]]:
+	for pair in [[ID_LOCKED, LOCKED], [ID_UNLOCKED, UNLOCKED], [ID_TWIN, TWIN], [ID_SET, SET_BASE], [ID_SET_TWIN, SET_TWIN], [ID_TWIN14, TWIN14]]:
 		a._items[int(pair[0])] = {"models": PackedStringArray(["item\\test_%d.bsr" % int(pair[0])]), "type_ids": tids, "code": String(pair[1])}
 	return a
 
@@ -88,14 +93,20 @@ func _test_glow_source() -> void:
 	var w := _wear(a, {"id": ID_TWIN, "plus": 12, "fx": ID_UNLOCKED})
 	_check(String(w["code"]) == TWIN and (w["models"] as PackedStringArray)[0] == "item\\test_%d.bsr" % ID_TWIN,
 		"the model is the twin's (%s)" % str(w["models"]))
-	_check(CharacterAppearance.glow_code_of(w) == UNLOCKED, "the glow and seal are the unlocked item's own (%s)" % CharacterAppearance.glow_code_of(w))
+	_check(CharacterAppearance.fx_code_of(w) == UNLOCKED, "the seal and the sparkle are the unlocked item's own (%s)" % CharacterAppearance.fx_code_of(w))
+	_check(CharacterAppearance.glow_code_of(w) == PLAIN_TWIN, "the glow type is the plain twin's, the same model's (%s)" % CharacterAppearance.glow_code_of(w))
+	var w14 := _wear(a, {"id": ID_TWIN14, "plus": 12, "fx": ID_UNLOCKED})
+	_check(CharacterAppearance.glow_code_of(w14) == UNLOCKED and CharacterAppearance.fx_code_of(w14) == UNLOCKED,
+		"no plain twin with a type: the item's own glow type too")
 	# A locked item's twin: the locked row has none either, so nothing (the
 	# original draws nothing for the locked row, round 786).
-	_check(CharacterAppearance.glow_code_of(_wear(a, {"id": ID_TWIN, "plus": 12, "fx": ID_LOCKED})) == TWIN, "a locked item's twin stays plain")
+	var lw := _wear(a, {"id": ID_TWIN, "plus": 12, "fx": ID_LOCKED})
+	_check(CharacterAppearance.glow_code_of(lw) == TWIN and CharacterAppearance.fx_code_of(lw) == TWIN, "a locked item's twin stays plain")
 	# A set twin with rows of its own keeps them (MEASURED: its own glow type
 	# and the seal's effects at the twin's own scale).
-	_check(CharacterAppearance.glow_code_of(_wear(a, {"id": ID_SET_TWIN, "plus": 12, "fx": ID_SET})) == SET_TWIN, "a set twin keeps its own rows")
-	_check(a.glow_source(TWIN, 0) == TWIN and a.glow_source(TWIN, 9999) == TWIN, "no own id, or one no table knows: the drawn row")
+	var sw := _wear(a, {"id": ID_SET_TWIN, "plus": 12, "fx": ID_SET})
+	_check(CharacterAppearance.glow_code_of(sw) == SET_TWIN and CharacterAppearance.fx_code_of(sw) == SET_TWIN, "a set twin keeps its own rows")
+	_check(a.glow_sources(TWIN, 0) == [TWIN, TWIN] and a.glow_sources(TWIN, 9999) == [TWIN, TWIN], "no own id, or one no table knows: the drawn row")
 
 func _test_glow_on_the_model() -> void:
 	var a := _appearance()
@@ -109,7 +120,8 @@ func _test_glow_on_the_model() -> void:
 	node.add_child(mi)
 	w["nodes"] = [node]
 	a._apply_glow(w)
-	_check(int(w["glow"]) == 12 and EquipGlow.is_glow(mi.material_override), "the twin's mesh glows at the item's +12 row")
+	_check(int(w["glow"]) == 12 and EquipGlow.is_glow(mi.material_override), "the twin's mesh glows at the +12 row")
+	_check(a.glow_tables.glow_row(CharacterAppearance.glow_code_of(w), 12).type_number == 3, "... of the plain twin's type 3")
 	var far := a._far_glow(w, [node])
 	_check(far.size() == 1, "the crowd's far recipe glows too (%d)" % far.size())
 	EquipGlow.clear(node)
@@ -120,7 +132,8 @@ func _test_glow_on_the_model() -> void:
 	body.worn = [w]
 	a._note_glow_wears(body)
 	var listed: Array = skel.get_meta(CharacterAppearance.GLOW_WEARS_META)
-	_check(listed.size() == 1 and CharacterAppearance.glow_code_of(listed[0]) == UNLOCKED, "the glow list keeps the item's own code for reglow")
+	_check(listed.size() == 1 and CharacterAppearance.glow_code_of(listed[0]) == PLAIN_TWIN and CharacterAppearance.fx_code_of(listed[0]) == UNLOCKED,
+		"the glow list keeps both codes for reglow")
 	a.reglow(skel, {CharacterAppearance.SLOT_WEAPON: 8})
 	_check(EquipGlow.is_glow(mi.material_override), "reglow at +8: still glowing")
 	EquipGlow.clear(node)

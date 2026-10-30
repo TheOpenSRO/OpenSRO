@@ -13001,8 +13001,13 @@ func _build_assembled_character(equipped: Dictionary = {}, body: String = "", sc
 		if not w.get("default", false) and not (w["nodes"] as Array).is_empty():
 			drawn += 1
 		if int(w.get("glow", 0)) > 0 or int(w.get("glow_fx", 0)) > 0:
+			# Round 843: a model switcher's row names where its glow type and
+			# effects come from when they are not its own.
 			var gc := CharacterAppearance.glow_code_of(w)
-			glows.append("%s%s +%d (row +%d, %d effect(s))" % [w.get("code", ""), (" with %s's glow" % gc) if gc != String(w.get("code", "")) else "",
+			var fc := CharacterAppearance.fx_code_of(w)
+			var own := String(w.get("code", ""))
+			glows.append("%s%s +%d (row +%d, %d effect(s))" % [own,
+				(" with %s's glow type and %s's effects" % [gc, fc]) if gc != own or fc != own else "",
 				int(w["plus"]), int(w["glow"]), int(w["glow_fx"])])
 	if not equipped.is_empty():
 		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them%s" % [
