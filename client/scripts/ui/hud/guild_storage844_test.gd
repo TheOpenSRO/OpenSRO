@@ -88,8 +88,12 @@ func _run() -> void:
 	# text the archive's, red below level 2.
 	var member := NpcServiceReader.guild_services(7, false)
 	var master := NpcServiceReader.guild_services(7, true)
-	_check(member.size() == 2 and (member[1] as NpcServiceReader.Service).key == "guild_storage"
-		and (master.back() as NpcServiceReader.Service).key == "guild_storage", "a member and the master both get the guild storage line")
+	# Round 844 lane G part 2: the vote line before the storage, the GP
+	# history after it.
+	var mkeys := member.map(func(x: NpcServiceReader.Service) -> String: return x.key)
+	var gkeys := master.map(func(x: NpcServiceReader.Service) -> String: return x.key)
+	_check(mkeys == ["guild_leave", "guild_master_release", "guild_storage", "guild_gp_history"]
+		and gkeys.slice(3) == ["guild_master_release", "guild_storage", "guild_gp_history"], "a member and the master both get the guild storage line")
 	_check(NpcServiceReader.guild_services(0, false).size() == 1, "no guild: the create line alone")
 	var text: String = table.get_text("UIIT_CTL_GUILD_WAREHOUSE") if table != null and table.has_method("get_text") else ""
 	if text == "" and table != null:

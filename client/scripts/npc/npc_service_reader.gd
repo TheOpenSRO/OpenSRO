@@ -76,6 +76,15 @@ const GUILD_WAREHOUSE_STRID := "UIIT_CTL_GUILD_WAREHOUSE"
 ## `push 0xdad410`, 0x6fd094 `push 0xdad3b8`).
 const GUILD_LEVEL_UP_STRID := "UIIT_MSG_GUILD_LEVEL_UP"
 const GUILD_MASTER_LEAVE_STRID := "UIIT_CTL_MASTERLEAVE"
+## Round 844 part 2: items 0x19 / 0x1a (the master-release vote) and 0x43
+## (READ: 0x6fd09e `push 0xdad388`, 0x6fd0a8 `push 0xdad358`, 0x6fd149
+## `push 0xd932b0`).
+const GUILD_MASTER_RELEASE_STRID := "UIIT_CTL_MASTERRELEASE"
+const GUILD_VOTE_STRID := "UIIT_CTL_MRELEASE_VOTE"
+const GUILD_GP_HISTORY_STRID := "UIIT_STT_GUILD_GP_HISTORY"
+## Whether the player's guild has a master-release vote the client knows of
+## (c:0x99da70; GuildData keeps it, World3D sets this).
+static var guild_vote_running := false
 
 ## The job guilds' join lines (round 526), by job kind: 1 Trader, 2 Thief
 ## ("Robber"), 3 Hunter (docs/protocol/jobs.md, "Three job kinds"). The real
@@ -422,8 +431,15 @@ static func guild_services(guild_id: int, is_master: bool) -> Array:
 	# Round 844: item 0x1d, the guild storage, follows the member's and the
 	# master's own lines in both branches (FUN_00700440, READ).
 	var storage := Service.new("guild_storage", "Use guild storage. (level 2 or above)", GUILD_WAREHOUSE_STRID)
+	# Round 844 part 2: every member's 0x19 "Vote for a leader" -- 0x1a
+	# "Participating in selection of leader" while a vote is known (c:0x99da70,
+	# GuildData.vote_id) -- before the storage, and 0x43 "GP Usage History"
+	# after it (FUN_00700440 0x701139..0x70116a, READ).
+	var vote := Service.new("guild_vote", "Participating in selection of leader", GUILD_VOTE_STRID) if guild_vote_running \
+		else Service.new("guild_master_release", "Vote for a leader", GUILD_MASTER_RELEASE_STRID)
+	var history := Service.new("guild_gp_history", "GP Usage History", GUILD_GP_HISTORY_STRID)
 	if not is_master:
-		return [Service.new("guild_leave", "Leave guild.", GUILD_SECESSION_STRID), storage]
+		return [Service.new("guild_leave", "Leave guild.", GUILD_SECESSION_STRID), vote, storage, history]
 	# Round 844: the master's lines in FUN_00700440's order (0x701101..0x70112d,
 	# READ): 0x17 level-up, 0x14 disband, 0x18 hand-over, then 0x1b the war's
 	# compensation (lane V); after them every member's 0x19 / 0x1a (the
@@ -431,7 +447,7 @@ static func guild_services(guild_id: int, is_master: bool) -> Array:
 	# and 0x1d the storage (lane H).
 	return [Service.new("guild_level_up", "Promote the guild.", GUILD_LEVEL_UP_STRID),
 		Service.new("guild_disband", "Disband the guild", GUILD_BREAK_STRID),
-		Service.new("guild_master_leave", "Transfer leadership", GUILD_MASTER_LEAVE_STRID), storage]
+		Service.new("guild_master_leave", "Transfer leadership", GUILD_MASTER_LEAVE_STRID), vote, storage, history]
 
 ## Whether the store window shows Repair and Repair All for the NPC with this
 ## codename (round 514). True exactly when the server registers interaction

@@ -106,6 +106,16 @@ func WriteCSV(w io.Writer, c *Catalogue) error {
 			return err
 		}
 	}
+	// Round 844: the NPC stores' GP prices (guildgoods.go).
+	for _, r := range npcGPRows(c, func(kind string) []string {
+		r := make([]string, nColumns)
+		r[cKind] = kind
+		return r
+	}) {
+		if err := cw.Write(r); err != nil {
+			return err
+		}
+	}
 	cw.Flush()
 	return cw.Error()
 }
@@ -252,6 +262,17 @@ func (cr *csvReader) row(r []string) error {
 		return cr.good(r)
 	case "scrap":
 		return cr.scrap(r)
+	case "npcgp":
+		// Round 844: an NPC store item's GP price (guildgoods.go).
+		id, err1 := strconv.ParseInt(r[cItemID], 10, 64)
+		gp, err2 := strconv.ParseInt(r[cPrices], 10, 64)
+		if err1 != nil || err2 != nil {
+			return cr.errf("bad npcgp row")
+		}
+		if cr.cat.NPCGP == nil {
+			cr.cat.NPCGP = map[int64]int64{}
+		}
+		cr.cat.NPCGP[id] = gp
 	default:
 		return cr.errf("unknown kind %q", r[cKind])
 	}

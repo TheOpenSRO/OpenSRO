@@ -64,7 +64,8 @@ func guildBlockPacketsWith(ctx context.Context, g *guild.Guild, override int64, 
 		return l
 	}
 	out := []*proto.Packet{{Opcode: guild.OpBlockBegin}}
-	for _, chunk := range guild.BlockChunks(guild.EncodeBlock(g, live)) {
+	// Round 844 part 2: a running master-release vote in the block's tail.
+	for _, chunk := range guild.BlockChunks(appendVoteTail(guild.EncodeBlock(g, live), g.ID)) {
 		out = append(out, &proto.Packet{Opcode: guild.OpBlockChunk, Data: chunk})
 	}
 	return append(out, &proto.Packet{Opcode: guild.OpBlockEnd})
@@ -133,6 +134,10 @@ func guildMemberPresence(ctx context.Context, characterID int64, online bool) {
 		}
 		live := d.guildLive(ctx, characterID)
 		live.Online = online
+		if !online {
+			// Round 844 part 2: the vote's day counts (_CHAR.LastLogout).
+			guildMemberLoggedOut(ctx, box.s, characterID)
+		}
 		d.toMembers(g, guild.OpUpdate, guild.EncodeMemberFields(guild.MemberFieldOffline|guild.MemberFieldLevel, m, live), characterID)
 	}
 }

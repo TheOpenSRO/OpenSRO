@@ -3207,6 +3207,7 @@ func _confirm_buy(item_id: int) -> void:
 	_open_store_box("store", "BuyConfirm", StoreMessageBox.Kind.BUY, {
 		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
 		"count": 1, "max": maxi(1, item.max_stack), "unit_price": _shop_prices.get(item_id, -1),
+		"gp_unit_price": guild_gp_price(item_id),
 	}, func(q: int) -> void: _do_buy(item_id, q))
 
 ## Opens one of the store's or the warehouse's confirm boxes on `host_id`'s
@@ -6697,6 +6698,9 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		"price": price,
 		"description": _item_description(_described_row(item, where, slot)),
 	}
+	# Round 844 lane G part 2: a store good's GP price beside its gold.
+	if price >= 0:
+		ctx["gp_price"] = guild_gp_price(item_id)
 	# Round 789: a devil's spirit's ability lines (AvatarTables, READ
 	# c:0x67b460) at its plus.
 	if item.is_devil_spirit():
@@ -7283,6 +7287,11 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		var crest_kind := int(CREST_ITEM_BOXES.get(item_code_for_id(item_id), 0))
 		if crest_kind != 0:
 			open_crest_box(slot, crest_kind)
+			return
+		# Round 844 lane G part 2: the guild recall scroll asks first (box
+		# 0x1c, c:0x676f1a).
+		if is_guild_recall_item(item_types(item_id)):
+			open_guild_recall_confirm(slot)
 			return
 		# Round 838: an item used ON another item enters the use-on mode.
 		if is_use_on_item(item_types(item_id)):
@@ -10145,3 +10154,166 @@ func open_guild_master_leave(npc_uid: int) -> void:
 	add_child(w)
 	w.centre_on(get_viewport_rect().size)
 	guild_master_leave_window = w
+
+# --- round 844, lane G part 2: the vote, the GP history, the recall ---------------
+
+## Line 0x19's box OK: 0x7105 {npc}.
+signal guild_vote_start_confirmed(npc_uid: int)
+## The election window's OK: 0x7107.
+signal guild_vote_cast(npc_uid: int, vote: int, index: int)
+## The recall question's answer: 0x7031.
+signal guild_recall_answered(job: int, caster: int, yes: bool)
+
+var guild_election_window: GuildElectionWindow
+var guild_gp_history_window: GuildGPHistoryWindow
+var _guild_recall_box: PartyMatchConfirm
+
+## Line 0x19 (c:0x702b9b): box type 2, UIIT_STT_CONFIRM_BOX with
+## UIIT_MSG_MRELEASE_CONFIRM; OK sends 0x7105.
+func open_guild_vote_confirm(npc_uid: int) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _resolve_ui("UIIT_MSG_MRELEASE_CONFIRM",
+			"For 10 minutes, you will participate in the vote to elect the leader. Will you proceed?")):
+		box.free()
+		return null
+	box.name = "GuildVoteConfirm"
+	box.confirmed.connect(func() -> void: guild_vote_start_confirmed.emit(npc_uid))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_qa_print_buttons(box, str(box.name))
+	return box
+
+## The election window (c:0x79b9b0(1, vote, ms)), one at a time.
+func open_guild_election(npc_uid: int, votes: GuildPart2Net) -> GuildElectionWindow:
+	close_guild_election()
+	var w := GuildElectionWindow.new()
+	var data := NetClient.guild_data
+	if not w.build_election(_builder, npc_uid, votes, func(id: int) -> String:
+			var m := data.member(id)
+			return m.member_name if m != null else ""):
+		w.free()
+		return null
+	w.voted.connect(func(n: int, v: int, i: int) -> void: guild_vote_cast.emit(n, v, i))
+	add_child(w)
+	w.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	guild_election_window = w
+	return w
+
+## 0x3908 kind 3 closes it (79b9b0(0, 0, -1)).
+func close_guild_election() -> void:
+	if guild_election_window != null and is_instance_valid(guild_election_window):
+		guild_election_window.close()
+	guild_election_window = null
+
+## B501: the history window, cleared, filled and shown.
+func open_guild_gp_history(entries: Array) -> GuildGPHistoryWindow:
+	if guild_gp_history_window == null or not is_instance_valid(guild_gp_history_window):
+		var w := GuildGPHistoryWindow.new()
+		if not w.build_history(_builder):
+			w.free()
+			return null
+		add_child(w)
+		guild_gp_history_window = w
+	var gw := guild_gp_history_window
+	gw.fill(entries)
+	print("GUILD844B history %s" % [gw.lines])
+	gw.show()
+	gw.move_to_front()
+	gw.position = (get_viewport_rect().size - gw.size) / 2.0
+	return gw
+
+## A UIIT_STT_EVENTGUIDE box with one text (the vote's results).
+func open_guild_event_box(text: String) -> PartyMatchConfirm:
+	# notice_box resolves its key; a text that is no key comes back as itself.
+	var box := GuildMsgBox.notice_box(_builder, text)
+	if box == null:
+		return null
+	box.name = "GuildEventBox"
+	# Its caption is UIIT_STT_EVENTGUIDE, "Alarm" (READ, as above).
+	if box.caption != null:
+		box.caption.text = box.text("UIIT_STT_EVENTGUIDE", "Alarm")
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_qa_print_buttons(box, str(box.name))
+	return box
+
+## 0x7030 (c:0x88d840 -> CIFGuildSummonReq c:0x660220): the agreement box,
+## 360 x 160, UIIT_MSG_GUILD_RECALL_ANSWER, Yes / No, its own 180 s timer
+## (closes unanswered). OURS: the archive's English text is empty, so the
+## Korean row's meaning stands in for it.
+func open_guild_recall_box(job: int, caster: int, seconds: int) -> PartyMatchConfirm:
+	if _guild_recall_box != null and is_instance_valid(_guild_recall_box):
+		# A second question overwrites the first's fields (READ); its timer
+		# is not restarted.
+		_guild_recall_box.set_meta("job", job)
+		_guild_recall_box.set_meta("caster", caster)
+		return _guild_recall_box
+	var text := _resolve_ui("UIIT_MSG_GUILD_RECALL_ANSWER", "")
+	if text.strip_edges() == "":
+		text = "The guild master has summoned the guild members."
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, text, Vector2(360, 160)):
+		box.free()
+		return null
+	box.name = "GuildRecallBox"
+	box.set_meta("job", job)
+	box.set_meta("caster", caster)
+	box.confirmed.connect(func() -> void:
+		guild_recall_answered.emit(int(box.get_meta("job")), int(box.get_meta("caster")), true))
+	box.declined.connect(func() -> void:
+		guild_recall_answered.emit(int(box.get_meta("job")), int(box.get_meta("caster")), false))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_guild_recall_box = box
+	get_tree().create_timer(180.0).timeout.connect(func() -> void:
+		if is_instance_valid(box):
+			box.close())
+	_qa_print_buttons(box, str(box.name))
+	return box
+
+## The recall scroll's use (IFSlotWithHelp 0x676f1a -> box 0x1c,
+## UIIT_STT_CONFIRM_BOX / UIIT_MSG_GUILD_RECALL; its Yes the plain use).
+func open_guild_recall_confirm(slot: int) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _resolve_ui("UIIT_MSG_GUILD_RECALL", "Recall all guild members now?")):
+		box.free()
+		return null
+	box.name = "GuildRecallConfirm"
+	box.confirmed.connect(func() -> void:
+		if NetClient.current_character_name != "":
+			NetClient.use_item(NetClient.current_character_name, slot))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_qa_print_buttons(box, str(box.name))
+	return box
+
+## The recall scroll: TypeID 3/3/12/3 (c:0x667000).
+static func is_guild_recall_item(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 12 and types[3] == 3
+
+
+# --- round 844, lane G part 2: the guild store's GP prices ---------------------
+
+var _guild_gp_prices = null
+
+## The GP an NPC store good costs (0 none): the archive's
+## refpricepolicyofitem row with PaymentDevice 8 of the package that holds the
+## item (the client reads its own archive, c:0x980d90; MEASURED: the 20 guild
+## goods' packages, one item each, are the only ones with a GP row).
+func guild_gp_price(item_id: int) -> int:
+	if _guild_gp_prices == null:
+		_guild_gp_prices = {}
+		var archive = _builder.media_archive() if _builder != null else null
+		if archive != null:
+			var d := MallData.new().load(func(path: String) -> PackedByteArray:
+				var e = ObjectLoader.find_file(archive, path)
+				return archive.read_file(e) if e != null else PackedByteArray())
+			for code in d.packages:
+				var pk: MallData.Package = d.packages[code]
+				if pk.costs.has(8) and pk.scraps.size() == 1:
+					_guild_gp_prices[(pk.scraps[0] as MallData.Scrap).item_code] = int(pk.costs[8])
+	return int(_guild_gp_prices.get(item_code_for_id(item_id), 0))

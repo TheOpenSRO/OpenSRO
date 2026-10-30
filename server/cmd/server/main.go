@@ -2038,6 +2038,8 @@ func main() {
 	specialtyShops := loadSpecialty(ctx, logger, *specialtyShopsCSV, *quotationCSV, *tradeScale, *specialGoods, refItems, chars)
 	// The item mall (round 837).
 	mallCatalogue := loadMall(logger, *mallCSV)
+	// Round 844 lane G part 2: the guild stores' GP prices.
+	session.SetGuildGoodsCatalogue(mallCatalogue)
 	silkStore := silkStoreOf(logger, accounts, *startingSilk)
 	go pruneTakeLog(ctx, logger, mallStore)
 	session.SetItemRecordTypes(func(ref uint32) ([4]int, bool) {
@@ -2667,6 +2669,8 @@ func main() {
 	// and, from round 838, a composite grant's return scroll fill; and the
 	// premium Gold Time's tick (session/goldtime.go).
 	scrollCaster := session.NewScrollCaster(chars, eq, hub, zerkTracker, logger).SetParties(parties)
+	// Round 844 part 2: the guild recall's warp.
+	session.SetGuildRecallWarp(eq, zerkTracker)
 	compositeKeeper.SetScrolls(scrollCaster)
 	session.StartGoldTime(ctx, timedJobs, refItems, hub)
 	handle := gateway.Chain(

@@ -66,6 +66,8 @@ var notice_body := ""
 var crest_rev := 0
 var soldier_flags := 0
 var members: Array[Member] = []
+## Round 844 part 2: the block's trailing vote list, [[id, kind, ms], ...].
+var votes: Array = []
 ## Round 842: the guild's union (0x3102, 0x38F5 types 0x0d / 0x12), which
 ## guild lines are coloured by (GuildLineColour).
 var union := UnionData.new()
@@ -330,6 +332,7 @@ func clear() -> void:
 	crest_rev = 0
 	soldier_flags = 0
 	members.clear()
+	votes = []
 	# Round 842: no guild, no union (FUN_009990f0 clears the whole record).
 	union.clear()
 	changed.emit()
@@ -386,14 +389,19 @@ func parse(b: PackedByteArray) -> bool:
 	var list: Array[Member] = []
 	for i in n:
 		list.append(_read_member(r))
-	# The trailing list (FUN_0099d7e0): u8 n x {u32, u8, u32}, kept unread.
+	# The trailing list (FUN_0099d7e0): u8 n x {u32 vote id, u8 kind, u32 ms
+	# left} -- round 844 part 2: the running master-release vote (READ
+	# s:0x5e7950), kept in `votes` for GuildPart2Net.
 	var extra := r.u8()
+	var vlist: Array = []
 	for i in extra:
-		r.u32()
-		r.u8()
-		r.u32()
+		var vid := r.u32()
+		var vk := r.u8()
+		var vms := r.u32()
+		vlist.append([vid, vk, vms])
 	if not r.ok:
 		return false
+	votes = vlist
 	in_guild = true
 	guild_id = gid
 	guild_name = gname

@@ -401,6 +401,13 @@ static func _price(lines: Array, ctx: Dictionary, t: Callable) -> void:
 	if price < 0:
 		return
 	_add(lines, "%s : %d%s" % [t.call("UIIT_STT_PRICE", "Price"), price, t.call("UIIT_STT_GOLD", "Gold")], WHITE)
+	# Round 844 lane G part 2: a guild store good's GP price, after the gold
+	# (c:0x6784a0, store slot kind 0x0f: `678fd4 test bl,0x8`, the "%s :
+	# %I64d%s" of UIIT_STT_GUILD_POINT, the record's +0x20 and
+	# UIIT_STT_GUILD_POINT_GP; untaxed).
+	var gp: int = int(ctx.get("gp_price", 0))
+	if gp > 0:
+		_add(lines, "%s : %d%s" % [t.call("UIIT_STT_GUILD_POINT", "Guild point (GP)"), gp, t.call("UIIT_STT_GUILD_POINT_GP", "GP")], WHITE)
 
 ## Items outside the four equipment builders (consumables, alchemy, quest
 ## items...): their builders (other branches of 0x6860a0) are not read, so

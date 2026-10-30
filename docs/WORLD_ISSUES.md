@@ -7849,6 +7849,98 @@ whether a disbanded lead guild breaks its union (INFERRED yes); the union crest 
 (INFERRED as the guild's); the siege-period refusals (no sieges); the tab's marks (178, 161, 131) keep the
 archive's picture -- no setter found for them.
 
+## Eight-hundred-and-forty-fourth round, lane G (part 2): the leader vote, GP usage history, the guild recall and the guild goods
+
+This part builds what the census still listed as missing in lane G's area.
+- Labels: READ (c: sro_client.exe, s: SR_GameServer.exe, sm: the ShardManager), MEASURED, INFERRED, OURS, OPEN.
+- The full readings are in docs/protocol/guild.md, "The vote, the GP history, the recall and the guild goods (round
+  844, lane G part 2)".
+- docs/protocol/guild_census.md now marks these rows built.
+
+**What the original does.**
+- **The master-release vote** (0x7105-0x7107, 0x3908; lines 0x19 / 0x1a; CIFGuildMasterElection).
+  - Who may start it, READ from s:0x5c6ac0 and the procedure `_Guild_Master_Election_Available`: any member, once
+    the master is offline and last logged out **45 days** ago or more.
+  - Who is listed, READ from `_Guild_Is_Master_Candidators`: the members online or last seen **7 days** ago or
+    less, the master excluded.
+  - It lasts 600,000 ms, checked every 10 s.
+  - A candidate wins the moment `votes * 100 / n >= 60.0`, where n is the list's size (READ sm:0x461a50).
+  - The winner takes the guild through the hand-over's path. With no winner, the vote breaks.
+- **GP usage history** (line 0x43; 0x7501 / B501; `res_ui\guild_gp.2dt`, READ).
+  - It records GP spent only: the level-up (kind 5) and guild items (kind 6). The fortress kinds are out of scope.
+  - It keeps the newest 100 entries from the last 30 days.
+- **The guild recall** (itemdata 9267; 0x7030 / 0x7031 / B031, READ).
+  - Only the master can use it, with the guild at level 5 or more, in a town, outside the thieves' town and the
+    instance worlds. It can be used once an hour.
+  - Every online member is asked for 180 s. A yes moves the member to the master's spot after 0.1 s.
+- **The guild goods**, READ from CheckCurrencyRequirement s:0x617360.
+  - They cost gold and the guild's GP, and only the master can buy them (0x18c4 / 0x18c5).
+  - The tooltip and the buy box show the GP price.
+  - The store refuses to open below guild level 3.
+- **Union chat** needs permission bit 0x04 (the master always has it), and at most 12 members can hold it.
+
+**What we built.**
+- **Server** (7f9152b6, 4d544a78):
+  - `guild/vote.go`, `gphistory.go` and `gpspend.go`, each with a mem and a SQL store. The schema code adds
+    `guild_members.last_logout` and creates `guild_gp_history`.
+  - `session/guildvote.go`, `guildgphistory.go`, `guildrecall.go` and `guildgoods.go`.
+  - `mall`'s new "npcgp" rows carry the goods' GP prices.
+  - The hand-over shares `handOver` with the vote's win. While a vote runs, leaving and expelling are blocked.
+  - Each logout is recorded.
+  - Test tools (OURS): `/guildabsent <member> <days>` and `/guildgp <n>`.
+  - partybot flags: `-guild-recall-answer`, `-quit-after` and `-guild-perm`.
+- **Client** (6ac7a953 and the docs commit):
+  - `GuildPart2Net`, `GuildElectionWindow` and `GuildGPHistoryWindow`.
+  - The member lines 0x19 / 0x1a / 0x43.
+  - The recall question box and its gauge.
+  - The goods' GP tooltip line and buy-box row, and the level-3 store gate.
+  - The event box's caption, UIIT_STT_EVENTGUIDE "Alarm".
+  - QA input actions `cmd:`, `storebuy:` and `storetip:`.
+- **INFERRED / OURS.**
+  - The day count uses UTC calendar days (INFERRED).
+  - The vote is kept in memory only (OURS, like the ShardManager's).
+  - A ballot with an index out of range gets error code 2 (OURS).
+  - The recall box's English text is empty in the archive, so a stand-in is shown (OURS).
+  - The constants are `guild.VoteMasterAbsentDays` (45), `VoteEligibleDays` (7), `VoteDuration`,
+    `VoteWinPercent` (60) and `VoteTick`.
+
+**Live** (render box, lane server on port 17030 in memory, real clicks, partybots; the evidence is in
+`/var/tmp/r844g/keep`).
+
+| Check | Result | Evidence |
+|---|---|---|
+| Promote 4 -> 5 at Leebaek (line 3): B0FA {1}, "Guild level has been increased to 5." | PASS | run7.client.log |
+| The guild store's tooltips: "Guild point (GP) : 20000GP" (crest) and "1000GP" (recall scroll), after the gold | PASS | run7.client.log QA INPUT 7, 10 |
+| The buy box: Price 1000000 Gold, then the "Guild point (GP) 20000 GP" row; Buy succeeds; the gold goes 78,501,000 -> 77,401,000 after both buys | PASS | run5_00000795.png, run5_00001040.png |
+| Line 8 "GP Usage History": the window lists the recall scroll 1000 / Guild Item Purchases, the crest 20000 / Guild Item Purchases and the level-up 378000 / Guild Growth, newest first | PASS | run7_00001140.png, run7.client.log GUILD844B history |
+| The recall: right-click the scroll, Yes: "Recall has been requested to all guild members."; Tobi gets 0x7030 {job 1, caster 2, 30 s}, answers yes, gets B031 {1}, and arrives at (-1853, -1560) via "guild recall" | PASS | run5_00001040.png, run5.Tobi.log, run5.server.log |
+| The vote with the master online: the box, then "Elections cannot be called during this period." (0x4c33) | PASS | run6_00000480.png |
+| Mate logs off; `/guildabsent Mate 46`; line 4 "Vote for a leader": the 10-minute question, then "The voting for the leader has just started." | PASS | run6_00000900.png, run6.client.log |
+| Line 4 again (now 0x1a): the election window (QaWin, 0 votes, "9Minute"); tick and Confirm: "[OFWS] Guild's new Guildmaster is now [QaWin]" in an "Alarm" box; the guild window shows QaWin as master | PASS | run6_00001170.png, run6_00001230.png, run6_00001335.png |
+| Union chat: refused before the grant, sent after Mate's 0x7104 gives 0x04, and Ally's reply heard | PASS | run4.* (part 2, earlier) |
+
+**Tests.**
+- Go:
+  - `guild.TestRound844Part2{Mem,SQL}` (presence, spend and history);
+  - `session.TestGuild844{PermissionGivesUnionChat,VoteRefusals,VoteWins,VoteTimesOut,VoteRules,GPHistory,GPHistoryStores,RecallAnswer,GuildGoods}`;
+  - `gm.TestGuild844AbsentAndGP`;
+  - `go test ./...` passes. It caught two of this part's own slips, both now fixed: B103 had moved after the
+    members' updates, and an unused helper.
+- Client:
+  - `ui/hud/guild844b_test.gd` (23 checks, against the real Media.pk2);
+  - `npc_talk_net_test` and `npc_service_reader_test`, which cover the new lines;
+  - `union844_test`, whose selection check now reads the in-place art swap;
+  - `check` reports ALL LOAD and `tests` reports 0 failing.
+
+**OPEN.**
+- The vote's listing window: the procedure says 7 days, but the client's text says three.
+- The recall's 30 s gauge: the server moves the member after 0.1 s, so the gauge is INFERRED to be only cosmetic.
+- The election window's "Vote Result" header is cut off at its width (the layout's text).
+- The SP:GP donation rate.
+
+**Production.** Re-export `-mall-csv` (`export-refdata -mode mall`) so the guild goods carry their GP prices. The
+schema changes apply themselves.
+
 ## Eight-hundred-and-forty-third round, lane Q: the quest scroll's flicker
 
 The user's ask: "Can you please also remove the flickering quest icons that appear above NPCs", with a

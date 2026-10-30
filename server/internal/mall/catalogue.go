@@ -119,6 +119,9 @@ type Group struct {
 // group id the purchase names.
 type Catalogue struct {
 	Groups map[int]*Group
+	// NPCGP is the GP price of each NPC store item with one (round 844,
+	// guildgoods.go): the guild stores' goods.
+	NPCGP map[int64]int64
 }
 
 // Shop is the registered shop at (group, index), the lookup s:0x526610 makes
@@ -263,6 +266,24 @@ func Build(t Tables, items func(code string) (Item, bool)) *Catalogue {
 	}
 	borrowed := borrowedGoods(shopsOf[AvatarStoreGroup], groupsOf, tabsOf, tabName, goodsOf)
 	cat := &Catalogue{Groups: map[int]*Group{}}
+	// Round 844: the packages NPC groups' tabs sell (their goods' package
+	// codes), for their GP prices.
+	npcPackages := map[string]bool{}
+	for _, r := range live(t.ShopGroup) {
+		if noNPC(col(r, 4)) {
+			continue
+		}
+		for _, sc := range shopsOf[col(r, 3)] {
+			for _, tg := range groupsOf[sc] {
+				for _, tc := range tabsOf[tg] {
+					for _, gd := range goodsOf[tc] {
+						npcPackages[gd.Package.Code] = true
+					}
+				}
+			}
+		}
+	}
+	cat.NPCGP = buildNPCGPPrices(packages, npcPackages)
 	for _, r := range live(t.ShopGroup) {
 		id, err := strconv.Atoi(col(r, 2))
 		if err != nil || !noNPC(col(r, 4)) {
