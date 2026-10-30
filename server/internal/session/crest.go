@@ -123,7 +123,8 @@ func useCrestItem(ctx context.Context, sess *gateway.Session, inv inventory.Stor
 		return refuse(crestErrPermission)
 	}
 	if union {
-		return refuse(crestErrNoUnion)
+		// Round 844 (unionops_crest.go): unions exist now.
+		return useUnionCrest(ctx, sess, inv, d, g, characterID, it, held, have, req, register, refuse)
 	}
 	if register {
 		if g.CrestRev != 0 {
@@ -194,6 +195,13 @@ func handleCrestGet(ctx context.Context, sess *gateway.Session, guilds guild.Sto
 	id := binary.LittleEndian.Uint32(data[1:5])
 	rev := binary.LittleEndian.Uint32(data[5:9])
 	reply := append([]byte{kind}, data[1:9]...)
+	// Round 844: a union's crest (unionops_crest.go).
+	if kind == CrestKindUnion {
+		if px := unionCrestBytes(ctx, int64(id), rev); px != nil {
+			return sess.Send(&proto.Packet{Opcode: OpCrestData, Data: append(append(reply, 1), px...)})
+		}
+		return sess.Send(&proto.Packet{Opcode: OpCrestData, Data: append(reply, 0)})
+	}
 	if kind == CrestKindGuild && guilds != nil {
 		cur, pixels, err := guilds.Crest(ctx, int64(id))
 		if err == nil && cur == rev && rev != 0 && len(pixels) == guild.CrestBytes {

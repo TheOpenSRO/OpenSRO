@@ -296,10 +296,11 @@ func TestChatPartyAndGuild(t *testing.T) {
 	}
 	w.a.none(OpChatUpdate)
 
-	// OpenSRO has no alliances and no academy.
+	// A guild in no union: 0x200c (round 844, GObjPC::FUN_004b1750 case
+	// 0xb; union844_test.go has the union's own lines). No academy.
 	w.c.say(ChatUnion, 8, "", "x")
-	if r := w.c.result(); r.OK || r.Code != ChatErrAllianceDenied {
-		t.Fatalf("union = %+v, want 0x200b", r)
+	if r := w.c.result(); r.OK || r.Code != ChatErrAllianceNoUnion {
+		t.Fatalf("union = %+v, want 0x200c", r)
 	}
 	w.c.say(ChatAcademy, 9, "", "x")
 	if r := w.c.result(); r.OK || r.Code != ChatErrNoAcademy {

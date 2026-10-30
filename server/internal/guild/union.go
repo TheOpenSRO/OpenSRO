@@ -27,6 +27,10 @@ type Union struct {
 	// its slot; leaving frees it without compacting the array (the
 	// original's setter refuses an occupied index, alliance.go).
 	Slots [MaxAllianceGuilds]int64
+	// crest and crestLast are the MemStore's union crest bytes and last
+	// revision (round 844, union844.go).
+	crest     []byte
+	crestLast uint32
 }
 
 // LeaderGuildID is slot 0's guild (INFERRED the union's leader: the first

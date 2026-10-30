@@ -186,21 +186,9 @@ func unionJoined(ctx context.Context, u *guild.Union, guildID int64) {
 // and every member's line again. gone is the guild itself when it no longer
 // exists (a disband), whose members are told nothing more.
 func unionLeft(ctx context.Context, before *guild.Union, guildID int64, how byte, gone *guild.Guild) {
-	if before == nil {
-		return
-	}
-	all := unionGuilds(ctx, before.GuildIDs())
-	if gone != nil {
-		all = append(all, gone)
-	}
-	toGuildMembers(all, guild.OpUpdate, guild.EncodeUnionOut(how, guildID))
-	var live []*guild.Guild
-	for _, g := range all {
-		if g != gone {
-			live = append(live, g)
-		}
-	}
-	refreshUnionPlates(live)
+	// Round 844: and the union broken when its first guild went or fewer
+	// than two are left (unionops.go).
+	unionOut(ctx, before, guildID, how, gone, nil)
 }
 
 // unionBeforeDisband is guildID's union read before the guild goes (the

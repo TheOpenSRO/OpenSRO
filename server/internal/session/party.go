@@ -334,6 +334,10 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 		if guildInviteAnswer(ctx, sess, me, data) {
 			return
 		}
+		// Round 844: a union request's answer (kind 6, unionops.go).
+		if unionRequestAnswer(ctx, sess, me, data) {
+			return
+		}
 		takeResurrection(ctx, sess, me.CharacterID, accept)
 		return
 	}

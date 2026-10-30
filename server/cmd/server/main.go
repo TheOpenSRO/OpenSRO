@@ -2733,6 +2733,8 @@ func main() {
 		session.PartyHandler(partyDeps),
 		session.PartyMatchHandler(partyMatchDeps),
 		session.GuildHandler(chars, guilds, hub),
+		// Round 844: the players' unions (0x70FB..0x70FD, session/unionops.go).
+		session.UnionHandler(),
 		// Chat (round 634): the five channels, whispers, the global
 		// chatting item and the GM's type-3 line.
 		session.ChatHandler(session.ChatDeps{Hub: hub, Parties: parties, Guilds: guilds, Inv: inv, Items: refItems, Gate: gmGate}),

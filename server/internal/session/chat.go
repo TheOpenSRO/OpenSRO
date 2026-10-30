@@ -410,10 +410,11 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		return okResult()
 
 	case ChatUnion:
-		// OpenSRO forms no alliances (internal/guild/alliance.go), so no
-		// sender is in one: 0x200b, the client's "Cannot use the Ally Chat"
-		// line.
-		return fail(ChatErrAllianceDenied, "")
+		// Round 844: the union's line (unionops.go, unionChat).
+		if code := unionChat(ctx, d.Guilds, d.Hub, sender, line); code != 0 {
+			return fail(code, "")
+		}
+		return okResult()
 
 	case ChatAcademy:
 		// OpenSRO has no academy (internal/academy's package comment).
