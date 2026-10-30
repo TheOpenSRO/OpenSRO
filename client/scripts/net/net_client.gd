@@ -446,6 +446,9 @@ var quest := QuestState.new()
 var guild_data := GuildData.new()
 ## Round 822: the membership replies and the invitation (GuildOpsState).
 var guild_ops := GuildOpsState.new()
+## Round 844: the union requests, their replies and the request box
+## (UnionOps; the union record itself is guild_data.union).
+var union_ops := UnionOps.new()
 ## Round 824: the guilds' crests (CrestCache; World3D gives it silk.dat).
 var crest_cache := CrestCache.new()
 ## Round 838 (OURS): the service scrolls' messages -- the service lines, the
@@ -971,6 +974,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	own_guild_line = {}
 	guild_data.clear()
 	guild_ops.reset_connection()
+	union_ops.reset_connection()
 	crest_cache.clear()
 	buff_roster.clear()
 	npc_roster.clear()
@@ -1852,7 +1856,10 @@ func _init() -> void:
 		var u := crest_cache.handle_update(data)
 		if u != null and u.kind == CrestNet.KIND_GUILD and guild_data.in_guild and u.guild_names[0] == guild_data.guild_name:
 			guild_data.crest_rev = u.rev
-			guild_data.changed.emit())
+			guild_data.changed.emit()
+		# Round 844: the own union's (c:0x895a3b, the id against +0x248).
+		if u != null and u.kind == CrestNet.KIND_UNION and guild_data.union.union_id == u.id and u.id != 0:
+			guild_data.union.crest_rev = u.rev)
 	register_handler(CrestNet.OP_CREST_DATA, func(data: PackedByteArray) -> void: crest_cache.handle_data(data))
 	# Round 838 (OURS): the service scrolls' lines, plate colours and rename.
 	service.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
@@ -1866,6 +1873,11 @@ func _init() -> void:
 		return String((user_guilds.get(uid, {}) as Dictionary).get("name", "")) if user_roster.has(uid) else ""
 	guild_ops.player_guild = func(uid: int) -> String:
 		return String((user_guilds.get(uid, {}) as Dictionary).get("guild_name", "")) if user_roster.has(uid) else ""
+	# Round 844: the union's requests and replies (UnionOps).
+	union_ops.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
+	union_ops.player_name = guild_ops.player_name
+	union_ops.player_guild = guild_ops.player_guild
+	union_ops.register_with(self)
 	# The game clock (round 786, GameClock): 0x3020 at world entry, 0x3027
 	# when an operator sets the hour.
 	for op in [GameClock.OP_POSITION, GameClock.OP_UPDATE]:
@@ -2474,6 +2486,7 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	# Round 838: its title as the record carries it (slot 27 -> FUN_009ca930).
 	titles.note_level(rec.uid, rec.hwan_level, false)
 	crest_cache.note_guild(rec.guild_name, rec.guild_id, rec.crest_rev)
+	crest_cache.note_union(rec.guild_name, rec.union_id, rec.union_crest_rev)
 	# Round 839: a stalling owner (+0x471 == 4): its stall as 0x30B8 would
 	# have told it (c:0x9ca3d9 spawns it at its booth).
 	if rec.interact == 4:
@@ -2521,6 +2534,7 @@ func _guild_line_update(d: Dictionary) -> void:
 	var line := {"guild_id": int(d["guild_id"]), "guild_name": String(d["guild_name"]), "nickname": String(d["nickname"]),
 		"crest_rev": int(d.get("crest_rev", 0)), "union_id": int(d.get("union_id", 0))}
 	crest_cache.note_guild(String(d["guild_name"]), int(d["guild_id"]), int(d.get("crest_rev", 0)))
+	crest_cache.note_union(String(d["guild_name"]), int(d.get("union_id", 0)), int(d.get("union_crest_rev", 0)))
 	if own_character_id >= 0 and uid == (own_character_id & 0xffffffff):
 		own_guild_line = line
 	elif user_roster.has(uid):
@@ -3155,6 +3169,9 @@ func _dispatch(p: Packet) -> void:
 			# Round 834: 0x3080 kind 1 is the exchange's (c:0x88aa60 case 1).
 			if p.opcode == PartyNet.OP_REQUEST and p.data.size() >= 5 and p.data[0] == ExchangeNet.REQUEST_KIND:
 				exchange_requested.emit(p.data.decode_u32(1))
+				return
+			# Round 844: 0x3080 kind 6 is the union's (c:0x88afb4).
+			if p.opcode == PartyNet.OP_REQUEST and union_ops.handle(p.opcode, p.data):
 				return
 			# Round 822: 0x3080 kind 5 is the guild's (c:0x88aeb7).
 			if p.opcode != PartyNet.OP_REQUEST or not guild_ops.handle(p.opcode, p.data):

@@ -57,6 +57,8 @@ const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
 ## a command (it starts with "/") or a chat line; World3D turns a chat line
 ## into its request through request_for.
 signal message_submitted(text: String)
+## Round 844: the own guild's name for a union line's prefix (UnionWorld sets it).
+var union_guild: Callable
 ## The selected tab changed (0..4).
 signal tab_changed(index: int)
 
@@ -1004,6 +1006,10 @@ func request_for(text: String) -> Dictionary:
 	var type := int(parsed["type"])
 	if type == TYPE_INCOMPLETE or type == TYPE_COMMAND:
 		return {}
+	# Round 844: a union line carries "-<own guild>): " before its text
+	# (0x7ada5a, L"-%s): "), which every reader shows after "name(Union".
+	if type == TYPE_UNION and union_guild.is_valid():
+		parsed["message"] = "-%s): %s" % [String(union_guild.call()), String(parsed["message"])]
 	_next_index = (_next_index % 255) + 1
 	parsed["index"] = _next_index
 	_pending[_next_index] = parsed

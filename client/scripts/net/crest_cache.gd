@@ -32,10 +32,47 @@ var _guilds := {}
 var _pictures := {}
 ## "<kind>_<id>_<rev>" asked and not answered.
 var _asked := {}
+## Round 844: guild name -> {"id": union id, "rev": the union's crest
+## revision} -- the cache entry's union half (0x9a4780's fourth and fifth
+## arguments; c:0x895810's type 2 sets it for each guild it names).
+var _unions := {}
 
 func clear() -> void:
 	_guilds.clear()
+	_unions.clear()
 	_asked.clear()
+
+## Round 844: a guild's union and its crest revision (a spawn, 0x30FF, or
+## 0x3257 type 2). Lines are remade when it changes.
+func note_union(guild_name: String, union_id: int, rev: int) -> void:
+	if guild_name == "":
+		return
+	var old: Dictionary = _unions.get(guild_name, {})
+	if int(old.get("id", -1)) == union_id and int(old.get("rev", -1)) == rev:
+		return
+	_unions[guild_name] = {"id": union_id, "rev": rev}
+	if rev != 0 or int(old.get("rev", 0)) != 0:
+		changed.emit(guild_name)
+
+## Round 844: the union crest drawn beside a guild's line (the entry's +0x38),
+## or null -- none, or asked for (CrestNet.KIND_UNION) and not here yet.
+func union_texture_for(guild_name: String) -> Texture2D:
+	var u: Dictionary = _unions.get(guild_name, {})
+	var rev := int(u.get("rev", 0))
+	var id := int(u.get("id", 0))
+	if rev == 0 or id == 0:
+		return null
+	var t := _picture(CrestNet.KIND_UNION, id, rev)
+	if t != null:
+		return t
+	var px := _load(CrestNet.KIND_UNION, id, rev)
+	if px.size() == CrestNet.BYTES:
+		return _store(CrestNet.KIND_UNION, id, rev, px)
+	var key := "%d_%d_%d" % [CrestNet.KIND_UNION, id, rev]
+	if not _asked.has(key) and send.is_valid():
+		_asked[key] = true
+		send.call(CrestNet.OP_CREST_GET, CrestNet.encode_get(CrestNet.KIND_UNION, id, rev))
+	return null
 
 ## A guild's id and crest revision, as a spawn, 0x30FF or the block says.
 func note_guild(guild_name: String, guild_id: int, rev: int) -> void:
@@ -63,6 +100,12 @@ func handle_update(data: PackedByteArray) -> CrestNet.Update:
 			_pictures.erase("%d_%d" % [KIND_KEY_GUILD, u.id])
 		else:
 			texture_for(u.guild_names[0])
+	elif u.kind == CrestNet.KIND_UNION:
+		# Round 844: each named guild's entry takes the union's crest.
+		if u.rev == 0:
+			_pictures.erase("%d_%d" % [CrestNet.KIND_UNION, u.id])
+		for n in u.guild_names:
+			note_union(n, u.id, u.rev)
 	return u
 
 ## 0x0131: a crest's bytes, kept and drawn.
@@ -79,6 +122,11 @@ func handle_data(data: PackedByteArray) -> void:
 		var g: Dictionary = _guilds[guild_name]
 		if d.kind == KIND_KEY_GUILD and int(g["id"]) == d.id and int(g["rev"]) == d.rev:
 			changed.emit(String(guild_name))
+	if d.kind == CrestNet.KIND_UNION:
+		for guild_name in _unions:
+			var un: Dictionary = _unions[guild_name]
+			if int(un["id"]) == d.id and int(un["rev"]) == d.rev:
+				changed.emit(String(guild_name))
 
 const KIND_KEY_GUILD := CrestNet.KIND_GUILD
 

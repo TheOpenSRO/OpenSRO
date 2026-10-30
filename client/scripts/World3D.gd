@@ -1895,6 +1895,8 @@ var _hud_panels: HudPanels
 ## OPENSRO_QA_ALCHEMY has started (QaAlchemy, round 768).
 var _qa_alchemy_started := false
 var _hud_chat: HudChat
+## Round 844: the union flow's glue (UnionWorld).
+var _union_world: UnionWorld
 ## GDR_NOTICE (round 634) and the "Chat to all" window, built on first use.
 var _hud_notice: HudNotice
 ## The system message window, bottom right (round 639): where this client's
@@ -2969,6 +2971,8 @@ func _try_initialize_pk2_ui() -> void:
 			HudChat.TYPE_GUILD:
 				return NetClient.last_guild_result != null and NetClient.last_guild_result.guild_id != 0
 		return false
+	# Round 844: the union's requests, boxes and chat prefix (UnionWorld).
+	_union_world = UnionWorld.new(self)
 	# The system message window (round 639), bottom right at 0x7b87a0's
 	# offsets; the chat's own 0x7781b0 lines (its refusals) go there too.
 	_hud_syslog = HudSystemMessage.new(_ui_builder)
@@ -9852,6 +9856,20 @@ func _apply_guild_line(label: Label3D, holder: Node3D, line: Dictionary, job_sta
 		s.render_priority = g.render_priority
 		s.layers = OverlayView.BIT
 		g.add_child(s)
+	# Round 844: the union's crest (+0x38), 36 px left of the guild text.
+	var ucrest := NetClient.crest_cache.union_texture_for(String(line.get("guild_name", "")))
+	if ucrest != null:
+		var us := Sprite3D.new()
+		us.name = "UnionCrest"
+		us.texture = ucrest
+		us.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		us.fixed_size = true
+		us.no_depth_test = true
+		us.shaded = false
+		us.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		us.render_priority = g.render_priority
+		us.layers = OverlayView.BIT
+		g.add_child(us)
 	_layout_guild_line(label, holder)
 
 ## Puts the guild line GUILD_LINE_RAISE_PX above the name line, centred on the
@@ -9881,7 +9899,15 @@ const GUILD_CREST_PX := 16.0
 const GUILD_CREST_LEFT_PX := 20.0
 
 func _fit_guild_crest(g: Label3D) -> void:
-	var s := g.get_node_or_null("GuildCrest") as Sprite3D
+	# Round 844: the union's crest, the same quad 36 px left (0x9df4ad..
+	# 0x9df5ea: 0xde3048 = 36.0 in place of 20.0).
+	for pair in [["GuildCrest", GUILD_CREST_LEFT_PX], ["UnionCrest", UNION_CREST_LEFT_PX]]:
+		_fit_crest_sprite(g, g.get_node_or_null(String(pair[0])) as Sprite3D, float(pair[1]))
+
+## Round 844: UnionCrest's offset (READ: 0xde3048 = 36.0).
+const UNION_CREST_LEFT_PX := 36.0
+
+func _fit_crest_sprite(g: Label3D, s: Sprite3D, left_px: float) -> void:
 	if s == null:
 		return
 	var fk := _plate_fk(g)
@@ -9890,7 +9916,7 @@ func _fit_guild_crest(g: Label3D) -> void:
 	var r := NamePlates.box_rect(g)
 	var item_left := g.offset.x - text_w * 0.5 - 1.0 * fk
 	var item_top := r.position.y + r.size.y * 0.5 - NamePlates.BOX_OVER_CELL_PX * fk
-	var centre := Vector2(item_left - (GUILD_CREST_LEFT_PX - GUILD_CREST_PX * 0.5) * fk,
+	var centre := Vector2(item_left - (left_px - GUILD_CREST_PX * 0.5) * fk,
 		item_top - GUILD_CREST_PX * 0.5 * fk)
 	# The 16 texels at 16 font pixels: the sprite's pixel is fk of the line's.
 	s.pixel_size = g.pixel_size * fk
@@ -19110,6 +19136,12 @@ func _qa_input_step() -> void:
 				_qa_input_report = "%s at %s" % [action, nc.get_global_rect().get_center()]
 				# Round 841: in UI units (local), so the click lands at a UI scale other than 1.
 				_qa_push_click(nc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT, true)
+		"unionnode", "unionbox", "unionstate":
+			# Round 844 (QA): unionnode:<id>[,..] left-clicks a control of the
+			# guild window by its GetChild path (73 the Relations tab, 164,86,51
+			# Apply, 164,86,271 the first union row); unionbox:yes|no the union
+			# request box's OK / Cancel; unionstate prints the union pane.
+			_qa_input_report = _qa_union_step(kind, arg)
 		"boxyes", "boxno":
 			# Round 840: the Yes / No of a question box under HudPanels by
 			# its node name (StallNetworkQuestion, StallNetworkNotice ...).
@@ -36348,10 +36380,12 @@ func _on_crest_confirmed(slot: int, kind: int) -> void:
 	if NetClient.current_character_name == "":
 		return
 	var own_rev := NetClient.guild_data.crest_rev if NetClient.guild_data.in_guild else 0
+	# Round 844: the own union's crest revision (c:0x895a3b keeps it).
+	var union_rev := NetClient.guild_data.union.crest_rev if NetClient.guild_data.in_guild else 0
 	match kind:
 		GuildMsgBox.Kind.CREST, GuildMsgBox.Kind.UNION_CREST:
 			var union := kind == GuildMsgBox.Kind.UNION_CREST
-			if (0 if union else own_rev) != 0:
+			if (union_rev if union else own_rev) != 0:
 				_crest_line("UIIT_MSG_CREST_REGISTER_OVERLAP")
 				return
 			var file := CrestNet.UNION_MARK_FILE if union else CrestNet.GUILD_MARK_FILE
@@ -36376,7 +36410,10 @@ func _on_crest_confirmed(slot: int, kind: int) -> void:
 				return
 			NetClient.use_item(NetClient.current_character_name, slot)
 		GuildMsgBox.Kind.UNION_CREST_DELETE:
-			_crest_line("UIIT_MSG_UNION_DELETE_ERROR")
+			if union_rev == 0:
+				_crest_line("UIIT_MSG_UNION_DELETE_ERROR")
+				return
+			NetClient.use_item(NetClient.current_character_name, slot)
 
 func _qa_crest_step(code: String) -> void:
 	var slot := _hud_panels.bag_slot_of_code(code)
@@ -36446,6 +36483,57 @@ func _qa_guild_answer_pending() -> void:
 	var b := box.node("GDR_MBIN_BTN_OK" if parts[0] == "yes" else "GDR_MBIN_BTN_CANCEL") as BaseButton
 	if b != null:
 		b.pressed.emit()
+
+## Round 844 (QA): the union steps of OPENSRO_QA_INPUT; the report.
+func _qa_union_step(kind: String, arg: String) -> String:
+	var gw: GuildWindow = _hud_panels._guild_window() if _hud_panels != null else null
+	if kind == "unionstate":
+		return "unionstate " + (_qa_union_state(gw) if gw != null else "(no guild window)")
+	var target: Control = null
+	if kind == "unionnode" and gw != null:
+		var path: Array = []
+		for part in arg.split(",", false):
+			path.append(int(part))
+		target = gw.control(path)
+	elif kind == "unionbox":
+		var box: GuildMsgBox = _hud_panels._guild_boxes.get(GuildMsgBox.Kind.UNION_REQUEST)
+		if is_instance_valid(box):
+			target = box.node("GDR_MBIN_BTN_OK" if arg == "yes" else "GDR_MBIN_BTN_CANCEL")
+	if target == null or not target.is_visible_in_tree():
+		return "%s:%s (not shown)" % [kind, arg]
+	var at := target.get_global_rect().get_center()
+	_qa_push_click(at, MOUSE_BUTTON_LEFT, true)
+	var hov := get_viewport().gui_get_hovered_control()
+	return "%s:%s at %s (hovered %s)" % [kind, arg, at, hov.get_path() if hov != null else "nothing"]
+
+## The union pane as drawn: the shown texts, the rows, the buttons' states.
+func _qa_union_state(gw: GuildWindow) -> String:
+	var up := gw.union_pane
+	if up == null:
+		return "(no union pane)"
+	var texts: PackedStringArray = []
+	for id in [UnionPane.LEAD_NAME, UnionPane.LEAD_MASTER, UnionPane.COUNT, UnionPane.SEL_NAME,
+			UnionPane.SEL_MASTER, UnionPane.SEL_MEMBERS, UnionPane.NO_UNION, UnionPane.NO_SELECTION]:
+		var c := up._part(id)
+		if c != null and c.is_visible_in_tree():
+			var l := c.get_node_or_null(TwoDtBuilder.TEXT_NODE) as Label
+			texts.append("%d=%s" % [id, l.text if l != null else TwoDtBuilder.text_of(c)])
+	var rows: PackedStringArray = []
+	for row in up.rows():
+		var n := TwoDtBuilder.child(row, UnionPane.ROW_NAME)
+		var lv := TwoDtBuilder.child(row, UnionPane.ROW_LEVEL)
+		if n != null and n.visible:
+			var nl := n.get_node_or_null(TwoDtBuilder.TEXT_NODE) as Label
+			var ll := lv.get_node_or_null(TwoDtBuilder.TEXT_NODE) as Label if lv != null else null
+			rows.append("%s|%s|%s%s" % [nl.text if nl != null else "", ll.text if ll != null else "",
+				nl.get_theme_color("font_color").to_html(false) if nl != null else "",
+				"|sel" if int(row.get_meta("union_guild", 0)) == up.selected else ""])
+	var btns: PackedStringArray = []
+	for id in [UnionPane.APPLY, UnionPane.SECEDE, UnionPane.EXPEL]:
+		var b := up._part(id) as BaseButton
+		btns.append("%d:%s" % [id, "off" if b == null or b.disabled else "on"])
+	return "pane=%s texts=[%s] rows=[%s] buttons=[%s]" % [str(up.pane() != null and up.pane().is_visible_in_tree()),
+		", ".join(texts), ", ".join(rows), " ".join(btns)]
 
 ## The guild window's Invite (button 37, c:0x81fb70(0)): the selected player
 ## (a pet or horse would give its owner, c:0x81fbdd; not selectable here).
