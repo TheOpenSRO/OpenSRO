@@ -71,7 +71,8 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Feature | Status | Notes |
 |---|---|---|
 | Terrain, objects and region streaming | ✅ Supported | Seamless world from Map.pk2; regions load off the main thread |
-| Click-to-walk | ✅ Supported | Click the ground to walk; arrival lands exactly on the point |
+| Click-to-walk | ✅ Supported | Click the ground to walk; arrival lands exactly on the point, a step of one unit included, where other players see you land too |
+| Other players' movement | ✅ Supported | Every step another player takes, small or large and at any speed, walked from where you see them; one drawn behind catches up at up to three times its speed and is put forward only when more than 50 off, as in the original |
 | Sky-click run | ✅ Supported | Clicking sky or far ground runs on that heading until blocked |
 | Keyboard (arrow keys) movement | ✅ Supported | Up runs where the character faces, Left/Right turn it on the spot (seated too); as in retail the server hears a turn in 45° steps and exactly on release |
 | Trace (follow a player) | ✅ Supported | From the action window, a hotbar slot or the right-click player menu. Follows as the original server does: runs to just short of the player and keeps up, and stops when they die or move out of range, or when you sit, are stunned, trade, mount or click to walk |
