@@ -94,7 +94,6 @@ func _on_opened(r: Dictionary) -> void:
 			end_talk.call()
 		return
 	var w: HudWindow = panels.open(WINDOW)
-	panels.wire_bag_money_button()
 	if w == null:
 		print("GuildStorage: the window could not be built")
 		return
@@ -109,6 +108,8 @@ func _on_opened(r: Dictionary) -> void:
 	# The inventory beside it (0x79af20), the original's companion; placed as
 	# the personal storage's (OURS, rounds 513 / 593).
 	var bag: HudWindow = panels.inventory_companion("guild storage opened (0x79af20)")
+	# The bag's gold button: the deposit box while the storage is up.
+	panels.wire_bag_money_button()
 	if bag != null:
 		var view: Vector2 = panels.get_viewport_rect().size
 		w.position = Vector2(view.x * 0.5 - w.size.x - 8.0, (view.y - w.size.y) * 0.5).round()

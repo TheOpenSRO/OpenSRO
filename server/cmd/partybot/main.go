@@ -166,6 +166,7 @@ func (b *bot) readSync(op uint16) (*proto.Packet, error) {
 // note learns names and ids from the world messages.
 func (b *bot) note(p *proto.Packet) {
 	b.noteGuild(p)
+	b.noteGStore(p)
 	b.noteSocial(p.Opcode, p.Data)
 	b.noteStall(p.Opcode, p.Data)
 	b.noteMall(p.Opcode, p.Data)
@@ -942,6 +943,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		time.Sleep(botGuildDelay)
 	}
 	b.guildSteps(name)
+	b.gstoreSteps(name)
 	b.timedGMLines(name)
 	b.mallSteps()
 	b.useSteps()
