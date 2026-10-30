@@ -128,11 +128,6 @@ func appendVoteTail(block []byte, guildID int64) []byte {
 	return binary.LittleEndian.AppendUint32(block, uint32(v.remaining()/time.Millisecond))
 }
 
-// isGuildVoteOp answers whether op is one of this file's requests.
-func isGuildVoteOp(op uint16) bool {
-	return op == OpVoteStart || op == OpVoteState || op == OpVoteBallot
-}
-
 func handleGuildVote(ctx context.Context, sess *gateway.Session, op uint16, data []byte, d guildOpsDeps) error {
 	if d.hub == nil {
 		return nil
@@ -372,7 +367,7 @@ func (d guildOpsDeps) voteEnd(ctx context.Context, v *guildVote, result byte, wi
 	if err != nil {
 		return
 	}
-	if _, err := d.handOver(ctx, g, winner); err != nil {
+	if _, err := d.handOver(ctx, g, winner, nil); err != nil {
 		slog.Warn("guild vote: the hand-over failed", "guild_id", v.guildID, "winner", winner, "err", err)
 	}
 }

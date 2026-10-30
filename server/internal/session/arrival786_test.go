@@ -732,7 +732,8 @@ func TestRound786EveryRelocationGoesThroughWarpVia(t *testing.T) {
 		"warpHome": {"returnAfterKill:death: respawn after a kill", "returnToPoint:death: return point", "complete:return scroll",
 			"skillReset:skill reset scroll"}, // round 838, servicescroll.go
 		"warpVia": {"handleUnstuck:/unstuck", "use:gate teleport", "walkIn:walk-in teleport", "complete:reverse return scroll",
-			"warpHome", "warpTo:zone change", "GMCommandHandler"},
+			"warpHome", "warpTo:zone change", "GMCommandHandler",
+			"handleRecallAnswer:guild recall"}, // round 844 lane G part 2, guildrecall.go
 	}
 	for k, w := range want {
 		g := append([]string(nil), got[k]...)
