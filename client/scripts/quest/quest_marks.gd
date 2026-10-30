@@ -30,6 +30,21 @@ class_name QuestMarks
 ## (AmbientParticles' placement for a mode-1 entry), looping.
 ## OURS: the .bsr's ex_mark_stand clip is not played (its .bsk drives no
 ## mesh; whether it moves the mod's point was not read).
+## **The flicker (round 843, the user's report).** The scroll's glow jumped
+## between bright and dim from frame to frame. MEASURED (efpcensus -show):
+## system_questmark_start.efp is a holder, then `quest_sign_shine.ddj`
+## (SRCALPHA/ONE, its alpha keyed 140 -> 72 -> 140 over 30 frames: the
+## original's slow pulse) and `quest_sign_a.ddj` (SRCALPHA/INVSRCALPHA, scale
+## (5, 5, 1)), both billboards at one point. READ: the original draws the
+## newer-born particle's group first -- the scroll, then the shine added over
+## it, in every frame (EfpEffect.DRAW_ORDER_STEP has the addresses). Here the
+## two nodes tied in Godot's transparent sort and came out in either order:
+## shine over (bright) or under the scroll (dim, the scroll's ink and rolled
+## ends showing). Each node now has a fixed order (EfpEffect's sorting
+## offset), the original's; the slow pulse stays, as the file keys it. No
+## occlusion test or glow pass touches the mark (it is a plain effect, not an
+## object's ambient glow); its fog fade (round 807) holds still with the
+## camera.
 
 ## **On the minimap (READ, CIFMinimap::vslot_013):** only the tracked quest's
 ## NPC list (0x30D5 flags & 0x40) is drawn; each NPC's spot comes from the

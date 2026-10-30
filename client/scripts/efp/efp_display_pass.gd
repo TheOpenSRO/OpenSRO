@@ -39,7 +39,9 @@ class_name EfpDisplayPass
 ## - The effects draw after every transparent surface, characters' included
 ##   (the original orders a placed object's effects before a later object's
 ##   blended meshes, and before the above-water characters); among
-##   themselves back to front by their draw box's centre, as Godot sorts.
+##   themselves back to front by their draw box's centre, as Godot sorts,
+##   and one effect's nodes at the same distance in the file's order, the
+##   first node on top (round 843, draw_before).
 ## - Link nodes (strips rebuilt each step) stay in Godot's pass with their
 ##   display twins (EfpEffect.display_shader).
 ## - Where the scene's linear value is above what the tone map shows as white,
@@ -171,6 +173,20 @@ func count() -> int:
 
 # ------------------------------------------------------------------ main thread
 
+## The pass's order (submit): back to front by the draw box's centre; draws
+## at the same distance -- one effect's nodes, whose boxes are the same --
+## the later template node first, so the file's first node draws on top
+## (round 843, EfpEffect.DRAW_ORDER_STEP; before, a tie fell either way, as
+## the list around it changed).
+static func draw_before(a: Array, b: Array) -> bool:
+	var da := float(a[3])
+	var db := float(b[3])
+	if da != db:
+		return da > db
+	if EfpEffect.qa_no_node_order or a.size() <= 5 or b.size() <= 5:
+		return false
+	return int(a[5]) > int(b[5])
+
 ## Once a frame, after the effects stepped: what to draw, culled to the
 ## camera's frustum and sorted back to front, handed to the render thread in
 ## the RenderingServer's own command order.
@@ -201,7 +217,7 @@ func submit(camera: Camera3D) -> void:
 			fx.pass_items(items, planes, eye, self)
 		if alive.size() != _effects.size():
 			_effects = alive
-	items.sort_custom(func(a, b): return float(a[3]) > float(b[3]))
+	items.sort_custom(draw_before)
 	last_items = items.size()
 	if items.is_empty() and _frame_sent_empty:
 		main_usec = Time.get_ticks_usec() - t0
