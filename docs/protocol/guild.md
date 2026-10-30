@@ -494,7 +494,7 @@ Three bits are named from the errors their call sites raise:
 | bit | gates | raised by |
 |---|---|---|
 | `0x01` | invite | `FUN_00514f10`, which also raises `GUILDERR_MEMBER_FULL` |
-| `0x08` | the guild warehouse | `FUN_005c7440`, `FUN_005c74d0`, raising `GUILD_WAREHOUSE_LIMIT` |
+| `0x08` | the guild warehouse | `FUN_005c7440`, `FUN_005c74d0`, raising `GUILD_WAREHOUSE_LIMIT` (round 844: the open and the close, the master exempt -- [guild_storage.md](guild_storage.md)) |
 | `0x10` | the notice and title | `FUN_005c6480`, raising `GUILDERR_INVALID_MASTER_COMMENT` and `_TITLE` |
 
 **Bit `0x04` is required at two call sites whose handlers raise no error code**,
@@ -648,8 +648,9 @@ will have to be undone.
 - **The war range**, and what `WarType`, `VictoryPointIndex` and the two `Data`
   columns hold.
 - **What maintains `guild + 0x44`.**
-- **The warehouse.** Only the permission bit and `GUILD_WAREHOUSE_LIMIT` are
-  known; the limit's value is not.
+- ~~**The warehouse.** Only the permission bit and `GUILD_WAREHOUSE_LIMIT` are
+  known; the limit's value is not.~~ READ in round 844 (lane H): level 2, sizes 30 / 60 / 90 /
+  120, one member at a time, the messages and the moves -- [guild_storage.md](guild_storage.md).
 - ~~**Guild points: where they come from.**~~ READ in round 272 -- see "Where guild
   points come from" above; credited in OpenSRO since round 525.
 - **What a level-up spends in guild points.** The ShardManager decides it, and

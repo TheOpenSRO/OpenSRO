@@ -448,6 +448,8 @@ var quest := QuestState.new()
 var guild_data := GuildData.new()
 ## Round 822: the membership replies and the invitation (GuildOpsState).
 var guild_ops := GuildOpsState.new()
+## Round 844: the guild storage's messages and its kept list (GuildStorageState).
+var guild_storage := GuildStorageState.new()
 ## Round 824: the guilds' crests (CrestCache; World3D gives it silk.dat).
 var crest_cache := CrestCache.new()
 ## Round 838 (OURS): the service scrolls' messages -- the service lines, the
@@ -973,6 +975,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	own_guild_line = {}
 	guild_data.clear()
 	guild_ops.reset_connection()
+	guild_storage.reset()
 	crest_cache.clear()
 	buff_roster.clear()
 	npc_roster.clear()
@@ -1843,6 +1846,9 @@ func _init() -> void:
 	guild_data.register_with(self)
 	for op in GuildOpsNet.RESULT_OPCODES:
 		register_handler(op, func(data: PackedByteArray) -> void: guild_ops.handle(op, data))
+	# Round 844: the guild storage (0xB250..0xB252, 0x3253..0x3255).
+	guild_storage.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
+	guild_storage.register_with(self)
 	# B0F0's success carries the guild block (c:0x8852c0 -> FUN_009965e0).
 	guild_ops.created.connect(func(block: PackedByteArray) -> void:
 		if guild_data.parse(block):
@@ -1872,6 +1878,12 @@ func _init() -> void:
 	# when an operator sets the hour.
 	for op in [GameClock.OP_POSITION, GameClock.OP_UPDATE]:
 		register_handler(op, func(data: PackedByteArray) -> void: game_clock.handle(op, data, Time.get_ticks_msec()))
+
+## Round 844: a guild storage move (0x7034 types 0x1d..0x21, GuildStorageNet's
+## payload); its 0xB034 comes back to guild_storage.
+func guild_storage_move(payload: PackedByteArray) -> void:
+	_item_op_kinds.append("guild_storage")
+	_send(ItemOpNet.OP_MOVE, payload)
 
 ## Registers `handler` (Callable(data: PackedByteArray)) for `opcode`, for a
 ## module this file does not route itself (round 711; the party-match lane
@@ -2834,6 +2846,14 @@ func _dispatch(p: Packet) -> void:
 				if not _item_op_kinds.is_empty() and _item_op_kinds[0] == "mall":
 					_item_op_kinds.pop_front()
 				mall_buy_result.emit(mb if not mb.is_empty() else {"ok": false, "code": MallNet.decode_failure(p.data)})
+				return
+			# Round 844: the guild storage's moves (types 0x1d..0x21), and a
+			# refusal while one is the oldest move out.
+			if GuildStorageNet.is_move_ack(p.data) or (p.data.size() >= 3 and p.data[0] == 2 and not _item_op_kinds.is_empty()
+					and _item_op_kinds[0] == "guild_storage"):
+				if not _item_op_kinds.is_empty() and _item_op_kinds[0] == "guild_storage":
+					_item_op_kinds.pop_front()
+				guild_storage.on_move(GuildStorageNet.decode_move(p.data))
 				return
 			# Round 834: the exchange's moves (types 4, 5, 0xd), and a refusal
 			# while one is the oldest move out.

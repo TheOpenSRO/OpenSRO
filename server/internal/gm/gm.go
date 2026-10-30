@@ -324,7 +324,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /chatban|/tradeban <name|@account> <30m|12h|7d|forever> [reason], /unchatban|/untradeban <name|@account>, /questblock <name> <mask>|clear, /jobexp <n>, /jobweek, /guildlevel <1-5>, /union <guild>|leave|expel <guild>, /silk <n> [own|gift|point], /lottery [draw [prize]]"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /chatban|/tradeban <name|@account> <30m|12h|7d|forever> [reason], /unchatban|/untradeban <name|@account>, /questblock <name> <mask>|clear, /jobexp <n>, /jobweek, /guildlevel <1-5>, /guildperm <member> <mask>, /union <guild>|leave|expel <guild>, /silk <n> [own|gift|point], /lottery [draw [prize]]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -407,6 +407,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.jobWeek(ctx)
 	case "guildlevel":
 		res = d.guildLevel(ctx, actor, args)
+	case "guildperm":
+		res = d.guildPerm(ctx, actor, args)
 	case "union":
 		res = d.union(ctx, actor, args)
 	case "silk":
@@ -1390,6 +1392,36 @@ func (d *Deps) jobWeek(ctx context.Context) Result {
 		return refuse("the weekly job procedure failed: " + err.Error())
 	}
 	return Result{Text: "the weekly job procedure ran: rewards shared, rankings rebuilt, contributions reset"}
+}
+
+// guildPerm sets a member of the GM's own guild's permission mask (round
+// 844 lane H, OURS, a test tool: the guild storage asks for bit 0x08; the
+// master's own grant window is the original's way).
+func (d *Deps) guildPerm(ctx context.Context, actor Actor, args []string) Result {
+	if len(args) != 2 {
+		return refuse("usage: /guildperm <member> <mask, e.g. 0x08>")
+	}
+	mask, err := strconv.ParseUint(args[1], 0, 32)
+	if err != nil {
+		return refuse("usage: /guildperm <member> <mask, e.g. 0x08>")
+	}
+	setter, ok := d.Guilds.(guild.MemberPermissionSetter)
+	if d.Guilds == nil || !ok {
+		return refuse("no guild store")
+	}
+	g, err := d.Guilds.GetByCharacter(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("you are not in a guild")
+	}
+	for _, m := range g.Members {
+		if strings.EqualFold(m.Name, args[0]) {
+			if err := setter.SetMemberPermission(ctx, g.ID, m.CharacterID, guild.Permission(mask)); err != nil {
+				return refuse("setting the permission failed: " + err.Error())
+			}
+			return Result{Text: fmt.Sprintf("%s's permission in %s is now 0x%x", m.Name, g.Name, mask)}
+		}
+	}
+	return refuse(args[0] + " is not in your guild")
 }
 
 // guildLevel raises the GM's own guild to level n (round 814, OURS, a test

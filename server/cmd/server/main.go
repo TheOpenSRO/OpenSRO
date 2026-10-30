@@ -33,6 +33,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gm"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/guild"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/guildstorage"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
@@ -1453,6 +1454,10 @@ func main() {
 		refItems   refItemStore
 		inv        inventory.Store
 		warehouse  inventory.Store // the storage NPC's container (a 2nd inventory), owned by the ACCOUNT
+		// The guild storage (round 844, internal/guildstorage): a container
+		// owned by the GUILD, sized by its level, and the guild's gold.
+		guildChest inventory.Store
+		guildGold  guildstorage.GoldStore
 		// avatars is the avatar inventory (round 789, internal/avatar): five
 		// slots per character, the bag's columns on its own table.
 		avatars inventory.Store
@@ -1546,6 +1551,9 @@ func main() {
 		// Each account's own size, grown by the expansion item (round 498).
 		memWarehouse.SetCapacityFunc(storage.CapacityOf(memAccounts))
 		warehouse = memWarehouse
+		memGuildChest := inventory.NewMemStore(memRef)
+		memGuildChest.SetDurabilityLookup(memRef)
+		guildChest, guildGold = memGuildChest, guildstorage.NewMemGold()
 		eq = equipment.NewMemStore(memInv)
 		avatars = avatar.NewMem(memRef)
 		cosStore = cos.NewMemStore()
@@ -1802,6 +1810,18 @@ func main() {
 		chars, refItems = sqlChars, sqlRef
 		dropSrc = sqlRef
 		warehouse = sqlWarehouse
+		sqlGuildChest, err := inventory.NewSQLStoreOwned(storePool, sqlRef, guildstorage.ChestTable, guildstorage.ChestOwner)
+		if err != nil {
+			logger.Error("opening guild storage store", "error", err)
+			os.Exit(1)
+		}
+		sqlGuildChest.SetDurabilityLookup(sqlRef)
+		sqlGuildGold, err := guildstorage.NewSQLGold(storePool)
+		if err != nil {
+			logger.Error("opening guild storage gold", "error", err)
+			os.Exit(1)
+		}
+		guildChest, guildGold = sqlGuildChest, sqlGuildGold
 		inv, eq, skills = sqlInv, sqlEq, sqlSkills
 		guilds, quests, friends = sqlGuilds, sqlQuests, sqlFriends
 		logger.Info("postgres storage ready")
@@ -1828,6 +1848,21 @@ func main() {
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
 	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold, ChestSizes: chestSizes, Items: refItems}
+	// Round 844: the guild storage, each guild's sized by its level (READ
+	// s:0xc6b5f0), bounded at the container's 0xd2.
+	if cs, ok := guildChest.(interface {
+		SetCapacity(int)
+		SetCapacityFunc(inventory.CapacityFunc)
+	}); ok {
+		cs.SetCapacity(guildstorage.MaxSlots)
+		cs.SetCapacityFunc(func(ctx context.Context, guildID int64) int {
+			if g, err := guilds.Get(ctx, guildID); err == nil && g != nil {
+				return guildstorage.Capacity(g.Level)
+			}
+			return 0
+		})
+	}
+	guildStorageSvc := &guildstorage.Service{Bag: inv, Chest: guildChest, Purse: chars, Vault: guildGold, Items: refItems}
 	zerkTracker := berserk.NewTracker()
 	// The Energy of life scroll's grants (round 632 review, session/composite.go).
 	compositeKeeper := session.NewCompositeKeeper()
@@ -2733,6 +2768,10 @@ func main() {
 		session.PartyHandler(partyDeps),
 		session.PartyMatchHandler(partyMatchDeps),
 		session.GuildHandler(chars, guilds, hub),
+		// The guild storage (round 844, guildstorage.go): 0x7250..0x7252;
+		// its moves are ItemOpHandler's 0x7034 types 0x1d..0x21.
+		session.GuildStorageHandler(&session.GuildStorageDeps{Guilds: guilds, Svc: guildStorageSvc, Hub: hub,
+			Chars: chars, Items: refItems, Trades: trades}),
 		// Chat (round 634): the five channels, whispers, the global
 		// chatting item and the GM's type-3 line.
 		session.ChatHandler(session.ChatDeps{Hub: hub, Parties: parties, Guilds: guilds, Inv: inv, Items: refItems, Gate: gmGate}),
@@ -2807,6 +2846,7 @@ func main() {
 	stallNetDisconnect := session.StallNetDisconnectHandler()
 	guildPointsDisconnect := session.GuildPointsDisconnectHandler(hub, gpSkills)
 	friendDisconnect := session.FriendDisconnectHandler(hub)
+	guildStorageDisconnect := session.GuildStorageDisconnectHandler(hub)
 
 	var tlsConfig *tls.Config
 	if *tlsCert != "" || *tlsKey != "" {
@@ -2861,6 +2901,7 @@ func main() {
 			step("quest", func() { session.ForgetQuestSession(sess.ID()) })
 			step("guild points", func() { guildPointsDisconnect(sess) })
 			step("friend", func() { friendDisconnect(sess) })
+			step("guild storage", func() { guildStorageDisconnect(sess) })
 			step("berserk", func() { berserkDisconnect(sess) })
 			// The party removal first, then the match entry, as the
 			// ShardManager's logout does (SM 0x4296f0: 0x44f580 moves a

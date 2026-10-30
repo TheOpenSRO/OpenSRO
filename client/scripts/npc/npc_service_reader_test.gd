@@ -182,13 +182,14 @@ func _init() -> void:
 			and str(consts.get("GUILD_CREATE_STRID", "")) == "UIIT_CTL_GUILD_CREATE",
 		"guild_create's strid is UIIT_CTL_GUILD_CREATE (FUN_006fcd60 case 0x12)")
 	var member: Array = from.call(guild_ids, store, 7, false)
-	_check(_keys(member) == ["shop:G1", "guild_leave"], "a member: [shop:G1, guild_leave] (got %s)" % [_keys(member)])
+	# Round 844: item 0x1d, the guild storage, follows (FUN_00700440).
+	_check(_keys(member) == ["shop:G1", "guild_leave", "guild_storage"], "a member: [shop:G1, guild_leave, guild_storage] (got %s)" % [_keys(member)])
 	var leave: Variant = _find(member, "guild_leave")
 	_check(leave != null and str(leave.get("strid")) == "UIIT_CTL_GUILD_SECESSION"
 			and str(consts.get("GUILD_SECESSION_STRID", "")) == "UIIT_CTL_GUILD_SECESSION",
 		"guild_leave's strid is UIIT_CTL_GUILD_SECESSION (FUN_006fcd60 case 0x1c)")
 	var master_lines: Array = from.call(guild_ids, store, 7, true)
-	_check(_keys(master_lines) == ["shop:G1", "guild_disband"],
+	_check(_keys(master_lines) == ["shop:G1", "guild_disband", "guild_storage"],
 		"a master gets the disband line, never secession or creation (got %s)" % [_keys(master_lines)])
 	var brk: Variant = _find(master_lines, "guild_disband")
 	_check(brk != null and str(brk.get("strid")) == "UIIT_CTL_GUILD_BREAK",
@@ -197,7 +198,8 @@ func _init() -> void:
 	var gs0: Array = NpcServiceReader.guild_services(0, false)
 	var gs7: Array = NpcServiceReader.guild_services(7, false)
 	_check(gs0.size() == 1 and gs0[0].label == "Create a new guild", "guild_services(0, false)[0].label == \"Create a new guild\"")
-	_check(gs7.size() == 1 and gs7[0].label == "Leave guild.", "guild_services(7, false)[0].label == \"Leave guild.\"")
+	_check(gs7.size() == 2 and gs7[0].label == "Leave guild." and gs7[1].strid == "UIIT_CTL_GUILD_WAREHOUSE",
+		"guild_services(7, false): \"Leave guild.\", then the guild storage (UIIT_CTL_GUILD_WAREHOUSE)")
 	if has_composer:
 		var resolve3 := func(token: String, fallback: String) -> String:
 			return str({"UIIT_CTL_GUILD_CREATE": "CREATE-TEXT", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}.get(token, fallback))

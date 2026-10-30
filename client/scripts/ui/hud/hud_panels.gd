@@ -96,6 +96,8 @@ const PANELS := {
 	# Opened from the talk box's Storage option (open_storage). The authored
 	# warehouse window: a 6x5 grid of the character's stored items.
 	"storage": ["resinfo\\ifstorageroom.txt", "Storage"],
+	# Round 844: the guild storage (GuildStorageController), the same layout.
+	"guild_storage": ["resinfo\\ifstorageroom.txt", "Guild storage"],
 	# Round 789: the blacksmith's grant window (GrantMagicAttributeWindow),
 	# opened by the talk line kind 0x2f's 0xB046 {1, 0x20} (open_grant_window).
 	"grant": [GrantMagicAttributeWindow.LAYOUT, "GrantMagicAttribute"],
@@ -207,6 +209,9 @@ const REGISTRY_FRAMES := {
 	"store": {"name": "GDR_STORE", "archive_defines": true},
 	"npctalk": {"name": "GDR_NPCWINDOW", "archive_defines": true},
 	"storage": {"name": "GDR_STORAGEROOM"},
+	# Round 844: ginterface's GuildStorageRoom section, ID 145 (0x91),
+	# 254x317, UIIT_STT_GUILD_WAREHOUSE.
+	"guild_storage": {"name": "GDR_GUILDSTORAGEROOM"},
 	"exchange": {"name": "GDR_EXCHANGE",
 		"defines": ["APPLY_EXCHANGE_UPDATE_1TH", "UI_UPDATE_2009_FIRST"]},
 	"system": {"name": "GDR_SYSTEM"},
@@ -1074,6 +1079,26 @@ func cancel_held_icon(why: String = "") -> void:
 ## one of these windows (World3D registers HudUnderbar.button_at).
 var click_pass_through: Array[Callable] = []
 
+## Round 844: the guild storage's 0xB250 refusal (World3D words it: 0x4c48
+## with the holder's name, the rest as the guild's refusals).
+signal guild_storage_refused(code: int, holder: String)
+var _guild_storage: GuildStorageController = null
+
+## The guild storage window's controller, built on first use.
+func guild_storage() -> GuildStorageController:
+	if _guild_storage == null:
+		_guild_storage = GuildStorageController.new(self)
+	return _guild_storage
+
+## The bag's gold button, wired once: the warehouse's or the guild
+## storage's deposit box while either is up (_on_bag_money_button).
+func wire_bag_money_button() -> void:
+	var inventory: HudWindow = _windows.get("inventory")
+	if inventory != null:
+		var bag_btn := inventory.node("GDR_INVENTORY_BTN_MONEY") as BaseButton
+		if bag_btn != null and not bag_btn.pressed.is_connected(_on_bag_money_button):
+			bag_btn.pressed.connect(_on_bag_money_button)
+
 ## The windows of an NPC interaction, whose hiding ends it (round 727).
 const NPC_INTERACTION_WINDOWS := ["npctalk", "store", "storage", "grant"]
 
@@ -1831,7 +1856,7 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	if NpcServiceReader.is_shop_key(key):
 		close("npctalk")
 		UiSounds.window_toggled(false, _interface_shown(), "npctalk store line (vslot_043)")
-	elif key == "storage" or key == "avatar_magic_option":
+	elif key == "storage" or key == "avatar_magic_option" or key == "guild_storage":
 		# Round 789: the grant line (kind 0x2f, c:0x7034f3..0x70358d) runs the
 		# talk window's close slot and sends 0x7046 {npc, 0x20}, as the
 		# warehouse line does.
@@ -3158,7 +3183,7 @@ func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dic
 	# across the store and the warehouse (READ, round 726 review).
 	# ConfirmBuy is a separate object (ID 400) and stays separate.
 	if box_kind != StoreMessageBox.Kind.BUY:
-		for host in ["store", "storage", "inventory"]:
+		for host in ["store", "storage", "inventory", GuildStorageController.WINDOW]:
 			var w: HudWindow = _windows.get(host)
 			if w == null:
 				continue
@@ -3730,6 +3755,9 @@ func _wire_storage_money_button(window: HudWindow) -> void:
 func _on_bag_money_button() -> void:
 	if _window_shown("storage"):
 		_open_gold_deposit()
+	elif _guild_storage != null and _guild_storage.is_open():
+		# Round 844: purpose 0x12 while the guild storage is up (0x6b2888).
+		_guild_storage.open_gold_box(true)
 
 ## Fills the warehouse grid (GDR_STORAGE_LAT) with the stored items; each is
 ## clickable to withdraw.
@@ -5465,7 +5493,7 @@ func close_topmost() -> bool:
 		if _windows[id] == best:
 			closed_id = id
 			break
-	if best == (_popup.window if _popup != null else null) or closed_id in ["store", "partymatch", "autopotion", "system", "npctalk", "storage"]:
+	if best == (_popup.window if _popup != null else null) or closed_id in ["store", "partymatch", "autopotion", "system", "npctalk", "storage", "guild_storage"]:
 		UiSounds.window_toggled(false, _interface_shown(), "Escape: %s" % (closed_id if closed_id != "" else best.name))
 	return true
 
@@ -5520,9 +5548,14 @@ func _escape_close() -> bool:
 	# (READ c:0x79d8c5..0x79d959): its vslot_043, the X -- the owner's 0x70B2,
 	# a visitor's 0x70B5, the window kept until the answer. (A hide here left
 	# the stall open on the server.)
-	for panel_id in ["storage", "npctalk", StallController.WINDOW, "exchange"]:
+	for panel_id in ["storage", GuildStorageController.WINDOW, "npctalk", StallController.WINDOW, "exchange"]:
 		var window: HudWindow = _windows.get(panel_id)
 		if window != null and window.visible:
+			if panel_id == GuildStorageController.WINDOW:
+				# Round 844: the guild storage (0x91) after the storage,
+				# its 0x79bf40(0): 0x7251 (READ c:0x79d871).
+				guild_storage().press_close()
+				return true
 			if panel_id == "exchange" and exchange_mode():
 				# Round 834: vslot_043 is the X, 0x7b24d0: the cancel, the
 				# window kept until the answer.
@@ -6714,6 +6747,9 @@ func _item_instance(where: String, slot: int) -> Object:
 	# Round 834: the exchange's grids (ExchangeController).
 	if where == "exchange_my" or where == "exchange_other":
 		return exchange.instance_at(where == "exchange_my", slot) if exchange != null else null
+	# Round 844: the guild storage's kept list.
+	if where == GuildStorageController.WINDOW:
+		return guild_storage().instance_at(slot)
 	# Round 839: the stall's slots (StallController).
 	if where == "stall":
 		return stall.instance_at(slot) if stall != null else null
@@ -7470,6 +7506,8 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 				_confirm_sell(from, item_id, qty)       # 0x46 -> 0x0f: type 9, sell
 			elif _over_window("storage", at):
 				_confirm_deposit(from, item_id, qty)    # 0x46 -> 0x13: type 2
+			elif _over_window(GuildStorageController.WINDOW, at):
+				guild_storage().deposit_from_bag(from, item_id, qty, at)   # 0x46 -> 0x91: type 0x1e
 			elif _over_window("exchange", at) and exchange_mode():
 				_exchange().offer_from_bag(from, item_id, qty)   # 0x46 -> 0x1a: type 4
 			elif _over_window(StallController.WINDOW, at) and stall != null and stall.active:
@@ -7498,6 +7536,13 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 			# inventory, kind 0x4e: READ c:0x7950b0, c:0x871940).
 			if on_bag:
 				_drop_avatar_to_bag(from, at)
+		GuildStorageController.WINDOW:
+			# Round 844: 0x91 -> 0x46 (type 0x1f, the withdraw box first) or
+			# 0x91 -> 0x91 (type 0x1d, c:0x7950b0).
+			if on_bag:
+				guild_storage().withdraw_to_bag(from, item_id, qty, _bag_slot_at(at))
+			elif _over_window(GuildStorageController.WINDOW, at):
+				guild_storage().move_inside(from, guild_storage().slot_at(at))
 		"storage":
 			# 0x13 -> 0x46 (type 3). The retail packet names the bag slot;
 			# ours has no field for it, so the server places it (OPEN).

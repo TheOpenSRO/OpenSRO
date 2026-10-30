@@ -13,6 +13,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/guild"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/guildstorage"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
@@ -240,6 +241,11 @@ func handleGuildDisband(ctx context.Context, sess *gateway.Session, p *proto.Pac
 		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guild.CodeNotInRange))
 		return nil
 	}
+	// Round 844: not while a member uses the guild storage (s:0x5c68b6).
+	if guildStorageRefuses(g.ID, 0) {
+		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guildstorage.CodeInUse))
+		return nil
+	}
 	unionBefore := unionBeforeDisband(ctx, g.ID)
 	was, err := d.guilds.Disband(ctx, g.ID)
 	if err != nil {
@@ -248,6 +254,8 @@ func handleGuildDisband(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	}
 	// Round 842: the store freed its union slot; the union is told.
 	unionLeft(ctx, unionBefore, was.ID, guild.UnionOutLeft, was)
+	// Round 844: its storage goes with it (UIIT_MSG_GUILD_BREAK_ANOTHER_EXPLAIN).
+	DropGuildStorage(ctx, was.ID)
 	sendGuild(sess, guild.OpDisbandResult, guild.EncodeOK())
 	d.toMembers(was, guild.OpUpdate, guild.EncodeDisbanded(), 0)
 	d.penalize(ctx, e.CharacterID)
@@ -282,6 +290,11 @@ func handleRetailGuildLeave(ctx context.Context, sess *gateway.Session, p *proto
 		return nil
 	}
 	if g.LeaderID == e.CharacterID {
+		return nil
+	}
+	// Round 844: not while using the guild storage (s:0x5c60e6).
+	if guildStorageRefuses(g.ID, e.CharacterID) {
+		sendGuild(sess, guild.OpLeaveResult, guild.EncodeFail(guildstorage.CodeInUse))
 		return nil
 	}
 	return d.removeMember(ctx, g, e.CharacterID, guild.RemovedLeft, sess, guild.OpLeaveResult)
@@ -321,6 +334,11 @@ func handleGuildExpel(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		}
 	}
 	if target == nil {
+		return nil
+	}
+	// Round 844: not the member using the guild storage (s:0x5c60e6).
+	if guildStorageRefuses(g.ID, target.CharacterID) {
+		sendGuild(sess, guild.OpExpelResult, guild.EncodeFail(guildstorage.CodeInUse))
 		return nil
 	}
 	if target.CharacterID == e.CharacterID {

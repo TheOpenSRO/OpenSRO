@@ -7483,6 +7483,74 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-fourth round, lane H: the guild storage
+
+The user's ask: "Add guild storage and all other guild functionality." This lane is the guild storage
+(the guild warehouse), end to end. Labels: READ (sro_client.exe `c:`, SR_GameServer.exe `s:`),
+MEASURED, INFERRED, OURS, OPEN. The whole reading, with every address, is
+`docs/protocol/guild_storage.md`.
+
+**What the original does (READ).**
+- **Where.** The guild manager (interaction 0x0f; Jangan's Guild Manager Leebaek), talk line 0x1d
+  "Use guild storage. (level 2 or above)" for every member, drawn 0xffff4a4a below guild level 2
+  (`FUN_006fcd60`). The line sends 0x7046 {npc, 0x0f}; its 0xB046 sends 0x7250 {npc}; 0xB250 {1}
+  opens GDR_GUILDSTORAGEROOM (ID 0x91, the personal storage's CIFStorageRoom and ifstorageroom.txt,
+  "Guild storage") with the inventory beside it, then 0x7252 lists it as 0x3253 {u64 gold}, 0x3255
+  pieces, 0x3254 (u8 size, u8 n, n x {slot, item record}).
+- **Who.** The master, or a member with permission bit 0x08 (0x4c1e "You are not authorized."); a
+  guild of level 2 or more (0x4c4a "Guild level must be 2 or higher to use guild storage."). Sizes 30 /
+  60 / 90 / 120 by level (the table s:0xc6b5f0).
+- **One at a time.** The ShardManager's job 0x24 holds the guild's holder; a second member gets
+  0x4c48 with the holder's name ("At the moment guild member %s is using guild storage, so it cannot
+  be opened."). The holder cannot leave or be expelled and the guild cannot be disbanded (0x4c48), and
+  bit 0x08 cannot be taken from the holder (0x4c4c). A disband takes the items with it
+  (UIIT_MSG_GUILD_BREAK_ANOTHER_EXPLAIN).
+- **Moves.** 0x7034 types 0x1d (inside: move, merge or swap; no split), 0x1e (bag -> storage: the
+  whole stack, never merged, the fee **half** the warehouse's: `KeepingFee x count x 0.5`, 1 to
+  10,000,000), 0x1f (storage -> bag, free), 0x20 / 0x21 (gold in / out, INTERACTMODE 6). The deposit
+  refuses quest and event items (3/3/9) and untradeable ones (0x1843).
+
+**What was built.**
+- Server: `internal/guildstorage` (the rules, `Service` over the bag, the storage container keyed by
+  guild id, the purse and the guild's gold, each action one transaction; `Locks`; the mem and SQL gold
+  stores, `guild_storage_gold` and `guild_storage_slots` created by the schema code);
+  `session/guildstorage.go` (0x7250..0x7252, the 0x7034 types, the disconnect release,
+  `GuildStorageHolder` for the other guild requests); the leave, expel and disband refusals
+  (guildops.go, four small checks); `/guildperm` (GM test tool, OURS); partybot `-gstore`.
+- Client: `GuildStorageNet` / `GuildStorageState` (the wire, the kept list), `GuildStorageController`
+  (the window with the shared slot code -- `_set_item_slot_fx`, tooltips, the held icon -- the
+  deposit, withdraw and gold boxes at the original's purposes 0x10..0x13, Escape and the X sending
+  0x7251), the talk line and its red, World3D's 0x0f arm and QA actions `gscell`, `gsgold`,
+  `gsclose`, `gsreport`.
+
+**Live QA (MEASURED; real input, Mate a partybot master, QaWin the rendered member; frames in
+/var/tmp/r844h/keep on the render box).**
+
+| check | result | frame |
+|---|---|---|
+| the talk line, guild level 2 | line 4 "Use guild storage. (level 2 or above)" in beige | a0410_talk_line4 |
+| without bit 0x08 | 0x4c1e, "You are not authorized." | a0540 (its system log) |
+| with 0x08: Mate's deposit seen | Mate's 50 potions at slot 2, Total Gold 7,000, the inventory beside it | a0540_open_mates_potions_7000_not_authorized |
+| deposit | the box at the half fee (10 for a Copper Sword), sword at slot 5, purse -10 | a0560, a0590 |
+| gold out / in | "Taken" 2,000 -> 5,000; "Deposit" 500 -> 5,500 | a0615, a0665 |
+| move inside, withdraw | potions 2 -> 9; the take box, 50 potions to the bag | a0725, a0760, a0790 |
+| one at a time | Mate refused 0xB250 {2, 0x4c48, "QaWin"} while QaWin had it open (a.Mate.log); QaWin refused while Mate held it: "At the moment guild member Mate is using guild storage, so it cannot be opened." | c0465_in_use_by_mate_message |
+| the other member after reopening | Mate's list: 5,500 gold and the sword at slot 5 (a.Mate.log, 0x3253/0x3255) | -- |
+| close and reopen | the X sends 0x7251 (0xB251 {1}, 0x704B); reopened: the same sword and 5,500 | a1040_closed, a1245_reopened_sword_5500 |
+| level 1 | the line red, 0x4c4a "Guild level must be 2 or higher to use guild storage." | b0415_level1_line_red, b0465_level_limit_message |
+| persistence across a restart | **not run live**: the render box has no Postgres, and a tunnel to this host's was not permitted. Proven by the SQL tests instead: `TestPersistsAcrossRestart` (a second pool reads the items and gold the first wrote), with the races and the rollbacks on both stores | -- |
+
+**Gates.** `go test ./...` ok (every package; the new `guildstorage` tests on both stores); `remote_godot.sh
+check` ALL LOAD (1045 scripts); `tests` "ran 395 suite(s), 0 failing" (two suites' line lists updated for the
+new talk line; `guild_storage844_test.gd` new, on the real Media.pk2). No perf gate: no per-frame or world
+code changed (UI windows, the talk line, the network and QA hooks only).
+
+**OPEN.** Bit 13 of the item flags (itemdata column 19 & 0x40) is not in refdata: the server tests
+CanTrade and not 3/3/9, which disagree with it on 73 of 14,529 tradeable rows (MEASURED). The client's
+own item test before the box (column 19 & 0x80) is not made. Right-click moves; 0x4c49 has no client
+text; what the ShardManager does with a holder who disconnects (OpenSRO releases it, INFERRED). Lane G:
+`session.GuildStorageHolder` for the permission change's 0x4c4c.
+
 ## Eight-hundred-and-forty-third round, lane Q: the quest scroll's flicker
 
 The user's ask: "Can you please also remove the flickering quest icons that appear above NPCs", with a
