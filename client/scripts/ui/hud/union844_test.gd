@@ -220,8 +220,9 @@ func _run() -> void:
 	_check(up.selected == 3 and _text(up._part(UnionPane.SEL_NAME)) == "Gamma" and _text(up._part(UnionPane.SEL_MASTER)) == "Gil"
 		and _text(up._part(UnionPane.SEL_MEMBERS)) == "30/50" and not up._part(UnionPane.NO_SELECTION).visible,
 		"Gamma selected: name, master, '30/50'")
-	var bar := rows[2].get_node_or_null(GuildWindow.ROW_SELECT_BAR) as Control
-	_check(bar != null and bar.visible, "its row's selected bar")
+	# Round 844 (merge): the row's own art is swapped to com_bar01select_
+	# (GuildWindow._mark_row, lane G), as 0x5b7090 does.
+	_check(GuildWindow.row_selected(rows[2]) and not GuildWindow.row_selected(rows[0]), "its row's selected bar")
 	# The sort headers: by name; by level (highest first).
 	up.set_sort(UnionPane.SORT_LEVEL)
 	_check(_text(TwoDtBuilder.child(rows[0], UnionPane.ROW_NAME)) == "Gamma" and _text(TwoDtBuilder.child(rows[2], UnionPane.ROW_NAME)) == "Beta", "Lv: 5, 3, 2")

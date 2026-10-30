@@ -83,12 +83,13 @@ func _run() -> void:
 		return
 	ItemInstance.types_of = func(ref: int) -> PackedInt32Array: return panels.call("item_types", ref)
 
-	# The talk line: item 0x1d after the member's and the master's own, its
+	# The talk line: item 0x1d after the member's and the master's own (the
+	# master's 0x17, 0x14, 0x18 since lane G), its
 	# text the archive's, red below level 2.
 	var member := NpcServiceReader.guild_services(7, false)
 	var master := NpcServiceReader.guild_services(7, true)
 	_check(member.size() == 2 and (member[1] as NpcServiceReader.Service).key == "guild_storage"
-		and (master[1] as NpcServiceReader.Service).key == "guild_storage", "a member and the master both get the guild storage line")
+		and (master.back() as NpcServiceReader.Service).key == "guild_storage", "a member and the master both get the guild storage line")
 	_check(NpcServiceReader.guild_services(0, false).size() == 1, "no guild: the create line alone")
 	var text: String = table.get_text("UIIT_CTL_GUILD_WAREHOUSE") if table != null and table.has_method("get_text") else ""
 	if text == "" and table != null:
