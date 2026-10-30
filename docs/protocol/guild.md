@@ -782,3 +782,130 @@ the full notes are round 824's in docs/WORLD_ISSUES.md).
 - **Drawing** (FUN_009dea30 0x9df370): a 16 x 16 quad whose left edge is the guild text item's left less
   20 and whose top is the item's top (FUN_008b2d30). The union's (36 px) is OPEN, no unions. Where the
   guild window or union pane shows crests, if they do, is OPEN.
+
+## The guild window and the guild manager (round 844, lane G)
+
+The census of everything the original's guild has is [guild_census.md](guild_census.md). This
+section records lane G's readings (READ, `sro_client.exe` c: and `SR_GameServer.exe` s:, unless
+marked).
+
+**The member highlight.** The window's rows are CNIFBarWnds. A left press (vslot_017 c:0x5b8790,
+message 0x201 only) moves the selection: c:0x5b86c0, then each row's c:0x5b7090. That sets the
+selected member's row art to `com_bar01select_Left.ddj` and every other row's to
+`com_bar01_Left.ddj`; the bar cuts the name at its last `_` and draws left / mid / right.
+`com_bar01select_` is `com_bar01_` with a 1-px (255, 178, 82) frame inset 2 px (MEASURED in
+Media.pk2), which is the "yellow highlight". Hover changes nothing. A refill re-marks the rows
+from the kept id (c:0x5b8580). The friend rows do the same (c:0x5a8700).
+
+OpenSRO had added the select bar under the row's own opaque bar, so it never showed. Since 844,
+`GuildWindow._mark_row` swaps the row's art.
+
+**The list.**
+- **Order** (c:0x5ba310), set by headers 400..403 (c:0x5baae0):
+  - name ascending (the shown name);
+  - level, highest first;
+  - class, master first;
+  - GP donated, most first.
+
+  The walk directions are READ; the comparators are INFERRED std::less.
+- **Button 23** (c:0x5ba970) cycles the shown name through name, grant name and fortress
+  position. It retitles header 400 with `UIIT_STT_GUILDSMAN`, `_TITLE` or `_GUILD_POSITION`.
+- **The position texts** come from UI_FORT::FUN_009961a0: role 1 commander, 2 subcommander,
+  4 battle manager, 8 product manager, 0x10 trainer manager, 0x20 engineer.
+- **Scroll bar 21** moves the six rows.
+
+**The buttons** (c:0x5b5150, READ):
+- Each button and its bit:
+  - 37: bit 0x01;
+  - 39: bit 0x02;
+  - 40: bit 0x04;
+  - 38: bit 0x10000000;
+  - the pencil 81: bit 0x10.
+- In a guild:
+  - 38 is enabled and reads `UIIT_CTL_GUILD_UNION_CHAT_GRANT` for the master,
+    `_CONFIRM` for the others.
+  - For the master, 40 follows guild level >= 4, and 41 is enabled.
+  - For the others, 40 is disabled.
+
+OpenSRO keeps two rules of its own:
+- 40 keeps round 814's rule (OURS): any member names themselves.
+- 41 (the fortress positions) stays disabled.
+
+**The notice.**
+- The bar 222 shows the title (c:0x5b54c0).
+- A press on the bar (c:0x5b7110) toggles its art (gil_windo02_on / _off) and the view 1200,
+  whose 155 holds the body (c:0x5b61ff -> 0x5aad40). The view's Confirm 153 closes it.
+- The pencil opens CIFGuildNotifyWrite (c:0x79b380 / 0x70ba50). The title edit takes 0x7f
+  characters and the body 0x3ff. The count line shows "%d/Max.%d" with 0x3ff.
+- Completed (c:0x70b7b0) checks locally: an empty title shows 0x4c22, an empty body 0x4c23.
+  Otherwise it sends 0x70F9 {title, body}.
+
+The server (s:0x516ea0 -> 0x5c6480) checks, in order:
+1. a chat ban: 0x3405, and the request is dropped;
+2. a `'` or `"` in either string: dropped silently (filter s:0x7312f0; its configured word list
+   is OPEN);
+3. dead: 0x4c07;
+4. no guild: 0x4c0d;
+5. without bit 0x10: 0x4c1e;
+6. the title 1..0x80 bytes, else 0x4c22;
+7. the body 1..0x800 bytes, else 0x4c23.
+
+Then B0F9 {1} (`_COMMON_KNOW_REMIND_UPDATE`) goes to the writer, and 0x38F5 type 5 mask 0x10
+(INFERRED mask) to the members. OpenSRO counts the bytes of the UTF-8 string, not of the ANSI one.
+
+**The permissions** (button 38 -> CNIFGuildGrantPow 47 -> 1000; c:0x5ad320, 0x5ac150, 0x5ace60):
+- The pane lists every member but the master, by name. Its checks 105..109 are the bits 0x01
+  join, 0x02 withdraw, 0x04 union chat, 0x08 storage and 0x10 notice.
+- The master edits; the others only look (0x5ac000).
+- Header 93's tooltip is `UIIT_MSG_GUILD_UNION_CHAT_TOOLTIP` with the holders of 0x04 + 1, and 12.
+- Confirm sends 0x7104 {u8 n, n x {u32 id, u32 mask}}, the changed rows only.
+
+The server (s:0x5c69f0) refuses, in order:
+1. no guild: 0x4c0d;
+2. not the master: 0x4c1e;
+3. more than 12 union-chat holders after the change: 0x4c4b;
+4. the storage's current user losing bit 0x08: 0x4c4c. This is lane H's hook
+   (`session.GuildStorageUser`).
+
+On success:
+- B104 {1} goes to the master, with type 0x16 mask 0x10 listing the rows.
+- Each changed member gets type 6 mask 0x10.
+- Every member gets type 0x14.
+
+**The master's mask is 0xffffffff and a member's is 0** (READ s:0x5c46e0, the hand-over). This
+settles round 821's INFERRED defaults.
+
+**The hand-over** (line 0x18 -> CIFGuildMasterLeave; 0x7103 {u32 NPC, u32 new master}):
+- The window's OK (c:0x70a170) refuses the master's own name (`UIIT_MSG_MLEAVEERR_USERNOTEXIST`).
+  Otherwise it asks "[%s]" + `UIIT_MSG_MLEAVE_CONFIRM`.
+- The server (s:0x5c6900) refuses, in order:
+  1. the NPC out of range: 3;
+  2. the target is the master himself: 3;
+  3. no guild: 0x4c0d;
+  4. a release vote running: 0x4c1e;
+  5. not the master: 0x4c1e;
+  6. a fortress guild in the siege period: 0x4c5d;
+  7. a hired mercenary: 0x4c55;
+  8. the target not a member: 0x4c1d.
+
+  It does not check that the target is online, nor the target's level or penalty.
+- B103 {1} goes to the old master; his client closes the talk and shows `UIIT_MSG_MLEAVE_SUCCESS`.
+- 0x38F5 type 0x16 mask 0x54 goes to the members:
+  - the new master: class 0, mask 0xffffffff, siege role 1;
+  - the old master: class 10, mask 0, role 0.
+- The new master also gets everyone's masks (type 0x16 mask 0x10).
+
+**The donation** (button 250 -> CIFGuildPointUp, 360 x 240; 0x7258 {u32 SP}):
+- The server (s:0x5c7880) refuses, in order: 0 SP, 2; dead, 0x4c07; no guild, 0x4c0d; too
+  little SP, 0x4c32.
+- On success the SP is spent and B258 {1, u32} goes back (`UIIT_MSG_GUILD_GP_SUBSCRIPION_RESULT`).
+- The GP goes through CGuild::AddPoints, with type 5 / 6 mask 8 to the members.
+- The SP:GP rate is the ShardManager's and is OPEN. OpenSRO uses 1:1, INFERRED from the earned
+  points' rate.
+
+**The level-up from the guild manager** (line 0x17 -> CIFGuildLevelUp, 360 x 220; 0x70FA
+{u32 NPC}):
+- The window shows the GP and gold tables by the current level (c:0xdafa44 / 0xdafa58) and
+  `UIIT_MSG_QUESTION_GUILD_LEVEL_UP`.
+- The server checks the NPC (else 3), then runs the "Levelling up" ladder above.
+- B0FA {1} goes back, and type 5 mask 0x0c to the members.

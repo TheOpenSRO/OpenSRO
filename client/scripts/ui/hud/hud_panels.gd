@@ -9995,8 +9995,10 @@ func qa_guild_report() -> String:
 		var name_node := TwoDtBuilder.child(row, GuildWindow.ROW_NAME)
 		rows.append("%s:%s:%s" % [TwoDtBuilder.text_of(name_node) if name_node != null else "",
 			"SEL" if GuildWindow.row_selected(row) else "-", str(bar.get_index()) if bar != null else "x"])
-	return "{visible=%s selected=%d sort=%d mode=%d notice_open=%s body=%s pane=%s perm=%s rows=[%s] write=%s}" % [
-		window.visible, window.selected_member, window.sort_mode, window.name_mode, window.notice_open,
+	var gd := NetClient.guild_data
+	var gm := gd.master()
+	return "{level=%d gp=%d master=%s visible=%s selected=%d sort=%d mode=%d notice_open=%s body=%s pane=%s perm=%s rows=[%s] write=%s}" % [
+		gd.level, gd.gp, gm.member_name if gm != null else "", window.visible, window.selected_member, window.sort_mode, window.name_mode, window.notice_open,
 		JSON.stringify(window.notice_body_shown().left(40)), window.permission_pane_open(),
 		JSON.stringify(window.permission_changes()), ", ".join(rows),
 		guild_notice_write != null and is_instance_valid(guild_notice_write)]

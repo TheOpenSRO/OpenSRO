@@ -18084,6 +18084,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       underbar by GetChild path (round 840)
 #   guildnode:<id>[,..] / rguildnode:..  left (right) click a guild window
 #                       control by GetChild path (round 844)
+#   hudnode:<path>      left click a control by node path under HudPanels
+#                       (round 844)
 #   guildreport         report the guild window's selection, row art, order,
 #                       notice and permission pane (round 844)
 #   boxyes:<name> / boxno:<name>  a question box's Yes / No (round 840)
@@ -19114,6 +19116,17 @@ func _qa_input_step() -> void:
 			else:
 				_qa_input_report = "%s at %s" % [action, gc.get_global_rect().get_center()]
 				_qa_push_click(gc.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT if kind == "rguildnode" else MOUSE_BUTTON_LEFT, true)
+		"hudnode":
+			# Round 844: left click a control by its node path under HudPanels
+			# (GuildMasterLeave/Create/.../CheckBox), as a player's click.
+			var hn: Control = _hud_panels.get_node_or_null(NodePath(arg)) as Control if _hud_panels != null else null
+			if hn == null or not hn.is_visible_in_tree():
+				_qa_input_report = action + " (not shown)"
+			else:
+				_qa_push_click(hn.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+				var hh := get_viewport().gui_get_hovered_control()
+				_qa_input_report = "%s at %s (hovered %s; pressed %s)" % [action, hn.get_global_rect().get_center(),
+					hh.get_path() if hh != null else "nothing", (hn as BaseButton).button_pressed if hn is BaseButton else "-"]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
 			_qa_input_report = "%s %s" % [action, _hud_panels.qa_guild_report() if _hud_panels != null else "{}"]
@@ -36309,7 +36322,7 @@ func _wire_guild_manage_844() -> void:
 var _guild_sp_now := 0
 
 func _on_guild_manage_result(r: GuildManageNet.Result) -> void:
-	print("GUILD844 result op=%#06x ok=%s code=%#06x amount=%d" % [r.op, r.ok, r.code, r.amount])
+	print("GUILD844 result op=0x%04x ok=%s code=0x%04x amount=%d" % [r.op, r.ok, r.code, r.amount])
 	if not r.ok:
 		_on_guild_ops_notice(GuildOpsNet.error_key(r.code), [], r.code)
 		return

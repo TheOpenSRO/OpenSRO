@@ -7,7 +7,8 @@ class_name GuildMasterLeaveWindow
 ## READ in sro_client.exe:
 ## - opened by the master's talk line 0x18 (UIIT_CTL_MASTERLEAVE, "Transfer
 ##   leadership"), title UIIT_STT_MLEAVE_WINDOWS; the list's header 22
-##   UIIT_CTL_MLEAVE_SELECT and 23 UIIT_STT_GUILDSMAN; seven rows 31..37
+##   UIIT_CTL_MLEAVE_SELECT and 23 UIIT_STT_GUILDSMAN (the layout's ListWnd
+##   section); seven rows 31..37
 ##   (CIFBarWnd on com_bar01_), each a check box 10 and a name 11, under a
 ##   scroll manager 41;
 ## - OK (11, c:0x70a170): a fortress-war position conflict ->
@@ -42,6 +43,8 @@ var members: Array = []
 var chosen := 0
 var first := 0
 var _checks: Array[TextureButton] = []
+## The ListWnd section (the rows and the header).
+var list_root: Control
 var _names: Array[Control] = []
 
 func build_master_leave(builder: UiBuilder, npc_uid: int, data: GuildData, own_name: String) -> bool:
@@ -55,9 +58,24 @@ func build_master_leave(builder: UiBuilder, npc_uid: int, data: GuildData, own_n
 		for m in data.members:
 			members.append([m.character_id, m.member_name])
 	members.sort_custom(func(a: Array, b: Array) -> bool: return String(a[1]) < String(b[1]))
+	# The list is the layout's second section, ListWnd (READ: the file's
+	# "Section = ListWnd" holds the scroll manager, the seven rows and the
+	# header), built over the Create section at the same origin.
+	var layout: UiLayoutParser.LayoutDef = builder.load_layout(LAYOUT)
+	list_root = builder.build_section(layout, "ListWnd") if layout != null and layout.sections.has("ListWnd") else null
+	if list_root != null:
+		list_root.name = "ListWnd"
+		add_child(list_root)
+		UiBuilder.settle_authored_rects(list_root)
+		# The scroll manager hosts the rows in the original (CIFScrollManager);
+		# here it is an empty control laid over them, so it lets the clicks
+		# through to the rows' check boxes (OURS).
+		var mgr := list_root.get_node_or_null("GDR_GUILDMASTER_LEVAE_LIST_SCROLLMGR") as Control
+		if mgr != null:
+			mgr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var slot_layout: UiLayoutParser.LayoutDef = builder.load_layout(SLOT_LAYOUT)
 	for row_name in ROWS:
-		var row := node(row_name)
+		var row := list_root.get_node_or_null(row_name) as Control if list_root != null else null
 		if row == null or slot_layout == null:
 			continue
 		var built := builder.build_section(slot_layout, "Create")

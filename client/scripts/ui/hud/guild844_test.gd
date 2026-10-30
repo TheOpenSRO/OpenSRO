@@ -306,6 +306,16 @@ func _run() -> void:
 	root.add_child(mw)
 	_check(mw.build_master_leave(builder, 77, _data("Pain"), "Pain"), "ifguildmasterleave builds")
 	_check(mw.size == Vector2(249, 315), "249 x 315 (ginterface GDR_GUILDMASTER_LEAVE)")
+	var cbs := mw.find_children("CheckBox", "TextureButton", true, false)
+	# A real press on Tobi's check (the third row by name: Ann, Bob, Cid...).
+	var tobi_i := -1
+	for i in mw.members.size():
+		if String(mw.members[i][1]) == "Tobi":
+			tobi_i = i
+	if tobi_i >= 0 and tobi_i < cbs.size():
+		(mw._checks[tobi_i] as TextureButton).button_pressed = true
+	_check(mw.chosen == 2 and mw.chosen_name() == "Tobi", "pressing Tobi's check chooses him (got %d)" % mw.chosen)
+	_check(cbs.size() == 7, "seven rows with a check box (got %d)" % cbs.size())
 	var refused2: Array = []
 	var asked2: Array = []
 	mw.refused.connect(func(k: String) -> void: refused2.append(k))
@@ -352,3 +362,5 @@ func _run() -> void:
 	w.own_name = "Pain"
 	w.refresh_guild()
 	_check(not w.is_master() and b.call(37).disabled, "the old master loses the master's buttons")
+	var b41: BaseButton = b.call(41)
+	_check(b41.disabled, "41 (fortress positions) stays disabled")
