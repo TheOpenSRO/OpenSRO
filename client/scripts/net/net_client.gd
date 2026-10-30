@@ -137,7 +137,9 @@ signal durability_changed(slot: int, durability: int, was: int)
 ## `slot` the equip slot (EquipmentNet.SLOT_*); `plus` the effective plus
 ## (OptLevel + advanced elixir). World3D redresses the body from it
 ## (_on_other_equipment_changed) and keeps the plus in _other_pluses.
-signal other_player_equipment_changed(uid: int, slot: int, ref_id: int, plus: int)
+## `own_ref` (round 843, OURS): the item's own RefItemID when `ref_id` is the
+## row a model switcher has it drawn as, else 0 (Broadcast.own_ref).
+signal other_player_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, own_ref: int)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
 signal shop_sell_result(ok: bool, reason: String, gold_received: int)
@@ -2744,11 +2746,12 @@ func _dispatch(p: Packet) -> void:
 			var eb := EquipmentNet.decode_broadcast(p.data)
 			if eb != null:
 				var on := p.opcode == EquipmentNet.OP_EQUIP_BROADCAST
-				print("NetClient: %s uid %d slot %d item %d plus %d" % ["0x3038" if on else "0x3039", eb.uid, eb.slot, eb.ref_item_id, eb.plus])
+				print("NetClient: %s uid %d slot %d item %d plus %d%s" % ["0x3038" if on else "0x3039", eb.uid, eb.slot, eb.ref_item_id, eb.plus,
+					(" own %d" % eb.own_ref) if eb.own_ref != 0 else ""])
 				# A 0x3038 with no plus byte (a non-equipment item, which retail's
 				# layout allows) is a +0 put on, never a removal (round 735's
 				# review, finding 7): only a 0x3039 is -1.
-				other_player_equipment_changed.emit(eb.uid, eb.slot, eb.ref_item_id, maxi(eb.plus, 0) if on else -1)
+				other_player_equipment_changed.emit(eb.uid, eb.slot, eb.ref_item_id, maxi(eb.plus, 0) if on else -1, eb.own_ref if on else 0)
 		ShopNet.OP_BUY_RESULT:
 			var r := ShopNet.decode_buy_result(p.data)
 			shop_buy_result.emit(r.ok, r.reason if r.error == "" else r.error)

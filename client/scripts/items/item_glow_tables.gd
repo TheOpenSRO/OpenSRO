@@ -365,6 +365,13 @@ func group_member_count() -> int:
 		n += (_groups[org] as Dictionary).size()
 	return n
 
+## Whether any table gives `code_name` a glow type or a particle row, at any
+## plus (round 843: a model switcher's row with none draws with the item's
+## own, CharacterAppearance.glow_source).
+func has_rows(code_name: String) -> bool:
+	var key := code_name.to_upper()
+	return _types.has(key) or not (_particles.get(key, []) as Array).is_empty()
+
 ## The item's glow type number, 0 for none.
 func type_of(code_name: String) -> int:
 	return int(_types.get(code_name.to_upper(), 0))

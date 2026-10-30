@@ -82,18 +82,38 @@ type EquipBroadcast struct {
 	// equipment item. A 0x3039 never carries it.
 	Plus    uint8
 	HasPlus bool
+	// Own is the worn item's own RefItemID when RefItemID is the row a model
+	// switcher has it drawn as (round 843, OURS: inventory.Instance.Model,
+	// displayRef), else 0. Encode writes it after the plus, the message's
+	// last field, only then -- every other 0x3038 is retail's bytes. The
+	// observer's client draws the mesh from RefItemID and, where that row
+	// has no glow or seal rows of its own, the item's own glow and seal
+	// effects (docs/protocol/item_switchers.md section 3).
+	Own uint32
 }
 
-// Encode writes the retail layout.
+// Encode writes the retail layout, and Own after it when set.
 func (b *EquipBroadcast) Encode() []byte {
-	out := make([]byte, 9, 10)
+	out := make([]byte, 9, 14)
 	binary.LittleEndian.PutUint32(out[0:], b.UID)
 	out[4] = b.Slot
 	binary.LittleEndian.PutUint32(out[5:], b.RefItemID)
 	if b.HasPlus {
 		out = append(out, b.Plus)
+		if b.Own != 0 && b.Own != b.RefItemID {
+			out = binary.LittleEndian.AppendUint32(out, b.Own)
+		}
 	}
 	return out
+}
+
+// switchedOwn is the Own a 0x3038 of a worn item carries: its own id when a
+// model switcher has it drawn as another row (round 843, OURS), else 0.
+func switchedOwn(itemID, model int64) uint32 {
+	if model > 0 && model != itemID {
+		return uint32(itemID)
+	}
+	return 0
 }
 
 // DecodeEquipBroadcast reads either message; the plus is whatever byte
@@ -105,6 +125,9 @@ func DecodeEquipBroadcast(data []byte) (*EquipBroadcast, error) {
 	b := &EquipBroadcast{UID: binary.LittleEndian.Uint32(data), Slot: data[4], RefItemID: binary.LittleEndian.Uint32(data[5:])}
 	if len(data) >= 10 {
 		b.Plus, b.HasPlus = data[9], true
+	}
+	if len(data) >= 14 {
+		b.Own = binary.LittleEndian.Uint32(data[10:])
 	}
 	return b, nil
 }
@@ -153,7 +176,8 @@ func sendPlusesAsBroadcasts(sess interface{ Send(*proto.Packet) error }, others 
 			if it.Plus == 0 || equipment.Slot(it.Slot) > BroadcastSlotMax {
 				continue
 			}
-			msg := &EquipBroadcast{UID: uint32(o.CharacterID), Slot: uint8(it.Slot), RefItemID: uint32(displayRef(it.ItemID, it.Model)), Plus: it.Plus, HasPlus: true}
+			msg := &EquipBroadcast{UID: uint32(o.CharacterID), Slot: uint8(it.Slot), RefItemID: uint32(displayRef(it.ItemID, it.Model)), Plus: it.Plus, HasPlus: true,
+				Own: switchedOwn(it.ItemID, it.Model)}
 			_ = sess.Send(&proto.Packet{Opcode: OpEquipBroadcast, Data: msg.Encode()})
 		}
 	}
@@ -183,6 +207,8 @@ func broadcastWorn(ctx context.Context, hub *world.Hub, store equipment.Store, i
 		msg := &EquipBroadcast{UID: uint32(characterID), Slot: uint8(slot), RefItemID: uint32(displayRef(w.ItemID, w.Model))}
 		if isEquipmentItem(ctx, items, w.ItemID) {
 			msg.Plus, msg.HasPlus = w.EffectivePlus(), true
+			// Round 843: the item's own id beside the model's (OURS).
+			msg.Own = switchedOwn(w.ItemID, w.Model)
 		}
 		sendAboutOwner(to, characterID, OpEquipBroadcast, msg.Encode())
 		return

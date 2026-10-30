@@ -1419,6 +1419,12 @@ var _other_equipped := {}
 ## slot not listed is +0. Lane A's glow reads it (with
 ## NetClient.other_player_equipment_changed for the moment it changes).
 var _other_pluses := {}
+## character_id -> {slot: the worn item's own RefItemID} (round 843, OURS):
+## the slots another player's 0x3038 named a model switcher's row for, with
+## the item's own id after the plus (EquipmentNet.Broadcast.own_ref). The
+## model's row is drawn; the item's own glow and seal stand in where that row
+## has none (CharacterAppearance.glow_source).
+var _other_fx := {}
 ## How far a body may still be from its target before it counts as moving:
 ## a tenth of the body's height (REAL_CHARACTER_NATIVE_HEIGHT), so the tail
 ## of the interpolation reads as standing.
@@ -12959,7 +12965,10 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 ## `pluses` (round 734) is slot -> the plus byte the glow is chosen by
 ## (EquipGlow): your own gear's OptLevel + advanced elixir (_player_pluses),
 ## another player's from their spawn or equip change; a slot it lacks is +0.
-func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE, pluses: Dictionary = {}) -> Skeleton3D:
+##
+## `fx` (round 843) is slot -> the worn item's own RefItemID where `equipped`
+## names the row a model switcher has it drawn as (_player_fx, _other_fx).
+func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE, pluses: Dictionary = {}, fx: Dictionary = {}) -> Skeleton3D:
 	if _appearance == null:
 		return null
 	var assets := _body_assets(body)
@@ -12976,7 +12985,7 @@ func _build_assembled_character(equipped: Dictionary = {}, body: String = "", sc
 		if not _item_models.has(item_id):
 			print("World3D: item %d in slot %d has no worn model in the item table -- not drawn" % [item_id, slot])
 			continue
-		items.append({"id": item_id, "plus": int(pluses.get(slot, 0)) & 0xFF})
+		items.append(_wear_item(item_id, slot, pluses, fx))
 	var built := _appearance.build(int(assets["ref"]), scale, items)
 	if built == null:
 		return null
@@ -12992,7 +13001,9 @@ func _build_assembled_character(equipped: Dictionary = {}, body: String = "", sc
 		if not w.get("default", false) and not (w["nodes"] as Array).is_empty():
 			drawn += 1
 		if int(w.get("glow", 0)) > 0 or int(w.get("glow_fx", 0)) > 0:
-			glows.append("%s +%d (row +%d, %d effect(s))" % [w.get("code", ""), int(w["plus"]), int(w["glow"]), int(w["glow_fx"])])
+			var gc := CharacterAppearance.glow_code_of(w)
+			glows.append("%s%s +%d (row +%d, %d effect(s))" % [w.get("code", ""), (" with %s's glow" % gc) if gc != String(w.get("code", "")) else "",
+				int(w["plus"]), int(w["glow"]), int(w["glow_fx"])])
 	if not equipped.is_empty():
 		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them%s" % [
 			body, scale, built.height_factor, drawn, equipped.size(), built.hidden_body_meshes,
@@ -13066,7 +13077,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# asking -- and this says which side to look at.
 	print("World3D: player equipment %s" % str(equipped))
 
-	var skeleton := _build_assembled_character(equipped, body, scale, pluses)
+	var skeleton := _build_assembled_character(equipped, body, scale, pluses, _player_fx())
 	if skeleton == null:
 		return
 	body = String(skeleton.get_meta("body", body))
@@ -13189,7 +13200,7 @@ func _refresh_paper_doll(equipped: Dictionary, body: String) -> void:
 	# window's avatar is a character object, and the client's copy of one
 	# character's dress onto another (UI_SILKMALL::FUN_00a617d0) carries
 	# each slot's plus into InstallEquipVisual.
-	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale, _player_pluses_last)
+	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale, _player_pluses_last, _player_fx())
 	if doll_skeleton == null:
 		return
 	_paper_doll.set_character(doll_skeleton)
@@ -16542,6 +16553,26 @@ func _qa_avatar_view() -> void:
 	_hud_panels.set_equipment_avatar_mode(true)
 	_hud_panels._fill_avatar_slots()
 	_hud_panels.qa_show_avatar_tips()
+
+## One item of a build's list: {"id", "plus"} and, for a model switcher's
+## row, "fx" the item's own RefItemID (round 843; left out otherwise, so the
+## lists and the kinds made from them are what they were).
+static func _wear_item(item_id: int, slot, pluses: Dictionary, fx: Dictionary) -> Dictionary:
+	var item := {"id": item_id, "plus": int(pluses.get(slot, 0)) & 0xFF}
+	var own := int(fx.get(slot, 0))
+	if own > 0 and own != item_id:
+		item["fx"] = own
+	return item
+
+## Round 843: slot -> the worn item's own RefItemID for the slots a model
+## switcher has drawn as another row (_display_equipped), from the worn list.
+func _player_fx() -> Dictionary:
+	var out := {}
+	for slot in NetClient.last_equipment_instances:
+		var it: ItemInstance = NetClient.last_equipment_instances[slot]
+		if it != null and it.model > 0 and it.model != it.ref_item_id:
+			out[int(slot)] = it.ref_item_id
+	return out
 
 ## The plus each worn slot's glow is chosen by (round 734): the item's
 ## OptLevel plus its advanced elixir, as a u8 -- READ, the client's item
@@ -24101,6 +24132,9 @@ func _other_template_ready(character_id: int) -> bool:
 	if kind == "":
 		kind = "%s|%s|%s" % [String((node as Node).get_meta("body", "")), str((args as Dictionary).get("equipped", {})),
 			str(_other_pluses.get(character_id, {}))]
+		# Round 843: a model switcher's own ids make another kind.
+		if not (_other_fx.get(character_id, {}) as Dictionary).is_empty():
+			kind += "|fx" + str(_other_fx[character_id])
 		args["kind"] = kind
 	# Round 762: the kind's own state, looked at again only when something
 	# it can use arrived (CharacterAppearance.kind_ready); its spec worked out
@@ -24110,7 +24144,7 @@ func _other_template_ready(character_id: int) -> bool:
 		return state == 1
 	var kt := Time.get_ticks_usec() if FrameSplit.on else 0
 	var spec := _other_build_spec(String((node as Node).get_meta("body", "")), (args as Dictionary).get("equipped", {}),
-		_other_pluses.get(character_id, {}))
+		_other_pluses.get(character_id, {}), _other_fx.get(character_id, {}))
 	if spec.is_empty():
 		return true
 	var ok := _appearance.kind_ready(kind, int(spec[0]), spec[1])
@@ -24121,7 +24155,7 @@ func _other_template_ready(character_id: int) -> bool:
 ## What _build_assembled_character hands CharacterAppearance.build for this
 ## body, worked out without building anything: [the model id, the items], or
 ## empty when the body cannot be resolved (it then builds the old way).
-func _other_build_spec(body: String, equipped: Dictionary, pluses: Dictionary) -> Array:
+func _other_build_spec(body: String, equipped: Dictionary, pluses: Dictionary, fx: Dictionary = {}) -> Array:
 	var ref := _body_ref_for(body)
 	if ref < 0:
 		ref = _body_ref_for(String(GENDER_BODY_CODE[DEFAULT_GENDER]))
@@ -24132,7 +24166,7 @@ func _other_build_spec(body: String, equipped: Dictionary, pluses: Dictionary) -
 		var item_id: int = int(equipped[slot])
 		if item_id == 0 or not _item_models.has(item_id):
 			continue
-		items.append({"id": item_id, "plus": int(pluses.get(slot, 0)) & 0xFF})
+		items.append(_wear_item(item_id, slot, pluses, fx))
 	return [ref, items]
 
 ## A body key's model id as _body_assets would find it, without assembling
@@ -24189,7 +24223,7 @@ func _ghost_other_now(character_id: int) -> void:
 		body = String(GENDER_BODY_CODE[DEFAULT_GENDER])
 	var equipped: Dictionary = (args as Dictionary).get("equipped", {})
 	var scale := int((args as Dictionary).get("scale", CharacterAppearance.DEFAULT_SCALE))
-	var spec := _other_build_spec(body, equipped, _other_pluses.get(character_id, {}))
+	var spec := _other_build_spec(body, equipped, _other_pluses.get(character_id, {}), _other_fx.get(character_id, {}))
 	if spec.is_empty():
 		if old == null:
 			_ghost_refused[character_id] = true
@@ -24774,7 +24808,7 @@ func _dress_other(character_id: int) -> void:
 	# bodyOf and equippedItems in server/internal/session/world.go, both
 	# queried live), and each item is drawn from its own model. Falls back to
 	# the labeled placeholder capsule if the bodies never loaded.
-	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}))
+	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}), _other_fx.get(character_id, {}))
 	if dt != null:
 		dt.mark("build")
 	if skeleton != null:
@@ -25039,7 +25073,7 @@ func _other_by_uid(uid: int) -> int:
 ## (FUN_008a9260 / FUN_008a9560 -> ResolveVisualSlotForItem); OpenSRO keys its
 ## worn map by equip slot, which is the message's slot byte. plus -1 is a
 ## removal.
-func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) -> void:
+func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, own_ref: int = 0) -> void:
 	var op := 0x3038 if plus >= 0 else 0x3039
 	var avatar := _is_avatar_item(ref_id)
 	# Retail tells the mover too (its handlers' own-uid branch updates the
@@ -25062,7 +25096,7 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 		# then its others are nowhere this handler can reach (round 735's
 		# review, finding 1). Kept and replayed once they are drawn.
 		if _arrival_pending:
-			_pending_equip_changes.append([uid, slot, ref_id, plus])
+			_pending_equip_changes.append([uid, slot, ref_id, plus, own_ref])
 			print("World3D: 0x%x for uid %d kept until the arrival list is drawn" % [op, uid])
 			return
 		print("World3D: 0x%x for uid %d, who is not drawn -- ignored" % [op, uid])
@@ -25073,6 +25107,23 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 	var worn: Dictionary = (kept.equipped if kept != null else _other_equipped.get(id, {}) as Dictionary).duplicate()
 	var pluses: Dictionary = (kept.pluses if kept != null else _other_pluses.get(id, {}) as Dictionary).duplicate()
 	var same_item := plus >= 0 and worn.has(slot) and int(worn[slot]) == ref_id
+	# Round 843 (OURS): the item's own id beside a model switcher's row; a
+	# change of it redraws the body (its glow and seal come from it).
+	if not avatar:
+		var fx: Dictionary = (_other_fx.get(id, {}) as Dictionary).duplicate()
+		var was := int(fx.get(slot, 0))
+		if plus >= 0 and own_ref > 0 and own_ref != ref_id:
+			fx[slot] = own_ref
+		else:
+			fx.erase(slot)
+		if int(fx.get(slot, 0)) != was:
+			same_item = false
+			if fx.has(slot):
+				print("World3D: player %d slot %d is drawn as item %d with item %d's own glow and seal" % [id, slot, ref_id, int(fx[slot])])
+		if fx.is_empty():
+			_other_fx.erase(id)
+		else:
+			_other_fx[id] = fx
 	if avatar:
 		# Round 789: by RefItemID, the slot byte ignored (READ c:0x8a9260 /
 		# c:0x8a9560 -> FUN_00a60ef0 / FUN_00a60470).
@@ -25138,7 +25189,7 @@ func _flush_pending_equip_changes() -> void:
 	var pending := _pending_equip_changes
 	_pending_equip_changes = []
 	for c in pending:
-		_on_other_equipment_changed(int(c[0]), int(c[1]), int(c[2]), int(c[3]))
+		_on_other_equipment_changed(int(c[0]), int(c[1]), int(c[2]), int(c[3]), int(c[4]) if c.size() > 4 else 0)
 
 ## Rebuilds another player's dressed body inside their node from
 ## _other_equipped (round 735), as _apply_player_equipment_visual redresses the
@@ -25160,7 +25211,7 @@ func _redress_other(character_id: int) -> void:
 	var equipped: Dictionary = _other_equipped.get(character_id, {})
 	var body := String(gait.get("body", node.get_meta("body", "")))
 	var scale := int(gait.get("scale", CharacterAppearance.DEFAULT_SCALE))
-	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}))
+	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}), _other_fx.get(character_id, {}))
 	if skeleton == null:
 		return
 	var old = gait.get("skeleton")
@@ -25765,6 +25816,7 @@ func _on_entity_left_now(character_id: int) -> void:
 	_other_settled.erase(character_id)
 	_other_awake[character_id] = true
 	_other_pluses.erase(character_id)
+	_other_fx.erase(character_id)
 	# Gone before their turn to be dressed came (round 739, B4).
 	_other_builds.drop(character_id)
 	_other_build_args.erase(character_id)
@@ -26342,10 +26394,13 @@ func _skin_preview_body(ref_obj_id: int, scale: int, keep_gear: bool) -> Skeleto
 		var slot := int(k)
 		if keep_gear or slot == 6 or slot == 7:
 			equipped[slot] = _player_equipped_last[k]
+	# Round 843: a model switcher's choice is drawn here too, with the item's
+	# own glow and seal where its row has none (_display_equipped, _player_fx).
+	equipped = _display_equipped(equipped)
 	if keep_gear:
 		equipped = _with_player_avatars(equipped)
 	var body := _body_key_for(ref_obj_id, "")
-	var skel := _build_assembled_character(equipped, body, scale, _player_pluses_last)
+	var skel := _build_assembled_character(equipped, body, scale, _player_pluses_last, _player_fx())
 	if skel == null:
 		return null
 	var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped, body))

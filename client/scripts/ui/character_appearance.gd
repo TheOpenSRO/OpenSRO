@@ -710,7 +710,10 @@ func _resolve_wears(items: Array, woman: bool, warn: bool) -> Array:
 		if slot < 0 or (slot > SLOT_SUIT and slot != SLOT_AVATAR):
 			continue
 		var models: PackedStringArray = info["models"]
-		var wear := {"id": id, "plus": plus & 0xFF, "slot": slot, "type_ids": info["type_ids"], "code": String(info.get("code", "")),
+		var code := String(info.get("code", ""))
+		var fx := int(raw.get("fx", 0)) if raw is Dictionary else 0
+		var wear := {"id": id, "plus": plus & 0xFF, "slot": slot, "type_ids": info["type_ids"], "code": code,
+			"glow_code": glow_source(code, fx),
 			"models": item_models(models[0] if not models.is_empty() else "", info["type_ids"], woman),
 			"nodes": [], "word": int(info.get("word", CharacterVisualChange.type_word(info["type_ids"]))),
 			"param7": int(info.get("param7", 0))}
@@ -727,6 +730,28 @@ func _resolve_wears(items: Array, woman: bool, warn: bool) -> Array:
 		wears.append(by_slot[slot])
 	wears.append_array(avatars)
 	return [arbitrate_wears(wears), weapon_kind]
+
+## Round 843 (OURS): the code name a worn weapon or shield's glow and seal
+## effects are looked up by. `code` is the row it is drawn as; `fx` the
+## item's own RefItemID when that row is a model switcher's (World3D passes it
+## as the item dict's "fx"), else 0. The drawn row's own rows stand when the
+## tables give it any (the archive's _SWITCHnn rows of the plain D11 A and the
+## Egyptian sets carry their own glow type and seal effects, MEASURED); a row
+## with none -- the locked Seal of Nova's twins, which an unlocked (_ACTIVE)
+## item is drawn with -- takes the item's own, so the switch keeps the
+## item's glow and seal (docs/protocol/item_switchers.md section 3).
+func glow_source(code: String, fx: int) -> String:
+	if fx <= 0 or glow_tables == null or glow_tables.has_rows(code):
+		return code
+	var own := String(_item_info(fx).get("code", ""))
+	if own != "" and glow_tables.has_rows(own):
+		return own
+	return code
+
+## The code name `wear`'s glow is looked up by (glow_source; its own code
+## for a wear made before round 843).
+static func glow_code_of(wear: Dictionary) -> String:
+	return String(wear.get("glow_code", wear.get("code", "")))
 
 ## Round 789: the wears CharacterVisualChange's arbitration draws, in attach
 ## order (AVATAR_RESEARCH.md 6.2): each gets its row's "vis_slot" /
@@ -962,7 +987,7 @@ func _far_glow(wear: Dictionary, nodes: Array) -> Dictionary:
 	var slot := int(wear["slot"])
 	if not glow_enabled or glow_tables == null or (slot != SLOT_WEAPON and slot != SLOT_SHIELD):
 		return out
-	var code := String(wear.get("code", ""))
+	var code := glow_code_of(wear)
 	if code == "" or nodes.is_empty():
 		return out
 	var row := glow_tables.glow_row(code, int(wear["plus"]))
@@ -985,7 +1010,7 @@ func _far_fx(wear: Dictionary, nodes: Array, skel: Skeleton3D, r: FarRecipe, wea
 	var slot := int(wear["slot"])
 	if nodes.is_empty():
 		return
-	var code := String(wear.get("code", ""))
+	var code := glow_code_of(wear)
 	# [row, the models it goes on]: a glow-table row on every model that has
 	# its bone (round 828, EquipGlow.apply's rule: each part of a dual weapon).
 	var rows: Array = []
@@ -1331,8 +1356,8 @@ func template_paths(ref_obj_id: int, items: Array) -> Array:
 		if int(wear["slot"]) != SLOT_AVATAR:
 			worn.append({"slot": wear["slot"], "type_ids": wear["type_ids"]})
 		var slot := int(wear["slot"])
-		if glow_enabled and glow_tables != null and (slot == SLOT_WEAPON or slot == SLOT_SHIELD) and String(wear["code"]) != "":
-			for r in glow_tables.particle_rows(String(wear["code"]), int(wear["plus"])):
+		if glow_enabled and glow_tables != null and (slot == SLOT_WEAPON or slot == SLOT_SHIELD) and glow_code_of(wear) != "":
+			for r in glow_tables.particle_rows(glow_code_of(wear), int(wear["plus"])):
 				var efp := (r as ItemGlowTables.ParticleRow).efp
 				if not efps.has(efp):
 					efps.append(efp)
@@ -2033,7 +2058,7 @@ func _apply_glow(wear: Dictionary) -> void:
 	var slot := int(wear["slot"])
 	if not glow_enabled or glow_tables == null or (slot != SLOT_WEAPON and slot != SLOT_SHIELD):
 		return
-	var code := String(wear.get("code", ""))
+	var code := glow_code_of(wear)
 	if code == "" or (wear["nodes"] as Array).is_empty():
 		return
 	var plus := int(wear["plus"])
@@ -2061,7 +2086,7 @@ func _note_glow_wears(body: Body) -> void:
 	for wear in body.worn:
 		var slot := int(wear["slot"])
 		if slot == SLOT_WEAPON or slot == SLOT_SHIELD:
-			list.append({"slot": slot, "code": wear.get("code", ""), "plus": int(wear["plus"]), "nodes": wear["nodes"]})
+			list.append({"slot": slot, "code": wear.get("code", ""), "glow_code": glow_code_of(wear), "plus": int(wear["plus"]), "nodes": wear["nodes"]})
 	body.skeleton.set_meta(GLOW_WEARS_META, list)
 
 ## Redraws the weapon and shield glow of a built body at new pluses (slot ->
@@ -2081,7 +2106,7 @@ func reglow(skel: Skeleton3D, pluses: Dictionary) -> int:
 				nodes.append(node)
 				EquipGlow.clear(node)
 		var plus := int(pluses.get(int(wear["slot"]), 0)) & 0xFF
-		var redo := {"slot": wear["slot"], "code": wear["code"], "plus": plus, "nodes": nodes}
+		var redo := {"slot": wear["slot"], "code": wear["code"], "glow_code": glow_code_of(wear), "plus": plus, "nodes": nodes}
 		_apply_glow(redo)
 		# EquipGlow.clear took the item's own particles too (round 794).
 		WornItemFx.apply(nodes, skel, _particles_archive(), String(wear["code"]))

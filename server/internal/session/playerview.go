@@ -259,6 +259,8 @@ func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, b
 		return playerSpawn{}, false
 	}
 	after := buffStateFrames(cur.CharacterID, now)
+	// Round 843 (OURS): a model switcher's items, with their own ids.
+	after = append(after, switchedWornFrames(d, cur.CharacterID)...)
 	if f := characterStatusFrame(cur.CharacterID); f != nil {
 		after = append(after, f)
 	}
@@ -273,6 +275,23 @@ func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, b
 		after = append(after, f)
 	}
 	return playerSpawn{e: cur, record: rec, after: after, version: version}, true
+}
+
+// switchedWornFrames is a 0x3038 per worn item of characterID's that a model
+// switcher has drawn as another row (look.switched): the same RefItemID and
+// plus as the record, and the item's own id after them (EquipBroadcast.Own).
+func switchedWornFrames(d viewDeps, characterID int64) []*gateway.Frame {
+	ctx := d.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var out []*gateway.Frame
+	for _, b := range lookOf(ctx, d, characterID).switched {
+		if f, err := gateway.NewFrame(&proto.Packet{Opcode: OpEquipBroadcast, Data: b.Encode()}); err == nil {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // fresh is s, rebuilt if its owner's state moved since it was built (rare:

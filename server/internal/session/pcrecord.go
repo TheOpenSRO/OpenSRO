@@ -140,6 +140,12 @@ type look struct {
 	// avatars is the avatar block (round 789): the worn avatars and devil's
 	// spirit in storage order, each with its plus.
 	avatars []pcspawn.Item
+	// switched is a 0x3038 for each worn item a model switcher has drawn as
+	// another row (round 843, OURS): the record names the model's row, as
+	// every other client is told; this one adds the item's own id (Own),
+	// whose glow and seal the model keeps. Sent after the record
+	// (buildPlayerSpawn).
+	switched []EquipBroadcast
 }
 
 // lookEntry is a cached look, the stores it was read from, and the
@@ -228,6 +234,10 @@ func lookOf(ctx context.Context, d viewDeps, characterID int64) look {
 		item := pcspawn.Item{RefItemID: uint32(displayRef(it.ItemID, it.Model))}
 		if itemHasPlus(ctx, it.ItemID) {
 			item.Plus, item.HasPlus = it.Plus, true
+			if own := switchedOwn(it.ItemID, it.Model); own != 0 {
+				lk.switched = append(lk.switched, EquipBroadcast{UID: uint32(characterID), Slot: uint8(it.Slot),
+					RefItemID: item.RefItemID, Plus: it.Plus, HasPlus: true, Own: own})
+			}
 		}
 		lk.items = append(lk.items, item)
 		if equipment.Slot(it.Slot) == equipment.SlotJobSuit {

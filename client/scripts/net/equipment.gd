@@ -164,6 +164,11 @@ class Broadcast:
 	var slot: int
 	var ref_item_id: int
 	var plus: int = -1
+	## Round 843 (OURS, server session/equip_broadcast.go EquipBroadcast.Own):
+	## the worn item's own RefItemID when `ref_item_id` is the row a model
+	## switcher has it drawn as, after the plus; 0 when the message ends at the
+	## plus (retail's bytes).
+	var own_ref: int = 0
 
 ## Decodes either broadcast; null when cut short. Retail's client reads the
 ## plus byte when the item's type word says equipment; OpenSRO's server writes
@@ -177,6 +182,8 @@ static func decode_broadcast(data: PackedByteArray) -> Broadcast:
 	b.ref_item_id = data.decode_u32(5)
 	if data.size() >= 10:
 		b.plus = int(data[9])
+	if data.size() >= 14:
+		b.own_ref = data.decode_u32(10)
 	return b
 
 ## Repair opcodes (session/repair.go). An NPC's repair buttons: restore a

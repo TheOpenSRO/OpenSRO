@@ -70,7 +70,7 @@ func _make_world() -> Node:
 		"\tpass",
 		"func _exit_tree() -> void:",
 		"\tpass",
-		"func _build_assembled_character(equipped: Dictionary = {}, _body: String = \"\", _scale: int = 0x22, pluses: Dictionary = {}) -> Skeleton3D:",
+		"func _build_assembled_character(equipped: Dictionary = {}, _body: String = \"\", _scale: int = 0x22, pluses: Dictionary = {}, _fx: Dictionary = {}) -> Skeleton3D:",
 		"\tdressed.append([equipped.duplicate(), pluses.duplicate()])",
 		"\treturn Skeleton3D.new()",
 		"func _body_animation_for(_gender: String, action_type: int, _group: String = \"default\") -> BanReader.ParsedAnimation:",
