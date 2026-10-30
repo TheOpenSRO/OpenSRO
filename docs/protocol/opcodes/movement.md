@@ -425,8 +425,47 @@ runs, `docs/WORLD_ISSUES.md`), INFERRED, OURS.
   is measured on the ground, as the server's height for a player is a guess.
 - Unchanged and READ: the server refuses a destination within 5.0 of the one it is walking to, and
   takes every other (`TestRound846EveryStepIsEchoedAtAnySpeed`); an observer is told a `/speed` by a
-  token-less `OpBuffEnd` and a late one by the spawn record's run speed; a stop (`0xB023`, an arrow
-  key's release among them) snaps.
+  token-less `OpBuffEnd` and a late one by the spawn record's run speed. ~~A stop (`0xB023`, an
+  arrow key's release among them) snaps.~~ A stop within 50 is walked (below).
+
+### The stop, and the Up key (round 846's follow-up)
+
+**READ.**
+- The 0xB023 reader `c:FUN_008a4f80` skips an object with `+0x440` set, then calls `FUN_009e00f0`
+  and `FUN_009e11e0(region, point, 0)`.
+  - `FUN_009e00f0` ends the movement (`+0x84`, `+0xac`, `+0x80` cleared). For a mover whose `+0xc`
+    is 0 it also snaps the heading (`FUN_009e0050`) and points the travel direction
+    (`FUN_009e0090`).
+  - `FUN_009e11e0` is the same placement as 0xB021's source, so the drawn object is re-placed only
+    when it is more than 50.0 from the point. **A stop does not snap a body within 50.**
+- The drawn position is `obj+0x74`. `FUN_009c4610` builds the world position from `+0x7c..+0x88`.
+  It is written only by vtable slot 37 (`FUN_009cf530`), called from the placement
+  `FUN_009e0d50`, the skill step `FUN_009e0960` and a few UI paths. The mover tick `FUN_009e0e60`
+  never calls it. How the drawn object follows the record during an ordinary walk was not found
+  (OPEN).
+- The Up key:
+  - `FUN_009ebec0` -> `FUN_009ebd10` only builds and sends the heading form; nothing moves. The run
+    starts on its echo (`FUN_008a5750` -> `FUN_009e08a0`).
+  - The release, `FUN_009eb6e0`, only sends 0x7023 {angle}. The run ends on the server's 0xB023.
+  - A press while the mover is still moving on a heading sends nothing (`FUN_009ebec0`'s window), so
+    a press before the last release's stop arrives is dropped.
+
+**OpenSRO now.**
+- **Observers:** `World3D._other_stop_at` walks a body within 50 to a stop's point at
+  `OtherWalk.CATCH_UP_MAX` times its speed, facing the message's angle. Beyond 50 the body is put
+  there. The walk is OURS: retail's way of bringing the drawn object to the record was not read.
+- **The mover:** `_own_arrow_stop` / `_own_settle` treat this player's own stop after an Up
+  release the same way. A newer order supersedes the release's stop.
+- **Riders:** a ridden COS's 0xB023 now ends its rider's leg (`_cos_move_stop`). It was dropped
+  before.
+- **OURS, kept:** the Up run starts on the press and ends on the release.
+  - Either way the client's run and the server's differ by the network's jitter (MEASURED: 0-18
+    units at /speed 1-10, 40 ms ± 20 ms).
+  - An echo-started run reaches a wall one round trip after the server's run and the observers' runs
+    started. The observers walk a straight line, so they ran that far past the wall: 50-90 units at
+    /speed 10 (MEASURED).
+  - An observer-side navmesh clip was tried and dropped: its probe met walls the mover's own carried
+    footing did not.
 
 ## The heading move: a click on the sky (round 653)
 

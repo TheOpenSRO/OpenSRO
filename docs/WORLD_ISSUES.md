@@ -7592,10 +7592,71 @@ walked the same distance on both clients (3.00 / 3.00, 1.00 / 1.00, 3.61 / 3.61 
 `/var/tmp/r846m/keep/h6/h6_montage.png`. Evidence, logs and the analyser: `/var/tmp/r846m/keep`
 (b1/h1 at 40 ms, b2/h2 at 100 ms with 7x, h6 the real clicks).
 
+**Follow-up: the arrow keys' stop (the coordinator: "small steps" are likely arrow-key taps).**
+
+*READ.*
+- `c:FUN_008a4f80` (0xB023) calls `FUN_009e00f0` (ends the movement, snaps the heading) and then
+  `FUN_009e11e0(..., 0)`. That is the same placement as 0xB021's source, so a stop within 50 of
+  the drawn body does not re-place it.
+- The Up press only sends (`FUN_009ebec0` -> `FUN_009ebd10`); the run starts on the echo
+  (`FUN_009e08a0`). The release only sends 0x7023 (`FUN_009eb6e0`).
+- The drawn position `obj+0x74` is written only by vtable slot 37 (`FUN_009cf530`). The mover tick
+  never calls it (OPEN: how the drawn object follows a walk).
+
+*MEASURED* (base `857ec7be` against head; `/speed` 1, 2, 5, 7, 10; 40 ms ± 20 ms; per speed Up
+held 50/100/150/200/500 ms, a turn while running, a click during a run; `keep/b3`, `keep/h10`):
+- Every Up press and release reached the server, and the server's stop point is its run speed times
+  the time between them (`TestRound846AnUpTapStopsWhereTheServersRunHasIt`).
+- The mover and the server disagree by the network's jitter. With run-on-press (base) the mover's
+  own stop snapped 0.3-18 units at taps and holds, and 53 after a turn at 10x.
+- Every observer stop snapped: 26 of 50 stops jumped by more than 1 unit, 9 of them by 10-40.
+
+*Tried and measured.*
+- **Retail's run-on-echo on the mover (`h7`, `h9`):** the jitter error stayed the same (taps 0-17
+  units). But a run now reaches a wall one round trip after the observers started theirs, and
+  observers have no collision of their own, so they ran 50-90 units past the wall at 10x and were put
+  back. Dropped; the run stays on the press (OURS, see movement.md).
+- **Clipping an observer's run at its first wall (`h7`, `h8`):** the probe met walls the mover's
+  carried footing did not. One stop came 0.0 ahead while the mover ran 100 units. Dropped.
+
+*Now (head `b2edf756`, `h10`).*
+- An observer walks a stop within 50 at 3x its speed, facing the message's angle (35 of 50 stops
+  walked, at most 41.9 units off); beyond 50 it puts the body there. The mover walks its own Up stop
+  the same way.
+- A ridden COS's stop now reaches its rider; it was dropped, so a rider's Up run never ended on
+  anyone else's screen.
+- Taps and holds at 1x-10x: both clients end on the same point every time (end gap 0.00). No
+  observer frame moved faster than 3.2x the run speed at any tap or hold.
+- The only such frames left are in a turn while running: 2.6 at 2x (base 10.7) and 7.0 at 7x
+  (base 12.4). The turn reaches the server only in 45° steps (READ, `FUN_009eb470`), so the server, and
+  the observers with it, run a different line until the stop: retail's own limit.
+
+| speed | Up taps 50-200 ms, mover's own stop: base / head | observer frames beyond 3.2x the speed: base / head |
+|---|---|---|
+| 1x | 0.3-2.1, snapped / 0.2-2.1, walked | 0 / 0 |
+| 2x | 0.3-3.3, snapped / 0.8-3.2, walked | 0 / 0 (a turn: 10.7 / 2.6) |
+| 5x | 0.0-11.0, snapped / 0.0-9.0, walked | 0 / 0 |
+| 7x | 0.0-11.3, snapped / 0.0-9.7, walked | 0 / 0 (a turn: 12.4 / 7.0) |
+| 10x | 0.0-9.9, snapped / 0.0-16.6, walked | 0 / 0 (a turn: 0 / 0; a hold: 0 / 0) |
+
+*Other paths checked:*
+- **Turning while running:** bends on 0xB024 and keeps retail's 45° quantization.
+- **A click during a run:** the 0xB021 source keeps the 50 rule and the catch-up.
+- **A run into a wall:** the mover's stop is walked within 50. Observers still do not collide (OPEN).
+- **A mount at speed:** fixed (the ridden stop).
+- **Region borders:** no snap path (refile and spawn records carry the leg).
+
+*Gates (follow-up).*
+- `go test ./...` all ok.
+- `check` ALL LOAD.
+- `tests` "ran 402 suite(s), 0 failing".
+- Perf gate `--base 857ec7be --head b2edf756 --sites jangan --frames 24000`: frame 0.86 / 0.87 ms,
+  entry 8845 / 8689 ms, freeze 2774 / 2777 ms, hitches 5 / 4. All SAME.
+
 **OPEN.**
-- The Up key's stop still snaps by the server's timing (READ; the original's client starts its run
-  on the echo, so its snap is smaller). Making the stop carry the client's point would leave retail's
-  0x7023 {u16 angle}.
+- Observers walk a straight line: retail's observers collide on their own (`FUN_009e0e60`'s query
+  runs for every mover). A run into a wall is corrected by the mover's stop, walked within 50.
+- Retail's run-on-echo is not followed (above); the Up stop is walked, not snapped.
 - Where the original's drawn object (`obj+0x74`) follows the mover's record each tick was not read;
   the catch-up's reading is INFERRED from the factor.
 - Unchanged and READ (round 637): with no movement order in effect -- after a world entry, before the
