@@ -2882,6 +2882,17 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 822: the membership boxes and buttons.
 	_hud_panels.guild_invite_requested.connect(_on_guild_invite_requested)
 	_hud_panels.guild_expel_requested.connect(func(who: String) -> void: NetClient.guild_expel(who))
+	# Round 844: the guild storage -- its refusal worded as the original's
+	# (0x4c48 with the holder's name, c:0x88f68d..0x88f7a6; the rest as the
+	# guild's), and the talk it ends (0x704B, c:0x78fc20).
+	_hud_panels.guild_storage_refused.connect(func(code: int, holder: String) -> void:
+		if code == GuildStorageNet.CODE_IN_USE:
+			_on_guild_ops_notice(GuildStorageNet.IN_USE_KEY, [holder], code)
+		else:
+			_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code))
+	_hud_panels.guild_storage().end_talk = func() -> void:
+		if _npc_talk != null and _npc_talk.end():
+			print("NPC end 0x704B: the guild storage's talk")
 	_hud_panels.guild_expel_refused.connect(func(code: int) -> void:
 		_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code))
 	_hud_panels.guild_invitation_answered.connect(_on_guild_invitation_answered)
@@ -18075,6 +18086,9 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   stallicon:<i> / stallmodify:<i> / stallslot:<i>  left click stall slot i's
 #                       icon, modify button or the slot (round 839)
 #   bagempty            left click the shown bag page's first empty cell
+#   gscell:<n> / gsgold / gsclose  left click the guild storage window's cell
+#                       of storage slot n (the page shown), its money button,
+#                       its X; gsreport prints its kept list (round 844)
 #   actionslot:<id>     right click the action window's button (round 839)
 #   stallclose          left click the stall window's X (round 839)
 #   netnode:<id>[,..] / netbox:<id> / underbar:<id>[,..]  left click a control
@@ -19177,6 +19191,32 @@ func _qa_input_step() -> void:
 			else:
 				_qa_input_report = "%s at %s" % [action, ec.get_global_rect().get_center()]
 				_qa_push_click(ec.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"gscell", "gsgold", "gsclose":
+			# Round 844: the guild storage window -- the cell of storage slot
+			# <n> on the page shown (to pick its item up or put one down), its
+			# money button, its X.
+			var gsw: HudWindow = _hud_panels._windows.get(GuildStorageController.WINDOW) if _hud_panels != null else null
+			var gsc: Control = null
+			if gsw != null and gsw.visible:
+				if kind == "gsclose":
+					gsc = gsw.get_node_or_null("CloseButton") as Control
+				elif kind == "gsgold":
+					gsc = gsw.node(GuildStorageController.MONEY_BUTTON) as Control
+				else:
+					var grid := gsw.node(GuildStorageController.LATTICE) as Control
+					var ci := int(arg) - _hud_panels.guild_storage().page * GuildStorageNet.PAGE_SLOTS
+					if grid != null and ci >= 0 and ci < grid.get_child_count():
+						gsc = grid.get_child(ci) as Control
+			if gsc == null:
+				_qa_input_report = action + " (no guild storage window shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, gsc.get_global_rect().get_center()]
+				_qa_push_click(gsc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"gsreport":
+			# Round 844: the guild storage's kept list and gold, as drawn.
+			var gsr := _hud_panels.guild_storage().describe() if _hud_panels != null else "no HUD"
+			print("QA GUILDSTORAGE %s open=%s" % [gsr, _hud_panels.guild_storage().is_open() if _hud_panels != null else false])
+			_qa_input_report = "%s (%s)" % [action, gsr]
 		"gachacard":
 			# Round 838: left click the Magic POP window's inventory cell holding
 			# the first Magic POP card (GachaWindow.card_cell).
@@ -27756,6 +27796,9 @@ func _on_npc_opened(id: int) -> void:
 					_talk_npc_code)
 		3:
 			_hud_panels.open_storage(_talk_npc_name)
+		0x0f:
+			# Round 844: 0xB046 {1, 0x0f} -> 0x7250 {npc} (c:0x888fc8).
+			_hud_panels.guild_storage().request_open(_talk_npc_uid(), _talk_npc_name)
 		0x20:
 			# Round 789: 0xB046 {1, 0x20} -> the grant window and the inventory
 			# beside it (READ c:0x888e30 -> 0x79d4a0(1), 0x79af20).
@@ -28257,6 +28300,11 @@ func _npc_services(code: String, ids: Variant = null) -> Array:
 		store_lines = NpcShopDefNet.store_lines(_talk_shop_def)
 	var out := NpcServiceReader.services_from_ids(id_set, store_lines, _guild_id, _guild_master, NetClient.job_kind,
 		_player_level, NetClient.job_alias == "")
+	# Round 844: the guild storage's line is red below guild level 2.
+	if NetClient.guild_data.level < GuildStorageController.MIN_LEVEL:
+		NpcTalkView.line_colours["guild_storage"] = NpcTalkView.COLOUR_MENU_LOW_LEVEL
+	else:
+		NpcTalkView.line_colours.erase("guild_storage")
 	for svc_v in out:
 		var svc: NpcServiceReader.Service = svc_v
 		if NpcShopDefNet.line_of(NpcServiceReader.tabgroup_of(svc.key)) >= 0:
@@ -28509,6 +28557,12 @@ func _on_npc_service_selected(key: String) -> void:
 			return
 		if key == "storage":
 			_npc_talk.open(3)
+			return
+		# Round 844: the guild storage's line 0x1d hides the talk window and
+		# sends 0x7046 {npc, 0x0f} (c:0x702c31..0x702c97); its 0xB046 sends
+		# 0x7250 (_on_npc_opened).
+		if key == "guild_storage":
+			_npc_talk.open(GuildStorageNet.INTERACTION)
 			return
 		# Round 789: the blacksmith's grant line (kind 0x2f -> 0x7046 {npc,
 		# 0x20}, READ c:0x7034f3..0x70358d); its 0xB046 opens the window.

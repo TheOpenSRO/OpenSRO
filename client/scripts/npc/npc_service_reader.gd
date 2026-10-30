@@ -68,6 +68,9 @@ const GUILD_CREATE_STRID := "UIIT_CTL_GUILD_CREATE"
 const GUILD_SECESSION_STRID := "UIIT_CTL_GUILD_SECESSION"
 ## Round 822: the master's disband line (FUN_006fcd60 case 0x14).
 const GUILD_BREAK_STRID := "UIIT_CTL_GUILD_BREAK"
+## Round 844: the guild storage's line, item 0x1d (READ FUN_006fcd60 case
+## 0x1d: "Use guild storage. (level 2 or above)").
+const GUILD_WAREHOUSE_STRID := "UIIT_CTL_GUILD_WAREHOUSE"
 
 ## The job guilds' join lines (round 526), by job kind: 1 Trader, 2 Thief
 ## ("Robber"), 3 Hunter (docs/protocol/jobs.md, "Three job kinds"). The real
@@ -411,9 +414,12 @@ static func guild_services(guild_id: int, is_master: bool) -> Array:
 		return [Service.new("guild", "Guild")]
 	if guild_id == 0:
 		return [Service.new("guild_create", "Create a new guild", GUILD_CREATE_STRID)]
+	# Round 844: item 0x1d, the guild storage, follows the member's and the
+	# master's own lines in both branches (FUN_00700440, READ).
+	var storage := Service.new("guild_storage", "Use guild storage. (level 2 or above)", GUILD_WAREHOUSE_STRID)
 	if not is_master:
-		return [Service.new("guild_leave", "Leave guild.", GUILD_SECESSION_STRID)]
-	return [Service.new("guild_disband", "Disband the guild", GUILD_BREAK_STRID)]
+		return [Service.new("guild_leave", "Leave guild.", GUILD_SECESSION_STRID), storage]
+	return [Service.new("guild_disband", "Disband the guild", GUILD_BREAK_STRID), storage]
 
 ## Whether the store window shows Repair and Repair All for the NPC with this
 ## codename (round 514). True exactly when the server registers interaction

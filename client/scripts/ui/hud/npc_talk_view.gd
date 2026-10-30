@@ -191,6 +191,13 @@ static func tax_line(text: String) -> String:
 
 ## The label's text for its lines: each menu line in beige, the one under the
 ## mouse in orange, the rest as composed.
+## A line's own resting colour by its key (round 844): the guild storage's
+## line is drawn 0xffff4a4a below guild level 2 (READ FUN_006fcd60 case 0x1d:
+## 0x64f8a0(.., 0xffff4a4a, 0xffff8a00, 0xffff8a00) when the guild block's
+## level byte is under 2). World3D sets it with the lines.
+static var line_colours := {}
+const COLOUR_MENU_LOW_LEVEL := Color8(0xff, 0x4a, 0x4a)
+
 static func coloured(lines: PackedStringArray, hovered: String) -> String:
 	var out := PackedStringArray()
 	for line in lines:
@@ -198,7 +205,7 @@ static func coloured(lines: PackedStringArray, hovered: String) -> String:
 			var open_end := line.find("]")
 			var key := line.substr(5, open_end - 5)
 			var inner := line.substr(open_end + 1, line.length() - open_end - 1 - 6)
-			var colour := COLOUR_MENU_ACTIVE if key == hovered and hovered != "" else COLOUR_MENU
+			var colour: Color = COLOUR_MENU_ACTIVE if key == hovered and hovered != "" else line_colours.get(key, COLOUR_MENU)
 			out.append("[url=%s][color=#%s]%s[/color][/url]" % [key, colour.to_html(false), inner])
 		else:
 			out.append(line)
