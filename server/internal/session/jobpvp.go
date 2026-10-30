@@ -130,7 +130,9 @@ func pvpRefusal(ctx context.Context, d combatDeps, attacker world.Entity, t pvpT
 		return untouchableCode
 	}
 	own := t.owner.CharacterID == attacker.CharacterID
-	return jobs.AttackCode(pvpFighter(ctx, d, attacker), pvpFighter(ctx, d, t.owner), own, false)
+	// Round 844 (lane V): two guilds at war fight (guildwar.go).
+	return jobs.AttackCodeWar(pvpFighter(ctx, d, attacker), pvpFighter(ctx, d, t.owner), own, false,
+		!own && guildsHostile(ctx, attacker.CharacterID, t.owner.CharacterID))
 }
 
 // untouchableCode is 0x3020 (s:0x5291d0's body-mode test).
@@ -330,6 +332,17 @@ func pvpApply(ctx context.Context, d combatDeps, attacker world.Entity, t pvpTar
 			// the COS's owner, s:0x4e1f60; the character bonus needs a PC
 			// victim).
 			jobKillCredit(ctx, d, attacker, t.owner, false)
+			// Round 844 (lane V): a hostile member's COS is a war kill at
+			// its own level (s:0x5c721x; "or [%s]'s belonging").
+			if guildsHostile(ctx, attacker.CharacterID, t.owner.CharacterID) {
+				cosWorld.mu.Lock()
+				lvl := t.cos.rec.Level
+				if lvl <= 0 {
+					lvl = t.cos.row.Level
+				}
+				cosWorld.mu.Unlock()
+				guildWarKill(ctx, attacker, t.owner, lvl, true)
+			}
 		}
 	} else {
 		hp, _, err := d.chars.ApplyDamage(ctx, t.char, out.total)
@@ -344,7 +357,9 @@ func pvpApply(ctx context.Context, d combatDeps, attacker world.Entity, t pvpTar
 			sd := strikeDeps{chars: d.chars, eq: d.eq, items: d.items, mp: d.mp, hub: d.hub, potions: d.potions}
 			killerSuit := jobStateNow(ctx, attacker.CharacterID) != jobs.StateNone
 			job := jobs.JobDeathByPlayer(killerSuit, jobStateNow(ctx, attacker.CharacterID), jobStateNow(ctx, t.char))
-			setDeathCause(t.char, deathCause{job: job, killerLevel: attacker.Level, byPlayer: true})
+			// Round 844 (lane V): cause 5, a war death (guildwar.go).
+			war := !job && guildsHostile(ctx, attacker.CharacterID, t.char)
+			setDeathCause(t.char, deathCause{job: job, killerLevel: attacker.Level, byPlayer: true, war: war})
 			res, err := finishKill(ctx, sd, t.char, monsterStrikeOutcome{hp: 0})
 			if err == nil && res.died {
 				out.died = true
@@ -354,6 +369,9 @@ func pvpApply(ctx context.Context, d combatDeps, attacker world.Entity, t pvpTar
 				out.hp = res.hp
 				if job {
 					jobKillCredit(ctx, d, attacker, t.owner, true)
+				}
+				if war {
+					guildWarKill(ctx, attacker, t.owner, t.owner.Level, false)
 				}
 			}
 		}
@@ -558,6 +576,9 @@ type deathCause struct {
 	job         bool
 	killerLevel int
 	byPlayer    bool
+	// war is cause 5 (round 844, lane V; s:0x4e6590): killed by a member of
+	// a guild at war with the victim's.
+	war bool
 }
 
 var deathCauses sync.Map // int64 -> deathCause

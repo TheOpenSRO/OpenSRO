@@ -16,7 +16,9 @@ const OP_END := 0x34B4
 const OP_UPDATE := 0x38F5
 ## Round 842: the union record (UnionData).
 const OP_UNION_INFO := UnionData.OP_UNION_INFO
-const SERVER_OPCODES := [OP_BEGIN, OP_CHUNK, OP_END, OP_UPDATE, OP_UNION_INFO]
+## Round 844 (lane V): the hostile list (HostileData).
+const OP_HOSTILE_LIST := 0x3109
+const SERVER_OPCODES := [OP_BEGIN, OP_CHUNK, OP_END, OP_UPDATE, OP_UNION_INFO, OP_HOSTILE_LIST]
 
 ## Member classes (the row fill 0x5b6b40, READ).
 const CLASS_MASTER := 0
@@ -71,6 +73,9 @@ var votes: Array = []
 ## Round 842: the guild's union (0x3102, 0x38F5 types 0x0d / 0x12), which
 ## guild lines are coloured by (GuildLineColour).
 var union := UnionData.new()
+## Round 844 (lane V): the guild's wars (HostileData: 0x3109, 0x38F5's war
+## types), which guild lines turn red by.
+var hostile := HostileData.new()
 
 ## The buffer between 0x34B3 and 0x34B4.
 var _buffer := PackedByteArray()
@@ -112,6 +117,9 @@ func handle(data: PackedByteArray, op: int) -> void:
 		OP_UNION_INFO:
 			if not union.parse_info(data):
 				print("GuildData: malformed union record (%d bytes)" % data.size())
+		OP_HOSTILE_LIST:
+			if not hostile.parse_list(data, guild_id):
+				print("GuildData: malformed hostile list (%d bytes)" % data.size())
 
 ## One 0x38F5 (FUN_00887330's switch on the u8 type; READ, docs/protocol/
 ## guild.md "Membership (round 822)"). Types it does not know, and any
@@ -121,6 +129,10 @@ func apply_update(data: PackedByteArray) -> void:
 	var r := _Reader.new(data)
 	var kind := r.u8()
 	if not r.ok or (not in_guild and kind != GuildOpsNet.UPDATE_DISBANDED):
+		return
+	# Round 844 (lane V): the war types (HostileData).
+	if GuildWarNet.WAR_UPDATE_TYPES.has(kind):
+		hostile.apply_update(kind, r, self)
 		return
 	match kind:
 		GuildOpsNet.UPDATE_REFRESH:
@@ -335,6 +347,7 @@ func clear() -> void:
 	votes = []
 	# Round 842: no guild, no union (FUN_009990f0 clears the whole record).
 	union.clear()
+	hostile.clear()
 	changed.emit()
 
 class _Reader:

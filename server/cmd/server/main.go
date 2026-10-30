@@ -2780,6 +2780,9 @@ func main() {
 			Chars: chars, Items: refItems, Trades: trades}),
 		// Round 844: the players' unions (0x70FB..0x70FD, session/unionops.go).
 		session.UnionHandler(),
+		// Round 844 (lane V): guild war (session/guildwar.go): 0x7110..0x7114
+		// and its 1 s check; the wars live in the guild store.
+		session.GuildWarHandler(chars, guilds, hub),
 		// Chat (round 634): the five channels, whispers, the global
 		// chatting item and the GM's type-3 line.
 		session.ChatHandler(session.ChatDeps{Hub: hub, Parties: parties, Guilds: guilds, Inv: inv, Items: refItems, Gate: gmGate}),

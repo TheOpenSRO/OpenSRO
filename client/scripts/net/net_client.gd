@@ -506,6 +506,10 @@ signal duel_ended(ended: DuelNet.Ended)
 ## Round 834: the exchange on the retail wire (ExchangeNet). The request
 ## box (0x3080 kind 1) with the asker's id.
 signal exchange_requested(asker_id: int)
+## Round 844 (lane V): 0x3080 kind 10, a guild's proclamation of war
+## (GuildWarNet.decode_proclamation), and the war requests' replies.
+signal guild_war_proclaimed(info: Dictionary)
+signal guild_war_result(op: int, result: Dictionary)
 ## 0xB081: ok with the partner's id, or the refusal's code.
 signal exchange_request_result(ok: bool, value: int)
 ## 0x3085: the target's side of the start, with the asker's id.
@@ -1872,6 +1876,11 @@ func _init() -> void:
 			var r := GuildManageNet.decode_result(op, data)
 			if r != null:
 				guild_manage_result.emit(r))
+	# Round 844 (lane V): the war requests' replies (c:0x881ec0, 0x881f30,
+	# 0x881f80, 0x885ae0).
+	for op in GuildWarNet.RESULT_OPCODES:
+		register_handler(op, func(data: PackedByteArray) -> void:
+			guild_war_result.emit(op, GuildWarNet.decode_result(op, data)))
 	# B0F0's success carries the guild block (c:0x8852c0 -> FUN_009965e0).
 	guild_ops.created.connect(func(block: PackedByteArray) -> void:
 		if guild_data.parse(block):
@@ -1970,6 +1979,22 @@ func guild_manage(op: int, payload: PackedByteArray) -> void:
 
 func guild_expel(member_name: String) -> void:
 	_send(GuildOpsNet.OP_EXPEL, GuildOpsNet.encode_expel(member_name))
+
+## Round 844 (lane V): guild war's requests (GuildWarNet).
+func guild_war_declare(target_guild: String, period: int, point_index: int, gold: int) -> void:
+	_send(GuildWarNet.OP_DECLARE, GuildWarNet.encode_declare(target_guild, period, point_index, gold))
+
+func guild_war_answer(accept: bool) -> void:
+	_send(GuildWarNet.OP_REQUEST, GuildWarNet.encode_answer(accept))
+
+func guild_war_end(war_id: int) -> void:
+	_send(GuildWarNet.OP_END, GuildWarNet.encode_u32(war_id))
+
+func guild_war_ask_reward(npc_uid: int) -> void:
+	_send(GuildWarNet.OP_ASK_REWARD, GuildWarNet.encode_u32(npc_uid))
+
+func guild_war_claim(npc_uid: int) -> void:
+	_send(GuildWarNet.OP_CLAIM, GuildWarNet.encode_u32(npc_uid))
 
 ## Box 0x0F's answer; nothing when no invitation is open.
 func guild_answer(accept: bool) -> void:
@@ -3216,6 +3241,12 @@ func _dispatch(p: Packet) -> void:
 			# Round 834: 0x3080 kind 1 is the exchange's (c:0x88aa60 case 1).
 			if p.opcode == PartyNet.OP_REQUEST and p.data.size() >= 5 and p.data[0] == ExchangeNet.REQUEST_KIND:
 				exchange_requested.emit(p.data.decode_u32(1))
+				return
+			# Round 844 (lane V): kind 10 is a proclamation of war (0x88aea8).
+			if p.opcode == PartyNet.OP_REQUEST and p.data.size() >= 1 and p.data[0] == GuildWarNet.REQUEST_WAR:
+				var info := GuildWarNet.decode_proclamation(p.data)
+				if not info.is_empty():
+					guild_war_proclaimed.emit(info)
 				return
 			# Round 844: 0x3080 kind 6 is the union's (c:0x88afb4).
 			if p.opcode == PartyNet.OP_REQUEST and union_ops.handle(p.opcode, p.data):
