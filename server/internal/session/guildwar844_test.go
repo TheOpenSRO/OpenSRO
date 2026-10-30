@@ -42,7 +42,11 @@ func TestRound844WarFlow(t *testing.T) {
 	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
 		return gateway.Chain(testGuildHandler(t, chars, guilds, hub), GuildWarHandler(chars, guilds, hub))
 	})
-	t.Cleanup(func() { guildWarBox.Store(nil); loadWarCache(context.Background(), guild.NewMemStore()) })
+	t.Cleanup(func() {
+		guildWarBox.Store(nil)
+		unionHostile.Store(nil)
+		loadWarCache(context.Background(), guild.NewMemStore())
+	})
 	ctx := context.Background()
 	for _, id := range []int64{f.aria, f.bram} {
 		c, _ := f.chars.GetByID(ctx, id)
@@ -124,6 +128,10 @@ func TestRound844WarFlow(t *testing.T) {
 	if !guildsHostile(ctx, f.aria, f.bram) || guildsHostile(ctx, f.aria, f.aria) {
 		t.Fatal("hostility")
 	}
+	// The union request's test (lane U's unionops.go, 0x4c42) sees the war.
+	if !unionGuildsHostile(ctx, ga.GuildID, gb.GuildID) {
+		t.Fatal("the union request's hostility test does not see the war")
+	}
 	// The blow between them is allowed whatever the level (s:0x5293a0).
 	low := jobs.Fighter{Job: jobs.StateNone, Level: 1}
 	if code := jobs.AttackCode(low, low, false, false, true); code != 0 {
@@ -187,7 +195,7 @@ func TestRound844WarFlow(t *testing.T) {
 	if n, _ := guilds.Booty(ctx, ga.GuildID); n != 200000 {
 		t.Fatalf("Alpha's booty %d", n)
 	}
-	if guildsHostile(ctx, f.aria, f.bram) || guildAtWar(ga.GuildID) {
+	if guildsHostile(ctx, f.aria, f.bram) || guildAtWar(ga.GuildID) || unionGuildsHostile(ctx, ga.GuildID, gb.GuildID) {
 		t.Fatal("still hostile after the end")
 	}
 

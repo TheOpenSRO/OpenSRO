@@ -138,6 +138,12 @@ func GuildWarHandler(chars character.Store, guilds guild.Store, hub *world.Hub) 
 	if ws != nil {
 		guildWarBox.Store(d)
 		gm.GuildWars = GuildWarCommands{}
+		// The union request's 0x4c42 (lane U's unionops.go asks this).
+		hostile := func(_ context.Context, a, b int64) bool {
+			_, at := cachedWarBetween(a, b)
+			return at
+		}
+		unionHostile.Store(&hostile)
 		loadWarCache(context.Background(), ws)
 		warTickerOnce.Do(func() { go warTicker() })
 	}
