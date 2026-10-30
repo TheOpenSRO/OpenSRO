@@ -151,3 +151,8 @@ func _run() -> void:
 	box.build(builder, StoreMessageBox.Kind.BUY, {"name": "Crest", "count": 1, "max": 1, "unit_price": 1000000, "gp_unit_price": 20000})
 	var gp_row := box.get_node_or_null("GPRow")
 	_check(gp_row != null and box.gp_unit_price == 20000, "the buy box has the GP row")
+
+	# 5. The vote's event box: caption UIIT_STT_EVENTGUIDE ("Alarm").
+	var ev: PartyMatchConfirm = panels.call("open_guild_event_box", "UIIT_MSG_MRELEASEERR_NOTVOTETIME")
+	_check(ev != null and ev.caption.text == builder.resolve_text("UIIT_STT_EVENTGUIDE"),
+		"the event box's caption is UIIT_STT_EVENTGUIDE (got %s)" % [ev.caption.text if ev != null else "none"])

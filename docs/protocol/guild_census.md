@@ -49,9 +49,9 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | 0x70FF | fortress position {u32 member, u8 role} | button 41, CIFGuildPositionGrant | s:0x517e30 -> 0x5c7bb0 | out of scope (fortress war) | -- |
 | 0x7103 | master hand-over {u32 NPC, u32 new master} | master's line 0x18, CIFGuildMasterLeave | s:0x517300 -> 0x5c6900 | **built** | G |
 | 0x7104 | permissions {u8 n, n x {u32 id, u32 mask}} | button 38's pane CNIFGuildGrantPow | s:0x5173e0 -> 0x5c69f0 | **built** | G |
-| 0x7105 | ask for a master-release vote {u32 NPC} | line 0x19 UIIT_CTL_MASTERRELEASE, box type 2 | s:0x517600 -> 0x5c6ac0 | missing (OPEN below) | G |
-| 0x7106 | open the vote {u32 NPC} | line 0x1a UIIT_CTL_MRELEASE_VOTE | CVoteManager s:0x5e7f00 | missing | G |
-| 0x7107 | vote {u32 NPC, u32 candidate, u8 choice} | CIFGuildMasterElection | s:0x517730 -> 0x5e7ea0 | missing | G |
+| 0x7105 | ask for a master-release vote {u32 NPC} | line 0x19 UIIT_CTL_MASTERRELEASE, box type 2 | s:0x517600 -> 0x5c6ac0 | **built** (G, part 2) | G |
+| 0x7106 | open the vote {u32 NPC} | line 0x1a UIIT_CTL_MRELEASE_VOTE | CVoteManager s:0x5e7f00 | **built** (G, part 2) | G |
+| 0x7107 | vote {u32 NPC, u32 candidate, u8 choice} | CIFGuildMasterElection | s:0x517730 -> 0x5e7ea0 | **built** (G, part 2) | G |
 | 0x7110 | war declaration {str, u8, u32, u8, u32} | CIFGuildWar | s:0x518820 | missing | V |
 | 0x7112 | hostile-guild action {u32} | NIFHostileGuild | s:0x518930 | missing | V |
 | 0x7113 | war NPC {u32 NPC} | box type 3 | s:0x518a80 | missing | V |
@@ -61,7 +61,8 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | 0x7258 | SP -> GP donation {u32 SP} | donation button 250, CIFGuildPointUp | s:0x517cc0 -> 0x5c7880 | **built** | G |
 | 0x7259 | guild soldier ability {u32 NPC, u8 bit} | the mercenary NPC | s:0x517d60 -> 0x5c7900 | out of scope (fortress war) | -- |
 | 0x725A | dismiss the hired mercenaries {} | c:0x7a0980 | s:0x517d20 | out of scope (fortress war) | -- |
-| 0x7031 | answer the guild recall {u32, u32, u8} | CIFGuildSummonReq, after 0x7030 | s:0x4ee1d0 | missing (OPEN below) | G |
+| 0x7031 | answer the guild recall {u32, u32, u8} | CIFGuildSummonReq, after 0x7030 | s:0x4ee1d0 | **built** (G, part 2) | G |
+| 0x7501 | GP usage history {u32 NPC} | line 0x43 | s:0x517e90 | **built** (G, part 2) | G |
 | 0x704C + option 0xC6 | crest register / delete | the crest scrolls | s:0x5c7600..0x5c77d0 | built (OURS bytes channel 0x0130) | 824 |
 | 0x7202 / 0x7203 | not guild: skill and mastery withdrawal | -- | -- | -- | -- |
 
@@ -77,8 +78,8 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | 0x3253 / 0x3254 / 0x3255 | a buffered stream, INFERRED to be the storage | missing | H |
 | 0x3256 | grant name | built | 814 |
 | 0x3257 | crest revision | built | 824 |
-| 0x3908 | master-release vote: kind 1 a vote record, kind 3 the result (`UIIT_MSG_MRELEASE_BEELETED` / `_BROKEN`) | missing | G |
-| 0x7030 | guild recall prompt {u32, u32, u32} | missing | G |
+| 0x3908 | master-release vote: kind 1 a vote record, kind 3 the result (`UIIT_MSG_MRELEASE_BEELETED` / `_BROKEN`), 4 a ballot moved, 5 the time left | **built** (G, part 2) | G |
+| 0x7030 | guild recall prompt {u32 job, u32 caster, u32 seconds} | **built** (G, part 2) | G |
 | B0F0..B0F4, B0F8 | membership replies | built | 822 |
 | B0F9 | notice: {1} shows `_COMMON_KNOW_REMIND_UPDATE` | **built** | G |
 | B0FA | level-up | **built** | G |
@@ -86,7 +87,9 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | B0FF | position grant | out of scope (fortress war) | -- |
 | B103 | hand-over: {1} closes the talk and shows `UIIT_MSG_MLEAVE_SUCCESS` | **built** | G |
 | B104 | permissions: {1}, no text | **built** | G |
-| B105 / B106 / B107 | the vote's replies (category 0x15 for B106 / B107) | missing | G |
+| B105 / B106 / B107 | the vote's replies (category 0x15 for B106 / B107) | **built** (G, part 2) | G |
+| B031 | the recall answer's reply {1} / {2, code} | **built** (G, part 2) | G |
+| B501 | the GP usage history {1, n x {time, name, GP, kind}} | **built** (G, part 2) | G |
 | B110..B114 | war replies | missing | V |
 | B250..B252 | storage replies | missing | H |
 | B256 | grant name | built | 814 |
@@ -154,11 +157,12 @@ The community view 177 (friends, blocking, letters) is built (595, 834). Letters
 | CIFGuildPointUp (360 x 240) | ifguildpointup.txt | button 250 | **built** (G) |
 | (ifguilddonategp.txt) | an older donation layout | no reference in the client code found | -- |
 | CIFGuildMasterLeave (249 x 315) + slot | ifguildmasterleave*.txt | line 0x18 | **built** (G) |
-| CIFGuildMasterElection (274 x 315) + slot | ifguildmasterelection*.txt | line 0x1a | missing (G) |
+| CIFGuildMasterElection (274 x 315) + slot | ifguildmasterelection*.txt | line 0x1a | **built** (G, part 2) |
 | CIFGuildPositionGrant (286 x 310) | ifguildpositiongrant.txt | button 41 | out of scope (fortress war) |
 | CIFGuildWar / WarRequest / WarAgree / WarConfirm | ifguildwar*.txt | war | missing (V) |
 | CIFStorageRoom (254 x 317) | -- | line 0x1d | missing (H) |
-| CIFGuildSummonReq (360 x 160) | -- | 0x7030 | missing (G) |
+| CIFGuildSummonReq (360 x 160) | -- | 0x7030 | **built** (G, part 2) |
+| CNIFGPHistoryWnd (464 x 311) | res_ui\guild_gp.2dt | line 0x43 | **built** (G, part 2) |
 | ifguildrelation(s).txt | -- | the old relations window | U / V |
 
 ## 5. The guild manager's talk lines (interaction 0x0f, FUN_00700440 c:0x70105e..0x701170)
@@ -171,10 +175,10 @@ The community view 177 (friends, blocking, letters) is built (595, 834). Letters
 | 0x18 | UIIT_CTL_MASTERLEAVE "Transfer leadership" | master | **built** (G) |
 | 0x1b | UIIT_CTL_GUILD_COMPENSATION "War reward gold received" (0x7114) | master | missing (V) |
 | 0x1c | UIIT_CTL_GUILD_SECESSION | member | built (822) |
-| 0x19 or 0x1a (by 0x99da70) | UIIT_CTL_MASTERRELEASE / UIIT_CTL_MRELEASE_VOTE | in a guild | missing (G, OPEN) |
+| 0x19 or 0x1a (by 0x99da70) | UIIT_CTL_MASTERRELEASE / UIIT_CTL_MRELEASE_VOTE | in a guild | **built** (G, part 2) |
 | 0x1d | UIIT_CTL_GUILD_WAREHOUSE | in a guild | missing (H) |
-| 0x43 | UIIT_STT_GUILD_GP_HISTORY "GP Usage History" | in a guild | missing (G; its window and request are not traced, OPEN) |
-| store lines | the guild store's goods (the STORE_*_GUILD tabs, PaymentDevice 8 = GP, c:0x617360) | in a guild | partial: the store opens; buying with GP (master only, 0x18c4 / 0x18c5) is not modelled |
+| 0x43 | UIIT_STT_GUILD_GP_HISTORY "GP Usage History" | in a guild | **built** (G, part 2): 0x7501 -> B501 -> CNIFGPHistoryWnd |
+| store lines | the guild store's goods (the STORE_*_GUILD tabs, PaymentDevice 8 = GP, c:0x617360) | in a guild | **built** (G, part 2): the GP price on the tooltip and the buy box, the master-only GP purchase (0x18c4 / 0x18c5), level < 3 refused |
 
 ## 6. GP: earned and spent
 
@@ -183,7 +187,7 @@ The community view 177 (friends, blocking, letters) is built (595, 834). Letters
 | earned | a member's skill points 1:1, in batches of 10 (round 272) | built (525) |
 | donated | SP -> GP, 0x7258. The rate is OPEN; OpenSRO uses 1:1, INFERRED | **built** (G) |
 | level-up | 5400 / 50400 / 135000 / 378000 GP plus 3M / 9M / 15M / 21M gold | built (528), the NPC window (G) |
-| guild store goods | PaymentDevice 8 prices, the master only | missing (G, OPEN: the store's GP lane) |
+| guild store goods | PaymentDevice 8 prices, the master only | **built** (G, part 2); logged as GP history kind 6 |
 | soldier abilities | 10,000 GP reset / 50,000 GP buy, plus 500,000 gold | out of scope (fortress war) |
 | mercenary attribute | FUN_005c7900 / job 0x2b | out of scope (fortress war) |
 
@@ -200,12 +204,10 @@ There is no fortress tab in the guild window: its three tabs are info, relations
 
 ## 8. OPEN
 
-- **The master-release vote** (0x7105-0x7107, 0x3908, CIFGuildMasterElection).
-  - The GameServer's checks are read: a vote already running 0x4c37; the master online 0x4c33;
-    then `_Guild_Master_Election_Available(master, 45)`, where 45 is INFERRED to be days absent.
-  - The vote's rules live in the database procedures and CVoteManager, which were not read
-    through.
-- **GP Usage History (line 0x43)**: its window and request were not traced.
-- **The guild recall (0x7030 / 0x7031)**: the fields' meanings are not read.
+- **Who is on the master-release vote's list.** The procedure keeps offline members
+  whose last logout was 7 days ago or less, but the client's `UIIT_MSG_MRELEASEERR_NOTVOTING`
+  says three days. OpenSRO follows the procedure; which value retail ran is OPEN.
+- **The SP:GP donation rate** is the ShardManager's. OpenSRO uses 1:1 (INFERRED).
 - **The notice filter's configured word list** (s:0x7312f0 beyond the two quotes): not read.
-- **The guild store's GP purchases**: not modelled.
+- **The recall's 30 s gauge**: the server moves the member after 0.1 s. The gauge is INFERRED to
+  be cosmetic.

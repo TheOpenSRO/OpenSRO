@@ -10195,6 +10195,7 @@ func open_guild_gp_history(entries: Array) -> GuildGPHistoryWindow:
 		guild_gp_history_window = w
 	var gw := guild_gp_history_window
 	gw.fill(entries)
+	print("GUILD844B history %s" % [gw.lines])
 	gw.show()
 	gw.move_to_front()
 	gw.position = (get_viewport_rect().size - gw.size) / 2.0
@@ -10207,6 +10208,9 @@ func open_guild_event_box(text: String) -> PartyMatchConfirm:
 	if box == null:
 		return null
 	box.name = "GuildEventBox"
+	# Its caption is UIIT_STT_EVENTGUIDE, "Alarm" (READ, as above).
+	if box.caption != null:
+		box.caption.text = box.text("UIIT_STT_EVENTGUIDE", "Alarm")
 	add_child(box)
 	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
 	_qa_print_buttons(box, str(box.name))

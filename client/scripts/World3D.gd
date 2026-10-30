@@ -18175,6 +18175,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       underbar by GetChild path (round 840)
 #   guildnode:<id>[,..] / rguildnode:..  left (right) click a guild window
 #                       control by GetChild path (round 844)
+#   cmd:<line>          one console line at that tick (round 844)
 #   storebuy:<id> / storetip:<id>  the store's buy box for a good (as its
 #                       drop on the bag opens it) / its tooltip lines (round 844)
 #   hudnode:<path>      left click a control by node path under HudPanels
@@ -19220,6 +19221,10 @@ func _qa_input_step() -> void:
 				var hh := get_viewport().gui_get_hovered_control()
 				_qa_input_report = "%s at %s (hovered %s; pressed %s)" % [action, hn.get_global_rect().get_center(),
 					hh.get_path() if hh != null else "nothing", (hn as BaseButton).button_pressed if hn is BaseButton else "-"]
+		"cmd":
+			# Round 844 part 2: one console line at this tick (as
+			# OPENSRO_QA_COMMANDS' at tick 60).
+			_run_qa_commands(arg)
 		"storebuy":
 			# Round 844 part 2: the buy box for a store good, as putting it
 			# down on the bag opens it (HudPanels._confirm_buy; not a drag).

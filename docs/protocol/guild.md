@@ -915,3 +915,146 @@ settles round 821's INFERRED defaults.
   `UIIT_MSG_QUESTION_GUILD_LEVEL_UP`.
 - The server checks the NPC (else 3), then runs the "Levelling up" ladder above.
 - B0FA {1} goes back, and type 5 mask 0x0c to the members.
+
+## The vote, the GP history, the recall and the guild goods (round 844, lane G part 2)
+
+The same sources as above. The ShardManager is `sm:`. The database procedures were recovered as
+text from the shard backup on the render box. Each claim is labelled.
+
+### The master-release vote (0x7105-0x7107, 0x3908; lines 0x19 / 0x1a)
+
+**The client.**
+- The guild manager shows every member one line after the master's own lines (FUN_00700440,
+  READ):
+  - 0x19 `UIIT_CTL_MASTERRELEASE` "Vote for a leader";
+  - or, while the client knows of a vote (c:0x99da70), 0x1a `UIIT_CTL_MRELEASE_VOTE`.
+- Line 0x19 asks a box (type 2), and its OK sends 0x7105 {u32 NPC} (c:0x81ff50).
+- Line 0x1a sends 0x7106 {u32 vote} when no state is cached (c:0x820010). B106 opens
+  CIFGuildMasterElection (274 x 315, `resinfo\ifguildmasterelection*.txt`):
+  - seven rows, each a radio check, the name and the votes;
+  - the time left, "%d%s" in minutes;
+  - OK enabled only with a row ticked, sending 0x7107 {u32 NPC, u32 vote, u8 index}.
+- The replies, READ:
+  - B105 {1}: `UIIT_MSG_MRELEASE_VOTING` in an event-guide box.
+  - B105 {2, 0x4c33}: `UIIT_MSG_MRELEASEERR_NOTVOTETIME`.
+  - B106 {1, u32 vote, u32 ms, u8 n, n x {u32 character, u8 votes}}.
+  - B106 / B107 {2, code}, category 0x15: 0x5008 is `UIIT_MSG_MRELEASEERR_NOTVOTING`.
+- 0x3908 updates the vote:
+  - kind 1: a vote started {u32 vote, u8, u32 ms};
+  - kind 3: it ended {u32 vote, u8 result, [u32 winner]}. Result 1 shows
+    `UIIT_MSG_MRELEASE_BEELETED` with the guild and the winner; result 2 shows `_BROKEN`;
+  - kind 4: a ballot moved {u32 vote, u8 old (0xff none), u8 new, u8 count};
+  - kind 5: the time left {u32 vote, u32 ms}.
+- The guild block's tail carries a running vote, u8 n x {u32 vote, u8, u32 ms}. The client then
+  shows "Vote for a leader is in progress." once (c:0x8856e9).
+
+**The rules** (READ: s:0x5c6ac0, CVoteManager s:0x5e7f00 / 0x5e7ea0, sm:0x436ea0, sm:0x461a50,
+and the procedures `_Guild_Master_Election_Available` and `_Guild_Is_Master_Candidators`):
+- **Who may start it.** Any member, at the guild manager. The server refuses, in order:
+  1. a vote already running: 0x4c37;
+  2. the master online: 0x4c33;
+  3. the master's last logout less than **45 days** ago: 0x4c33. The days are
+     `convert(int, getdate()) - convert(int, LastLogout)`. OpenSRO counts calendar days in UTC
+     (INFERRED).
+- **The list.** Every member but the master who is online, or whose last logout was **7 days
+  ago or less** (the procedure's `@minus <= 7`, READ). The client's
+  `UIIT_MSG_MRELEASEERR_NOTVOTING` says three days. OpenSRO follows the procedure; which value
+  retail ran is OPEN.
+- **The vote lasts 600,000 ms** (`push 0x927c0`). The ShardManager checks it every 10 s. After
+  the first minute it broadcasts the time left (kind 5).
+- **The winning rule.** A candidate wins the moment `votes * 100 / n >= 60.0`, where n is the
+  list's size (`fcomp [0x79ae30]`). Each voter holds one ballot and may move it. The vote breaks
+  when time runs out with no winner (kind 3 result 2).
+- **The winner** takes the guild through the hand-over's own path. While a vote runs:
+  - a hand-over is refused with 0x4c1e;
+  - a listed member cannot leave (0x4c38) or be expelled (0x4c39);
+  - disbanding ends the vote.
+- **A ballot** is refused when:
+  - the NPC is out of reach: 3;
+  - there is no such vote: 0x5006;
+  - the voter is not listed: 0x5008;
+  - the index is out of range: 2 (OURS).
+
+**What OpenSRO adds** (OURS):
+- Each member's last logout is kept on `guild_members.last_logout`, a column the schema code adds.
+  The original keeps it as `_CHAR.LastLogout`.
+- The vote itself lives in memory, as the ShardManager's does. A server stop ends it without a
+  message.
+- The constants are `guild.VoteMasterAbsentDays`, `VoteEligibleDays`, `VoteDuration`,
+  `VoteWinPercent` and `VoteTick`.
+
+### GP usage history (line 0x43; 0x7501 / B501)
+
+- **The client** (c:0x8206c0, c:0x885c20, CNIFGPHistoryWnd c:0x5b9b30 / 0x5b9d70, READ):
+  - Line 0x43 `UIIT_STT_GUILD_GP_HISTORY` sends 0x7501 {u32 NPC}.
+  - B501 {1, u8 n, n x {u32 time_t, str name, u32 GP, u8 kind}} fills `res_ui\guild_gp.2dt`
+    (464 x 311). Each entry becomes a `UIIT_MSG_GUILD_GP_HISTORY` line, with the local date and
+    time and an empty line after it.
+  - The kinds 0..8 are, in order: the fortress buff, structures, NPCs, guards and items; then
+    guild growth (5), guild item purchases (6), the fortress dungeon and misc.
+- **The server** (s:0x517e90, READ):
+  - Out of reach of a guild manager: B501 {2, 3}. No guild: {2, 0x4c0d}. No rank is checked.
+  - The ShardManager logs only GP *spent*: the level-up is kind 5 (sm:0x438bb0) and a store good
+    is kind 6 (s:0x4e9bce).
+  - It loads `TOP 100 ... UsedTime >= GETDATE() - 30 ORDER BY ID DESC` and drops the oldest past
+    100 entries.
+- **OpenSRO** keeps the history in `guild_gp_history`, a table the schema code creates (OURS),
+  under the same 100-entry and 30-day limits.
+
+### The guild recall (0x7030 / 0x7031 / B031; itemdata 9267)
+
+- **The scroll.** "Guild Member Summon Scroll" is TypeID 3/3/12/3 and sits on the guild store's
+  tab. Its fields (READ):
+  - Param1: 3,600,000 ms, the reuse;
+  - Param2: 30,000 ms, the members' gauge;
+  - Param3: 5, the guild level it needs.
+- **The use** (s:0x49afe0, READ) is refused, in order:
+  1. no guild: 0x4c0d;
+  2. inside an instance world: 0x18c1;
+  3. not the master, or the guild under Param3's level: 0x18bc;
+  4. not in a town: 0x18c2;
+  5. in region 0x60b6 (the thieves' town): 0x18c7;
+  6. the reuse running: 0x185b.
+
+  Then the scroll is spent.
+- **The question.** The ShardManager (sm:0x434f90 / 0x437e70) asks every online member but the
+  master: 0x7030 {u32 job, u32 caster, u32 seconds = Param2 / 1000}. The job lives 180 s.
+- **The member's box.** CIFGuildSummonReq is 360 x 160, with Yes / No and its own 180 s timer
+  (c:0x660220). The archive's English `UIIT_MSG_GUILD_RECALL_ANSWER` is empty, so OpenSRO shows
+  the Korean row's meaning in its place (OURS).
+- **The answer** (s:0x4ee1d0, READ): 0x7031 {u32 job, u32 caster, u8 yes}.
+  - A dead, teleporting, trading or talking member gets {2, 0x18c1}.
+  - Otherwise B031 {1} goes back, whatever the answer.
+  - A yes moves the member to where the master stood when the scroll was used. The delay is
+    floored to 0.1 s (0x3833 -> s:0x5ba690). The client's 30 s gauge after B031 {1} is cosmetic
+    (INFERRED from that delay).
+
+### The guild store's goods, bought with GP (master only)
+
+- **The prices.** The goods' GP prices are the archive's `refpricepolicyofitem` rows with
+  PaymentDevice 8, on the packages the guild manager's tabs sell. MEASURED in this archive, five
+  goods carry one:
+  - 9267, the recall scroll: 1,000 GP;
+  - 9268 / 9269, the guild crest register / delete: 20,000 GP each;
+  - 9270 / 9271, the union crest register / delete: 30,000 GP each.
+- **The client** (READ):
+  - The tooltip adds "%s : %I64d%s" with `UIIT_STT_GUILD_POINT` after the gold price
+    (c:0x6784a0, `test bl,0x8`).
+  - The buy box adds a second row with the GP times the count (c:0x7c4276).
+  - The guild store does not open below guild level 3: `UIIT_MSG_GUILD_STORE_LIMIT`
+    (c:0x702161).
+- **The server** (CheckCurrencyRequirement s:0x617360, READ) refuses, in order:
+  1. too little gold: 0x180f;
+  2. no guild or not the master: 0x18c4 `UIIT_MSG_GUILD_STORE_BUY_LIMIT`;
+  3. the guild short of GP: 0x18c5 `UIIT_MSG_GUILD_LACK_GP`.
+
+  The payment takes the gold, then the GP (the donation totals stay). The members get type 5
+  mask 8, and the history logs kind 6.
+- **OpenSRO** reads the GP prices from the mall catalogue's new "npcgp" rows. Production must
+  re-export `-mall-csv` (`export-refdata -mode mall`) for the goods to cost GP.
+
+### Union chat follows the permission
+
+A union chat line needs bit 0x04 of the sender's guild permission (`guild.PermUnionChat`). The
+master always holds it. A member without it gets "You do not have union chatting authority"
+(0x200e). The grant goes through 0x7104 (above), which caps the holders at 12 (0x4c4b).
