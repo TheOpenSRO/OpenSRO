@@ -219,6 +219,10 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 	if cid, ok := d.character(sess); ok && d.Trades.Established(cid) {
 		return fail(ExchangeErrBlocked)
 	}
+	// Round 844: the guild storage's moves and gold (guildstorage.go).
+	if len(data) > 0 && isGuildStorageMove(data[0]) {
+		return guildStorageMove(ctx, sess, data)
+	}
 	// Round 837: the item mall's buy (mall.go). StorageOperation lets op
 	// 0x18 through at INTERACTMODE 1 (a pending request), so it is routed
 	// before the busy test below.
