@@ -125,11 +125,32 @@ func _test_walk(world: Node) -> void:
 	_check(is_equal_approx(body.rotation.y, RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(0), 0.0)), "facing the message's angle")
 	_frames(world, 10)
 	_check(body.position == Vector3(60, 1, 40), "and it stays")
-	# A source far from where it is drawn is taken; a near one is not.
-	world.call("_on_entity_move_echo", _echo(301, Vector3(200, 0, 40), Vector3(100, 0, 40)))
-	_check(body.position == Vector3(100, 0, 40), "a source 40 off puts the body there first")
-	world.call("_on_entity_move_echo", _echo(301, Vector3(200, 0, 60), Vector3(110, 0, 40)))
-	_check(body.position == Vector3(100, 0, 40), "a source 10 off does not jerk it")
+	# Round 846 (READ, FUN_009e1050's 50.0): a source more than 50 from where
+	# the body is drawn is taken; a nearer one is not.
+	world.call("_on_entity_move_echo", _echo(301, Vector3(200, 0, 40), Vector3(120, 0, 40)))
+	_check(body.position == Vector3(120, 0, 40), "a source 60 off puts the body there first")
+	world.call("_on_entity_move_echo", _echo(301, Vector3(200, 0, 60), Vector3(160, 0, 40)))
+	_check(body.position == Vector3(120, 0, 40), "a source 40 off does not jerk it: it walks on from where it is drawn")
+	# And catches up (READ, FUN_009e0550): drawn 80 from the point, the server's
+	# mover 40 -- twice the speed, so the two arrive together.
+	var leg: Dictionary = legs.get(301, {})
+	_check(is_equal_approx(float(leg.get("mult", 0.0)), sqrt(80.0 * 80.0 + 20.0 * 20.0) / sqrt(40.0 * 40.0 + 20.0 * 20.0)),
+		"a body drawn behind walks faster by its distance over the server's (x%.3f)" % float(leg.get("mult", 0.0)))
+	var before := body.position
+	_frames(world, 15)
+	_check(absf(before.distance_to(body.position) - 100.0 * float(leg.get("mult", 0.0)) * 0.25) < 0.1,
+		"a quarter second in it has walked %.2f, its run speed (100) times the factor" % before.distance_to(body.position))
+	# A small step: a body already on the source walks the 2 units at its own
+	# speed, never put anywhere.
+	_frames(world, 120)
+	var here := body.position
+	world.call("_on_entity_move_echo", _echo(301, here + Vector3(2, 0, 0), here))
+	_check(body.position == here and is_equal_approx(float((legs.get(301, {}) as Dictionary).get("mult", 0.0)), 1.0),
+		"a 2-unit step starts from where the body stands, at its own speed")
+	_frames(world, 1)
+	_check(absf(body.position.x - here.x - 100.0 / 60.0) < 0.01, "and walks it (x +%.3f in a frame)" % (body.position.x - here.x))
+	_frames(world, 10)
+	_check(body.position == here + Vector3(2, 0, 0), "onto the point")
 	world.call("_on_entity_left", 301)
 	_check(not legs.has(301), "a body that leaves takes its leg")
 
@@ -191,4 +212,50 @@ func _test_own(world: Node) -> void:
 	_check(String(world.call("_issue_walk", Vector3(100, 0, 10))) == "ignore", "a click during the pick-up clip walks nowhere")
 	world.set("_player_pickup_clip", null)
 	world.set("_has_move_target", false)
+	_test_own_846(world, net)
 	net.set("own_character_id", -1)
+
+## Round 846: a plain click walk ends ON its point (READ, FUN_009e0e60 cuts
+## the step to land on it), as the server and every observer walk it; an
+## approach keeps its early stop. And a click within 5.0 of the point a walk
+## is still going to is ignored (READ: the server refuses it while the leg
+## runs, retail's client walks only on its echo).
+## NEGATIVES: _click_walk_stop returning MOVE_TARGET_STOP_DISTANCE for a plain
+## walk fails "a 3-unit click walks all 3"; _issue_walk without
+## _move_click_refused fails "a click 3 from the point still being walked to".
+func _test_own_846(world: Node, net: Node) -> void:
+	var stop_plain := float(world.call("_click_walk_stop"))
+	_check(stop_plain <= 0.01, "a plain click walk stops on its point (%.3f)" % stop_plain)
+	var walked := 0.0
+	var left := 3.0
+	for i in 60:
+		var r := ClickWalk.step(Vector2(left, 0), 50.0, 1.0 / 60.0, stop_plain)
+		if bool(r["arrived"]):
+			break
+		var v: Vector2 = r["velocity"]
+		walked += v.x / 60.0
+		left -= v.x / 60.0
+	_check(absf(walked - 3.0) < 0.011, "a 3-unit click walks all 3 (%.3f), not 0.6" % walked)
+	world.set("_pending_attack", {"target": 1})
+	_check(is_equal_approx(float(world.call("_click_walk_stop")), 0.3 * 14.34 / 1.8), "an attack's approach keeps its early stop")
+	world.set("_pending_attack", {})
+	# The refusal: an order to (500, 0, 10) in progress, its 0x7021 sent.
+	var frame_was: Vector2i = net.get("_spawn_frame")
+	net.set("_spawn_frame", Vector2i(97, 168))
+	var sync: MoveOrderSync = world.get("_move_sync")
+	var dest: Vector3 = net.call("quantize_destination", Vector3(500, 0, 10))
+	sync.sent_destination(dest, Time.get_ticks_msec())
+	world.set("_has_move_target", true)
+	world.set("_move_heading_run", false)
+	world.set("_move_target", dest)
+	world.set("_player_move_order", true)
+	(world.get("player") as Node3D).position = Vector3(400, 0, 10)
+	_check(String(world.call("_issue_walk", dest + Vector3(3, 0, 0))) == "ignore", "a click 3 from the point still being walked to is ignored")
+	_check((world.get("_move_target") as Vector3) == dest, "and the walk goes on to its point")
+	_check(String(world.call("_issue_walk", dest + Vector3(8, 0, 0))) == "walk", "a click 8 from it walks")
+	sync.arrived()
+	world.set("_has_move_target", false)
+	_check(String(world.call("_issue_walk", dest + Vector3(3, 0, 0))) == "walk", "once the walk is over a click 3 from its point walks")
+	world.set("_has_move_target", false)
+	sync.placed(Vector3(400, 0, 10))
+	net.set("_spawn_frame", frame_was)

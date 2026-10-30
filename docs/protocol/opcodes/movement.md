@@ -182,8 +182,11 @@ with no exclusion).
 - The heading run alone sends 0x7024 {u16 angle} whenever its heading moves 1° or more (`0x9e0d50`
   -> `0x9eb470`).
 - The client treats its own 0xB021 like anyone else's:
-  - flag 1 snaps it to the source and clears its order;
-  - then a destination more than 5 units off aims it.
+  - ~~flag 1 snaps it to the source and clears its order;~~ **corrected in round 846:** flag 1 moves
+    the mover's record to the source, re-places the drawn object only when it is more than 50.0
+    from it, and clears the order only on the no-cell branch ("How an observer keeps up", below);
+  - then a destination aims it when an order is in effect or it is more than 5 units off, with
+    the catch-up factor (at most 3x) for a body drawn behind.
 
 ## The optional extra byte has exactly one emitter (round 366)
 
@@ -357,6 +360,73 @@ Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`).
     (`docs/protocol/auto_command.md`, phase 1, READ).
 - **Not read:** what the collision query tests, which of its bits mean what beyond the two above,
   and whether a server-driven mover uses this same tick.
+
+## How an observer keeps up, and every step reaches it (round 846)
+
+The user: "if I take small steps it doesn't register on another client. It only registers when I
+take a large step and it shows that I teleported away", "it only seems to happen at a higher
+/speed". Labels: READ (`sro_client.exe` decompile and `.rdata`), MEASURED (the round's two-client
+runs, `docs/WORLD_ISSUES.md`), INFERRED, OURS.
+
+**The observer's reader (READ, `NetProcessInNavAndSkill::FUN_008a5750`, re-read this round).**
+
+- An object with `+0x440` set is skipped. Otherwise the flag-1 source goes to `FUN_009e11e0(region,
+  pos, 1)`, then a destination aims the mover (`FUN_009e0550`) when an order is in effect
+  (`obj+0x714`) or the destination is more than 25.0 squared (`0xe1b8a0`) from the mover's record.
+- **`FUN_009e11e0` does not move the drawn object.** It runs the collision query from the mover's
+  record (`+0x4c`, `{cell, instance, region, x, y, z}`) to the source and copies the result into the
+  record. Then `FUN_009e1050` measures the record against the object's own position (`obj+0x74`)
+  with `FUN_009ecdb0` (x² + y² + z², then the CRT's root at `0xb42de0`, INFERRED from its shape) and
+  only when that is **more than 50.0** (double `0xd8f0b0`) re-places the object through
+  `GlobalDataManager::FUN_009e0d50`, which calls the object's vtable `+0x94` with the record. A
+  body within 50 of the source stays where it is drawn. (The order flag `+0xac` is cleared only on
+  the branch with no cell, `param_1[0x13] == 0`.)
+- **`FUN_009e0550` sets a catch-up factor.** After storing the destination it measures two ground
+  distances to it (`FUN_009ecc70`): from the mover's record (`+0x4c`), `r`, and from the object's
+  position (`obj+0x74`), `d`. When `r < d` the mover's `+0x8c` becomes `d / r`, at most **3.0**
+  (float `0xd8adc4`), and 3.0 (double `0xe1b808`) when `r` is 0; otherwise 1.0.
+- The mover's tick `FUN_009e0e60` steps `speed * +0x8c * seconds` (when `obj+0x444` is 0; the
+  speed slot `param_1[param_1[4] + 1]`), cut to the distance left.
+- INFERRED: the factor makes a body drawn behind its mover walk on from where it is drawn and reach
+  the destination when the mover does. Where `obj+0x74` follows the record each tick was not read.
+
+**What OpenSRO did (MEASURED, base `857ec7be`, a prod-like lane server: no
+`-trust-client-positions`, the navigation meshes; two real clients, 40 ms ± 20 ms each way):**
+
+- **The mover's own walk stopped 2.39 short of its click** (`MOVE_TARGET_STOP_DISTANCE`, OURS since
+  round 649 for every walk) while the server and every observer walked to the point. A 3-unit click
+  moved the mover 0.6-0.8 and the observers 3.0-3.6; a click under 2.39 away moved nobody and sent
+  nothing. Retail's mover lands on its destination (round 649, READ).
+- **A click near the point still being walked to was walked here and never sent** (the server would
+  refuse it, `0xb45b28`): the mover stood up to 5 from where the server and every observer had it,
+  until its stop put it there in one jump. Retail's server refuses it and retail's client walks only
+  on its echo, so nothing moves.
+- **A click near the point just reached went out at once**, but this client's walk starts on the
+  click and the server's one transit later, so the server's leg was still running: refused
+  silently, no echo, the walk stopped a second later (`ECHO_TIMEOUT_MS`) and the stop was relayed
+  as `0xB023` -- the observers saw no step and then a jump.
+- **An observer took the source whenever its body was more than 32 from it** (the monsters'
+  `RESYNC_DISTANCE`, OURS) and walked every leg at the bare run speed, so a body that fell behind (a
+  raised `/speed` with real latency) was put forward on the next step instead of catching up.
+
+**OpenSRO now (round 846):**
+
+- `World3D._click_walk_stop`: a walk to a point ends **on** it (`CLICK_LAND_EPSILON` 0.01, a float
+  tolerance); an attack's, a friendly cast's and a pick-up's approach keep the early stop (OURS).
+- `World3D._move_click_refused`: a click within 5.0 (truncated as the wire carries it) of the point
+  a walk is still going to is ignored, as the server refuses it (READ) -- not for an approach, whose
+  point re-aims every tick.
+- `MoveOrderSync.held` (OURS): a click within 5.0 of the point the server may still be walking to
+  -- its echo's time plus the leg's length at the run speed, `confirm(free_ms)`; until the echo, the
+  echo timeout -- is walked here at once and sent once the server's leg is over ("held"), whether
+  or not the walk here has ended.
+- `OtherWalk.RESYNC_DISTANCE` 50.0 and `OtherWalk.catch_up` (READ, above), for a body on foot and a
+  rider; the factor is kept apart from the leg's speed, so a buff's new speed keeps it. OURS: the 50
+  is measured on the ground, as the server's height for a player is a guess.
+- Unchanged and READ: the server refuses a destination within 5.0 of the one it is walking to, and
+  takes every other (`TestRound846EveryStepIsEchoedAtAnySpeed`); an observer is told a `/speed` by a
+  token-less `OpBuffEnd` and a late one by the spawn record's run speed; a stop (`0xB023`, an arrow
+  key's release among them) snaps.
 
 ## The heading move: a click on the sky (round 653)
 
