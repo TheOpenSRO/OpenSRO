@@ -52,7 +52,7 @@ choice), **OPEN**.
 | 9 | The stall window hidden (0xB0B2, 0xB0B5, 0x30B9, the X, Escape) | -- | `CIFStall::vslot_023(0)`: `0x6b3f40(1)` on the inventory pane (every bag cell enabled again); **the inventory stays** | stayed (the bag redrawn) | unchanged |
 | 10 | Gori's exchange (talk item 0x28, interaction 0x12, a 3/3/14/2 coupon in the bag) | inventory | `CIF_NPCTalk::FUN_007020c0` case 0x28: `0x745ab0` (the bag holds a coupon), then `0x79af20` (c:0x703336), then 0x7119 | **not opened** | built (`World3D._gacha_exchange`) |
 | 11 | The fortress smith's repair (talk item 0x36, interaction 0x1a NPC_*_FORTRESS_SMITH, choice 2) | inventory | `IF_NPCTalk::FUN_006ff8d0`: the store closed if it exists (`0x7997d0` -> `0x79ce40(0, 0)`), `0x79af20` (c:0x6fff15), then the repairable worn and bag items counted (`0x6abd50`, `0x6b6050`): none -> UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR, else the repair box (`0x77f0a0` kind 0xc) | no fortresses | **OPEN** (no fortress system) |
-| 12 | The guild storage (0xB250 {1}, Guild_OnWarehouseUseResult c:0x88f630) | inventory | `0x79bf40(1)` (GDR_GUILDSTORAGEROOM 0x91), `0x6aefa0` on the inventory pane, `0x79af20` (c:0x88f6b1), `+0x7b6` set, the NPC kept at the window's `+0x7c8` | no guild storage | **OPEN** (FEATURES "Guild storage: Not yet") |
+| 12 | The guild storage (0xB250 {1}, Guild_OnWarehouseUseResult c:0x88f630) | inventory | `0x79bf40(1)` (GDR_GUILDSTORAGEROOM 0x91), `0x6aefa0` on the inventory pane, `0x79af20` (c:0x88f6b1), `+0x7b6` set, the NPC kept at the window's `+0x7c8` | no guild storage | built (round 844, `GuildStorageController`: the inventory beside it, as the warehouse's; [guild_storage.md](guild_storage.md)) |
 | 13 | CIFAlchemyBox::Create (GDR_ALCHEMYBOX, ID 0x2c, `ifnewalchemybox.txt`) | inventory | ends in `0x79af20` (c:0x722ba8) unconditionally | -- | none: INFERRED unreachable -- its section "AlchemyBox" is in no string of the image except as the tail of the class name "CIFAlchemyBox" (`0xdb2834`, pushed only by the class factory's registration c:0xd6f676), and no code creates window 0x2c (its getter `0x799590` only reads) |
 | 14 | The I key, the underbar's inventory item | inventory | `0x79b020` (callers: the key dispatcher c:0x78084f, the underbar menu c:0x60cd69): a toggle | built | unchanged |
 | 15 | The equipment toggle `0x79ad70` | inventory | no caller | -- | -- |
@@ -95,7 +95,8 @@ choice), **OPEN**.
 
 ## 3. OPEN
 
-- Rows 11 and 12: the fortress smith's repair and the guild storage, for want of the systems.
+- Row 11: the fortress smith's repair, for want of the system. (Row 12, the guild storage, is built
+  in round 844.)
 - The COS window's own open and close sounds (`0x79bcd0` ends in the helper 0x79a7e0): this client's
   COS window is silent (round 795), for the status icon too.
 - The stall window shown while the alchemy window exists cannot happen through OpenSRO's own paths:
