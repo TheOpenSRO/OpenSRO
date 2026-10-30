@@ -23,8 +23,8 @@ import (
 //   - 0x38F5 type 0x0d (a guild joined) to the members of the guilds that
 //     were in it, type 0x12 (left) to every member of the union as it was;
 //   - each member's 0x30FF again (its union id), through refreshGuildPlate.
-// OURS: the union is formed and left only through the GM's /union (a test
-// tool, UnionCommands); the original's request flow is OPEN.
+// Round 844: the players form, leave and expel through 0x70FB..0x70FD
+// (unionops.go); the GM's /union (UnionCommands, OURS) is a test tool.
 
 // unionStore is the plate store as a guild.UnionStore, nil when it keeps
 // none.
@@ -197,8 +197,8 @@ func unionBeforeDisband(ctx context.Context, guildID int64) *guild.Union {
 	return unionOfGuild(ctx, guildID)
 }
 
-// UnionCommands is the GM's /union (round 842, OURS, a test tool: the
-// original's union request flow is not built). It runs on the plate store.
+// UnionCommands is the GM's /union (round 842, OURS, a test tool; the
+// players' flow is unionops.go). It runs on the plate store.
 type UnionCommands struct{}
 
 // Join puts the GM's guild into the union of the guild named host (forming

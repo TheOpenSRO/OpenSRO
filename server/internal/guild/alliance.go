@@ -65,8 +65,10 @@ const (
 	ErrAllianceCantAllyToOwnGuild = 0x4c26
 	// ErrAllianceAlreadyAllied and ErrAllianceFull are in the client's message
 	// table but are NOT raised anywhere in SR_GameServer.exe -- see
-	// docs/protocol/guild.md. They are listed so the vocabulary is complete and
-	// so nobody re-derives their absence.
+	// docs/protocol/guild.md. Round 844: the ShardManager raises
+	// ErrAllianceFull (its join job, sm:0x434300 finds no free slot of the
+	// eight; docs/protocol/guild_union.md); ErrAllianceAlreadyAllied is still
+	// seen raised nowhere.
 	ErrAllianceAlreadyAllied = 0x4c27
 	ErrAllianceFull          = 0x4c29
 	// ErrAllianceTargetHasAlliance is raised when the target guild already

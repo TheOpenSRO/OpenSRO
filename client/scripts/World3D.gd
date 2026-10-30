@@ -36488,7 +36488,8 @@ func _qa_guild_answer_pending() -> void:
 func _qa_union_step(kind: String, arg: String) -> String:
 	var gw: GuildWindow = _hud_panels._guild_window() if _hud_panels != null else null
 	if kind == "unionstate":
-		return "unionstate " + (_qa_union_state(gw) if gw != null else "(no guild window)")
+		return "unionstate tick %d frame %d %s" % [_qa_tick, Engine.get_frames_drawn(),
+			_qa_union_state(gw) if gw != null else "(no guild window)"]
 	var target: Control = null
 	if kind == "unionnode" and gw != null:
 		var path: Array = []

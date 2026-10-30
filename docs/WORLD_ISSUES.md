@@ -7483,6 +7483,97 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-fourth round, lane U: unions for players
+
+The user's ask (round 844): "Add guild storage and all other guild functionality." Lane U's part: unions
+complete for players -- the request and the Agreement box, leave, expel and the union broken, the union
+tab in the guild window, union chat, the union's messages and its emblem, the GM's /union kept. Labels:
+READ (`c:` sro_client.exe, `s:` SR_GameServer.exe, `sm:` the ShardManager's decompile on the box),
+MEASURED, INFERRED, OURS, OPEN. The whole reading: `docs/protocol/guild_union.md`.
+
+**What the original does (READ unless marked).**
+- **Request.** Only the union tab's Apply (51) sends 0x70FB {u32 the selected object} (`c:0x8201b0`, its
+  one caller the tab's dispatcher `c:0x57d060`; a pet stands for its owner); no target-menu route. The
+  server (`s:0x5170b0` -> `s:0x5c6550`): reach 3, dead 0x4c07, no guild 0x4c0d, not the master 0x4c1e, **a
+  requester in a union led by another guild 0x4c1e**, own level < 2 0x4c2a, target 3 / no guild 0x4c25 /
+  hostile 0x4c42 (INFERRED from `UIIT_MSG_QUESTION_GUILD_RESPECT_ALLY_NOTALLY`) / same guild 0x4c26 /
+  level < 2 0x4c2b / in a union 0x4c28 / not its master 0x4c24; then 0x3080 {6, requester} to the target
+  and nothing to the requester. Refusals 0xB0FB {2, code}, shown through the guild category (0x4c2e,
+  0x4c10, 0x4c2f, 0x4c30 have no row: nothing).
+- **Agreement box 0x1d** (`c:0x88afb4`, `c:0x647a01`): 470 x 144, "Apply", "The leader of [%s] guild
+  proposed an alliance with you. Do you accept?", the line 0x4c right, OK / Cancel 0x51 right, its timer;
+  Yes {1, 1}, No **{2, u16 0}** (`c:0x798667`). The answer (`s:0x5c8510` kind 6): No 0x4c2e to the
+  requester; Yes the ShardManager's join (`sm`: 0x4c0d, 0x4c25, 0x4c28, 0x4c24, **0x4c29 when the union's
+  eight slots are full** -- raised by the ShardManager, not the GameServer, which round 717's alliance.go
+  searched); no 0xB0FB on success; 30 s -> 0xB0FB {2, 0x4c10} to the requester only.
+- **Told.** Formed: both guilds 0x3102 (no line); joined: the new guild 0x3102, the others 0x38F5 0x0d
+  ("An alliance with [%s]guild has been formed."); out: {0x12, how, guild} to every guild including the one
+  leaving, 0xB0FC / 0xB0FD {1} to the asker, and **{0x12, 3} "Guild alliance has been broken." to those
+  left when the lead guild left or fewer than two remain** (`sm:0x4369f0`, `s:0x5b8dd0`).
+- **Secede / Expel** (`c:0x57ce70`, `c:0x57ac10`): MsgBoxSimple 360 x 151, Yes / No, captions "Secede" /
+  "Expel"; 0x70FC (no body) / 0x70FD {u32 guild}; server: 0x4c0d, 0x4c1e, 0x4c2f, (expel) the lead guild's
+  master only 0x4c1e, not in the union 0x4c30.
+- **The union tab** (CNIFAllianceGuild, `guild_r.2dt` 86 under Relations; OnCreate `c:0x57dd10`, refresh
+  `0x57c6f0`, buttons `0x57bfc0`, rows `0x57d0a0`): the lead guild = 0x3102's third u32 (`0x996ed0`; settles
+  round 842's INFERRED), its row gold 0xffffb451; the master's race from the entry's model and the
+  selected guild's members (the entry's last byte) over its level's cap -- both of round 842's INFERRED
+  fields now READ; order the union map's (ascending ids), Name / Lv headers re-sort (Lv highest first,
+  INFERRED from the walk); Apply for a guild master, Secede and Expel too for the lead guild's master,
+  Secede only for another union guild's master.
+- **Union chat.** The client prefixes "-<own guild>): " (`c:0x7ada5a`); the server (`s:0x4b1750` case 0xb):
+  no guild 0x200b, no union 0x200c, not the master and no permission bit **0x04** 0x200e; the line to every
+  union guild; each client drops its own name's copy (`c:0x8780f1`). Bit 0x04 is union chat (guild.go
+  called it unnamed); at most 12 holders a guild (`s:0x5c49a0`, 0x4c4b).
+- **Union crest** (`s:0x5c7710` / `0x5c77d0`): level 5, master, in a union 0x4c2f, the lead guild 0x4c1e;
+  0x3257 type 2 {union, n guild names, rev}; drawn 36 px left of the guild text (`0x9df4ad`, 36.0).
+
+**What we built.**
+- Server: `guild/union844.go` (opcodes, `ValidateUnionRequest`, `UnionBroken`, `PermUnionChat`, the
+  `UnionBreaker` / `UnionCrestStore` stores with their mem and SQL halves -- `guild_unions.crest` and
+  `crest_last_rev` added by the schema code itself, no migration), `session/unionops.go` (0x70FB..0x70FD,
+  the wait response and its 30 s, the answer on the 0x3080 chain, the join job, `unionOut` with the break,
+  union chat), `session/unionops_crest.go` (the crest's use, 0x3257 type 2, OpCrestGet kind 2); round
+  842's `unionLeft` now breaks a union too; chat's union case and `main.go`'s handler list.
+- Client: `net/union_ops.gd` (requests, replies, 0x3080 kind 6), `ui/hud/union_pane.gd` (the tab),
+  `GuildMsgBox.Kind.UNION_REQUEST` (box 0x1d), `world/union_world.gd` (the glue: Apply on the selected
+  player, the box, the chat prefix), the union crest in `CrestCache` and on the plates
+  (`_fit_crest_sprite`), `HudChat.union_guild`; small hooks in `net_client.gd`, `guild_window.gd`,
+  `hud_panels.gd`, `World3D.gd` (QA: `unionnode` / `unionbox` / `unionstate`, `OPENSRO_QA_UNION_ANSWER`).
+- partybot: `-union-request` (asked again while the target is still far), `-union-chat-reply`,
+  `-union-chat`, `-union-leave-after`; the 0x3080 kind 6 box is answered by `-accept`.
+
+**Live (render box, lane server 17050 in memory, client `/opt/opensro-client-r844u` from git; real keys
+and clicks through OPENSRO_QA_INPUT; evidence `/var/tmp/r844u/keep`, logs in `keep/logs`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| QaWin (Alpha Lv2) selects Bram, U, Relations, Apply: Bram's bot gets box 0x1d, accepts; 0x3102 to both; the tab: lead Alpha (gold row), QaWin, 2/8, Beta; Apply / Secede / Expel on | PASS | run1_f0770.png, run1.client.log `unionstate` frame 776, run1.Bram.log |
+| Bram's line `[Beta * Bram]` blue before, green right after (Gil, Dan, Kappa blue) | PASS | run1_f0700.png -> run1_f0800.png |
+| Union chat both ways: `QaWin(Union-Alpha): hello`, `Bram(Union-Beta): hi from Beta` in 0xffc2f573 | PASS | run1_f0880.png |
+| Gil's Gamma joins the same way: "An alliance with [Gamma]guild has been formed." (Bram's bot gets 0x38F5 0x0d) | PASS | run1.client.log frame 951, run1.Bram.log |
+| Name header, Gamma's row selected: Name Gamma, master Gil, 1/20; Expel's question "Will you ban [Gamma]guild from the guild alliance?" Yes: "[Gamma]guild has been banned...", 0xB0FD {1}; Gil's bot {0x12, 2} | PASS | run1_f1060.png, run1.client.log frames 1036..1096 |
+| A level-1 guild (Dan's Delta): "Level of invited guild is below the required level to participate in the alliance." (0x4c2b) | PASS | run1_f1180.png |
+| QaWin, the lead guild's master, secedes: "[Alpha]guild has left the alliance."; Bram's bot {0x12, 1, Alpha} then {0x12, 3}; Bram's line blue | PASS | run1_f1300.png, run1.Bram.log |
+| Kappa's bot asks QaWin: box 0x1d on the client ("Apply", "The leader of [Kappa] guild proposed an alliance with you. Do you accept?"), its OK clicked: Kappa's line green; the tab: lead Kappa, Apply and Expel off, Secede on | PASS | run2_f0270.png, run2_f0330.png, run2_f0530.png |
+| QaWin (a member guild) secedes: the two-guild union broken, Kappa's bot {0x12, 1}, {0x12, 3}; Kappa's line blue | PASS | run2_f0610.png, run2.Kappa.log |
+| Rex's bot refuses (No): 0xB0FB {2, 0x4c2e}, nothing shown, as the original | PASS | run2_f0700.png, run2.client.log frame 691 |
+| `%nobody` with no union: "Cannot use the Ally Chat because the selected guild is not your ally." (0x200c) | PASS | run2_f0815.png |
+| Union crest: Alpha Lv5 leads Beta, item 9270, box 0x18's OK reads unionmark.bmp (synthetic, beside Media.pk2), rev 1, 0x3257 type 2; the crest 36 px left of `[Beta * Bram]` and `[Alpha]` | PASS | run3_f0640.png, run3_f0760.png |
+| The GM's `/union leave` still works (the union broken, the crest gone) | PASS | run3_f0870.png, run3.server.log |
+
+**Tests.** Go: `guild.TestRound844ValidateUnionRequest`, `TestRound844UnionBroken`, `TestRound844UnionBytes`,
+`TestRound844UnionStores{Mem,SQL}`; `session.TestRound844UnionRequest` (every refusal in order, the box,
+the No, the 30 s, the Yes, a member guild's master, the target in a union), `TestRound844UnionLeaveExpelChat`,
+`TestRound844UnionChatPermission`; `TestRound842UnionFlow` and `TestChatPartyAndGuild` updated for the break
+and 0x200c. Client: `ui/hud/union844_test.gd` against the real Media.pk2 (UnionOps, the crest cache, the
+tab's every part and button rule, the questions, box 0x1d's geometry, the chat prefix).
+
+**OPEN.** What the target guild's vslot 0x1c tests (0x4c42; lane V can store its war test in
+`unionHostile`); granting the union chat bit (the permission window, lane G -- masters chat already);
+whether a disbanded lead guild breaks its union (INFERRED yes); the union crest box's own-crest test
+(INFERRED as the guild's); the siege-period refusals (no sieges); the tab's marks (178, 161, 131) keep the
+archive's picture -- no setter found for them.
+
 ## Eight-hundred-and-forty-third round, lane Q: the quest scroll's flicker
 
 The user's ask: "Can you please also remove the flickering quest icons that appear above NPCs", with a

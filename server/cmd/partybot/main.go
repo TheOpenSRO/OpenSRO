@@ -345,6 +345,10 @@ func isGuildOp(op uint16) bool {
 		guild.OpInviteResult, guild.OpExpelResult, guild.OpJoinResult:
 		return true
 	}
+	if isUnionOp(op) {
+		// Round 844: the union's replies and record (union.go).
+		return true
+	}
 	return false
 }
 
@@ -979,6 +983,8 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 			if !open {
 				return errors.New("connection closed")
 			}
+			// Round 844: the union steps (union.go).
+			b.unionPacket(name, p)
 			if p.Opcode == party.OpInfo && botKill.species != "" && killC == nil {
 				killC = time.After(botKill.after)
 				fmt.Printf("[%s] in a party: killing a %s in %s\n", name, botKill.species, botKill.after)
@@ -1055,6 +1061,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 				fmt.Printf("[%s] killed it: EXP +%d, SP +%d\n", name, ar.ExpGained, ar.SkillExpGained)
 			}()
 		case <-tick.C:
+			b.unionTick(name)
 			if requestName != "" && !requested {
 				b.send(party.OpMatchList, []byte{0})
 			}
