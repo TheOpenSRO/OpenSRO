@@ -408,6 +408,10 @@ func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gat
 			return handleGuildInvite(ctx, sess, p, ops)
 		case guild.OpExpel:
 			return handleGuildExpel(ctx, sess, p, ops)
+		// Round 844: the notice, the level-up window, the hand-over, the
+		// permissions and the donation (guildmanage.go).
+		case guild.OpNotice, guild.OpLevelUp, guild.OpHandOver, guild.OpPermission, guild.OpDonate:
+			return handleGuildManage(ctx, sess, p, ops)
 		// Round 824: a crest's bytes (crest.go, OURS).
 		case OpCrestGet:
 			return handleCrestGet(ctx, sess, guilds, p.Data)

@@ -2547,6 +2547,8 @@ func main() {
 	// 0x4def96-0x4defc2): guildPointsDisconnect below, and FlushAllPending
 	// once the listener stops.
 	gpSkills := session.NewGuildPointSkills(skills, guilds, chars)
+	// Round 844: the guild donation (0x7258) spends SP from the same store.
+	session.SetGuildDonateSkills(skills)
 
 	// The server list's status (round 679): read when asked.
 	serverStatus := func() session.ServerStatus {
