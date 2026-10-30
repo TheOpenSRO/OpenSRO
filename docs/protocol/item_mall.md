@@ -534,6 +534,10 @@ The message is in section 6.
      `InstallEquipVisual(slot, src[+0x38 + 12·slot].id, plus byte, 0)`. Mode 1 does the same from
      `+0x16c` / `+0xa4` (its caller is OPEN). Then the scale byte (`0xa5b960(src+0x30)`) and a
      rebuild (vslot `0x20`). The plus is copied, so the glow shows.
+     OpenSRO (round 843): `MallModels.build_body` takes the worn items as the Equipment window
+     draws them -- a model switcher's choice as its row (`World3D._display_equipped`), with the
+     item's own glow and seal where that row has none (`item_switchers.md` §3a). Until then it
+     read the items' own ids and showed the item's original model.
 4. `0x5602c0(idx, 0)` plays action 0 (STAND1, `BSR_FORMAT.md`; `0x9cfb40` → model vslot `0xc`).
    INFERRED that it loops.
 5. `0x561250` computes the pan box (4b).

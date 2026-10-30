@@ -122,11 +122,13 @@ carries `Model` -- the ref id of its `_SWITCHnn` row -- which is what is drawn:
   (u16 count, then u32 slot and u32 model per entry; written only when some entry has one, the
   message's last field);
 - the owner's client draws its body, paper doll and portrait with the model's row
-  (`World3D._display_equipped`) and the tooltip shows the model row's description;
+  (`World3D._display_equipped`) and the tooltip shows the model row's description; from round
+  843 the item mall's preview and the skin-change window's preview do too (3a);
 - other players' clients are told the model's row in place of the item's id in the spawn record
   (`lookOf`) and the 0x3038 broadcast (`displayRef`): they draw nothing else from it -- the
   model, the glow type (itemoption.txt lists the `_SWITCHnn` rows with types of their own, which
-  follow the mesh) and the visual slot, which the row's TypeIDs keep.
+  follow the mesh) and the visual slot, which the row's TypeIDs keep. From round 843 they are
+  also told the item's own id (3a), for the glow and seal a twin without rows of its own lacks.
 
 Targets: a weapon or shield (the archive has twins for both; the description says "weapon"),
 degree 11 (ItemClass 31..33), with a `<code>_SWITCHnn` row -- an unlocked `_ACTIVE` row uses its
@@ -136,8 +138,77 @@ locked row's (OURS: the two differ in requirement, not model). `ITEM_MODEL_11` i
 (ItemClass 1..33). A target without the twin, a Default on an item with its own model, or the
 model it already has are refused.
 
+### 3a. The glow and seal of a switched item (round 843)
+
+The user: "when using the model switcher, the seal and + glow/effects need to stay and they
+currently don't".
+
+**What the original draws (READ, `equip_glow_seal.md` §1).** The glow and the effects of a worn
+weapon or shield are chosen by its RefID and its plus alone (`FUN_00a5f3e0`): the glow type from
+`itemoption.txt`, the seal's effects from `itemrare.txt`, the +8 sparkle from
+`itemoptionefp.txt`, each keyed by the item's code name. Nothing reads a Rarity, a seal or a
+set. So an item drawn as another row glows, or does not, as that row does.
+
+**The cause (MEASURED).** The user's own switched item on prod (read only): character 12's
+`ITEM_EU_TSWORD_11_A_RARE_ACTIVE` (62652) +12 with model `ITEM_EU_TSWORD_11_A_RARE_SWITCH13`
+(62220). The unlocked row has glow type 4, the three `eternity_11_nova_0N` seal effects and the
+`system_enchant_b_01` sparkle; its twin has no row in any of the three tables. The archive's
+twins are made from the **locked** Seal of Nova rows (`_11_A_RARE`), which have none either
+(`equip_glow_seal.md` §0), and round 838 drew an unlocked item with its locked row's twins. The
+census of the twins the mall's switchers reach (nn 01..16 but 11, the Default), against their
+base:
+
+| Base | Twins | The twin's tables |
+|---|---|---|
+| plain `_11_A` | 240 | a glow type and the sparkle, as the base (no seal on either) |
+| locked `_11_A_RARE` | 240 | none, as the base |
+| unlocked `_11_A_RARE_ACTIVE` (drawn with the locked twins) | 240 | **none; the base has glow, seal and sparkle** -- the bug |
+| Egyptian `_11_SET_A_RARE`, `_11_SET_B_RARE` | 240 each | glow type, seal and sparkle of their own (the seal's files as the base's, the scale often the twin's own: 150 against 185 for `ITEM_CH_SWORD_11_SET_A_RARE_SWITCH05`) |
+
+**What a glow type is (MEASURED, `itemtypenumber.txt`).** Types 1-4 have the same colours and
+periods at every threshold, and the same textures but for type 1's +9 row (`option_texture20`
+where the others use `option_texture14`). They differ in the option texture's scroll: types 1 and
+2 scroll (+0.005, -0.005) up to +8 and (0, -0.005) from +9, types 3 and 4 (0, +0.005); and types 2
+and 4 set the alpha-test flag. The archive sets it
+per mesh: the twins of one model -- plain, locked and the two sets, which draw the same `.bsr`
+(240 of 240) -- agree on it in 310 of 330, and a twin's type differs from its base's in 114 of
+the 240 plain twins. The plain and the unlocked base rows share it on all 22 bases. The
+twins' own description reads "Model Switched Item / Model: Degree N / **Glow: Default**".
+
+**OpenSRO (OURS where the original has nothing).** `CharacterAppearance.glow_sources`:
+- a drawn row the tables give any row keeps its own (the plain and the Egyptian twins, as the
+  archive draws them: the glow stays, its scroll axis the model's; the set's seal stays at the
+  scale the archive gives that model);
+- a drawn row with none, worn by an item that has rows (the unlocked Seal of Nova item): its
+  seal and sparkle are the item's own (`itemrare.txt`, `itemoptionefp.txt` at the item's scale;
+  INFERRED that the base's scale suits the new model -- the archive has no Nova row for it,
+  OPEN), and its glow type is the plain twin's of the same model
+  (`..._A_RARE_SWITCHnn` -> `..._A_SWITCHnn`, the same `.bsr`), else the item's own;
+- a locked item's twin stays plain, as the locked item is (`equip_glow_seal.md` §0).
+
+**Who draws it.** Your body, the equipment window's doll and the portrait (round 838), and now
+the item mall's preview and the skin-change preview: both built from `_player_equipped_last`,
+the item's own ids, so they showed the item's own model (the mall's preview is a copy of the
+Equipment window's dress, READ `0xa617d0` mode 0 in `item_mall.md` §4a, plus included, so it
+shows what the window shows: the model, its glow and its effects). Other players: the record and
+the 0x3038 name the model's row (round 838); OpenSRO's server adds, OURS:
+
+- **0x3038 `Own`**: after the plus byte, a u32 -- the item's own RefItemID -- when the RefItemID
+  is a model switcher's row (`EquipBroadcast.Own`, `switchedOwn`). Every other 0x3038 is retail's
+  bytes; a retail client stops after the plus (`FUN_008a9260`).
+- **After the spawn record** (0x3015 and the group spawns), one such 0x3038 per switched worn
+  item (`look.switched`, `switchedWornFrames`, among the spawn's state frames), since the
+  retail record has no room for it.
+
+The client keeps them per player and slot (`World3D._other_fx`), clears a slot on a 0x3039 or a
+plain 0x3038, and redraws the body when one changes; the crowd's far recipes and kinds carry it
+too (the item dict's `"fx"`). Tests: `switcher843_test.go`, `item_switch_glow843_test.gd`.
+
 ## 4. Not done here
 
 - The other private-server 3/3/13/8 rows (not sold): `ITEM_MODELSWITCHER_*`, `*_UNLOCK`,
   `ITEM_UPGRADESTONE_*`, the shield type switchers -- refused as before.
 - The exchange and stall show an item's own description, not its model's.
+- The character select screen (0xB007's item list, retail's) draws the item's own row, not its
+  model (round 843, OPEN).
+- The Nova seal's scale on another model (3a): the archive has no Nova row for the twins (OPEN).

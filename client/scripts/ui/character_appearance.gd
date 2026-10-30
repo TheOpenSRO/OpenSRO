@@ -744,9 +744,10 @@ func _resolve_wears(items: Array, woman: bool, warn: bool) -> Array:
 ##   unlocked (_ACTIVE) item is drawn with -- takes the item's own effects
 ##   (its seal and sparkle), and the glow type of the plain twin of the same
 ##   model (`..._A_RARE_SWITCHnn` -> `..._A_SWITCHnn`, the same .bsr), else
-##   the item's own. A glow type is only the option texture's scroll axis
-##   (itemtypenumber.txt: types 1-4 differ in that and the alpha-test flag,
-##   colours and textures alike, MEASURED), which the archive sets per mesh:
+##   the item's own. A glow type is mostly the option texture's scroll
+##   (itemtypenumber.txt: types 1-4 share colours and periods; they differ in
+##   the scroll, the alpha-test flag and type 1's +9 texture, MEASURED), which
+##   the archive sets per mesh:
 ##   the plain and the unlocked base rows share it on all 22 bases, and the
 ##   twins of one model agree in 310 of 330 (MEASURED).
 func glow_sources(code: String, fx: int) -> Array:

@@ -7663,6 +7663,64 @@ Not live: the dead pet's wash, the life flash and the switch flash. `slot_fx843_
 - The switch flash is built for the bag and the 13 worn slots. Whether 0x3040 mask 1 can name an
   avatar window's slot is not read.
 
+## Eight-hundred-and-forty-third round, lane W: a model switcher keeps the glow and the seal
+
+The user: "also when using the model switcher, the seal and + glow/effects need to stay and they
+currently don't", then (the coordinator's brief) "the model switcher effect should show up in the
+item mall character preview and it does not. It shows up in the inventory preview though".
+`docs/protocol/item_switchers.md` §3a has the whole reading.
+
+- **The cause (MEASURED).** The user's own switched item (prod DB, read only): character 12's
+  `ITEM_EU_TSWORD_11_A_RARE_ACTIVE` +12 with model `ITEM_EU_TSWORD_11_A_RARE_SWITCH13`. The
+  glow and the effects are chosen by the drawn row (READ, `FUN_00a5f3e0`: RefID and plus only),
+  and the archive's twins are made from the LOCKED Seal of Nova rows, which no table lists. Round
+  838 drew an unlocked item with its locked row's twins, so it lost its glow type, its three Nova
+  seal effects and its +8 sparkle. The census of the 960 twins the mall's switchers reach: the
+  plain D11 A and the two Egyptian sets' twins carry their own rows (unchanged here); the 240
+  locked twins carry none, which is right for a locked item and wrong for an unlocked one.
+- **What a glow type is (MEASURED).** `itemtypenumber.txt`'s types 1-4 share colours and
+  periods; they differ in the option texture's scroll, the alpha-test flag and type 1's +9
+  texture. The archive sets the type per model: the plain, locked and set twins of one model draw
+  the same `.bsr` (240 of 240) and agree on the type in 310 of 330; the plain and unlocked base
+  rows share it on all 22 bases. The twins' description: "Model Switched Item / Model: Degree N /
+  Glow: Default".
+- **The fix (OURS).** `CharacterAppearance.glow_sources`: a drawn row with rows of its own keeps
+  them; one with none, worn by an item that has rows, takes the item's own seal and sparkle and
+  the glow type of the plain twin of the same model (`_A_RARE_SWITCHnn` -> `_A_SWITCHnn`), else
+  the item's own. A locked item's twin stays plain. The Nova effects keep the item's own scale on
+  the new model (INFERRED; the archive has no Nova row for it, OPEN).
+- **Other players (OURS wire).** The record and the 0x3038 name the model's row (round 838). The
+  server now adds the item's own id after the plus of a 0x3038 for a switched item
+  (`EquipBroadcast.Own`; every other 0x3038 is retail's bytes) and sends one such 0x3038 per
+  switched worn item after a spawn record (`look.switched`, among the spawn's state frames). The
+  client keeps it per player and slot (`World3D._other_fx`), clears it on a 0x3039 or a plain
+  0x3038, redraws the body when it changes, and carries it into the crowd's kinds and far recipes.
+- **The previews.** The item mall's preview (`MallModels.build_body`) and the skin-change
+  preview (`_skin_preview_body`) read the worn items' own ids, so they showed the item's original
+  model. Both now take them as the Equipment window draws them (`_display_equipped`, `_player_fx`).
+  The original's mall preview copies the Equipment window's dress with each slot's plus (READ
+  `0xa617d0` mode 0, `item_mall.md` §4a), so it shows the model, the glow and the effects.
+- **Live (box, port 17020, real clicks through OPENSRO_QA_INPUT).** A level-110 China man was
+  given the unlocked Seal of Nova sword 62605 and shield 62610 at +12, used model switchers 05 and
+  13 on them (right-click the tool, click the item, the box's OK), equipped the sword, opened the
+  mall, tried the wedding dress 22916 on and pressed Original. The tooltips read "Reaper Ghost
+  Sword (+12) ... Model Switched Item / Model: Degree 5 / Glow: Default", the plus and the stats
+  kept. The body, the doll and the mall preview each drew `ITEM_CH_SWORD_11_A_RARE_SWITCH05 with
+  ITEM_CH_SWORD_11_A_SWITCH05's glow type and ITEM_CH_SWORD_11_A_RARE_ACTIVE's effects +12 (row
+  +12, 4 effect(s))`, the dress on and off included. A watcher saw the actor (a second client)
+  arrive in the sword (`0x3038 uid 1 slot 6 item 62081 plus 12 own 62605`, the spawn's after
+  frame) and put the shield on (`... slot 7 item 62207 plus 12 own 62610`); after a relog the
+  actor's own body drew both with glow and effects. The v0.1.607 build, the same steps: no glow
+  and no effects on the switched sword, and the mall preview drew the original sword. Frames:
+  `/var/tmp/r843w/keep/` on the box.
+- **Tests.** Server `go test ./...` passes (`switcher843_test.go`: the trailer's bytes, the
+  spawn's after frame, the equip broadcast to an observer). Client: `check` ALL LOAD (1043
+  scripts), `tests` "ran 395 suite(s), 0 failing" on the tree rebased onto dev 8a92fc80
+  (`item_switch_glow843_test.gd` new; five World3D test subclasses take the new `fx` parameter).
+- **OPEN.** The character select screen (retail's 0xB007 list) draws the item's own row, not its
+  model. The Nova effects' scale on another model. Whether the private server itself kept an
+  unlocked item's glow after its switch (its filter is not in the archive).
+
 ## Eight-hundred-and-forty-second round, lane T: the stall network's item tooltips
 
 The user's asks: "when using the stall network you should be able to hover over the item icon and
