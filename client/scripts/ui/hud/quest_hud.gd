@@ -13,14 +13,19 @@ class_name QuestHud
 ##   0xFFFF4A4A, above 9 0xFF65AFA2, else 0xFFEFDAA4. A click sends 0x70D4.
 ## - **The quest detail** (CIFQuestReward, resinfo\ifquestreward.txt, READ:
 ##   UI_QUEST::FUN_006e4c00): the title SN_PAY_<Q>, the contents
-##   SN_PAYCON_<Q> (sml2 markup; drawn as plain text, OURS -- the client's PML
-##   renderer is not built), the button UIIT_STT_QUEST_GIVEUP for statuses
+##   SN_PAYCON_<Q> in the CIFPML 18 (sml2 markup, drawn as the client draws
+##   it -- PmlText, round 845: the record's FontColor black, <font color>
+##   runs in their colour, <strong> in the weight-600 face, the 5-pixel line
+##   margin, the pixel scroll and its scroll bar 15), the title 17 in the
+##   weight-600 face (0x8b44b0(5, 2)), the button UIIT_STT_QUEST_GIVEUP for statuses
 ##   1/7/8 (0x70D9 after an agreement box) or UIIT_STT_QUEST_REWARD for 2
 ##   (0x70D8).
 ## - **The reward window** (0x3514 -> CNIFQuestReward, READ that it opens and
 ##   draws the basic rewards and the items, FUN_00605250 / FUN_006071d0).
 ##   OURS: CNIFQuestReward's own 2dt layout is not read, so it is drawn on the
-##   same paper as the detail: the page text, then the reward lines (gold,
+##   same paper as the detail (`res_ui\quest_re.2dt`, a dark CNIF window, is
+##   not built; round 845 draws its text through the same PML, so the paper's
+##   black): the page text, then the reward lines (gold,
 ##   EXP, SP EXP, SP from refqusetreward; the items from
 ##   refquestrewarditems), and the button sends 0x7515 with nothing chosen
 ##   (the server pays every item; choice rewards are OPEN).
@@ -33,6 +38,21 @@ class_name QuestHud
 ##   FUN_007314f0).
 
 const DETAIL_LAYOUT := "resinfo\\ifquestreward.txt"
+const CONTENTS := "GDR_QUESTREWARD_CONTENTS"
+## The record's rect (MEASURED, ifquestreward.txt), when the layout is missing.
+const CONTENTS_RECT := Rect2(30, 74, 290, 247)
+const SCROLL_CONTROL := "GDR_QUESTREWARD_SCROLL"
+## CIFQuestReward's OnCreate art for the scroll (0x6e5020..0x6e50b5, READ).
+const SCROLL_UP_DDJ := "interface\\guide\\gd_scroll_up.ddj"
+const SCROLL_DOWN_DDJ := "interface\\guide\\gd_scroll_down.ddj"
+const SCROLL_THUMB_DDJ := "interface\\guide\\gd_scroll_button.ddj"
+const SCROLL_TRACK_DDJ := "interface\\quest\\qst_scroll_line.ddj"
+## 0x649c30: the scroll's length is the PML's height less 0x30.
+const SCROLL_LENGTH_LESS := 48.0
+const TITLE_BOLD_META := "quest_title_bold"
+## Godot's embolden for the weight-600 title when the system has no bold
+## file (OURS: the chat's bold tab's 0.6).
+const TITLE_EMBOLDEN := 0.6
 const INFO_LAYOUT := "resinfo\\ifquestinfo.txt"
 const INFO_SLOT_LAYOUT := "resinfo\\ifquestinfoslot.txt"
 const INFO_REGISTRY := {"name": "GDR_QUESTINFO"}
@@ -135,23 +155,80 @@ func _paper(existing: HudWindow, window_name: String) -> HudWindow:
 		print("QuestHud: %s did not build" % DETAIL_LAYOUT)
 		w.queue_free()
 		return null
-	# The contents box (GDR_QUESTREWARD_CONTENTS, a CIFPML at 30,74,290,247):
-	# a label in its rect (OURS: plain text, see the header).
-	var body := RichTextLabel.new()
+	# The contents box (GDR_QUESTREWARD_CONTENTS, a CIFPML at 30,74,290,247)
+	# drawn as the client's PML (round 845, PmlText): its record's FontColor
+	# (255,0,0,0, black) is the colour of every run no <font> recolours.
+	var def := _contents_def()
+	var body := PmlText.new()
 	body.name = "QuestContents"
-	body.bbcode_enabled = true
-	body.scroll_active = true
-	body.position = Vector2(30, 74)
-	body.size = Vector2(290, 247)
-	body.mouse_filter = Control.MOUSE_FILTER_PASS
-	if builder != null and builder.font_at(0) != null:
-		body.add_theme_font_override("normal_font", builder.font_at(0))
-		body.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
+	body.position = Vector2(def.rect.position) if def != null else CONTENTS_RECT.position
+	body.size = Vector2(def.rect.size) if def != null else CONTENTS_RECT.size
+	var index := def.font_index if def != null else 0
+	var face: Font = builder.font_at(index) if builder != null else null
+	if face == null:
+		face = ThemeDB.fallback_font
+	body.setup(face, UiBuilder.FONT_SIZES[clampi(index, 0, UiBuilder.FONT_SIZES.size() - 1)],
+		def.font_color if def != null else Color.BLACK)
 	w.add_child(body)
+	_link_scroll(w, body)
+	_bold_title(w)
 	w.centre()
 	return w
 
-static func _set_label(w: HudWindow, control: String, text: String) -> void:
+## The contents record of ifquestreward.txt (its rect, font and FontColor).
+func _contents_def() -> UiLayoutParser.ControlDef:
+	if builder == null:
+		return null
+	var layout := builder.load_layout(DETAIL_LAYOUT)
+	var sec := layout.get_section("Create") if layout != null else null
+	if sec == null:
+		return null
+	return sec.control_by_name.get(CONTENTS, null) as UiLayoutParser.ControlDef
+
+## CIFQuestReward's OnCreate (0x6e4f40, READ): the scroll 15 gets
+## gd_scroll_up / gd_scroll_down / gd_scroll_button and the track
+## qst_scroll_line (0x6593c0, vslot 0x34); the PML's text sets its range
+## 0..content - 247 in pixels, step 1, and its length 247 - 48 (0x649c30 ->
+## 0x65a390; INFERRED that the PML's linked scroll, +0x370, is this one).
+## Drawn as the NPC talk's CIFVerticalScroll is (HudChat.ChatScroll, the up
+## arrow 16 above the record).
+func _link_scroll(w: HudWindow, body: PmlText) -> void:
+	var bar := w.node(SCROLL_CONTROL) as Control
+	if bar == null:
+		return
+	var scroll := HudChat.ChatScroll.new()
+	scroll.name = "QuestContentsScroll"
+	if builder != null:
+		scroll.up_texture = builder.load_texture(SCROLL_UP_DDJ)
+		scroll.down_texture = builder.load_texture(SCROLL_DOWN_DDJ)
+		scroll.bar_texture = builder.load_texture(SCROLL_TRACK_DDJ)
+		scroll.thumb_texture = builder.load_texture(SCROLL_THUMB_DDJ)
+	scroll.length = maxf(body.size.y - SCROLL_LENGTH_LESS, 0.0)
+	scroll.position = bar.position - Vector2(0, HudChat.SCROLL_BUTTON.y)
+	scroll.size = Vector2(HudChat.SCROLL_BUTTON.x, HudChat.SCROLL_BUTTON.y * 3 + scroll.length)
+	scroll.moved.connect(func(pos: int) -> void: body.set_scroll(pos))
+	body.scrolled.connect(func(pos: int) -> void: scroll.set_range(body.max_scroll(), pos))
+	w.add_child(scroll)
+	body.set_meta("scroll_bar", scroll)
+
+## The title 17 (0x6e4fa4..0x6e4fb4, READ): its text object gets text flag 2
+## in all five states (0x8b44b0(5, 2)) -- the weight-600 face.
+func _bold_title(w: HudWindow) -> void:
+	var n := w.node("GDR_QUESTREWARD_TITLE") as Control
+	if n != null:
+		n.set_meta(TITLE_BOLD_META, true)
+
+## The contents set: the markup laid out from the top and the scroll's range.
+static func _set_contents(w: HudWindow, markup: String) -> void:
+	var body := w.get_node_or_null("QuestContents") as PmlText
+	if body == null:
+		return
+	body.set_markup(markup)
+	var scroll := body.get_meta("scroll_bar", null) as HudChat.ChatScroll
+	if scroll != null:
+		scroll.set_range(body.max_scroll(), body.scroll)
+
+func _set_label(w: HudWindow, control: String, text: String) -> void:
 	var n := w.node(control) as Control
 	if n == null:
 		return
@@ -161,6 +238,19 @@ static func _set_label(w: HudWindow, control: String, text: String) -> void:
 		l.name = "Text"
 		l.size = n.size
 		n.add_child(l)
+		# The record's FontColor (the title's 255,255,255,255) and, for the
+		# title, the weight-600 face (_bold_title): the system's bold file,
+		# else Godot's embolden as the chat's bold tab draws it (OURS).
+		l.add_theme_color_override("font_color", Color.WHITE)
+		var face: Font = builder.font_at(0) if builder != null else null
+		if face != null:
+			l.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+			if n.get_meta(TITLE_BOLD_META, false):
+				var bold := HudNotice.bold_file(face)
+				l.add_theme_font_override("font", bold if bold != null else FontOversampling.bold(face, TITLE_EMBOLDEN))
+			else:
+				l.add_theme_font_override("font", face)
+		UiBuilder.crisp_text(l)
 	l.text = text
 
 static func _button(w: HudWindow) -> BaseButton:
@@ -176,8 +266,7 @@ func open_detail(id: int) -> HudWindow:
 	var q := t.quest(id)
 	var v := state.view_of(id) if state != null else null
 	_set_label(detail, "GDR_QUESTREWARD_TITLE", t.resolve(q.pay, t.title_of(id)) if q != null else t.title_of(id))
-	var body := detail.get_node("QuestContents") as RichTextLabel
-	body.text = TeleportBoard.escape(QuestTables.plain(t.resolve(q.paycon, ""))) if q != null else ""
+	_set_contents(detail, t.resolve(q.paycon, "") if q != null else "")
 	var b := _button(detail)
 	var status := v.status if v != null else 0
 	var key := "UIIT_STT_QUEST_REWARD" if status == QuestNet.STATUS_ACHIEVED_NOT_PAID else "UIIT_STT_QUEST_GIVEUP"
@@ -244,10 +333,12 @@ func open_reward(id: int, text: String) -> HudWindow:
 	reward_quest = id
 	var t := _tables()
 	_set_label(reward, "GDR_QUESTREWARD_TITLE", t.title_of(id))
-	var lines := PackedStringArray([TeleportBoard.escape(t.resolve(text, text)), ""])
+	# OURS layout (see the header): the page text, a blank line, then the
+	# reward lines, as PML lines (`<br>`) in the paper's black.
+	var lines := PackedStringArray([t.resolve(text, text), ""])
 	for l in reward_lines(id):
-		lines.append(TeleportBoard.escape(l))
-	(reward.get_node("QuestContents") as RichTextLabel).text = "\n".join(lines)
+		lines.append(l)
+	_set_contents(reward, "<br>".join(lines))
 	var b := _button(reward)
 	if b != null:
 		_set_button_text(b, _ui("UIIT_STT_QUEST_REWARD", "Reward"))
