@@ -1040,7 +1040,10 @@ func pick_up_icon(what: Dictionary, icon: Texture2D, source: CanvasItem, at: Vec
 	# tab switched): a drop after that would act on a slot nobody sees. A
 	# quick slot is exempt -- the bar's page arrows hide the slot while its
 	# icon is carried to another page. OURS (retail's handling not read).
-	if String(what.get("kind", "")) != "quickslot":
+	# Round 843 (lane P): a window that lets go itself says so
+	# ("keep_on_hide": Magic POP's pane, whose page turn hides the cell while
+	# the original keeps it held).
+	if String(what.get("kind", "")) != "quickslot" and not bool(what.get("keep_on_hide", false)):
 		_watch_held_source(source)
 	return true
 
@@ -7516,6 +7519,10 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 			if not _over_any_window(at):
 				held_dropped_outside.emit(what, at)
 		"quickslot":
+			held_dropped_outside.emit(what, at)
+		"gacha_bag", "gacha_card":
+			# Round 843: Magic POP's own slots are World3D's window's
+			# (GachaWindow.accept_drop, CIFGhaCha::vslot_028 c:0x749a30).
 			held_dropped_outside.emit(what, at)
 
 ## A worn item put down. On a bag cell: taken off, the clicked slot sent as

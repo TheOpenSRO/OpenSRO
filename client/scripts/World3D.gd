@@ -13887,6 +13887,15 @@ func _on_quickslot_pick_requested(slot_index: int) -> void:
 ## The held icon was put down off the panels (round 652): onto the quick slot
 ## bar, or the world.
 func _on_held_dropped_outside(what: Dictionary, at: Vector2) -> void:
+	# Round 843 (lane P): put down on Magic POP, the window takes it
+	# (CIFGhaCha::vslot_028 c:0x749a30 always answers yes); its own slots put
+	# down anywhere else do nothing (no other window takes kind 0x8c). A
+	# quick slot is let go of off the bar whatever takes it (the bar's
+	# vslot_026), so it goes on to its own handling.
+	if String(what.get("kind", "")) != "quickslot" and _gacha_window != null and _gacha_window.accept_drop(what, at):
+		return
+	if String(what.get("kind", "")).begins_with("gacha_"):
+		return
 	# Round 795: the COS window's slots and commands, and a bag item put down
 	# on the pet bag (HudCos.accept_drop), before anything else takes it.
 	if _hud_cos != null:
@@ -18070,7 +18079,12 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   bagitem:<id>        left click the shown bag cell holding that item id
 #                       (round 791); rbagitem:<id> right-clicks it, the
 #                       item's use (round 838)
-#   gachacard           left click the Magic POP pane's first card (round 838)
+#   gachacard           left click the Magic POP pane's first card on the
+#                       page shown (round 838; round 843: the pick-up)
+#   gachatab:<p> / gachacell:<slot> / gachacardslot  left click Magic POP's
+#                       page tab p (0-based), the pane's cell of bag slot
+#                       <slot> (its page shown) or the card slot (round 843)
+#   gachastate          report the Magic POP window's state (round 843)
 #   playerclick:<name>  left click the middle of that player's body (round 839)
 #   stallicon:<i> / stallmodify:<i> / stallslot:<i>  left click stall slot i's
 #                       icon, modify button or the slot (round 839)
@@ -19177,6 +19191,28 @@ func _qa_input_step() -> void:
 			else:
 				_qa_input_report = "%s at %s" % [action, ec.get_global_rect().get_center()]
 				_qa_push_click(ec.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"gachatab", "gachacell", "gachacardslot":
+			# Round 843: Magic POP's page tab <page> (0-based), its pane's cell of
+			# bag slot <slot> (on the page shown), its card slot.
+			var gt: Control = null
+			if _gacha_window != null and _gacha_window.visible:
+				if kind == "gachatab":
+					gt = _gacha_window.tab_of(int(arg))
+				elif kind == "gachacell":
+					var gcl := _gacha_window.cell_of(int(arg))
+					gt = gcl.get_node_or_null("ItemIcon") as Control if gcl != null and gcl.visible else null
+				else:
+					var gcs := _gacha_window.node("GDR_GHACHA_CARD_SLOT") as Control
+					gt = gcs.get_node_or_null("ItemIcon") as Control if gcs != null else null
+			if gt == null:
+				_qa_input_report = action + " (not shown)"
+			else:
+				var gpt := gt.get_global_rect().get_center()
+				_qa_input_report = "%s at %s" % [action, gpt]
+				_qa_push_click(gpt, MOUSE_BUTTON_LEFT)
+		"gachastate":
+			# Round 843: the Magic POP window's state, for the report.
+			_qa_input_report = action + " " + (_gacha_window.qa_state() if _gacha_window != null else "(no window)")
 		"gachacard":
 			# Round 838: left click the Magic POP window's inventory cell holding
 			# the first Magic POP card (GachaWindow.card_cell).
@@ -27832,6 +27868,10 @@ func _open_gacha_select() -> void:
 		_gacha_select.start_requested.connect(_on_gacha_start)
 		_gacha_select.closed.connect(func() -> void:
 			if _gacha_window == null or not _gacha_window.visible:
+				# Round 843: the select window's close closes Magic POP
+				# (CIFGhachaSelectWnd::vslot_043 c:0x749d60 -> c:0x79c060(0):
+				# snd_window_close).
+				UiSounds.play(UiSounds.KEY_WINDOW_CLOSE, "Magic POP closed from its select window (c:0x79c11f)")
 				_gacha_end_talk())
 	# The talk box gives way to the game (OURS: what hides it is not read).
 	if _hud_panels != null and _hud_panels.is_open("npctalk"):
@@ -27839,6 +27879,10 @@ func _open_gacha_select() -> void:
 		_hud_panels.close("npctalk")
 		_npc_hide_silent -= 1
 	_gacha_select.open()
+	# Round 843: c:0x79c060(1) creates the Ghacha window HIDDEN (ShowWindow(0)
+	# at c:0x79c0e4) before the toggle helper 0x79a7e0 runs on it, so the open
+	# sounds snd_window_close (READ).
+	UiSounds.play(UiSounds.KEY_WINDOW_CLOSE, "Magic POP opened: its window is created hidden (c:0x79c0f7)")
 	print("GACHA: select window open for NPC %d (ref %d)" % [_gacha_npc_uid, _gacha_npc_ref])
 
 ## Start (c:0x74a2b0): the main window with the chosen kind's prizes.
@@ -27858,9 +27902,35 @@ func _on_gacha_start(kind: GachaTables.Kind) -> void:
 		_gacha_window.icon_of = func(ref: int) -> Texture2D: return _hud_panels._item_icon(ref) if _hud_panels != null else null
 		_gacha_window.types_of = func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array()
 		_gacha_window.bag_of = func() -> Array: return _hud_panels.bag_entries() if _hud_panels != null else []
+		# Round 843 (lane P): the window's own bag pane -- every page, the bag's
+		# records' effects and tooltips, the purse -- and the held icon its
+		# cards go in by (GachaWindow).
+		_gacha_window.size_of = func() -> int: return _hud_panels.bag_size() if _hud_panels != null else 0
+		_gacha_window.gold_of = func() -> int: return int(_hud_panels._stats.gold) if _hud_panels != null and _hud_panels._stats != null else 0
+		_gacha_window.slot_fx = func(icon: Control, ref: int, bag_slot: int) -> void:
+			if _hud_panels != null:
+				_hud_panels._set_item_slot_fx(icon, ref, _hud_panels._item_instance("bag", bag_slot) if bag_slot >= 0 else null)
+		_gacha_window.tip_of = func(icon: Control, ref: int, bag_slot: int) -> void:
+			if _hud_panels != null:
+				_hud_panels._set_item_tip(icon, ref, "bag" if bag_slot >= 0 else "", bag_slot)
+		_gacha_window.count_shows = func(ref: int, qty: int) -> bool: return _hud_panels.shows_count(ref, qty) if _hud_panels != null else qty > 1
+		_gacha_window.pick_up = func(what: Dictionary, tex: Texture2D, source: Control, at: Vector2) -> bool:
+			return _hud_panels.pick_up_icon(what, tex, source, at) if _hud_panels != null else false
 		_gacha_window.play_requested.connect(func(uid: int, gid: int, bag_slot: int) -> void:
 			NetClient.gacha_play(uid, gid, bag_slot))
+		_gacha_window.coupon_flashed.connect(func(bag_slot: int) -> void:
+			# The bag's own slot flashes too (0x3040 mask 1: c:0x88c1df -> 0x6b44d0).
+			if _hud_panels != null:
+				_hud_panels.flash_switched(bag_slot + 13))
 		_gacha_window.closed.connect(_gacha_end_talk)
+		# A card held from the pane is let go when the window goes (OURS: retail
+		# destroys the window; the payload's "keep_on_hide").
+		_gacha_window.visibility_changed.connect(func() -> void:
+			if not _gacha_window.visible and _hud_panels != null and _hud_panels.held_icon != null \
+					and _hud_panels.held_icon.kind().begins_with("gacha_"):
+				_hud_panels.cancel_held_icon("Magic POP closed"))
+		if _hud_panels != null:
+			_hud_panels.click_pass_through.append(_gacha_window.passes_at)
 	var list := tables.prizes_for(tables.prize_set(_gacha_npc_ref), kind,
 		func(ref: int) -> PackedInt32Array: return _hud_panels.item_types(ref) if _hud_panels != null else PackedInt32Array())
 	_gacha_select.hide()
