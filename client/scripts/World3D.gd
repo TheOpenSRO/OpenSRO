@@ -14211,6 +14211,7 @@ func _refresh_quickslot_counts() -> void:
 			var icon := _hud_underbar.slot_icon_rect(int(qs))
 			if icon != null:
 				panels.mark_quick_slot(icon, int(_quickslot_items[qs]["slot"]))
+	_refresh_quickslot_states()
 
 ## Round 829: the worn-out gear figure (EquipStateImg): worn slots 0..7.
 var _equip_state_img: EquipStateImg = null
@@ -14236,6 +14237,23 @@ func _refresh_quickslot_seals() -> void:
 		if _hud_panels.is_seal_item(id):
 			seals[slot] = id
 	_hud_underbar.set_slot_seals(seals)
+	_refresh_quickslot_states()
+
+## Round 843 (lane S): the bar's items' state effects (a summoned pet's edge,
+## a dead pet's wash, an awake spirit's edge) from their bag records, on
+## every bar change and every bag list (with the counts).
+func _refresh_quickslot_states() -> void:
+	if _hud_underbar == null or _hud_panels == null:
+		return
+	var states := {}
+	for slot in _quickslot_items:
+		var id := int(_quickslot_items[slot]["item"])
+		var bag := int(_quickslot_items[slot]["slot"])
+		var inst: ItemInstance = NetClient.last_inventory_instances.get(bag) if bag >= 0 else null
+		if inst != null and inst.ref_item_id != id:
+			inst = null
+		states[slot] = [_hud_panels.item_row(id), inst, id]
+	_hud_underbar.set_slot_states(states)
 
 ## OPENSRO_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
 ## raises that mastery n times, "<id>" learns that skill; each waits for its
@@ -38877,11 +38895,26 @@ func _on_cos_item_state(d: Dictionary) -> void:
 	var it: ItemInstance = NetClient.last_inventory_instances.get(int(d.get("slot", -1)))
 	if it == null:
 		return
+	# Round 843 (lane S): the slot's effects follow the state (c:0x88c637..,
+	# 0x6b4390 -> the bag slot's 0x667ac0(state), then the quick bar's,
+	# 0x60a940): a pet out gets its edge, a dead one the blue wash. A revival
+	# (state 3 over a record still at 4, 0x667ac0 -> 0x6666d0) or a rent
+	# made longer (more seconds than a record with some left,
+	# c:0x88c6dc..0x88c701 -> 0x6b4500) flashes the bag slot once.
+	var life := false
 	if int(d.get("state", -1)) >= 0:
-		it.cos_state = int(d["state"])
+		var state := int(d["state"])
+		life = state == CosNet.ITEM_STATE_STORED and it.cos_state == CosNet.ITEM_STATE_DEAD
+		it.cos_state = state
 	if int(d.get("rent_secs", -1)) >= 0:
-		it.cos_rent_secs = int(d["rent_secs"])
+		var old_left := it.rent_left_secs()
+		var new_left := int(d["rent_secs"])
+		life = life or (old_left > 0 and new_left > old_left)
+		it.cos_rent_secs = new_left
 		it.rent_read_msec = Time.get_ticks_msec()
+	if _hud_panels != null:
+		_hud_panels.bag_item_state_changed(int(d.get("slot", -1)), life)
+	_refresh_quickslot_states()
 
 ## A HudCos command (0x7a0980's numbering) sent for uid.
 func _on_hud_cos_command(uid: int, cmd: int) -> void:

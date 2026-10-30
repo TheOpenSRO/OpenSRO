@@ -158,6 +158,9 @@ func _row(id: int, code: String, type4: int, level: int, max_hp: int) -> CosTabl
 	return r
 
 var _rows := {}
+## Round 843: item rows for the pet bag's slot effects (a seal item, a pet
+## scroll); every other id has none, as before.
+var _item_rows := {}
 
 func _data(uid: int, ref_id: int, name: String = "") -> CosNet.Data:
 	var d := CosNet.Data.new()
@@ -276,7 +279,7 @@ func _manager_tests() -> void:
 	var cos := HudCos.new(_builder())
 	cos.setup({
 		"cos_row": func(id: int) -> CosTable.Row: return _rows.get(id),
-		"item_row": func(_id: int) -> ItemTableReader.Item: return null,
+		"item_row": func(id: int) -> ItemTableReader.Item: return _item_rows.get(id),
 		"text": func(k: String) -> String: return k,
 		"exp_to_next": func(lv: int) -> int: return lv * 100,
 		"screen_width": func() -> int: return 1024,
@@ -368,6 +371,36 @@ func _manager_tests() -> void:
 	_check(rabbit.items.get(2) == picked, "a picked item lands in its slot")
 	cos.bag_applied({"ok": true, "type": CosNet.BAG_COS_TO_BAG, "cos": 3, "src": 5, "dst": 9})
 	_check(not rabbit.items.has(5), "COS_TO_BAG removes it")
+	# Round 843 (lane S): the pet bag's slots are CIFSlotWithHelps (SetItem
+	# 0x6871d0 from IFCOSInventory c:0x7a75b4), so a seal item there shows
+	# the star and a dead pet's scroll the blue wash; an emptied slot neither.
+	var seal_row := ItemTableReader.Item.new()
+	seal_row.id = 901
+	seal_row.rarity = 2
+	var scroll_row := ItemTableReader.Item.new()
+	scroll_row.id = 902
+	scroll_row.type_ids = PackedInt32Array([3, 2, 1, 1])
+	_item_rows = {901: seal_row, 902: scroll_row}
+	var seal_it := ItemInstance.new()
+	seal_it.ref_item_id = 901
+	var dead_it := ItemInstance.new()
+	dead_it.ref_item_id = 902
+	dead_it.is_equipment = false
+	dead_it.cos_state = CosNet.ITEM_STATE_DEAD
+	rabbit.items[0] = seal_it
+	rabbit.items[1] = dead_it
+	w.refresh_inventory()
+	var fx := func(i: int, n: String) -> bool:
+		var c := (w.inv_slots[i] as Control).get_node("ItemIcon").get_node_or_null(n) as CanvasItem
+		return c != null and c.visible
+	_check(fx.call(0, ItemSealEdge.NODE_NAME) and not fx.call(1, ItemSealEdge.NODE_NAME) and not fx.call(3, ItemSealEdge.NODE_NAME),
+		"the pet bag: a seal item's slot has the star, others none")
+	_check(fx.call(1, ItemStateEdge.WASH_NAME) and not fx.call(0, ItemStateEdge.WASH_NAME), "the pet bag: a dead pet's scroll has the blue wash")
+	rabbit.items.erase(0)
+	rabbit.items.erase(1)
+	w.refresh_inventory()
+	_check(not fx.call(0, ItemSealEdge.NODE_NAME) and not fx.call(1, ItemStateEdge.WASH_NAME), "emptied: neither")
+	_item_rows = {}
 	# A drop on the bag's slot 3 of a pet-bag item from slot 2.
 	await process_frame
 	var at := (w.inv_slots[3] as Control).get_global_rect().get_center()
