@@ -69,6 +69,7 @@ const MON_GEOMETRY := 8
 const MON_COLOUR := 14
 
 const QST_CODE := 2
+const QST_KIND := 3
 const QST_AREA := 4
 const QST_GEOMETRY := 5
 const QST_MONSTER_CODE := 11
@@ -88,6 +89,9 @@ class GuideMap:
 	## Joins to a WorldmapInfoReader map, or to a dungeon floor.
 	var map_id: int
 	var end_region_text: String
+	## The 서비스 column (round 845; the client loads a row only when it is
+	## not 0).
+	var service: int = 1
 
 	## Where a region and an in-tile offset land on this map, in pixels
 	## from its top-left. A ascends from the start and B descends from it,
@@ -119,6 +123,37 @@ class GuidePoint:
 	var colour_text: String
 	## QUEST only: the monster the quest is about, if it names one.
 	var monster_code: String
+	## The 서비스 column: the client loads a MONSTER or QUEST row only when
+	## it is not 0 (Client_LoadRefDataFile case 0x59, round 845, READ).
+	var service: int = 1
+	## QUEST only: the 구분 column (+0xf0, GlobalDataManager 0x970110): 0
+	## the monster codes' areas, 1 a quest icon at the row's own place
+	## (NIFWorldMap 0x6256e0, round 845).
+	var kind: int = 0
+
+	## QUEST: the last column split at `,` (0x970110's loop over 0x4ee310):
+	## monster codes for kind 0, the icon's tooltip keys for kind 1.
+	func codes() -> PackedStringArray:
+		var out := PackedStringArray()
+		for c in monster_code.split(",", false):
+			var t := c.strip_edges()
+			if t != "":
+				out.append(t)
+		return out
+
+	## MONSTER: the 색상값 column's colours, `0x80000005[,0x...]` -- the
+	## values the monster's area texels carry in its mask tiles
+	## (interface\worldmap\monster\<area>_<x>x<y>.ddj; MEASURED:
+	## field_166x101's texels are 0x80000004, MOB_CH_WATERGHOST's colour).
+	func colours() -> PackedInt64Array:
+		var out := PackedInt64Array()
+		for c in colour_text.split(",", false):
+			var t := c.strip_edges().to_lower()
+			if t.begins_with("0x"):
+				t = t.substr(2)
+			if t != "" and t.is_valid_hex_number():
+				out.append(t.hex_to_int())
+		return out
 
 	func pixel_in(map: GuideMap) -> Vector2i:
 		return map.pixel(region, pos) if map != null else Vector2i.ZERO
@@ -175,14 +210,40 @@ static func parse(data: PackedByteArray) -> ParsedGuide:
 						cols, MON_CODE, MON_AREA, MON_GEOMETRY, MON_COLOUR, -1))
 			SECTION_QUESTS:
 				if cols.size() > QST_MONSTER_CODE:
-					guide.quests.append(_parse_point(
-						cols, QST_CODE, QST_AREA, QST_GEOMETRY, -1, QST_MONSTER_CODE))
+					var q := _parse_point(cols, QST_CODE, QST_AREA, QST_GEOMETRY, -1, QST_MONSTER_CODE)
+					q.kind = _int_at(cols, QST_KIND)
+					guide.quests.append(q)
 			_:
 				guide.skipped_other_sections += 1
 	return guide
 
+## `server_dep\silkroad\textdata\worldmapguidedata_region.txt` (round
+## 845): `<monster code>\t<A>x<B>[,<A>x<B>...]`, the tiles of a monster's
+## mask. The client appends each row's tiles to the monster's record
+## (Client_LoadRefDataFile case 0x5d: 0x9417f0 by the code, then every
+## pair), so a code's rows add up, in file order. Code -> Array of Vector2i.
+const REGION_TABLE_PATH := "server_dep\\silkroad\\textdata\\worldmapguidedata_region.txt"
+
+static func parse_region_tiles(data: PackedByteArray) -> Dictionary:
+	var out := {}
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() < 2:
+			continue
+		var code := cols[0].strip_edges()
+		if code == "" or code.begins_with("//"):
+			continue
+		var tiles: Array = out.get(code, [])
+		for part in cols[1].split(",", false):
+			var t := _pair(part)
+			if t != Vector2i.ZERO:
+				tiles.append(t)
+		out[code] = tiles
+	return out
+
 static func _parse_map(cols: PackedStringArray) -> GuideMap:
 	var m := GuideMap.new()
+	m.service = int(cols[0].strip_edges())
 	m.name = cols[MCOL_NAME].strip_edges()
 	m.start_region = _pair(cols[MCOL_START_REGION])
 	m.end_region_text = cols[MCOL_END_REGION].strip_edges()
@@ -207,6 +268,7 @@ static func _parse_area(cols: PackedStringArray) -> GuidePoint:
 static func _parse_point(cols: PackedStringArray, code_col: int, area_col: int,
 		geometry_col: int, colour_col: int, monster_col: int) -> GuidePoint:
 	var p := GuidePoint.new()
+	p.service = int(cols[0].strip_edges())
 	p.name = cols[1].strip_edges()
 	p.code = cols[code_col].strip_edges()
 	p.area = cols[area_col].strip_edges()

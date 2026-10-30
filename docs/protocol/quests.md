@@ -240,3 +240,69 @@ when it has quest business with the character.
 - The talk answer's wire opcode (0x30D4 built, 0x70D4 handled: both accepted).
 - The default quests a new character is given (round 692) are still recorded,
   not opened: none of them (`QTUTORIAL_*`, `QEVENT_GUIDE`) has a setup.
+
+## 8. The quest detail's text: CIFPML (round 845)
+
+The content-view button (row control 19 -> `0x6e5290` -> `UI_QUEST::FUN_006e4c00`) opens
+CIFQuestReward on `resinfo\ifquestreward.txt`; its contents `GDR_QUESTREWARD_CONTENTS` (id 18,
+30,74,290,247, FontColor 255,0,0,0) is a CIFPML showing `SN_PAYCON_<Q>`. All READ unless marked.
+
+| piece | reading | where |
+|---|---|---|
+| tags | matched whole: `sml2` 2, `br` 3, `p` 4, `center` 5, `left` 6, `right` 7, `font` 8, `strong` 9, `table` 10, `tr` 11, `td` 12, `img` 13, `layer` 14; `/` closes | `0x9b2160`, `0x9b5600` |
+| `<font>` attributes | `index` 0xd, `color` 0xe, `style` 0xf (`shadow|bold|blur|outline|underline`: 1, 2, 4, 8, 16), `bgcolor` 4 | `0x9b23e0`, `0x9b3090` |
+| a value | starts after the first `"` past the name | `0x9b2e40..0x9b2fb0` |
+| a colour | four numbers A,R,G,B, `((a<<8|r)<<8|g)<<8|b`; a number is digits after blanks, or 0 when a non-digit follows (`0xb9cc80`), then the scan passes the next `,` | `0x9b1e40` |
+| the start state | {font `+0x94`, bg `+0x9c`, colour `+0xa0`, style `+0xf0`} of the control; `+0xa0` is the record's FontColor (the loader's `+0x90` -> `0x8b2b70` on the window's +0x90 block) | `0x64b2c0`, `0x82c7c1`, `0x8b56c5` |
+| `<font>` / `<strong>` | push the state with the attributes / with style 2 | `0x9b0d0a..0x9b0f74` |
+| a run | a text item: the state's font (`0xba5460`), colour (`0x8b2ba0`), style (`0x8b4400`), line gap 0 (`0x8b2c80`), wrap width = width - x (`0x8b2c60`) | `0x9af330` |
+| the wrap | advances summed; the first glyph past the width (never the run's first) breaks after the last space, or before it | `0x8b3ef0` |
+| a line | height = tallest run's tmHeight (`0x8b3040`: the TEXTMETRIC `0xbaa110` keeps per glyph mode); the next line at y + height + margin; the margin 5 | `0x9af0f0`, `0x9b0c6d`, `0x64b2c0` |
+| the draw | each glyph cell from the item's top, colour `& 0xffffff | alpha << 24` (the markup's alpha dropped); style 1 a black shadow at (+1, +1); style 2 the weight-600 face | `0x8b48b0`, `0x8b2290` |
+| the scroll | range 0..content - height, step 1 px, length height - 48; wheel: step x delta / 20 (6 px a notch) | `0x649c30`, `0x65a390`, vslot_036 `0x649cb0` |
+| CIFQuestReward | +0x384 the PML, +0x380 the title (text flag 2 in all states: bold), +0x37c the button, +0x388 the scroll with `gd_scroll_up/down/button` and the track `qst_scroll_line`; the PML's quote unescape on (+0x374) | `0x6e4f40` |
+
+MEASURED (textquest_otherstring): 997 `<sml2>` strings, tags `br` 18415, `font` 6035, `strong` 6013;
+colours `255,226,74,0` 5016 (+16 doubled-quote), `255,44,15,1` 993 (+4), `255,255,0,0` 7. A quest's
+detail: orange bold headers (226, 74, 0), the plain lines in the record's black, the scenario
+paragraph in (44, 15, 1). OpenSRO: `PmlText` (client/scripts/ui/pml_text.gd), QuestHud.
+
+## 9. The quest list's world-map button (round 845)
+
+All READ unless marked; `QuestMapGuide` and `HudWorldmap.show_quest` carry the details.
+
+- **The message map** (`0xeb98d0`, filled by `0xd6d6e0`): control 18 -> `0x6e51e0`, 19 ->
+  `0x6e5290` (the detail), 8 -> `0x6e55d0` (the check box).
+- **`0x6e51e0`**: the world map window (CGInterface 0x1c, `0x799920`) tests the quest
+  (`0x612e60`); no place: the quest tracked (`DAT_00eeae70`), nothing else; a place: the window shown
+  (open: vslot 0x50 `0x46cd60` -> `0xb90c00`, INFERRED to the front; closed: `0x79abe0`, M's toggle),
+  `0x6256e0(id)`, the quest tracked.
+- **`0x612e60`**: the player's record (`0x9d4c60` -> `0x8b9290`); status 8 (ACHIEVED_KILL_MONSTER):
+  the 0x30D5 NPC list (+0x24..+0x28) not empty; else a QUEST row of the code name
+  (GlobalDataManager +0x80c, `0x9418d0`). No place: `0x7781b0(0, UIIT_MSG_MAP_ERR)` -- "Does not have
+  any information about that quest.", type 0, 0xffdbc99b.
+- **The guide table**: `worldmapguidedata.txt` through Client_LoadRefDataFile case 0x59; rows whose
+  first column is 0 are skipped (INFERRED the column); QUEST rows (`0x970110`): kind (+0xf0), area
+  (+0xf4), region x, y, pos x, y (+0xf8..+0x104; the x, y columns skipped), the last column split at
+  `,` (+0x108); `worldmapguidedata_region.txt` (case 0x5d) appends each `<A>x<B>` to the monster's
+  tiles.
+- **`0x6256e0`**: auto-move off with the stale flag; `0x61a620` clears the marks; status 8: each NPC's
+  npcpos spot -- a local map holding it shown and scrolled there, else `0x622f00("field", x, y,
+  x / 10, z / 10)`; else each QUEST row: kind 0 -> for each monster `0x624f40(m, 1, 0x80e9c624)`
+  (icon `wmap_monster_icon.ddj` + name, `0x622f00`, the mask tiles painted: the monster's colours not
+  yet painted -> 0x80e9c624, other non-empty texels -> 0x00ffffff, then the colours join +0x229b0);
+  kind 1 -> for each key `0x619ae0(wmap_quest_icon.ddj, ...)` and `0x622f00`.
+- **`0x622f00(area, x, y, px, py)`**: the area's map id (`0x93b070`); 0: world map, point
+  ((x - left) * 32 + px, (top - y) * 32 + py); > 2000: that floor, point (px, py); then the scroll
+  moves the point to (304, 176), small size (104, 104) (`0x61c5a0`, clamped), the marker redone.
+- **`0x619ae0`**: a 32x32 sign, its top-left at the point; drawn by `0x61e890` after the place signs,
+  only on its map. The mask pictures (`0x61b0b0`) draw over the map's tile quads (`0x61e700`), before
+  the place signs.
+
+MEASURED (the box's Media.pk2): 128 QUEST rows in service, 127 code names; 120 kind 0 on `field`,
+7 kind 0 on `dunhuang1`, 1 kind 1 (QNO_CH_HWAN_1_3_1). Of the early Jangan quests, SMITH_1 has no row
+(the error line), POTION_1 / CHEF_1 / SOLDIER_EA1_1 and the others name their monsters.
+
+OPEN (sections 8 and 9): CNIFQuestReward's own `res_ui\quest_re.2dt` (the reward window is still drawn
+on the detail's paper); the hover box of the world map's quest signs (a Godot tooltip here); whether
+the texture loader shares one mask between two monsters; PML tables and images.

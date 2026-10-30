@@ -1674,9 +1674,32 @@ func _quest_window() -> QuestWindow:
 	window.player_level = _party_match_level()
 	window.quest_selected.connect(func(id: int) -> void: NetClient.quest.set_tracked(id))
 	window.detail_requested.connect(func(id: int) -> void: _quest_hud().open_detail(id))
+	window.map_requested.connect(_on_quest_map)
 	window.fill_log(NetClient.quest.entries())
 	_windows[QUEST_ID] = window
 	return window
+
+## Round 845: a quest row's world-map button (0x6e51e0; QuestMapGuide has
+## the reading). No place: the system line UIIT_MSG_MAP_ERR (0x612e60 ->
+## 0x7781b0(0, ..)) and the quest tracked; a place: the world map shown (to
+## the front when open, else the M key's toggle), the quest put on it
+## (HudWorldmap.show_quest) and tracked.
+func _on_quest_map(id: int) -> void:
+	var guide := QuestMapGuide.shared(_builder.media_archive() if _builder != null else null)
+	var view := NetClient.quest.view_of(id)
+	var q := _quest_hud()._tables().quest(id)
+	var wm := world_map as HudWorldmap
+	if not guide.has_area(view, q.code if q != null else ""):
+		var text := _builder.resolve_text(QuestMapGuide.MAP_ERR_KEY) if _builder != null else QuestMapGuide.MAP_ERR_KEY
+		exchange_system_line.emit(text, HudSystemMessage.TYPE_ALWAYS)
+	elif wm != null and is_instance_valid(wm):
+		if wm.visible:
+			wm.move_to_front()
+		else:
+			wm.toggle()
+		wm.quest_guide = guide
+		wm.show_quest(view, q.code if q != null else "")
+	NetClient.quest.set_tracked(id)
 
 ## The quest log changed (NetClient.quest, round 785): the list redraws.
 func _on_quest_log_changed() -> void:

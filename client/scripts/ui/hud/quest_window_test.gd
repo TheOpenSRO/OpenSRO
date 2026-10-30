@@ -329,9 +329,10 @@ func _run() -> void:
 	var detail: Control = hud.get("detail") if hud != null else null
 	_check(detail != null and detail.visible, "the content-view button opens the quest detail (CIFQuestReward)")
 	if detail != null:
-		var body := detail.get_node_or_null("QuestContents") as RichTextLabel
-		_check(body != null and body.text.contains("Hunt wolves") and not body.text.contains("<b>"),
-			"the detail draws SN_PAYCON_ without its markup (got '%s')" % (body.text if body else ""))
+		var body := detail.get_node_or_null("QuestContents") as PmlText
+		var drawn := "\n".join(body.plain_lines()) if body != null else ""
+		_check(body != null and drawn.contains("Hunt wolves") and not drawn.contains("<"),
+			"the detail draws SN_PAYCON_ as PML, without its markup (round 845; got '%s')" % drawn)
 		_check(str(detail.get_meta("quest_button", "")) == "UIIT_STT_QUEST_REWARD", "an achieved-unpaid quest's button is the reward")
 	_check((net.get("quest") as QuestState).tracked == 1, "the content view selects (tracks) the quest")
 	# Dropped as completed: the rows empty.

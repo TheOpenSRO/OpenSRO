@@ -7483,6 +7483,105 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-fifth round, lane K: the quest detail's colours and the quest list's map button
+
+The user: "fix the bug where ready quest text on its special window is white and unreadable. It's
+supposed to be color coded. Usually orange headers and black regular text. Also the map icon in the
+quest menu for each quest should show where the quest area is. If not it will throw an error in the
+log window on the right." Labels: READ (sro_client.exe, `c:`), MEASURED, INFERRED, OURS, OPEN. The
+readings with every address are `docs/protocol/quests.md` sections 8 and 9.
+
+**Which window.** The quest detail -- the parchment the quest list's content-view button (row control
+19) opens: CIFQuestReward on `resinfo\ifquestreward.txt`, its text the quest's `SN_PAYCON_<Q>` in the
+CIFPML 18. Round 785 drew that markup as plain text in a Godot RichTextLabel whose default colour is
+white, on the white parchment (MEASURED on the old build's frame: 2870 white text pixels, no other text
+colour, in the contents box). The reward window OpenSRO opens on 0x3514 is drawn on the same paper
+(OURS since round 785) and had the same white text.
+
+**What the original does (READ).**
+- The text is `<sml2>` markup (MEASURED, textquest_otherstring: 997 strings; tags `sml2`, `br`,
+  `font`, `strong` only): headers `<strong><font color="255,226,74,0"> ◈ Mission</font></strong>`,
+  the plain lines with no `<font>`, the scenario inside `<font color="255,44,15,1">`.
+- CIFPML's parser (0x9b2160 / 0x9b23e0 / 0x9b1e40) reads a colour as A,R,G,B; the draw (0x8b48b0)
+  replaces the alpha with its own. So headers RGB (226, 74, 0), the scenario (44, 15, 1).
+- A run outside `<font>` takes the control's own colour: the layout (0x64b2c0) starts its state stack
+  from the window's +0xa0, which the ResInfo loader fills from the record's FontColor (0x82c7c1,
+  0x8b56c5 -> 0x8b2b70) -- `GDR_QUESTREWARD_CONTENTS` FontColor 255,0,0,0: **black**.
+- `<strong>` pushes the state with style 2 (0x9b0f6b), the face's weight-600 variant; the title 17 is
+  in that face too (CIFQuestReward OnCreate 0x6e4fa4: 0x8b44b0(5, 2)) and white (its FontColor).
+- Lines: a run's height is its face's tmHeight (0x8b3040), the line margin 5 (0x64b2c0), so text lines
+  are tmHeight + 5 apart and a `<br><br>` adds only 5 (an empty line is 0 tall). Word wrap at the
+  box's width after the last space (0x8b3ef0).
+- The scroll: pixels, range 0..content - 247, step 1, the wheel 6 px a notch (0x649c30, vslot_036); the
+  scroll bar 15 with gd_scroll_up / gd_scroll_down / gd_scroll_button and the track qst_scroll_line,
+  length 247 - 48 (0x6e5020..0x6e50b5, 0x65a390).
+- The data's 20 doubled-quote colours (`color=""255,226,74,0""`, QEV_ALL_BASIC3_*) read A = 0 and
+  R, G, B as written (0xb9cc80 reads 0 at a quote), so they draw the same orange.
+
+**The user's description matches the original**: orange headers (226, 74, 0), black plain lines. One
+addition: the scenario paragraph is (44, 15, 1), a near-black brown, by the data's own `<font>`.
+
+**What we built.**
+- `PmlText` (client/scripts/ui/pml_text.gd): the CIFPML parse, state stack, layout, wrap, draw and
+  pixel scroll as read; glyph by glyph (no kerning), each character shaped alone so the `◈` the faces
+  lack comes from the system's fallback (OURS mechanism; GDI links a font for it).
+- QuestHud: the detail's and the reward window's contents are a PmlText with the record's rect, font
+  and FontColor; the scroll bar 15 drawn as the NPC talk's CIFVerticalScroll with CIFQuestReward's art;
+  the title in the weight-600 face (the system's bold file, else Godot's embolden as the chat's bold tab).
+- The reward window keeps its OURS paper (`res_ui\quest_re.2dt`, a dark CNIF window, is not built); its
+  text now draws through the same PML, so black on the paper.
+
+**The map button (READ; quests.md section 9).** CNIFQuestSlot's message map sends control 18 to
+0x6e51e0: with no place for the quest (0x612e60) the system window gets `UIIT_MSG_MAP_ERR`, "Does not
+have any information about that quest.", type 0 (always shown) in 0xffdbc99b, and the quest is tracked;
+with one, the world map (window 0x1c) is shown and 0x6256e0 puts the quest on it, and the quest is
+tracked. A place: status 8 -- its 0x30D5 NPC list not empty; any other status -- a QUEST row of its
+code name in `worldmapguidedata.txt` (service rows only). 0x6256e0: auto-move off, the last marks
+cleared; kind-0 rows mark each named monster (0x624f40: `wmap_monster_icon.ddj` with its name at its
+MONSTER row's place, the map scrolled there, its area painted from the mask tiles
+`interface\worldmap\monster\<area>_<x>x<y>.ddj` listed in `worldmapguidedata_region.txt` -- the
+monster's colours become 0x80e9c624, half-alpha gold, the rest clear); kind-1 rows put
+`wmap_quest_icon.ddj` with their tooltip key; status 8 scrolls to each NPC's npcpos spot. The point
+goes to the map area's (304, 176), (104, 104) in the small size. MEASURED: 128 QUEST rows in service
+(127 codes; 120 field kind 0, 7 dunhuang1 kind 0, 1 kind 1); field_166x101's texels are 9366 x
+0x80000004 (the water ghost's colour) and 7018 x 0x00ffffff.
+
+Built: `QuestMapGuide` (the guide's rows, monsters, maps and mask tiles; the area test),
+`WorldmapGuideReader` keeps the service flag, the kind, the code lists and colours and reads the region
+file, `QuestWindow.map_requested` from button 18, `HudPanels._on_quest_map` (the error line or the
+world map), `HudWorldmap.show_quest` (the marks, their layers in the render's order, shown only on
+their own map, cleared on the next quest and on the teleport selection).
+
+**Live** (render box, lane server 17090 in memory with the quest catalogue, client
+`/opt/opensro-client-r845k` from this branch, real input through OPENSRO_QA_INPUT; character Qak845
+with QNO_CH_SMITH_1 and QNO_CH_POTION_1 taken at their NPCs through the talk pages; evidence in
+`/var/tmp/r845k/keep`):
+
+| Check | Result | Evidence |
+|---|---|---|
+| Before: the detail's text | white on the parchment, 2870 white pixels in the box | `base_f550_before.png` |
+| Map button, SMITH_1 (no guide row) | the system line "Does not have any information about that quest." | `r3_f360.png`, `r3_log_extract.txt` |
+| Map button, POTION_1 | the world map at the Water Ghost Marshland, the gold area over tiles (29..31, 3), the monster icon "Water Ghost" at (3902, 442); 1116 / 9366 / 1596 texels painted | `r3_f420.png`, `r3_log_extract.txt` |
+| Detail, SMITH_1, top | orange bold headers, black lines: RGB (226,74,0) 1147 px, (0,0,0) 1978, white 0 | `r3_f520.png`, `measurements.txt` |
+| Detail scrolled (thumb dragged) | the scenario in (44,15,1): 3300 px | `r3_f590.png` |
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1060 scripts); `tests` "ran 400 suite(s), 0 failing" (a first run had buff_persist_test failing once -- "a body built after its owner's buff arrived takes the aura at once" -- which passed alone twice and in the second full run: a timing flake outside this round's code); the new
+`quest845_test.gd` (real Media.pk2: four quests' markup, the detail window, the guide, the mask, the world
+map's marks, the row button) ALL PASS; `quest_window_test.gd` updated for the PML body. The server is
+untouched. UI-only round: no perf gate.
+
+**OPEN.**
+- The reward window's own layout (`res_ui\quest_re.2dt`, CNIFQuestReward: a dark window, its text
+  control type 6) is not built; its text colour there is not read.
+- The icons' hover text is a Godot tooltip; the world map's hover box for these signs was not read.
+- Whether the client's texture loader shares one mask between two monsters (each mark here paints its
+  own copy); the 4 Donwhang monster codes with two MONSTER rows keep the first (INFERRED map insert).
+- `table`, `tr`, `td`, `img` and `layer` in PML are drawn as plain text; no quest text uses them.
+- GDI's tmHeight is computed from the face's OS/2 win metrics (INFERRED rule); the box draws Arial,
+  the user's Windows client Tahoma.
+- Status 8 is never sent by OpenSRO's server (it sends 1 and 2), so the NPC branch is tested only
+  through its pieces.
+
 ## Eight-hundred-and-forty-fourth round, lane H: the guild storage
 
 The user's ask: "Add guild storage and all other guild functionality." This lane is the guild storage

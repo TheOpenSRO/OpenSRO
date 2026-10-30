@@ -308,7 +308,7 @@ Retail windows rebuilt from the game's own layout files.
 | Player info (HP/MP/Hwan) | ✅ Supported | Live HP/MP bars and Hwan orbs |
 | Buff bar | ✅ Supported | Icons with timers; right-click cancel |
 | Target window with buffs | ✅ Supported | Target's HP, rank and buff/debuff icons |
-| Quest window | 🟡 Partial | Quest list and objectives; counts and timers partly missing |
+| Quest window | 🟡 Partial | Quest list and objectives; each quest's details in the original's colours (orange headers, black text, a scroll bar); the map button shows the quest's area on the world map (the monsters' grounds in gold, or the quest's spot), or says the map has no information on it; counts and timers partly missing |
 | System message window and banners | ✅ Supported | System messages, notice banners and area names |
 | Action window | ✅ Supported | Sit, walk/run, emotes, auto attack, trace, exchange, party, auto grab |
 | Right-click player menu | ✅ Supported | Whisper, Exchange, Add friend, Invite party and Trace, as the original; always on (the original's option is gone), and ready for entries of our own below Trace (such as View items) |
