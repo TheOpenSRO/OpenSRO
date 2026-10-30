@@ -236,6 +236,8 @@ var _friends: Array = []
 ## lookup the race marks use.
 var data: GuildData
 var race_of_model: Callable
+## Round 844: the relations pane's union pane, CNIFAllianceGuild (UnionPane).
+var union_pane: UnionPane
 
 ## Builds the window from the archive's `.2dt` files, in the order the
 ## client's classes do, and leaves it in the state their OnCreates leave it.
@@ -286,6 +288,7 @@ func build_guild(builder: UiBuilder) -> bool:
 		bar.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_wire()
 	_settle()
+	union_pane = UnionPane.new(self)
 	return true
 
 func _load_under(builder: UiBuilder, path: String, parent: Control) -> Control:
@@ -504,6 +507,9 @@ func _on_shown() -> void:
 			if part != null:
 				part.visible = false
 	_guild_info()
+	# Round 844: the relations refresh's union part (0x5bb0e1 -> 0x5804a0).
+	if union_pane != null:
+		union_pane.on_shown()
 	place_centred()
 
 ## The guild information, 0x5b5eb0. Its two branches write the same fields,

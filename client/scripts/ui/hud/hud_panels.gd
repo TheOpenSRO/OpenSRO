@@ -898,6 +898,10 @@ signal guild_grant_name_requested(nickname: String)
 ## Round 822: the guild window's Invite (37) and the ban question's Yes (39),
 ## and the client's own refusal of a ban (0x4c1f).
 signal guild_invite_requested
+## Round 844: the union pane's Apply, Secede's Yes and Expel's Yes (UnionPane).
+signal union_request_requested
+signal union_leave_requested
+signal union_expel_requested(guild_id: int)
 signal guild_expel_requested(member_name: String)
 signal guild_expel_refused(code: int)
 ## The guild leave prompt (open_guild_leave_prompt, round 521) was confirmed.
@@ -1609,6 +1613,13 @@ func _guild_window() -> GuildWindow:
 	window.expel_requested.connect(func(who: String) -> void: guild_expel_requested.emit(who))
 	window.expel_refused.connect(func(code: int) -> void: guild_expel_refused.emit(code))
 	_wire_guild_844(window)
+	# Round 844: the union pane (UnionPane) follows the union record.
+	if window.union_pane != null:
+		NetClient.guild_data.union.changed.connect(window.union_pane.on_union_changed)
+		NetClient.guild_data.changed.connect(window.union_pane.on_shown)
+		window.union_pane.request_pressed.connect(func() -> void: union_request_requested.emit())
+		window.union_pane.leave_confirmed.connect(func() -> void: union_leave_requested.emit())
+		window.union_pane.expel_confirmed.connect(func(id: int) -> void: union_expel_requested.emit(id))
 	_windows[GUILD_WINDOW_KEY] = window
 	return window
 
@@ -2150,6 +2161,14 @@ func show_guild_invitation(who: String, guild_name: String) -> GuildMsgBox:
 	box.cancelled.connect(func() -> void: guild_invitation_answered.emit(false))
 	box.expired.connect(func() -> void: guild_invitation_expired.emit())
 	box.arm_timer()
+	return box
+
+## Round 844: 0x3080 kind 6's box 0x1d (GuildMsgBox.Kind.UNION_REQUEST),
+## its own timer armed; the caller connects accepted / cancelled / expired.
+func show_union_request(guild_name: String) -> GuildMsgBox:
+	var box := open_guild_box(GuildMsgBox.Kind.UNION_REQUEST, guild_name)
+	if box != null:
+		box.arm_timer()
 	return box
 
 ## B0F8's 0x4c10: the open box 0x0F goes, unanswered (0x6ec7f0(0xf)).

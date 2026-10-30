@@ -132,18 +132,28 @@ func TestRound842UnionFlow(t *testing.T) {
 		t.Fatalf("Alpha's union packet: %+v", p)
 	}
 
-	// Beta leaves: type 0x12 {1, Beta} to both, then the lines with none.
+	// Beta leaves: type 0x12 {1, Beta} to both, then -- round 844 -- the
+	// union broken, {3}, to Alpha (two guilds were left under two,
+	// sm:0x4369f0), then the lines with none.
 	if _, err := cmds.Leave(ctx, f.bram, ""); err != nil {
 		t.Fatalf("/union leave: %v", err)
 	}
 	out := guild.EncodeUnionOut(guild.UnionOutLeft, gb.GuildID)
-	for _, c := range []struct {
+	broken := guild.EncodeUnionOut(guild.UnionOutBroken, 0)
+	for i, c := range []struct {
 		conn net.Conn
 		r    *bufio.Reader
 	}{{f.connA, f.rA}, {f.connB, f.rB}} {
 		ps := readN(t, f, c.conn, c.r, 3)
 		if ps[0].Opcode != guild.OpUpdate || !bytes.Equal(ps[0].Data, out) {
 			t.Fatalf("first: %#04x % x, want 0x38F5 % x", ps[0].Opcode, ps[0].Data, out)
+		}
+		if i == 0 {
+			if ps[1].Opcode != guild.OpUpdate || !bytes.Equal(ps[1].Data, broken) {
+				t.Fatalf("Alpha's second: %#04x % x, want the break % x", ps[1].Opcode, ps[1].Data, broken)
+			}
+			ps = append(ps[:1], ps[2:]...)
+			ps = append(ps, f.read(t, c.conn, c.r))
 		}
 		for _, p := range ps[1:] {
 			if _, un := unionOfLine(t, p.Data); p.Opcode != OpEntityGuildUpdate || un != 0 {

@@ -43,7 +43,18 @@ class_name GuildMsgBox
 
 enum Kind { INVITE = 0x0F, CREATE = 0x12, DISBAND = 0x13, LEAVE = 0x14,
 	CREST = 0x15, CREST_DELETE = 0x16, UNION_CREST = 0x18, UNION_CREST_DELETE = 0x19,
-	CREST_DONE = 0x1a, UNION_CREST_DONE = 0x1b }
+	CREST_DONE = 0x1a, UNION_CREST_DONE = 0x1b, UNION_REQUEST = 0x1d }
+
+## Round 844 (lane U): box 0x1d, the union request (0x3080 kind 6,
+## c:0x88afb4; UI_SILKMALL::FUN_00644c90 case 0x647a01, READ): resized to
+## 0x1d6 x 0x90 (470 x 144); title UIIT_STT_GUILD_RESPECT_ALLY_JOIN; +0x840
+## UIIT_MSG_QUESTION_GUILD_RESPECT_ALLY_JOIN with the requester's guild name
+## (+0x820) and moved 0x4c right; OK and Cancel 0x51 right; +0x808 hidden;
+## the box's timer armed (0x644650), as box 0x0F's. Yes sends {1, 1}, No
+## {2, u16 0} (0x797d90 case 0x798667).
+const UNION_REQUEST_SIZE := Vector2(0x1d6, 0x90)
+const UNION_REQUEST_TEXT_SHIFT := 0x4c
+const UNION_REQUEST_BUTTON_SHIFT := 0x51
 
 ## Round 824: the crest items' boxes (UI_SILKMALL::FUN_00644c90, READ; the
 ## items open them from IFSlotWithHelp::FUN_00676570, 0x676dcb..0x676efe, and
@@ -91,8 +102,11 @@ func build_guild_box(builder: UiBuilder, box_kind: int, who: String = "", what: 
 	kind = box_kind
 	var box := CREATE_SIZE if box_kind == Kind.CREATE else INIF_SIZE
 	var title := "UIIT_STT_AGREEMENT_BOX" if box_kind == Kind.INVITE or box_kind == Kind.DISBAND else "UIIT_STT_CONFIRM_BOX"
+	if box_kind == Kind.UNION_REQUEST:
+		box = UNION_REQUEST_SIZE
+		title = "UIIT_STT_GUILD_RESPECT_ALLY_JOIN"
 	var names := {Kind.INVITE: "GuildInvitation", Kind.CREATE: "GuildCreateConfirm",
-		Kind.DISBAND: "GuildDisbandConfirm", Kind.LEAVE: "GuildLeaveConfirm"}
+		Kind.DISBAND: "GuildDisbandConfirm", Kind.LEAVE: "GuildLeaveConfirm", Kind.UNION_REQUEST: "UnionRequest"}
 	if not names.has(box_kind):
 		return false
 	name = names[box_kind]
@@ -109,8 +123,12 @@ func build_guild_box(builder: UiBuilder, box_kind: int, who: String = "", what: 
 			lines = [text("UIIT_MSG_GUILD_BREAK_CONFIRM", "UIIT_MSG_GUILD_BREAK_CONFIRM")]
 		Kind.LEAVE:
 			lines = [text("UIIT_MSG_GUILD_SECESSION_CONFIRM", "UIIT_MSG_GUILD_SECESSION_CONFIRM")]
+		Kind.UNION_REQUEST:
+			lines = [_format("UIIT_MSG_QUESTION_GUILD_RESPECT_ALLY_JOIN", what)]
 	_add_background(builder, box)
 	var shift := float(CREATE_SHIFT) if box_kind == Kind.CREATE else 0.0
+	if box_kind == Kind.UNION_REQUEST:
+		shift = float(UNION_REQUEST_TEXT_SHIFT)
 	var statics := ["GDR_MBIN_STATIC_MESSAGE1", "GDR_MBIN_STATIC_MESSAGE2"]
 	for i in statics.size():
 		var n := node(statics[i])
@@ -120,6 +138,8 @@ func build_guild_box(builder: UiBuilder, box_kind: int, who: String = "", what: 
 		builder.set_static_text(n, str(lines[i]) if i < lines.size() else "")
 	var ok := node("GDR_MBIN_BTN_OK")
 	var cancel := node("GDR_MBIN_BTN_CANCEL")
+	if box_kind == Kind.UNION_REQUEST:
+		shift = float(UNION_REQUEST_BUTTON_SHIFT)
 	for b in [ok, cancel]:
 		if b != null:
 			_move(b, shift)
@@ -197,7 +217,7 @@ func build_crest_box(builder: UiBuilder, box_kind: int) -> bool:
 
 ## Arms box 0x0F's timer (call once the box is in the tree).
 func arm_timer() -> void:
-	if kind != Kind.INVITE or not is_inside_tree():
+	if (kind != Kind.INVITE and kind != Kind.UNION_REQUEST) or not is_inside_tree():
 		return
 	_timer = get_tree().create_timer(INVITE_TIMEOUT_SEC)
 	_timer.timeout.connect(func() -> void:

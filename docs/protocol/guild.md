@@ -515,6 +515,11 @@ read; it surfaced as one of the 62 single-vocabulary functions the widened
 error-code scan located (`client/tools/re/errsites.py`), every code it raises
 being a `GUILDERR_`. Implemented in `server/internal/guild/alliance.go`.
 
+**Round 844:** the whole players' flow -- the request and its box, the answer, leave, expel, the union
+broken, the union pane, union chat and the union crest -- is `docs/protocol/guild_union.md`. It corrects
+two points below: the validator also refuses a requester whose union is led by another guild (0x4c1e),
+and 0x4c29 ALLIANCE_FULL is raised -- by the ShardManager's join job.
+
 ### The cap is 8, and the long-standing note is now confirmed
 
 This page said: *"Unions holding eight guilds is a long-standing note in this

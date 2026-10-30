@@ -34,7 +34,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 - No consignment
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
-- Guilds: no storage, union requests, wars or the master-release vote yet
+- Guilds: no wars or master-release vote yet
 - Players cannot drop items
 - Friends: letters and the block list not done
 
@@ -231,7 +231,7 @@ Chat, full party system, party matching and basic guilds.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Chat channels | ✅ Supported | All, whisper, party, guild and global chat |
+| Chat channels | ✅ Supported | All, whisper, party, guild, union and global chat |
 | GM notices | ✅ Supported | Notice banners from GMs |
 | Chat window | ✅ Supported | Retail chat window with five tabs and the whole-chat window |
 | Party | ✅ Supported | Invite, leave, kick; survives disconnects |
@@ -244,8 +244,8 @@ Chat, full party system, party matching and basic guilds.
 | Guild window | ✅ Supported | Level, GP, members n / cap, the notice (click it to read it all; the pencil writes it for those allowed) and the member list (online lamps, ranks, GP), live updates as members join, leave, log on and off; the selected member framed in yellow as in the original; sort by name, level, grade or GP; show names, grant names or positions; scroll; ban; donate SP as GP; its grant-name button sets your own grant name (or `/grantname`). The fortress positions button waits for fortress war |
 | Guild names over characters | ✅ Supported | `[Guild * Grant]` (or `[Guild]`) 20 px above the name with no box behind it, orange for you and every member of your guild, green for a guild in your union, blue for others (the original's colours and rule), recoloured at once when you or they join or leave a guild or a union, riding a mount with the name and hidden in a job suit; each member sets their own grant name (window button or /grantname), at any guild level |
 | Guild points and levels | 🟡 Partial | Points earned from skill points or donated in the guild window, the guild levels up at the guild manager; the guild store's GP goods not done |
-| Guild emblems | 🟡 Partial | Register and delete a guild's emblem with the emblem scrolls (guildmark.bmp, 16 x 16 24-bit, beside Media.pk2; guild level 4, the master); shown beside the guild name over every member; union emblems wait for unions |
-| Union | 🟡 Partial | Unions are kept by the server and sent to every member (their guild lines turn green, live); a GM forms and leaves them with /union, the players' own union request, the union window and union chat are not built yet |
+| Guild emblems | 🟡 Partial | Register and delete a guild's emblem with the emblem scrolls (guildmark.bmp, 16 x 16 24-bit, beside Media.pk2; guild level 4, the master); shown beside the guild name over every member. Union emblems too (unionmark.bmp; the union's lead guild, guild level 5), drawn left of the guild emblem over every member of the union's guilds |
+| Union | ✅ Supported | The original's unions of up to 8 guilds: a guild master selects another guild's master and presses Apply in the guild window's Relations > Union tab; they get the Agreement box (30 s) and accept or refuse; the original's refusals (both guilds level 2, the lead guild's master only, not already in a union, the union full...). The Union tab lists the guilds (the lead guild in gold, sort by name or level) with the lead guild's and the selected guild's details; Secede and Expel with the original's questions; the union breaks when its lead guild leaves or one guild is left. Every member is told in the system window, the guild lines turn green or back to blue at once, and union chat (%) reaches every union guild (guild masters can always use it; other members need the union chat right). A GM can still form and leave unions with /union |
 | Friends list | ✅ Supported | The original's friends: ask by name (the Community window's Add friend, the right-click menu, /friend or /invite), its Agreement box with Accept / No and a 30 s wait, 20 friends a side; online lamps, race icons and the count in the Community window, Whisper and Delete friend (both sides); "Friend [name] has logged on / off" lines |
 | Mail / letters | ❌ Not yet | Letter pane drawn, no backend |
 | Block list | ❌ Not yet | Block pane drawn, no backend |

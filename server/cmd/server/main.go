@@ -2774,6 +2774,8 @@ func main() {
 		// its moves are ItemOpHandler's 0x7034 types 0x1d..0x21.
 		session.GuildStorageHandler(&session.GuildStorageDeps{Guilds: guilds, Svc: guildStorageSvc, Hub: hub,
 			Chars: chars, Items: refItems, Trades: trades}),
+		// Round 844: the players' unions (0x70FB..0x70FD, session/unionops.go).
+		session.UnionHandler(),
 		// Chat (round 634): the five channels, whispers, the global
 		// chatting item and the GM's type-3 line.
 		session.ChatHandler(session.ChatDeps{Hub: hub, Parties: parties, Guilds: guilds, Inv: inv, Items: refItems, Gate: gmGate}),

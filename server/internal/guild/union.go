@@ -13,9 +13,9 @@ import (
 // first guild (READ s:0x5b9260 returns alliance+0x1c, the array's first
 // slot; INFERRED the leader), an id and a crest revision.
 //
-// OURS: OpenSRO forms a union only through the GM's /union (a test tool);
-// the original's request, answer and leave flow (0x70FB..0x70FD with the NPC,
-// FUN_005c6550's ladder) is not built (OPEN).
+// Round 844: the players' own flow -- 0x70FB..0x70FD, FUN_005c6550's
+// ladder, the union broken -- is union844.go and session/unionops.go; the
+// GM's /union stays a test tool (OURS).
 
 // Union is one alliance.
 type Union struct {
@@ -27,6 +27,10 @@ type Union struct {
 	// its slot; leaving frees it without compacting the array (the
 	// original's setter refuses an occupied index, alliance.go).
 	Slots [MaxAllianceGuilds]int64
+	// crest and crestLast are the MemStore's union crest bytes and last
+	// revision (round 844, union844.go).
+	crest     []byte
+	crestLast uint32
 }
 
 // LeaderGuildID is slot 0's guild (INFERRED the union's leader: the first
