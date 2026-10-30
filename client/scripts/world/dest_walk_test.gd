@@ -119,10 +119,22 @@ func _test_walk(world: Node) -> void:
 	world.call("_on_entity_move_echo", _echo(301, Vector3(60, 0, 100), Vector3(60, 0, 0)))
 	_frames(world, 30)
 	_check(absf(body.position.z - 50.0) < 0.01, "at a buffed 100 it walks 50 in half a second (z %.3f)" % body.position.z)
-	# The stop: snapped, facing the message, the leg over.
+	# Round 846 (READ, FUN_008a4f80 -> FUN_009e11e0's 50.0): a stop 10 from the
+	# body is not jumped to: it walks there, three times its speed (100), facing
+	# the message's angle, and stands.
+	var was_at := body.position
 	world.call("_on_entity_move_stop", _stop(301, Vector3(60, 1, 40), 0))
-	_check(body.position == Vector3(60, 1, 40) and not legs.has(301), "0xB023 puts it there and ends the leg")
+	_check(body.position == was_at and legs.has(301), "0xB023 10 off does not put it there: it walks (%s)" % str(body.position))
 	_check(is_equal_approx(body.rotation.y, RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(0), 0.0)), "facing the message's angle")
+	_frames(world, 1)
+	_check(absf(was_at.distance_to(body.position) - 300.0 / 60.0) < 0.01, "at 3x its speed: 5 in a frame (%.3f)" % was_at.distance_to(body.position))
+	_frames(world, 10)
+	_check(Vector2(body.position.x, body.position.z) == Vector2(60, 40) and not legs.has(301), "and stands on the point, the leg over (%s)" % str(body.position))
+	# More than 50 off: put there (FUN_009e1050).
+	world.call("_on_entity_move_stop", _stop(301, Vector3(60, 1, 100), 0))
+	_check(body.position == Vector3(60, 1, 100) and not legs.has(301), "a stop 60 off puts it there")
+	world.call("_on_entity_move_stop", _stop(301, Vector3(60, 1, 40), 0))
+	_check(body.position == Vector3(60, 1, 40), "and back (60 again)")
 	_frames(world, 10)
 	_check(body.position == Vector3(60, 1, 40), "and it stays")
 	# Round 846 (READ, FUN_009e1050's 50.0): a source more than 50 from where
@@ -151,6 +163,28 @@ func _test_walk(world: Node) -> void:
 	_check(absf(body.position.x - here.x - 100.0 / 60.0) < 0.01, "and walks it (x +%.3f in a frame)" % (body.position.x - here.x))
 	_frames(world, 10)
 	_check(body.position == here + Vector3(2, 0, 0), "onto the point")
+	# Round 846: a ridden COS's stop is its rider's -- it was dropped, and a
+	# rider's arrow-key run never ended on anyone else's screen.
+	var recs: Dictionary = world.get("_cos_recs")
+	var riders: Dictionary = world.get("_riders")
+	var rec := CosSpawnNet.Record.new()
+	rec.uid = 9001
+	recs[9001] = rec
+	riders[301] = 9001
+	var run_echo := _echo(9001, Vector3.ZERO, body.position)
+	run_echo.kind = DestMoveNet.KIND_HEADING
+	run_echo.angle = 0
+	world.call("_on_entity_move_echo", run_echo)
+	_check(legs.has(301) and bool((legs[301] as Dictionary)["run"]), "the mount's heading echo runs its rider")
+	_frames(world, 6)
+	var ridden_at := body.position
+	world.call("_on_entity_move_stop", _stop(9001, ridden_at + Vector3(2, 0, 0), 0))
+	_check(legs.has(301) and not bool((legs[301] as Dictionary)["run"]), "the mount's 0xB023 ends the rider's run (walking the last 2)")
+	_frames(world, 10)
+	_check(not legs.has(301) and Vector2(body.position.x, body.position.z).is_equal_approx(Vector2(ridden_at.x + 2, ridden_at.z)),
+		"and the rider stands on the mount's stop (%s)" % str(body.position))
+	riders.erase(301)
+	recs.erase(9001)
 	world.call("_on_entity_left", 301)
 	_check(not legs.has(301), "a body that leaves takes its leg")
 
@@ -259,3 +293,42 @@ func _test_own_846(world: Node, net: Node) -> void:
 	world.set("_has_move_target", false)
 	sync.placed(Vector3(400, 0, 10))
 	net.set("_spawn_frame", frame_was)
+	_test_own_arrow(world)
+
+## Round 846: the Up key's stop (READ, FUN_008a4f80 -> FUN_009e11e0's 50.0):
+## the 0xB023 that answers the release is walked to within 50, put there
+## beyond; one a newer order superseded leaves that order going.
+## NEGATIVES: _own_arrow_stop returning false fails "the 0xB023 is the
+## release's"; _step_own_settle not moving fails "walks the difference".
+func _test_own_arrow(world: Node) -> void:
+	var player: Node3D = world.get("player")
+	world.set("_has_move_target", false)
+	world.set("_move_heading_run", false)
+	world.set("_arrow_stop_superseded", false)
+	# As the release leaves it: 0x7023 sent, the run stopped here.
+	world.set("_arrow_wait", "stop")
+	player.position = Vector3(30, 0, 0)
+	_check(bool(world.call("_own_arrow_stop", Vector3(33, 0, 0), RemoteFacing.from_wire_angle(0))), "the 0xB023 is the release's")
+	_check(String(world.get("_arrow_wait")) == "" and Vector2(player.position.x, player.position.z) == Vector2(30, 0),
+		"3 off: not put there (%s)" % str(player.position))
+	var moved := 0
+	for i in 30:
+		if not bool(world.call("_step_own_settle", 1.0 / 60.0)):
+			break
+		moved += 1
+	_check(Vector2(player.position.x, player.position.z).is_equal_approx(Vector2(33, 0)) and moved >= 1,
+		"walks the difference, at three times its speed (%d frames, %s)" % [moved, str(player.position)])
+	world.set("_arrow_wait", "stop")
+	_check(bool(world.call("_own_arrow_stop", Vector3(100, 0, 0), 0.0)) and Vector2(player.position.x, player.position.z) == Vector2(100, 0),
+		"67 off: put there")
+	# A click after the release: the release's 0xB023 does not end its walk.
+	world.set("_arrow_wait", "stop")
+	world.call("_arrow_wait_clear")
+	_check(bool(world.get("_arrow_stop_superseded")), "a new order after the release supersedes its stop")
+	world.set("_has_move_target", true)
+	_check(bool(world.call("_own_arrow_stop", Vector3(50, 0, 0), 0.0)) and bool(world.get("_has_move_target")),
+		"and that stop leaves the walk going")
+	_check(not bool(world.call("_own_arrow_stop", Vector3(50, 0, 0), 0.0)), "a later 0xB023 is a correction again")
+	world.set("_has_move_target", false)
+	world.set("_move_heading_run", false)
+	world.call("_arrow_reset")

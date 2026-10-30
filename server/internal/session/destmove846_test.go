@@ -80,3 +80,48 @@ func TestRound846EveryStepIsEchoedAtAnySpeed(t *testing.T) {
 		t.Fatal("a step within 5.0 of the destination being walked was taken")
 	}
 }
+
+// Round 846's follow-up: an Up tap. READ: the mover's client starts the run on
+// the heading form's echo and ends it on the server's 0xB023 (c:FUN_009e08a0,
+// FUN_009e00f0), so the stop the window and the mover hear must lie where the
+// server's run had the character when the 0x7023 came: its run speed (a GM
+// /speed included) times the time between the two requests, from where the
+// last stop left it -- a 50-200 ms tap at 1x to 10x.
+func TestRound846AnUpTapStopsWhereTheServersRunHasIt(t *testing.T) {
+	strictPositions(t)
+	f := startDeadWorldFixture(t)
+	var now atomic.Int64
+	now.Store(time.Now().UnixNano())
+	f.hub.SetClock(func() time.Time { return time.Unix(0, now.Load()) })
+	t.Cleanup(func() { f.hub.SetClock(nil); buffBooks.SetGMSpeedFactor(f.aria, 1) })
+	x := 0.0
+	for _, factor := range []float64{1, 2, 5, 7, 10} {
+		gmSpeed{hub: f.hub}.SetGMSpeed(f.aria, factor)
+		if factor != 1 {
+			readOp(t, f, f.connA, f.rA, OpBuffEnd)
+			readOp(t, f, f.connB, f.rB, OpBuffEnd)
+		}
+		speed := math.Round(float64(PlayerRunSpeed) * factor)
+		for _, ms := range []int{50, 100, 150, 200} {
+			hold := time.Duration(ms) * time.Millisecond
+			// Wire angle 0 is heading pi/2: +x.
+			f.send(t, f.connA, proto.OpMovementRequest, []byte{0, 1, 0, 0})
+			readOp(t, f, f.connA, f.rA, proto.OpMovementResponse)
+			readOp(t, f, f.connB, f.rB, proto.OpMovementResponse)
+			now.Add(int64(hold))
+			f.send(t, f.connA, OpMovementStopRequest, angleBody(0))
+			want := x + speed*hold.Seconds()
+			for _, side := range []struct {
+				name string
+				p    *proto.Packet
+			}{{"Aria", opOnly(readOp(t, f, f.connA, f.rA, OpMovementStop))}, {"Bram", opOnly(readOp(t, f, f.connB, f.rB, OpMovementStop))}} {
+				_, pos, _ := stopWorld(t, spawnZone, side.p.Data)
+				if math.Abs(pos.X-want) > 0.01 || math.Abs(pos.Z) > 0.01 {
+					t.Fatalf("/speed %v, a %v tap: %s's 0xB023 at %+v, want x %.3f", factor, hold, side.name, pos, want)
+				}
+			}
+			x = want
+			now.Add(int64(time.Second))
+		}
+	}
+}
