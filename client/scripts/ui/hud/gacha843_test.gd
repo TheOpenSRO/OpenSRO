@@ -165,8 +165,22 @@ func _run() -> void:
 		return
 	var texts := [String((t0.get_node("Text") as Label).text), String((t1.get_node("Text") as Label).text),
 		String((t2.get_node("Text") as Label).text)]
-	_check(texts == ["Page 1", "Page 2", "Page 2"],
-		"the tabs read UIIT_CTL_BELOINGING, then UIIT_STT_INVENTORY_EXTENSION_TEB for every other page: %s" % str(texts))
+	_check(texts == ["Page 1", "Page 2", "Page 3"],
+		"the tabs read the bag window's Page 1, Page 2, Page 3 (round 845, OURS): %s" % str(texts))
+	# Round 845: a bag past three pages -- "Page 4", "Page 5", and the tabs
+	# share the strip evenly, inside it, in order, none overlapping.
+	_win.max_pages = 5
+	_check(_win.bag_pages() <= 5, "the pane's page cap follows max_pages")
+	_win.max_pages = 3
+	_check(_win.tab_text(3) == "Page 4" and _win.tab_text(4) == "Page 5", "pages past three read Page 4, Page 5: %s, %s" % [_win.tab_text(3), _win.tab_text(4)])
+	for n in [3, 4, 5, 6]:
+		var last := GachaWindow.tab_rect(n - 1, n)
+		var fits := last.end.x <= GachaWindow.TAB_ORIGIN.x + GachaWindow.TAB_STRIP_WIDTH + 0.5
+		var ordered := true
+		for k in range(1, n):
+			ordered = ordered and GachaWindow.tab_rect(k, n).position.x >= GachaWindow.tab_rect(k - 1, n).end.x
+		_check(fits and ordered, "%d tabs fit the strip in order, the last ending at %.0f" % [n, last.end.x])
+	_check(GachaWindow.tab_rect(2, 3) == Rect2(599, 55, 60, 24), "three tabs keep the original's 60 x 24 at a 62 px pitch")
 	var r1: Rect2 = t1.get_meta(UiBuilder.AUTHORED_RECT_META)
 	_check(r1 == Rect2(537, 55, 60, 24), "tab 1 at (475 + 62, 55), 60 x 24: %s" % r1)
 	_check((t0 as TextureButton).texture_normal == builder.load_texture(GachaWindow.TAB_ON)
@@ -274,7 +288,7 @@ func _run() -> void:
 
 	# --- Page 3: a card registered over the coupon -----------------------------
 	await _click(_centre(t2))
-	_check(_win.bag_page == 2 and _win.cell_of(70).visible, "page 3 shown (its tab reads Page 2)")
+	_check(_win.bag_page == 2 and _win.cell_of(70).visible, "page 3 shown (its tab reads Page 3)")
 	await _click(_centre(_win.cell_of(70).get_node("ItemIcon") as Control))
 	await _click(_centre(_win.node("GDR_GHACHA_CARD_SLOT") as Control))
 	_check(_win.card_slot == 70 and _win.state() == 2, "the page-3 card registered over the coupon")

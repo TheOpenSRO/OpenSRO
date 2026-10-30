@@ -20,6 +20,9 @@ class_name GachaWindow
 ##     UIIT_CTL_BELOINGING ("Page 1"), **every other one's
 ##     UIIT_STT_INVENTORY_EXTENSION_TEB ("Page 2")** -- the original names a
 ##     third page "Page 2" too (c:0x748918..0x748941: the two keys only).
+##     OURS (round 845, the user's request): the tabs read Page 1, 2, 3 (the
+##     bag window's keys) and on (tab_text); more tabs than fit share the
+##     strip evenly (tab_rect).
 ##     A tab acts on the press (CIFSelectableArea, WM_LBUTTONDOWN), busy or
 ##     not (c:0x747e30 has no busy test).
 ##   - **Cells**: one CIFSlotWithHelp per bag slot the bag window has (its
@@ -124,7 +127,10 @@ const CARD_INDEX := 0x70
 
 ## The bag pane (c:0x749560, c:0x748790).
 const PAGE_SLOTS := 32
-const MAX_PAGES := 3
+## The pages the pane draws at most: the bag window's cap, which its owner
+## sets from HudPanels.BAG_MAX_PAGES (World3D), so the pane follows the bag
+## when it grows past three pages; 3 until set.
+var max_pages := 3
 const BAG_COLS := 4
 const BAG_ORIGIN := Vector2(494, 91)
 const BAG_PITCH := 36.0
@@ -137,8 +143,18 @@ const TAB_PITCH := 62.0
 const TAB_SIZE := Vector2(60, 24)
 const TAB_ON := "interface\\ifcommon\\com_tab_on.ddj"
 const TAB_OFF := "interface\\ifcommon\\com_tab_off.ddj"
-const TAB_TEXT_FIRST := ["UIIT_CTL_BELOINGING", "Page 1"]
-const TAB_TEXT_OTHER := ["UIIT_STT_INVENTORY_EXTENSION_TEB", "Page 2"]
+## The tabs' captions: the bag window's own three keys (HudPanels.BAG_TABS),
+## so they read Page 1, Page 2, Page 3 (OURS, the user's request: the
+## original gives every tab after the first UIIT_STT_INVENTORY_EXTENSION_TEB,
+## so its third reads "Page 2" too -- c:0x748918..0x748941). A page past the
+## keys reads the first caption with its number replaced ("Page 4", ...).
+const TAB_TEXTS := [["UIIT_CTL_BELOINGING", "Page 1"], ["UIIT_STT_INVENTORY_EXTENSION_TEB", "Page 2"],
+	["UIIT_STT_INVENTORY_EXTENSION_TEB2", "Page 3"]]
+## The strip the tabs share (the window's 673 px less a margin past
+## TAB_ORIGIN): the original's 60 x 24 at a 62 px pitch while they fit, and
+## narrower, evenly, for more pages than fit (OURS).
+const TAB_STRIP_WIDTH := 190.0
+const TAB_GAP := 2.0
 const TABS_NODE := "GachaBagTabs"
 
 const ROLL_FRAME := "interface\\game\\gacha_roll%04d.ddj"
@@ -276,13 +292,30 @@ func _t(pair: Array) -> String:
 ## page open while none is known (as HudPanels draws the bag).
 func bag_size() -> int:
 	var n := int(size_of.call()) if size_of.is_valid() else 0
-	return n if n > 0 else PAGE_SLOTS * MAX_PAGES
+	return n if n > 0 else PAGE_SLOTS * max_pages
 
-## The bag's pages (IFInventory's 0x6b6620 arithmetic, at most 3; the
-## same as HudPanels.bag_pages, which this window does not load).
+## The bag's pages (IFInventory's 0x6b6620 arithmetic, at most max_pages;
+## the same as HudPanels.bag_pages, which this window does not load).
 func bag_pages() -> int:
 	var size := bag_size()
-	return 1 if size <= 1 else mini(((size - 1) >> 5) + 1, MAX_PAGES)
+	return 1 if size <= 1 else mini(((size - 1) >> 5) + 1, max_pages)
+
+## Tab `i`'s caption: the bag window's key for its page, else the first
+## caption with its number made i + 1.
+func tab_text(i: int) -> String:
+	if i < TAB_TEXTS.size():
+		return _t(TAB_TEXTS[i])
+	var first := _t(TAB_TEXTS[0])
+	var digits := RegEx.create_from_string("\\d+")
+	return digits.sub(first, str(i + 1)) if digits.search(first) != null else "%s %d" % [first, i + 1]
+
+## Tab `i`'s rect among `pages` tabs: the original's (475 + 62 i, 55),
+## 60 x 24 while they fit in TAB_STRIP_WIDTH, else that strip shared evenly.
+static func tab_rect(i: int, pages: int) -> Rect2:
+	if pages <= 0 or TAB_PITCH * (pages - 1) + TAB_SIZE.x <= TAB_STRIP_WIDTH:
+		return Rect2(TAB_ORIGIN + Vector2(TAB_PITCH * i, 0), TAB_SIZE)
+	var w := floorf((TAB_STRIP_WIDTH - TAB_GAP * (pages - 1)) / pages)
+	return Rect2(TAB_ORIGIN + Vector2((w + TAB_GAP) * i, 0), Vector2(w, TAB_SIZE.y))
 
 ## The pane's tabs and cells for `pages` pages (c:0x749560's loop, 0x748790).
 func _build_pane(pages: int) -> void:
@@ -313,7 +346,7 @@ func _build_pane(pages: int) -> void:
 		tab.focus_mode = Control.FOCUS_NONE
 		# CIFSelectableArea acts on the press (0x64cb80 answers 0x201).
 		tab.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
-		var rect := Rect2(TAB_ORIGIN + Vector2(TAB_PITCH * i, 0), TAB_SIZE)
+		var rect := tab_rect(i, pages)
 		tab.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
 		tab.position = rect.position
 		tab.size = rect.size
@@ -321,7 +354,7 @@ func _build_pane(pages: int) -> void:
 		tab.pressed.connect(select_bag_page.bind(i))
 		var caption := Label.new()
 		caption.name = "Text"
-		caption.text = _t(TAB_TEXT_FIRST if i == 0 else TAB_TEXT_OTHER)
+		caption.text = tab_text(i)
 		caption.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

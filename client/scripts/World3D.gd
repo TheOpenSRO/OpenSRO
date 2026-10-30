@@ -28073,6 +28073,7 @@ func _on_gacha_start(kind: GachaTables.Kind) -> void:
 		# records' effects and tooltips, the purse -- and the held icon its
 		# cards go in by (GachaWindow).
 		_gacha_window.size_of = func() -> int: return _hud_panels.bag_size() if _hud_panels != null else 0
+		_gacha_window.max_pages = HudPanels.BAG_MAX_PAGES
 		_gacha_window.gold_of = func() -> int: return int(_hud_panels._stats.gold) if _hud_panels != null and _hud_panels._stats != null else 0
 		_gacha_window.slot_fx = func(icon: Control, ref: int, bag_slot: int) -> void:
 			if _hud_panels != null:

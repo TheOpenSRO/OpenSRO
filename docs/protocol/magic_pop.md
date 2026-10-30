@@ -89,7 +89,11 @@ pages". The original draws the bag inside the Magic POP window, with a tab per p
     `interface\ifcommon\com_tab_on.ddj` selected / `com_tab_off.ddj` (`0x64ce30`), font 0, centred,
     text **UIIT_CTL_BELOINGING ("Page 1") for the first and UIIT_STT_INVENTORY_EXTENSION_TEB ("Page
     2") for every other** (`c:0x748918..0x748941` name those two keys only, so a third page reads
-    "Page 2" too; the bag window's own third tab reads TEB2, "Page 3"). The first is selected
+    "Page 2" too; the bag window's own third tab reads TEB2, "Page 3"). **OURS (round 845, the
+    user's request):** OpenSRO's tabs read the bag window's keys, Page 1 / Page 2 / Page 3, and
+    "Page N" past them (`GachaWindow.tab_text`); the pane's page cap is the bag window's
+    (`HudPanels.BAG_MAX_PAGES`, set as `max_pages`), and more tabs than the original's 3 x 62 px fit
+    share a 190 px strip evenly (`tab_rect`). The first is selected
     (`0x64cc30(i == 0)`). `CIFGhaCha::vslot_004` (`c:0x745950`) folds 500..500+n-1 into the message
     map's 500 entry, whose handler `c:0x747e30` finds the tab by its handle and runs `c:0x747a40` --
     **with no busy test**. A tab acts on the press (CIFSelectableArea, round 633);
