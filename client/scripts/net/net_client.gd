@@ -475,6 +475,9 @@ signal guild_points_result(result: GuildNet.PointsResult)
 ## The guild's level and the next level's cost, or a level-up's outcome
 ## (round 528).
 signal guild_level_result(result: GuildNet.LevelResult)
+## Round 844 (lane G): a reply to the notice, level-up, hand-over,
+## permission or donation request (GuildManageNet).
+signal guild_manage_result(result: GuildManageNet.Result)
 
 ## A chat line arrived (round 634): any type -- ordinary, whisper, party,
 ## guild, global, notice.
@@ -1849,6 +1852,13 @@ func _init() -> void:
 	# Round 844: the guild storage (0xB250..0xB252, 0x3253..0x3255).
 	guild_storage.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
 	guild_storage.register_with(self)
+	# Round 844: the notice, level-up, hand-over, permission and donation
+	# replies.
+	for op in GuildManageNet.RESULT_OPCODES:
+		register_handler(op, func(data: PackedByteArray) -> void:
+			var r := GuildManageNet.decode_result(op, data)
+			if r != null:
+				guild_manage_result.emit(r))
 	# B0F0's success carries the guild block (c:0x8852c0 -> FUN_009965e0).
 	guild_ops.created.connect(func(block: PackedByteArray) -> void:
 		if guild_data.parse(block):
@@ -1931,6 +1941,11 @@ func guild_secede(npc_uid: int) -> void:
 func guild_invite(target_uid: int) -> void:
 	guild_ops.invite_lock = true
 	_send(GuildOpsNet.OP_INVITE, GuildOpsNet.encode_invite(target_uid))
+
+## Round 844: one of GuildManageNet's requests (its encoders build the
+## payload).
+func guild_manage(op: int, payload: PackedByteArray) -> void:
+	_send(op, payload)
 
 func guild_expel(member_name: String) -> void:
 	_send(GuildOpsNet.OP_EXPEL, GuildOpsNet.encode_expel(member_name))

@@ -189,8 +189,13 @@ func _init() -> void:
 			and str(consts.get("GUILD_SECESSION_STRID", "")) == "UIIT_CTL_GUILD_SECESSION",
 		"guild_leave's strid is UIIT_CTL_GUILD_SECESSION (FUN_006fcd60 case 0x1c)")
 	var master_lines: Array = from.call(guild_ids, store, 7, true)
-	_check(_keys(master_lines) == ["shop:G1", "guild_disband", "guild_storage"],
-		"a master gets the disband line, never secession or creation (got %s)" % [_keys(master_lines)])
+	# Round 844: the master's 0x17, 0x14, 0x18 in FUN_00700440's order.
+	_check(_keys(master_lines) == ["shop:G1", "guild_level_up", "guild_disband", "guild_master_leave", "guild_storage"],
+		"a master gets level-up, disband, hand-over and the storage, never secession or creation (got %s)" % [_keys(master_lines)])
+	var lvl: Variant = _find(master_lines, "guild_level_up")
+	var mlv: Variant = _find(master_lines, "guild_master_leave")
+	_check(lvl != null and str(lvl.get("strid")) == "UIIT_MSG_GUILD_LEVEL_UP" and mlv != null
+		and str(mlv.get("strid")) == "UIIT_CTL_MASTERLEAVE", "item 0x17 UIIT_MSG_GUILD_LEVEL_UP, item 0x18 UIIT_CTL_MASTERLEAVE")
 	var brk: Variant = _find(master_lines, "guild_disband")
 	_check(brk != null and str(brk.get("strid")) == "UIIT_CTL_GUILD_BREAK",
 		"guild_disband's strid is UIIT_CTL_GUILD_BREAK (FUN_006fcd60 case 0x14)")

@@ -34,7 +34,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 - No consignment
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
-- Guilds: no ranks, notice, storage, union requests or wars yet
+- Guilds: no storage, union requests, wars or the master-release vote yet
 - Players cannot drop items
 - Friends: letters and the block list not done
 
@@ -106,7 +106,7 @@ Retail NPCs in their retail spots, with talk menus, shops, storage and quests.
 | Storage (warehouse) | ✅ Supported | Per-account items and gold with deposit fee |
 | Repair NPCs | ✅ Supported | The original's flow: Repair All shows the cost in its own Yes/No box and mends worn gear and bag items alike; Repair turns the cursor into a hammer that mends the item you click; broken items pay their revive fee; each repaired item flashes and plays the repair sound |
 | Quests | 🟡 Partial | 564 of 696 quests reachable, NPC quest marks; the original's talk pages (Accept/Refuse, OK closes the talk, the reward's "Quest completed." notice), party-only quests and their refusals; timed and job quests missing |
-| Guild manager NPC | 🟡 Partial | Create, leave and disband (the master) with the original's confirm boxes; level-up, master hand-over and the other lines not done |
+| Guild manager NPC | 🟡 Partial | Create, leave and disband (the master) with the original's confirm boxes; the master's "Promote the guild." (the level-up window with its GP and gold) and "Transfer leadership" (pick a member, confirm); the leader vote, the guild storage, the war reward and the GP history lines not done |
 | Test Items NPC | ✅ Supported | Jangan NPC; free +12 full-blue gear, elixirs, stones; server option |
 | Test Items NPC: level-101 Nova | ✅ Supported | Sells the unlocked level-101 Seal of Nova instead of level 111 |
 | Test Items NPC: +12 full-blue listing | ✅ Supported | Store slots and tooltips show the +12 full-blue piece you get |
@@ -240,10 +240,10 @@ Chat, full party system, party matching and basic guilds.
 | Party matching | ✅ Supported | Register, browse, request to join and answer |
 | Guild creation | ✅ Supported | Create a guild at the guild manager |
 | Guild invites | ✅ Supported | Invite the selected player from the guild window, the original's Agreement box, accept or refuse, 30 s timeout; ban a member; 72 h penalty after leaving, a ban or a disband |
-| Guild ranks and permissions | 🟡 Partial | Invite and Ban follow your permission bits (the master has all); granting rights, union chat and the notice not done |
-| Guild window | 🟡 Partial | Level, GP, members n / cap, notice title and the member list (online lamps, ranks, GP), live updates as members join, leave, log on and off; select a member to ban; its grant-name button sets your own grant name (or `/grantname`) |
+| Guild ranks and permissions | ✅ Supported | The master gives or takes each member's Join, Withdraw, Union, Storage and Notice rights in the guild window's authority list (members can look); Invite, Ban and the notice follow them; at most 12 union chatters; hand the guild to another member at the guild manager |
+| Guild window | ✅ Supported | Level, GP, members n / cap, the notice (click it to read it all; the pencil writes it for those allowed) and the member list (online lamps, ranks, GP), live updates as members join, leave, log on and off; the selected member framed in yellow as in the original; sort by name, level, grade or GP; show names, grant names or positions; scroll; ban; donate SP as GP; its grant-name button sets your own grant name (or `/grantname`). The fortress positions button waits for fortress war |
 | Guild names over characters | ✅ Supported | `[Guild * Grant]` (or `[Guild]`) 20 px above the name with no box behind it, orange for you and every member of your guild, green for a guild in your union, blue for others (the original's colours and rule), recoloured at once when you or they join or leave a guild or a union, riding a mount with the name and hidden in a job suit; each member sets their own grant name (window button or /grantname), at any guild level |
-| Guild points and levels | 🟡 Partial | Points earned, guild levels up; spending points not done |
+| Guild points and levels | 🟡 Partial | Points earned from skill points or donated in the guild window, the guild levels up at the guild manager; the guild store's GP goods not done |
 | Guild emblems | 🟡 Partial | Register and delete a guild's emblem with the emblem scrolls (guildmark.bmp, 16 x 16 24-bit, beside Media.pk2; guild level 4, the master); shown beside the guild name over every member; union emblems wait for unions |
 | Union | 🟡 Partial | Unions are kept by the server and sent to every member (their guild lines turn green, live); a GM forms and leaves them with /union, the players' own union request, the union window and union chat are not built yet |
 | Friends list | ✅ Supported | The original's friends: ask by name (the Community window's Add friend, the right-click menu, /friend or /invite), its Agreement box with Accept / No and a 30 s wait, 20 friends a side; online lamps, race icons and the count in the Community window, Whisper and Delete friend (both sides); "Friend [name] has logged on / off" lines |

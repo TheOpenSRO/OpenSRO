@@ -151,6 +151,10 @@ func apply_update(data: PackedByteArray) -> void:
 			_guild_fields(r)
 		GuildOpsNet.UPDATE_MEMBER:
 			_member_fields(r)
+		GuildOpsNet.UPDATE_PERMISSIONS:
+			_permissions(r)
+		GuildOpsNet.UPDATE_MEMBERS_FIELD:
+			_members_fields(r)
 		UnionData.UPDATE_JOINED:
 			# Round 842: a guild joined the union (FUN_00580650's line).
 			var joined := union.apply_joined(r)
@@ -219,6 +223,41 @@ func _guild_fields(r: _Reader) -> void:
 			soldier_flags = 0 if f == 0 else soldier_flags | f
 	changed.emit()
 
+## Round 844: type 0x14 {u8 n, n x {u32 id, u32 mask}} -- every listed
+## member's permission, silently (c:0x887330's table, READ; the server's
+## s:0x5caa20 after a 0x7104).
+func _permissions(r: _Reader) -> void:
+	var n := r.u8()
+	for i in n:
+		var id := r.u32()
+		var p := r.u32()
+		if not r.ok:
+			return
+		var m := member(id)
+		if m != null:
+			m.permission = p
+	changed.emit()
+
+## Round 844: type 0x16 {u8 n, u8 mask, n x {u32 id, the mask's fields}} --
+## several members' fields, each as type 6 reads them (0x5bb1b0 per member;
+## the hand-over's mask 0x54, the permission list's 0x10).
+func _members_fields(r: _Reader) -> void:
+	var n := r.u8()
+	var mask := r.u8()
+	for i in n:
+		var id := r.u32()
+		if not r.ok:
+			return
+		var m := member(id)
+		if m == null:
+			# Its fields cannot be skipped without knowing it; the original
+			# asserts here too.
+			return
+		_fields_of(m, mask, r)
+		if not r.ok:
+			return
+	changed.emit()
+
 ## Type 6: u32 id, u8 mask, then the fields in bit order (FUN_005bb1b0).
 func _member_fields(r: _Reader) -> void:
 	var id := r.u32()
@@ -227,6 +266,11 @@ func _member_fields(r: _Reader) -> void:
 	if not r.ok or m == null:
 		# The original asserts "Illigal Guild Member : %d" here.
 		return
+	_fields_of(m, mask, r)
+	changed.emit()
+
+## One member's fields by mask, in bit order (0x5bb1b0).
+func _fields_of(m: Member, mask: int, r: _Reader) -> void:
 	if mask & GuildOpsNet.MEMBER_FIELD_LEVEL:
 		var lv := r.u8()
 		if r.ok:
@@ -255,7 +299,6 @@ func _member_fields(r: _Reader) -> void:
 		var sa := r.u8()
 		if r.ok:
 			m.siege_authority = sa
-	changed.emit()
 
 ## Bit 0x02 of type 6: the online lines (FUN_005bb1b0, READ).
 func _presence(m: Member, online: bool) -> void:

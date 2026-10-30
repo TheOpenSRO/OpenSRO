@@ -7550,6 +7550,106 @@ CanTrade and not 3/3/9, which disagree with it on 73 of 14,529 tradeable rows (M
 own item test before the box (column 19 & 0x80) is not made. Right-click moves; 0x4c49 has no client
 text; what the ShardManager does with a holder who disconnects (OpenSRO releases it, INFERRED). Lane G:
 `session.GuildStorageHolder` for the permission change's 0x4c4c.
+## Eight-hundred-and-forty-fourth round, lane G: the guild window, the guild manager and the member highlight
+
+The user (2026-10-29): "Add guild storage and all other guild functionality. Also when selecting members in a
+guild on the guild window there's a yellow highlight around the name. We don't have that. replicated that
+behavior."
+
+Labels: READ (c: sro_client.exe, s: SR_GameServer.exe), MEASURED, INFERRED, OURS, OPEN. The full readings are in
+docs/protocol/guild.md, "The guild window and the guild manager (round 844, lane G)". The census of every guild
+opcode, window and NPC line, with each one's owner lane, is docs/protocol/guild_census.md.
+
+**What the original does.**
+- **The highlight (READ, MEASURED).**
+  - A guild row is a CNIFBarWnd. A left press selects it (c:0x5b8790, message 0x201 only).
+  - The selected row's art becomes `com_bar01select_` and every other row's `com_bar01_` (c:0x5b7090).
+  - The select art is the plain bar plus a 1-px (255, 178, 82) frame inset 2 px. It is a frame, not a fill.
+  - Nothing changes on hover. A refill keeps the selection on the same member (c:0x5b8580).
+  - The friend list does the same (c:0x5a8700).
+  - The party matching and the stall network already swap or overlay the art correctly.
+- **The window.**
+  - Headers 400..403 sort the list by name, level, class or GP (c:0x5ba310).
+  - Button 23 cycles the shown name: name, grant name, fortress position (c:0x5ba970).
+  - Scroll 21 scrolls the list.
+  - The notice bar opens the body's view 1200; its pencil opens CIFGuildNotifyWrite (0x70F9).
+  - Button 38 opens the permission pane CNIFGuildGrantPow (0x7104: invite, expel, union chat, storage,
+    notice; union chat holds 12 at most).
+  - Button 250 opens CIFGuildPointUp: SP becomes GP (0x7258).
+  - Button 41 is the fortress positions (0x70FF), out of scope.
+  - There is **no right-click or double-click on a member**: the row handles 0x201 only. So the original's
+    guild list has no whisper and no party invite.
+- **The guild manager** (FUN_00700440).
+  - The master's lines: 0x17 promote (CIFGuildLevelUp, 0x70FA), 0x14 disband, 0x18 transfer leadership
+    (CIFGuildMasterLeave, 0x7103), 0x1b the war's reward gold.
+  - Every member's lines: 0x19 / 0x1a the master-release vote, 0x1d the storage, 0x43 GP usage history.
+- **The hand-over (READ s:0x5c46e0).**
+  - The new master gets class 0, mask 0xffffffff and siege role 1; the old one gets 10, 0 and 0.
+  - It goes out as 0x38F5 type 0x16 mask 0x54.
+  - This settles round 821's INFERRED masks: master all bits, member 0.
+- **Agent A's reading** (0x70F6 dead, 0x7202 / 0x7203 not guild, every 0x38F5 type) is in the census.
+
+**What was wrong.** `GuildWindow._mark_row` added the select bar and moved it to index 0, which put it
+**under** the row's own opaque `com_bar01_` bar, so nothing showed. The guild and friend lists share that code.
+The window had no order, name modes, scroll, notice view or write, permission pane or donation. The guild manager
+had no level-up or hand-over line.
+
+**What we built.**
+- **Server (`guild/manage.go`, `wire_manage.go`, `memstore_manage.go`, `sqlstore_manage.go`,
+  `session/guildmanage.go`):** the five requests in the original's order of checks, with their replies and
+  0x38F5 broadcasts; the 0x38F5 types 0x14 and 0x16.
+  - The notice applies the chat ban and the quote drop, then the byte limits 0x80 / 0x800.
+  - Lane H's storage hook for 0x4c4c is `session.GuildStorageUser`.
+  - SP comes from the skill store; `main` calls `SetGuildDonateSkills`.
+  - There is no schema change: the stores use round 821's columns.
+- **Client.**
+  - `GuildWindow`: the art swap, the order, the name modes, the scroll, the notice view, the permission pane,
+    the button rules.
+  - The windows `GuildNoticeWrite`, `GuildDonateWindow`, `GuildLevelUpWindow`, `GuildMasterLeaveWindow`.
+  - `GuildManageNet`, `GuildData` 0x14 / 0x16, and the NPC lines 0x17 / 0x18 (`NpcServiceReader`).
+  - QA input `guildnode:`, `hudnode:`, `guildreport`.
+- **OURS.**
+  - The notice body sits in a wrapping label, and the write window's body is a TextEdit.
+  - Button 41 stays disabled.
+  - The hand-over list's scroll manager lets clicks through.
+  - The donation rate is 1:1 (INFERRED; the ShardManager decides it, OPEN).
+
+**Live (render box, lane server 17030 in memory, real clicks; QaWin founds Akat, partybots join; evidence in
+`/var/tmp/r844g/keep`).** Frames lag the input by about 40 ticks.
+
+| Check | Result | Evidence |
+|---|---|---|
+| A press on Ann's row frames it in (255, 178, 82) (pixel dump of the row: `ffb252` at the inset), on Cid's moves it | PASS | run1_00000510.png, run1.client.log QA INPUT 3-6 |
+| Level header: QaWin first; the name button: grant names (Zed, Ace, Pengis), then back to names | PASS | run1.client.log QA INPUT 7-13 |
+| The notice bar opens the view (bar art on), Confirm closes it | PASS | run1_00000700.png, QA INPUT 14-17 |
+| The pencil opens "Writing guild notice"; typed title and body; Completed: B0F9 {1}, the banner "Guild notice has been refreshed.", the bar shows the title, the bots get 0x38F5 05 10 | PASS | run1_00000880.png, run1_00001070.png, run1.Tobi.log |
+| "Give authority" opens the pane (members but the master, by name); Ann's Notice ticked; Confirm: 0x7104, Tobi gets 0x38F5 14 {Ann 0x10} | PASS | run1_00001070.png, run1.Tobi.log |
+| Donate 100 SP: B258 {1, 100}, "Contributed [100]GP.", GP 100 / 5400 (1%), QaWin 100, SP 500 -> 400; the bots get type 5 / 6 mask 8 | PASS | run1_00001230.png, run1_00001330.png |
+| At Guild Manager Leebaek: the lines 3 "Promote the guild." and 5 "Transfer leadership"; promote: the window (5400 GP, 3000000 Gold, "Will you promote [Akat]guild to [2]LV?"), Confirm: B0FA {1}, level 2, GP 0, "Guild level has been increased to 2." | PASS | run2_00000700.png, run2.client.log |
+| Transfer: the list (Ann, QaWin, Tobi), Tobi checked, Confirm: "[Tobi] Transfer leadership to the guild member", Yes: B103 {1}, the talk closes, "Leadership has been successfully transferred."; Tobi gets 0x16 mask 0x54 and the masks; the window: Tobi master, QaWin "Check authority", Join / Withdraw off | PASS | run2_00001045.png, run2_00001070.png, run2_00001190.png, run2.Tobi.log |
+
+**Tests.**
+- Go:
+  - `guild.TestRound844Manage{Mem,SQL}` and `TestRound844CheckNotice`;
+  - `session.TestGuild844{Notice,Permissions,UnionChatCap,HandOver,Donate,LevelUpNPC}`;
+  - `go test ./...` passes.
+- Client:
+  - `ui/hud/guild844_test.gd`, against the real Media.pk2. It covers the art swap and the frame's colour,
+    the order, the modes, the scroll, the notice view, the buttons, the pane, the write, level-up, hand-over
+    and donation windows, and 0x14 / 0x16.
+  - `npc_service_reader_test.gd` covers the master's lines.
+  - `remote_godot.sh check`: ALL LOAD. `tests`: 0 failing.
+
+**OPEN.**
+- The master-release vote (0x7105-0x7107, 0x3908): the database procedures decide it.
+- GP usage history (line 0x43).
+- The guild recall (0x7030 / 0x7031).
+- The notice filter's word list.
+- The guild store's GP purchases.
+- The donation's SP:GP rate.
+- The order's comparators.
+- Whether the original pre-fills the write window.
+- Whether the level-up window hides the talk.
 
 ## Eight-hundred-and-forty-third round, lane Q: the quest scroll's flicker
 

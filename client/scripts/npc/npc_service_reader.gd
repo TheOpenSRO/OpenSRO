@@ -71,6 +71,11 @@ const GUILD_BREAK_STRID := "UIIT_CTL_GUILD_BREAK"
 ## Round 844: the guild storage's line, item 0x1d (READ FUN_006fcd60 case
 ## 0x1d: "Use guild storage. (level 2 or above)").
 const GUILD_WAREHOUSE_STRID := "UIIT_CTL_GUILD_WAREHOUSE"
+## Round 844 (lane G): the master's level-up (item 0x17) and hand-over
+## (item 0x18) lines (READ: FUN_006fcd60's jump table, 0x6fd080
+## `push 0xdad410`, 0x6fd094 `push 0xdad3b8`).
+const GUILD_LEVEL_UP_STRID := "UIIT_MSG_GUILD_LEVEL_UP"
+const GUILD_MASTER_LEAVE_STRID := "UIIT_CTL_MASTERLEAVE"
 
 ## The job guilds' join lines (round 526), by job kind: 1 Trader, 2 Thief
 ## ("Robber"), 3 Hunter (docs/protocol/jobs.md, "Three job kinds"). The real
@@ -419,7 +424,14 @@ static func guild_services(guild_id: int, is_master: bool) -> Array:
 	var storage := Service.new("guild_storage", "Use guild storage. (level 2 or above)", GUILD_WAREHOUSE_STRID)
 	if not is_master:
 		return [Service.new("guild_leave", "Leave guild.", GUILD_SECESSION_STRID), storage]
-	return [Service.new("guild_disband", "Disband the guild", GUILD_BREAK_STRID), storage]
+	# Round 844: the master's lines in FUN_00700440's order (0x701101..0x70112d,
+	# READ): 0x17 level-up, 0x14 disband, 0x18 hand-over, then 0x1b the war's
+	# compensation (lane V); after them every member's 0x19 / 0x1a (the
+	# master-release vote) and 0x43 the GP history -- not built here yet --
+	# and 0x1d the storage (lane H).
+	return [Service.new("guild_level_up", "Promote the guild.", GUILD_LEVEL_UP_STRID),
+		Service.new("guild_disband", "Disband the guild", GUILD_BREAK_STRID),
+		Service.new("guild_master_leave", "Transfer leadership", GUILD_MASTER_LEAVE_STRID), storage]
 
 ## Whether the store window shows Repair and Repair All for the NPC with this
 ## codename (round 514). True exactly when the server registers interaction
