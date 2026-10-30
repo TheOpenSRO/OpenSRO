@@ -2132,6 +2132,7 @@ func _ready() -> void:
 			# Round 781: learning or raising spends SP; the underbar showed
 			# the last stats' total until the next stats update (MEASURED:
 			# 9,000,000 there, 8,996,066 in the Skill window).
+			_guild_sp_now = state.skill_points
 			if _hud_underbar != null:
 				_hud_underbar.set_sp(state.skill_points))
 	# The auras follow OpBuffStart / OpBuffEnd through _on_buff_started /
@@ -2882,6 +2883,7 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 822: the membership boxes and buttons.
 	_hud_panels.guild_invite_requested.connect(_on_guild_invite_requested)
 	_hud_panels.guild_expel_requested.connect(func(who: String) -> void: NetClient.guild_expel(who))
+	_wire_guild_manage_844()
 	_hud_panels.guild_expel_refused.connect(func(code: int) -> void:
 		_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code))
 	_hud_panels.guild_invitation_answered.connect(_on_guild_invitation_answered)
@@ -18080,6 +18082,10 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   netnode:<id>[,..] / netbox:<id> / underbar:<id>[,..]  left click a control
 #                       of the stall network window, its buy box or the
 #                       underbar by GetChild path (round 840)
+#   guildnode:<id>[,..] / rguildnode:..  left (right) click a guild window
+#                       control by GetChild path (round 844)
+#   guildreport         report the guild window's selection, row art, order,
+#                       notice and permission pane (round 844)
 #   boxyes:<name> / boxno:<name>  a question box's Yes / No (round 840)
 #   netpage:<i> / netprev / netnext / netlist:<i> / netclose  the network's
 #                       page buttons, the open combo list's row i, its X
@@ -19098,6 +19104,19 @@ func _qa_input_step() -> void:
 			else:
 				_qa_input_report = "%s at %s" % [action, sc.get_global_rect().get_center()]
 				_qa_push_click(sc.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+		"guildnode", "rguildnode":
+			# Round 844: left (right) click a control of the guild window by
+			# its GetChild path from the window (47,28 the first member row,
+			# 47,401 the level header, 47,222 the notice bar).
+			var gc := _qa_net_control("guildnode", arg)
+			if gc == null:
+				_qa_input_report = action + " (not shown)"
+			else:
+				_qa_input_report = "%s at %s" % [action, gc.get_global_rect().get_center()]
+				_qa_push_click(gc.get_global_rect().get_center(), MOUSE_BUTTON_RIGHT if kind == "rguildnode" else MOUSE_BUTTON_LEFT, true)
+		"guildreport":
+			# Round 844: the guild window's state, for the QA log.
+			_qa_input_report = "%s %s" % [action, _hud_panels.qa_guild_report() if _hud_panels != null else "{}"]
 		"netnode", "netbox", "underbar":
 			# Round 840: left click a control of the stall network window
 			# (netnode:<id>[,<id>..], a GetChild path from its root), of its
@@ -28563,6 +28582,12 @@ func _on_npc_service_selected(key: String) -> void:
 				_hud_panels.open_guild_leave_prompt(_talk_npc_name)
 			else:
 				_log_system("Leaving a guild needs the server.")
+		"guild_level_up":
+			# Round 844: line 0x17 opens CIFGuildLevelUp; its Confirm sends 0x70FA.
+			_hud_panels.open_guild_level_up(_talk_npc_uid())
+		"guild_master_leave":
+			# Round 844: line 0x18 opens CIFGuildMasterLeave; its confirm sends 0x7103.
+			_hud_panels.open_guild_master_leave(_talk_npc_uid())
 		"guild_disband":
 			# Round 822: line 0x14 opens box 0x13; its OK sends 0x70F1.
 			if NetClient.is_connected_to_server():
@@ -33814,6 +33839,8 @@ func _qa_net_control(kind: String, arg: String) -> Control:
 			c = nb.control(ids) if nb != null and is_instance_valid(nb) and nb.visible else null
 		"underbar":
 			c = TwoDtBuilder.find_path(_hud_underbar.bar_root, ids) if _hud_underbar != null else null
+		"guildnode":
+			c = _hud_panels.qa_guild_control(ids)
 	return c if c != null and c.is_visible_in_tree() else null
 
 ## Round 840: the stall network's town test (CRegionManagerBody slot 23,
@@ -35679,6 +35706,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		# and 19). The bar's real fill is progress toward the next skill
 		# point, which the server does not send yet.
 		_hud_underbar.set_sp(stats.skill_points)
+	_guild_sp_now = stats.skill_points
 
 ## The EXP-loss line (UIIT_MSG_STATE_LOSE_EXP, "[%I64d]Experience Points
 ## lost."), or "" when nothing was lost.
@@ -36247,6 +36275,57 @@ func _wire_party_state() -> void:
 	NetClient.self_id_received.connect(_on_party_self_id)
 
 # --- The guild's membership (round 822; GuildOpsState, GuildData) -----------
+
+## Round 844 (lane G): the guild window's notice, permissions and GP
+## donation, the guild manager's level-up and hand-over windows: their
+## requests out (GuildManageNet), their replies' lines in (READ: B0F9 the
+## warning banner's UIIT_MSG_GUILD_COMMON_KNOW_REMIND_UPDATE c:0x881a70; B103
+## the talk closed and UIIT_MSG_MLEAVE_SUCCESS c:0x889680; B258
+## UIIT_MSG_GUILD_GP_SUBSCRIPION_RESULT c:0x88d750; B104 and B0FA nothing; a
+## refusal through category 0x10).
+func _wire_guild_manage_844() -> void:
+	var h := _hud_panels
+	h.guild_notice_submitted.connect(func(t: String, b: String) -> void:
+		NetClient.guild_manage(GuildManageNet.OP_NOTICE, GuildManageNet.encode_notice(t, b)))
+	h.guild_permissions_submitted.connect(func(changes: Array) -> void:
+		NetClient.guild_manage(GuildManageNet.OP_PERMISSION, GuildManageNet.encode_permissions(changes)))
+	h.guild_donate_submitted.connect(func(n: int) -> void:
+		NetClient.guild_manage(GuildManageNet.OP_DONATE, GuildManageNet.encode_donate(n)))
+	h.guild_level_up_confirmed.connect(func(npc: int) -> void:
+		NetClient.guild_manage(GuildManageNet.OP_LEVEL_UP, GuildOpsNet.encode_npc(npc)))
+	h.guild_hand_over_confirmed.connect(func(npc: int, id: int) -> void:
+		NetClient.guild_manage(GuildManageNet.OP_HAND_OVER, GuildManageNet.encode_hand_over(npc, id)))
+	h.guild_local_refused.connect(func(code: int) -> void:
+		if code == GuildManageNet.LOCAL_SP_SHORT:
+			_log_system(_resolve_any_text(GuildManageNet.SP_SHORT_KEY, "Cannot contribute more SP than you have."))
+		else:
+			_on_guild_ops_notice(GuildOpsNet.error_key(code), [], code))
+	h.guild_system_line.connect(func(t: String) -> void: _log_system(t))
+	h.guild_sp = func() -> int: return _guild_sp_now
+	NetClient.guild_manage_result.connect(_on_guild_manage_result)
+
+## The player's SP as the last stats or skill state said (the donation
+## window's 608).
+var _guild_sp_now := 0
+
+func _on_guild_manage_result(r: GuildManageNet.Result) -> void:
+	print("GUILD844 result op=%#06x ok=%s code=%#06x amount=%d" % [r.op, r.ok, r.code, r.amount])
+	if not r.ok:
+		_on_guild_ops_notice(GuildOpsNet.error_key(r.code), [], r.code)
+		return
+	match r.op:
+		GuildManageNet.OP_NOTICE_RESULT:
+			var t := _resolve_any_text("UIIT_MSG_GUILD_COMMON_KNOW_REMIND_UPDATE", "Guild notice has been refreshed.")
+			_log_system(t)
+		GuildManageNet.OP_HAND_OVER_RESULT:
+			if _hud_panels != null:
+				_hud_panels.close("npctalk")
+			_log_system(_resolve_any_text("UIIT_MSG_MLEAVE_SUCCESS", "Leadership has been successfully transferred."))
+		GuildManageNet.OP_DONATE_RESULT:
+			_log_system(GuildWindow.format_d(_resolve_any_text("UIIT_MSG_GUILD_GP_SUBSCRIPION_RESULT", "Contributed [%d]GP."), [r.amount]))
+			_request_world_stats()
+		GuildManageNet.OP_LEVEL_UP_RESULT:
+			_request_world_stats()
 
 func _wire_guild_ops() -> void:
 	var d := NetClient.guild_data

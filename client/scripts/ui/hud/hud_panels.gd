@@ -1580,6 +1580,7 @@ func _guild_window() -> GuildWindow:
 	window.invite_requested.connect(func() -> void: guild_invite_requested.emit())
 	window.expel_requested.connect(func(who: String) -> void: guild_expel_requested.emit(who))
 	window.expel_refused.connect(func(code: int) -> void: guild_expel_refused.emit(code))
+	_wire_guild_844(window)
 	_windows[GUILD_WINDOW_KEY] = window
 	return window
 
@@ -9924,3 +9925,127 @@ var stall_network_town := Callable()
 
 func stall_network_in_town() -> bool:
 	return bool(stall_network_town.call()) if stall_network_town.is_valid() else false
+
+# --- round 844, lane G: the guild window's notice, permissions and GP ---------------
+
+## The notice write window's Completed (0x70F9 {title, body}).
+signal guild_notice_submitted(title: String, body: String)
+## The permission pane's Confirm (0x7104): [[member id, permission], ...].
+signal guild_permissions_submitted(changes: Array)
+## The GP donation window's Confirm with the SP to give.
+signal guild_donate_submitted(sp: int)
+## A local refusal (category 0x10) from one of these windows.
+signal guild_local_refused(code: int)
+
+var guild_notice_write: GuildNoticeWrite
+var guild_donate_window: GuildDonateWindow
+## The player's skill points (World3D sets it), shown by the donation window.
+var guild_sp := Callable()
+
+## Hooks the round 844 parts of the guild window (once, when it is built).
+func _wire_guild_844(window: GuildWindow) -> void:
+	window.notice_write_requested.connect(open_guild_notice_write)
+	window.permissions_submitted.connect(func(changes: Array) -> void: guild_permissions_submitted.emit(changes))
+	window.donate_requested.connect(open_guild_donate)
+
+## GDR_GUILD_NOTIFY_WRITE through 0x79b380(1): one at a time, centred.
+func open_guild_notice_write() -> void:
+	if guild_notice_write != null and is_instance_valid(guild_notice_write):
+		guild_notice_write.move_to_front()
+		return
+	var w := GuildNoticeWrite.new()
+	if not w.build_write(_builder):
+		w.free()
+		return
+	w.submitted.connect(func(t: String, b: String) -> void: guild_notice_submitted.emit(t, b))
+	w.refused.connect(func(code: int) -> void: guild_local_refused.emit(code))
+	add_child(w)
+	w.centre_on(get_viewport_rect().size)
+	guild_notice_write = w
+
+## The donation button's window (0x5b68a0): one at a time, centred.
+func open_guild_donate() -> void:
+	if guild_donate_window != null and is_instance_valid(guild_donate_window):
+		guild_donate_window.move_to_front()
+		return
+	var w := GuildDonateWindow.new()
+	var sp: int = int(guild_sp.call()) if guild_sp.is_valid() else 0
+	if not w.build_donate(_builder, NetClient.guild_data.guild_name, sp):
+		w.free()
+		return
+	w.submitted.connect(func(n: int) -> void: guild_donate_submitted.emit(n))
+	w.refused.connect(func(code: int) -> void: guild_local_refused.emit(code))
+	add_child(w)
+	w.centre_on(get_viewport_rect().size)
+	guild_donate_window = w
+
+## QA (round 844): a guild window control by GetChild path.
+func qa_guild_control(ids: Array) -> Control:
+	var window := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
+	return window.control(ids) if window != null else null
+
+## QA (round 844): the guild window's state as one line.
+func qa_guild_report() -> String:
+	var window := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
+	if window == null:
+		return "{no guild window}"
+	var rows: Array = []
+	for row in window.member_rows():
+		var bar := row.get_node_or_null("RowBar")
+		var name_node := TwoDtBuilder.child(row, GuildWindow.ROW_NAME)
+		rows.append("%s:%s:%s" % [TwoDtBuilder.text_of(name_node) if name_node != null else "",
+			"SEL" if GuildWindow.row_selected(row) else "-", str(bar.get_index()) if bar != null else "x"])
+	return "{visible=%s selected=%d sort=%d mode=%d notice_open=%s body=%s pane=%s perm=%s rows=[%s] write=%s}" % [
+		window.visible, window.selected_member, window.sort_mode, window.name_mode, window.notice_open,
+		JSON.stringify(window.notice_body_shown().left(40)), window.permission_pane_open(),
+		JSON.stringify(window.permission_changes()), ", ".join(rows),
+		guild_notice_write != null and is_instance_valid(guild_notice_write)]
+
+## The level-up window's Confirm (0x70FA {npc}).
+signal guild_level_up_confirmed(npc_uid: int)
+## The hand-over's confirm box OK (0x7103 {npc, member id}).
+signal guild_hand_over_confirmed(npc_uid: int, member_id: int)
+## A line for the chat's system window (key, already formatted text).
+signal guild_system_line(text: String)
+
+var guild_level_up_window: GuildLevelUpWindow
+var guild_master_leave_window: GuildMasterLeaveWindow
+
+## The master's talk line 0x17: CIFGuildLevelUp, centred.
+func open_guild_level_up(npc_uid: int) -> void:
+	if guild_level_up_window != null and is_instance_valid(guild_level_up_window):
+		guild_level_up_window.close()
+	var d := NetClient.guild_data
+	var w := GuildLevelUpWindow.new()
+	if not w.build_level_up(_builder, npc_uid, d.guild_name, d.level):
+		w.free()
+		return
+	w.confirmed.connect(func(npc: int) -> void: guild_level_up_confirmed.emit(npc))
+	add_child(w)
+	w.centre_on(get_viewport_rect().size)
+	guild_level_up_window = w
+
+## The master's talk line 0x18: CIFGuildMasterLeave, centred; its OK asks
+## "[%s]" + UIIT_MSG_MLEAVE_CONFIRM and that box's OK confirms.
+func open_guild_master_leave(npc_uid: int) -> void:
+	if guild_master_leave_window != null and is_instance_valid(guild_master_leave_window):
+		guild_master_leave_window.close()
+	var w := GuildMasterLeaveWindow.new()
+	if not w.build_master_leave(_builder, npc_uid, NetClient.guild_data, NetClient.current_character_name):
+		w.free()
+		return
+	w.refused.connect(func(key: String) -> void: guild_system_line.emit(_resolve_ui(key, key)))
+	w.confirm_wanted.connect(func(npc: int, id: int, who: String) -> void:
+		var box := PartyMatchConfirm.new()
+		var msg := "[%s]\n%s" % [who, _resolve_ui("UIIT_MSG_MLEAVE_CONFIRM", "Transfer leadership to the guild member")]
+		if not box.build(_builder, msg, Vector2(0x118, 0x90)):
+			box.free()
+			return
+		box.name = "GuildHandOverConfirm"
+		box.confirmed.connect(func() -> void: guild_hand_over_confirmed.emit(npc, id))
+		add_child(box)
+		box.centre_on(get_viewport_rect().size)
+		_qa_print_buttons(box, str(box.name)))
+	add_child(w)
+	w.centre_on(get_viewport_rect().size)
+	guild_master_leave_window = w

@@ -179,6 +179,8 @@ const EXPEL_BUTTON := 39
 ## The row bars (0x5b7090: the slot's art is com_bar01select_ for the
 ## selected member's row, com_bar01_ for the rest).
 const ROW_SELECT_BAR := "SelectBar"
+## Round 844: the meta a row keeps its selected state in (_mark_row).
+const ROW_SELECTED_META := "row_selected"
 ## Invite pressed (the owner sends 0x70F3 for the selected player).
 signal invite_requested
 ## The ban question's Yes for a member (the owner sends 0x70F4); a refusal
@@ -440,6 +442,33 @@ func _command_buttons() -> void:
 	var grant := _at([ID_INFO, GRANT_NAME_BUTTON]) as BaseButton
 	if grant != null:
 		grant.disabled = not _has_guild
+	# Round 844 (0x5b5379..0x5b5442, READ): in a guild 38 is enabled and
+	# captioned UIIT_CTL_GUILD_UNION_CHAT_GRANT for the master, _CONFIRM for
+	# the rest (it opens the permission pane, 0x5b63e0 index 1); the notice's
+	# edit button follows the player's 0x10 bit. 41 (the fortress positions,
+	# CIFGuildPositionGrant) stays disabled: no fortress war (OURS).
+	var perm_btn := _at([ID_INFO, PERMISSION_BUTTON]) as BaseButton
+	if perm_btn != null and data != null and data.in_guild and _builder != null:
+		perm_btn.disabled = false
+		_twodt.set_text(perm_btn, _builder.resolve_text(
+			"UIIT_CTL_GUILD_UNION_CHAT_GRANT" if is_master() else "UIIT_CTL_GUILD_UNION_CHAT_CONFIRM"))
+	if edit != null:
+		edit.disabled = perm & GuildData.PERM_NOTICE == 0
+	# 0x5b518e: while the permission pane is up the command buttons are
+	# hidden (0x5b5480(0)).
+	var pane := _at([ID_INFO, ID_GRANT_PANE])
+	if pane != null and pane.visible:
+		for id in COMMAND_BUTTONS:
+			var b := _at([ID_INFO, id])
+			if b != null:
+				b.visible = false
+
+## Whether the player is the guild's master (FUN_00989ce0 on the own name).
+func is_master() -> bool:
+	if data == null or not data.in_guild:
+		return false
+	var m := data.master()
+	return m != null and m.member_name == _me()
 
 ## The player's own member record's permission bits (0 outside a guild).
 func own_permission() -> int:
@@ -531,6 +560,7 @@ func _guild_info() -> void:
 	var notice := _at(NOTICE_TEXT)
 	if notice != null and notice.get_node_or_null(TwoDtBuilder.TEXT_NODE) != null:
 		_twodt.set_text(notice, "")
+	_set_notice_body("")
 	fill_members()
 
 ## Round 821: 0x5b5eb0's in-guild branch, READ, from the guild record: 66
@@ -562,6 +592,8 @@ func _guild_info_from(d: GuildData) -> void:
 	var notice := _at(NOTICE_TEXT)
 	if notice != null:
 		_twodt.set_text(notice, d.notice_title if d.notice_title != "" else _builder.resolve_text(NOTICE_NONE))
+	# Round 844: the body goes on the notice view's text (0x5b61ff -> 0x5aad40).
+	_set_notice_body(d.notice_body)
 
 func _set_info(id: int, text: String) -> void:
 	var c := _at([ID_INFO, id])
@@ -581,18 +613,127 @@ func _race_art(ref_obj_id: int) -> String:
 ## built: the first rows show.
 func fill_members() -> void:
 	var rows := member_rows()
-	var list: Array = []
-	if data != null and data.in_guild:
-		list = data.members.duplicate()
-		list.sort_custom(func(a: GuildData.Member, b: GuildData.Member) -> bool: return a.member_name < b.member_name)
+	var list := sorted_members()
+	if _member_scroll != null:
+		_member_scroll.set_max_line(list.size() - rows.size())
+	var first := _member_scroll.line if _member_scroll != null else 0
 	for i in rows.size():
-		_fill_row(rows[i], list[i] if i < list.size() else null)
+		var k := first + i
+		_fill_row(rows[i], list[k] if k < list.size() else null)
 	# A member who left takes the selection with them (OURS); the rest keep
 	# their marks.
 	if selected_member != 0 and (data == null or data.member(selected_member) == null):
 		selected_member = 0
 	for row in rows:
 		_mark_row(row, selected_member != 0 and int(row.get_meta("guild_member", 0)) == selected_member)
+
+## Round 844, the list's order (0x5ba310, READ): +0x7a0 picks the key, set
+## by the headers 400..403 (0x5baae0) -- 0 the shown name (by the display
+## mode below: name, grant name or fortress position), ascending (a
+## std::multimap walked from its start); 1 the level, highest first (walked
+## from its end); 2 the class (0 master, 5 staff, 10 member), master first;
+## 3 the GP donated, most first. That the multimaps use std::less is
+## INFERRED (their comparators were not read); the walk directions are READ.
+## Equal keys keep the record's order (a multimap keeps insertion order).
+const SORT_NAME := 0
+const SORT_LEVEL := 1
+const SORT_CLASS := 2
+const SORT_GP := 3
+## The headers (message map 0xeb27b8..: 0x190..0x193 -> 0x5baae0).
+const SORT_HEADERS := [400, 401, 402, 403]
+## The name-mode button (47 -> 23, stl_condition.ddj; message map -> 0x5ba970):
+## each press cycles +0x7a3 (0, 1, 2) and retitles header 400.
+const NAME_MODE_BUTTON := 23
+const NAME_MODE_TITLES := ["UIIT_STT_GUILDSMAN", "UIIT_STT_TITLE", "UIIT_STT_GUILD_POSITION"]
+## The member list's scroll bar (47 -> 21; the refill 0x5b8580 starts at its
+## line, +0x7d0 -> +0x380).
+const MEMBER_SCROLL := 21
+## The fortress position texts by siege role (UI_FORT::FUN_009961a0's
+## switch at 0x996299, READ: 0 "", 1, 2, 4, 8, 0x10, 0x20).
+const SIEGE_ROLE_KEYS := {1: "UIIT_STT_FORT_GUILD_COMMANDER", 2: "UIIT_STT_FORT_GUILD_SUBCOMMANDER",
+	4: "UIIT_STT_FORT_GUILD_BATTLEMANAGER", 8: "UIIT_STT_FORT_GUILD_PRODUCTMANAGER",
+	0x10: "UIIT_STT_FORT_GUILD_TRAINERMANAGER", 0x20: "UIIT_STT_FORT_GUILD_ENGINEER"}
+
+## +0x7a0 and +0x7a3 (both 0 at create).
+var sort_mode := SORT_NAME
+var name_mode := 0
+var _member_scroll: VScroll2dt
+
+## The members in the list's order (sort_mode; the name key by name_mode).
+func sorted_members() -> Array:
+	var list: Array = []
+	if data == null or not data.in_guild:
+		return list
+	var keyed: Array = []
+	for i in data.members.size():
+		keyed.append([data.members[i], i])
+	var mode := sort_mode
+	keyed.sort_custom(func(a: Array, b: Array) -> bool:
+		var ma: GuildData.Member = a[0]
+		var mb: GuildData.Member = b[0]
+		match mode:
+			SORT_LEVEL:
+				if ma.level != mb.level:
+					return ma.level > mb.level
+			SORT_CLASS:
+				if ma.member_class != mb.member_class:
+					return ma.member_class < mb.member_class
+			SORT_GP:
+				if ma.gp_donation != mb.gp_donation:
+					return ma.gp_donation > mb.gp_donation
+			_:
+				var ka := shown_name(ma)
+				var kb := shown_name(mb)
+				if ka != kb:
+					return ka < kb
+		return int(a[1]) < int(b[1]))
+	for e in keyed:
+		list.append(e[0])
+	return list
+
+## The row's name by the display mode (0x5b4a00): the name (+4), the grant
+## name (+0x40) or the fortress position text (+0x60).
+func shown_name(m: GuildData.Member) -> String:
+	match name_mode:
+		1:
+			return m.nickname
+		2:
+			var key: String = SIEGE_ROLE_KEYS.get(m.siege_authority, "")
+			return _builder.resolve_text(key) if key != "" and _builder != null else ""
+	return m.member_name
+
+## 0x5baae0: a header sets the order and refills the list.
+func press_sort(mode: int) -> void:
+	sort_mode = clampi(mode, SORT_NAME, SORT_GP)
+	fill_members()
+
+## 0x5ba970: the next name mode, header 400's caption, and a refill.
+func press_name_mode() -> void:
+	name_mode = (name_mode + 1) % 3
+	var header := _at([ID_INFO, SORT_HEADERS[0]])
+	if header != null and _builder != null:
+		_twodt.set_text(header, _builder.resolve_text(NAME_MODE_TITLES[name_mode]))
+	fill_members()
+
+func member_scroll_line() -> int:
+	return _member_scroll.line if _member_scroll != null else 0
+
+func member_scroll_to(to: int) -> void:
+	if _member_scroll != null:
+		_member_scroll.scroll_to(to)
+
+func _wire_member_list() -> void:
+	for i in SORT_HEADERS.size():
+		var h := _at([ID_INFO, SORT_HEADERS[i]]) as BaseButton
+		if h != null:
+			h.pressed.connect(press_sort.bind(i))
+	var mode_btn := _at([ID_INFO, NAME_MODE_BUTTON]) as BaseButton
+	if mode_btn != null:
+		mode_btn.pressed.connect(press_name_mode)
+	var info := _at([ID_INFO])
+	_member_scroll = VScroll2dt.build_on(_at([ID_INFO, MEMBER_SCROLL]), _builder, info)
+	if _member_scroll != null:
+		_member_scroll.changed.connect(func(_l: int) -> void: fill_members())
 
 ## 0x5b86c0: the selection moves to `id`, every row's bar following it.
 func select_member(id: int) -> void:
@@ -602,24 +743,49 @@ func select_member(id: int) -> void:
 		_mark_row(row, id != 0 and int(row.get_meta("guild_member", 0)) == id)
 	selected_member = id
 
-## 0x5b7090 on one row: the selected bar over its own.
+## 0x5b7090 on one row (the friend rows' 0x5a8700 is the same): the row is a
+## CNIFBarWnd, and selecting it SETS ITS OWN ART -- com_bar01select_Left.ddj
+## (+0x4e8 = 1) for the selected member, com_bar01_Left.ddj (+0x4e8 = 0) for
+## every other row -- which the bar cuts at its last '_' (0x4733a0) and draws
+## as left / mid / right (READ). com_bar01select_ is com_bar01_ with a 1-px
+## (255, 178, 82) frame inset 2 px all round (MEASURED in Media.pk2): the
+## "yellow highlight around the name". It is a frame, not a fill; nothing
+## differs on hover (CNIFGuildUserSlot handles 0x201 only, 0x5b8790), and it
+## moves only when another row is pressed (0x5b86c0) -- a refill re-marks the
+## rows from the kept id (0x5b8580).
+##
+## Round 844: the art is swapped in place, as the original does. Before, a
+## second bar went in UNDER the row's own opaque com_bar01_ (move_child 0),
+## so the selection never showed (the user's report).
 func _mark_row(row: Control, on: bool) -> void:
-	var bar := row.get_node_or_null(ROW_SELECT_BAR) as Control
-	if bar == null and on and _builder != null:
-		var before := row.get_child_count()
-		_builder._add_row_bar_from(row, UiBuilder.ROW_BAR_SELECTED_DDJ, row.size)
-		if row.get_child_count() > before:
-			bar = row.get_child(row.get_child_count() - 1) as Control
-			bar.name = ROW_SELECT_BAR
-			bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			row.move_child(bar, 0)
-	if bar != null:
-		bar.visible = on
+	if row == null or _builder == null:
+		return
+	if bool(row.get_meta(ROW_SELECTED_META, false)) == on and row.get_node_or_null("RowBar") != null:
+		return
+	row.set_meta(ROW_SELECTED_META, on)
+	var old := row.get_node_or_null("RowBar")
+	var at := old.get_index() if old != null else 0
+	if old != null:
+		row.remove_child(old)
+		old.queue_free()
+	_builder._add_row_bar_from(row, UiBuilder.ROW_BAR_SELECTED_DDJ if on else UiBuilder.ROW_BAR_DDJ, row.size)
+	var fresh := row.get_node_or_null("RowBar") as Control
+	if fresh != null:
+		fresh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.move_child(fresh, at)
+
+## Whether a row draws the selected art (round 844; the row's +0x4e8).
+static func row_selected(row: Control) -> bool:
+	return row != null and bool(row.get_meta(ROW_SELECTED_META, false))
 
 ## CNIFGuildUserSlot 0x5b8790: a left press on a row with a member selects it.
 func _on_row_input(event: InputEvent, row: Control) -> void:
 	var mb := event as InputEventMouseButton
-	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+	if mb == null or not mb.pressed:
+		return
+	if mb.button_index != MOUSE_BUTTON_LEFT:
+		if _member_scroll != null:
+			_member_scroll._wheel(event)
 		return
 	var id := int(row.get_meta("guild_member", 0))
 	if id != 0:
@@ -682,7 +848,7 @@ func _fill_row(row: Control, m: GuildData.Member) -> void:
 	_set_texture(TwoDtBuilder.child(row, ROW_LAMP), FRIEND_LAMP_ON if m.online else FRIEND_LAMP_OFF)
 	_set_art(TwoDtBuilder.child(row, ROW_RACE), _race_art(m.ref_obj_id))
 	var rank_key: String = ROW_RANK_KEYS.get(m.member_class, "")
-	var texts := [[ROW_NAME, m.member_name], [ROW_LEVEL, "%d" % m.level],
+	var texts := [[ROW_NAME, shown_name(m)], [ROW_LEVEL, "%d" % m.level],
 		[ROW_RANK, _builder.resolve_text(rank_key) if rank_key != "" else ""], [ROW_GP, "%d" % m.gp_donation]]
 	for pair in texts:
 		var c := TwoDtBuilder.child(row, int(pair[0]))
@@ -824,6 +990,8 @@ func _wire() -> void:
 	for row in member_rows():
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		row.gui_input.connect(_on_row_input.bind(row))
+	_wire_member_list()
+	_wire_844()
 	# The window's ShowWindow(1) (0x5bb150).
 	visibility_changed.connect(func() -> void:
 		if visible and not _shown_flag:
@@ -1064,6 +1232,323 @@ func friend_scroll_line() -> int:
 func friend_scroll_to(to: int) -> void:
 	if _friend_scroll != null:
 		_friend_scroll.scroll_to(to)
+
+# --- round 844: the notice, the permission pane, the GP donation ----------------
+#
+# READ (sro_client.exe):
+# - The notice bar 47 -> 222 (CNIFGuildNotifySlot) shows the title (0x5b54c0
+#   on 117). A left press on it (vslot_017 0x5b7110) flips its flag +0x348,
+#   sets its art to gil_windo02_on / _off and shows / hides the notice view
+#   47 -> 1200 (CNIFGuildNotifyView, the guild window's +0x7a8, 0x5b3c80),
+#   whose text 155 holds the body (0x5b5eb0 -> 0x5aad40; the control is built
+#   with 0x400 characters, 0x5a9d00). The view's Confirm 153 (0x5a9d90) puts
+#   the bar back (0x5b80a0(0)) and hides the view.
+# - The bar's pencil 222 -> 81 (message map 0x51 -> 0x5b3cb0) opens
+#   GDR_GUILD_NOTIFY_WRITE through 0x79b380(1, 1) (GuildNotifyWrite).
+# - Button 38 (index 1 of 0x5b63e0, in a guild): the permission pane 47 ->
+#   1000 (CNIFGuildGrantPow) shown and filled from the members (0x5ad320:
+#   every member but the master, by name), the command buttons hidden
+#   (0x5b5480(0)), and the rows' +0x4e4 set to whether the player is the
+#   master (0x5ac000): the master edits, everyone else only looks. A row
+#   (CNIFGuildGrantPowSlot, 0x5ac150): the race mark, the name, and five
+#   checks, 105..109 = bits 0x01 join (invite), 0x02 withdraw (expel), 0x04
+#   union (union chat), 0x08 storage, 0x10 notice. The union header 93's
+#   tooltip is UIIT_MSG_GUILD_UNION_CHAT_TOOLTIP with the members holding 0x04
+#   + 1 and 12 (0x5ab0f0). Confirm 151 (0x5ad250 -> SendGuildMsg_104,
+#   0x5ace60) sends 0x7104 {u8 n, n x {u32 member id, u32 permission}} for the
+#   rows whose bits changed, then hides the pane and shows the command
+#   buttons; Cancel 152 only hides it. The scroll 97 moves the rows
+#   (vslot_036 0x5ac9d0 -> 0x5ac8d0).
+# - The donation button 250 (message map 0xfa -> 0x5b68a0), in a guild: the
+#   GP donation window (child 1500 of 47, 360 x 240, msgbox2_window_, centred;
+#   resinfo\ifguildpointup.txt).
+
+const PERMISSION_BUTTON := 38
+const ID_GRANT_PANE := 1000
+const ID_NOTICE_SLOT := 222
+const ID_NOTICE_VIEW := 1200
+const NOTICE_VIEW_TEXT := 155
+const NOTICE_VIEW_OK := 153
+const NOTICE_ON_ART := "interface\\guild\\gil_windo02_on.ddj"
+const NOTICE_OFF_ART := "interface\\guild\\gil_windo02_off.ddj"
+const NOTICE_BODY_MAX := 0x400
+const DONATE_BUTTON := 250
+const GRANT_OK := 151
+const GRANT_CANCEL := 152
+const GRANT_SCROLL := 97
+const GRANT_UNION_HEADER := 93
+const GRANT_ROW_NAME := 68
+const GRANT_ROW_RACE := 231
+## The row's checks and the bit each shows (0x5ac150, READ).
+const GRANT_CHECKS := [105, 106, 107, 108, 109]
+const GRANT_BITS := [0x01, 0x02, 0x04, 0x08, 0x10]
+## The union chat members' cap in the tooltip (0x5ab0f0 `push 0xc`).
+const UNION_CHAT_MAX := 12
+
+## The pencil pressed (the owner opens the notice write window).
+signal notice_write_requested
+## Confirm on the permission pane: [[member id, permission], ...] for the
+## rows whose bits changed (the owner sends 0x7104).
+signal permissions_submitted(changes: Array)
+## The donation button pressed (the owner opens the GP donation window).
+signal donate_requested
+
+## The notice bar's flag (+0x348): the body view is open.
+var notice_open := false
+## The pane's members (ids, in its order) and their edited bits.
+var _grant_ids: Array = []
+var _grant_perm := {}
+var _grant_editable := false
+var _grant_scroll: VScroll2dt
+
+func _wire_844() -> void:
+	var slot := _at([ID_INFO, ID_NOTICE_SLOT])
+	if slot != null:
+		slot.mouse_filter = Control.MOUSE_FILTER_STOP
+		slot.gui_input.connect(func(e: InputEvent) -> void:
+			var mb := e as InputEventMouseButton
+			if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+				toggle_notice_view())
+	var view_ok := _at([ID_INFO, ID_NOTICE_VIEW, NOTICE_VIEW_OK]) as BaseButton
+	if view_ok != null:
+		view_ok.pressed.connect(close_notice_view)
+	var view_text := _at([ID_INFO, ID_NOTICE_VIEW, NOTICE_VIEW_TEXT]) as LineEdit
+	if view_text != null:
+		view_text.editable = false
+		view_text.max_length = NOTICE_BODY_MAX
+	var pencil := _at(NOTICE_EDIT) as BaseButton
+	if pencil != null:
+		pencil.pressed.connect(func() -> void: notice_write_requested.emit())
+	var perm_btn := _at([ID_INFO, PERMISSION_BUTTON]) as BaseButton
+	if perm_btn != null:
+		perm_btn.pressed.connect(open_permission_pane)
+	var ok := _at([ID_INFO, ID_GRANT_PANE, GRANT_OK]) as BaseButton
+	if ok != null:
+		ok.pressed.connect(press_permission_confirm)
+	var cancel := _at([ID_INFO, ID_GRANT_PANE, GRANT_CANCEL]) as BaseButton
+	if cancel != null:
+		cancel.pressed.connect(close_permission_pane)
+	for row in grant_rows():
+		for i in GRANT_CHECKS.size():
+			var box := TwoDtBuilder.child(row, int(GRANT_CHECKS[i])) as BaseButton
+			if box != null:
+				box.toggled.connect(_on_grant_check.bind(row, i))
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
+		row.gui_input.connect(func(e: InputEvent) -> void:
+			if _grant_scroll != null:
+				_grant_scroll._wheel(e))
+	var pane := _at([ID_INFO, ID_GRANT_PANE])
+	_grant_scroll = VScroll2dt.build_on(_at([ID_INFO, ID_GRANT_PANE, GRANT_SCROLL]), _builder, pane)
+	if _grant_scroll != null:
+		_grant_scroll.changed.connect(func(_l: int) -> void: fill_grant())
+	var donate := _at([ID_INFO, DONATE_BUTTON]) as BaseButton
+	if donate != null:
+		donate.pressed.connect(func() -> void:
+			if data != null and data.in_guild:
+				donate_requested.emit())
+
+## 0x5b7110: the bar's flag flips, its art follows, the view shows or hides.
+func toggle_notice_view() -> void:
+	_set_notice_open(not notice_open)
+
+## 0x5a9d90: the view's Confirm.
+func close_notice_view() -> void:
+	_set_notice_open(false)
+
+func _set_notice_open(on: bool) -> void:
+	notice_open = on
+	var slot := _at([ID_INFO, ID_NOTICE_SLOT])
+	if slot is TextureRect and _builder != null:
+		(slot as TextureRect).texture = _builder.load_texture(NOTICE_ON_ART if on else NOTICE_OFF_ART)
+	var view := _at([ID_INFO, ID_NOTICE_VIEW])
+	if view != null:
+		view.visible = on
+		if on:
+			view.move_to_front()
+
+## The body on the view's text (0x5aad40). The control is a CNIFEdit drawn
+## read-only (0x5a9d00: style 0xc2); the body can span lines, so the text
+## sits in a wrapping label over it (OURS: Godot's LineEdit is one line).
+func _set_notice_body(body: String) -> void:
+	var host := _at([ID_INFO, ID_NOTICE_VIEW, NOTICE_VIEW_TEXT])
+	if host == null:
+		return
+	if host is LineEdit:
+		(host as LineEdit).text = ""
+	var label := host.get_node_or_null("NoticeBody") as Label
+	if label == null:
+		label = Label.new()
+		label.name = "NoticeBody"
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.clip_text = true
+		if _builder != null and _builder.font_at(0) != null:
+			label.add_theme_font_override("font", _builder.font_at(0))
+		label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		host.add_child(label)
+	label.text = body.left(NOTICE_BODY_MAX)
+
+func notice_body_shown() -> String:
+	var label := _at([ID_INFO, ID_NOTICE_VIEW, NOTICE_VIEW_TEXT]).get_node_or_null("NoticeBody") as Label \
+		if _at([ID_INFO, ID_NOTICE_VIEW, NOTICE_VIEW_TEXT]) != null else null
+	return label.text if label != null else ""
+
+## The pane's rows (CNIFGuildGrantPowSlot), top to bottom.
+func grant_rows() -> Array[Control]:
+	var out: Array[Control] = []
+	var pane := _at([ID_INFO, ID_GRANT_PANE])
+	if pane == null:
+		return out
+	for c in pane.get_children():
+		if c is Control and str(c.get_meta(TwoDtBuilder.META_CLASS, "")) == "CNIFGuildGrantPowSlot":
+			out.append(c)
+	out.sort_custom(func(a: Control, b: Control) -> bool: return a.position.y < b.position.y)
+	return out
+
+func permission_pane_open() -> bool:
+	var pane := _at([ID_INFO, ID_GRANT_PANE])
+	return pane != null and pane.visible
+
+## Index 1 of 0x5b63e0 (button 38), in a guild only.
+func open_permission_pane() -> void:
+	if data == null or not data.in_guild:
+		return
+	var pane := _at([ID_INFO, ID_GRANT_PANE])
+	if pane == null:
+		return
+	pane.visible = true
+	_grant_ids.clear()
+	_grant_perm.clear()
+	var list: Array = []
+	for m in data.members:
+		if m.member_class != GuildData.CLASS_MASTER:
+			list.append(m)
+	list.sort_custom(func(a: GuildData.Member, b: GuildData.Member) -> bool: return a.member_name < b.member_name)
+	for m in list:
+		_grant_ids.append(m.character_id)
+		_grant_perm[m.character_id] = m.permission
+	_grant_editable = is_master()
+	if _grant_scroll != null:
+		_grant_scroll.set_max_line(_grant_ids.size() - grant_rows().size())
+		_grant_scroll.scroll_to(0)
+	fill_grant()
+	_union_chat_tooltip()
+	for id in COMMAND_BUTTONS:
+		var b := _at([ID_INFO, id])
+		if b != null:
+			b.visible = false
+
+## 0x5ad250: the pane hidden, the command buttons back (0x5b5480(1)).
+func close_permission_pane() -> void:
+	var pane := _at([ID_INFO, ID_GRANT_PANE])
+	if pane != null:
+		pane.visible = false
+	_command_buttons()
+
+## Confirm: the changed rows, then closed.
+func press_permission_confirm() -> void:
+	var changes := permission_changes()
+	if _grant_editable and not changes.is_empty():
+		permissions_submitted.emit(changes)
+	close_permission_pane()
+
+## The rows whose bits differ from the record's (SendGuildMsg_104's test
+## against the member's +0x2c), in the pane's order.
+func permission_changes() -> Array:
+	var out: Array = []
+	if data == null:
+		return out
+	for id in _grant_ids:
+		var m := data.member(int(id))
+		if m != null and int(_grant_perm.get(id, m.permission)) != m.permission:
+			out.append([int(id), int(_grant_perm[id])])
+	return out
+
+## The pane's rows from its scroll line (0x5ac8d0 -> 0x5ac150).
+func fill_grant() -> void:
+	var rows := grant_rows()
+	var first := _grant_scroll.line if _grant_scroll != null else 0
+	for i in rows.size():
+		var row := rows[i]
+		var k := first + i
+		var m: GuildData.Member = data.member(int(_grant_ids[k])) if data != null and k < _grant_ids.size() else null
+		row.set_meta("grant_member", m.character_id if m != null else 0)
+		var name_node := TwoDtBuilder.child(row, GRANT_ROW_NAME)
+		var race := TwoDtBuilder.child(row, GRANT_ROW_RACE)
+		if m == null:
+			if race != null:
+				race.visible = false
+			if name_node != null:
+				_twodt.set_text(name_node, "")
+			for id in GRANT_CHECKS:
+				var c := TwoDtBuilder.child(row, int(id))
+				if c != null:
+					c.visible = false
+			continue
+		if race != null:
+			race.visible = true
+			_set_art(race, _race_art(m.ref_obj_id))
+		if name_node != null:
+			_twodt.set_text(name_node, m.member_name)
+		var bits := int(_grant_perm.get(m.character_id, m.permission))
+		for j in GRANT_CHECKS.size():
+			var box := TwoDtBuilder.child(row, int(GRANT_CHECKS[j])) as BaseButton
+			if box == null:
+				continue
+			box.visible = true
+			box.disabled = not _grant_editable
+			box.set_pressed_no_signal(bits & int(GRANT_BITS[j]) != 0)
+			var mark := box.get_node_or_null(TwoDtBuilder.MARK_NODE) as Control
+			if mark != null:
+				mark.visible = box.button_pressed
+
+func _on_grant_check(on: bool, row: Control, index: int) -> void:
+	var id := int(row.get_meta("grant_member", 0))
+	if id == 0 or not _grant_editable:
+		return
+	var bits := int(_grant_perm.get(id, 0))
+	var bit := int(GRANT_BITS[index])
+	_grant_perm[id] = (bits | bit) if on else (bits & ~bit)
+
+## The pane's bit for a member as edited (tests and QA).
+func granted(id: int) -> int:
+	return int(_grant_perm.get(id, 0))
+
+## Ticks one check as a press would (QA and tests).
+func set_grant(id: int, index: int, on: bool) -> void:
+	for row in grant_rows():
+		if int(row.get_meta("grant_member", 0)) == id:
+			var box := TwoDtBuilder.child(row, int(GRANT_CHECKS[index])) as BaseButton
+			if box != null and not box.disabled:
+				box.button_pressed = on
+			return
+
+## Each %d of `fmt` in turn from `values` (the client's _swprintf_s).
+static func format_d(fmt: String, values: Array) -> String:
+	var out := fmt
+	for v in values:
+		var i := out.find("%d")
+		if i < 0:
+			break
+		out = out.substr(0, i) + str(v) + out.substr(i + 2)
+	return out
+
+## 0x5ab0f0: the union header's tooltip (the members holding 0x04, + 1).
+func _union_chat_tooltip() -> void:
+	var header := _at([ID_INFO, ID_GRANT_PANE, GRANT_UNION_HEADER])
+	if header == null or data == null or _builder == null:
+		return
+	var n := 0
+	for m in data.members:
+		if m.permission & GuildData.PERM_UNION_CHAT != 0:
+			n += 1
+	# _swprintf_s(fmt, n + 1, 12): each %d in turn, extra values unused (the
+	# archive's text may carry one, "%d / 7", MEASURED in the box's Media.pk2).
+	header.tooltip_text = format_d(_builder.resolve_text("UIIT_MSG_GUILD_UNION_CHAT_TOOLTIP"), [n + 1, UNION_CHAT_MAX])
+	if header.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+		header.mouse_filter = Control.MOUSE_FILTER_PASS
 
 ## CNIFMainFrame's chrome (0x479a50): caption (10, 12, W-21, 12), drag area
 ## (10, 0, W-21, 34), close button (W-26, 10, 16, 16) on com_windowclose.ddj.

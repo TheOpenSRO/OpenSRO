@@ -49,6 +49,9 @@ const UPDATE_MEMBER_ADD := 2
 const UPDATE_MEMBER_OUT := 3
 const UPDATE_GUILD := 5
 const UPDATE_MEMBER := 6
+## Round 844: the bulk permissions (silent) and several members' fields.
+const UPDATE_PERMISSIONS := 0x14
+const UPDATE_MEMBERS_FIELD := 0x16
 ## Type 3's reason byte.
 const REMOVED_LEFT := 1
 const REMOVED_EXPELLED := 2
