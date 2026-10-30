@@ -61,21 +61,18 @@ func (f Fighter) caravanProtected() bool {
 // area skill (flags 1), which never starts a PK: refused with no code
 // (returned as ErrWrongTarget's silent twin, 0xFFFF).
 //
-// OURS, disclosed: OpenSRO has no PvP capes, guild wars or murder states, so
+// OURS, disclosed: OpenSRO has no PvP capes or murder states (guild wars: hostile, round 844), so
 // those branches never apply; a pair that is not job-opposed would be a
 // first-strike PK (purple / red murderers, the PK counters), which OpenSRO
 // does not model -- it is refused with 0x3025, the code the engine gives
 // when its PK-off byte is set (which in the engine also forbids job PvP).
-func AttackCode(a, t Fighter, own, area bool) uint16 {
-	return AttackCodeWar(a, t, own, area, false)
-}
-
-// AttackCodeWar is AttackCode with the hostile-guild branch (round 844, lane
-// V; READ s:0x5293a0): after the town, party, cape and caravan rules, two
-// players whose guilds are at war (hostile, CGuild slot 7 s:0x5d1220) may
-// fight -- before the PK-off code, the area flag, the level-20 rule and the
-// murder limits, so war needs no PK mode and has no level limit.
-func AttackCodeWar(a, t Fighter, own, area, hostile bool) uint16 {
+//
+// Round 844 (lane V; READ s:0x5293a0): hostile is the guild-war branch --
+// after the town, party, cape and caravan rules, two players whose guilds are
+// at war (CGuild slot 7 s:0x5d1220) may fight, before the PK-off code, the
+// area flag, the level-20 rule and the murder limits: war needs no PK mode
+// and has no level limit.
+func AttackCode(a, t Fighter, own, area, hostile bool) uint16 {
 	if own {
 		return ErrWrongTarget
 	}

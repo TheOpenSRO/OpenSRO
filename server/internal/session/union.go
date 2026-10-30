@@ -217,6 +217,11 @@ func (UnionCommands) Join(ctx context.Context, characterID int64, host string) (
 	if h == nil {
 		return "", fmt.Errorf("no guild named %s", host)
 	}
+	// Round 844 (lane V): a guild at war with the other cannot ally with it
+	// (Guild_ValidateAllianceRequest s:0x5c6550 -> 0x4c42).
+	if d := guildWarBox.Load(); d != nil && guild.AtWar(ctx, d.wars, mine.ID, h.ID) {
+		return "", fmt.Errorf("the union refused it (0x%x): the guilds are at war", guild.ErrWarAllianceHostile)
+	}
 	u, err := us.JoinUnion(ctx, mine.ID, h.ID)
 	if err != nil {
 		return "", fmt.Errorf("the union refused it (0x%x): %w", guild.UnionCode(err), err)

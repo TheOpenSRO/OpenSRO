@@ -68,23 +68,6 @@ func AtWar(ctx context.Context, ws WarStore, a, b int64) bool {
 	return false
 }
 
-// WarBetween is a's war against b, nil when none.
-func WarBetween(ctx context.Context, ws WarStore, a, b int64) *War {
-	if ws == nil || a == 0 || b == 0 {
-		return nil
-	}
-	wars, err := ws.WarsOf(ctx, a)
-	if err != nil {
-		return nil
-	}
-	for i := range wars {
-		if wars[i].Other(a) == b {
-			return &wars[i]
-		}
-	}
-	return nil
-}
-
 // ---------------------------------------------------------------------------
 // MemStore's wars, kept beside it (a side table, so the store's own struct is
 // untouched).

@@ -126,13 +126,13 @@ func TestRound844WarFlow(t *testing.T) {
 	}
 	// The blow between them is allowed whatever the level (s:0x5293a0).
 	low := jobs.Fighter{Job: jobs.StateNone, Level: 1}
-	if code := jobs.AttackCodeWar(low, low, false, false, true); code != 0 {
+	if code := jobs.AttackCode(low, low, false, false, true); code != 0 {
 		t.Fatalf("a hostile blow at level 1: %#x", code)
 	}
-	if code := jobs.AttackCode(low, low, false, false); code != jobs.ErrYourLevelLow {
+	if code := jobs.AttackCode(low, low, false, false, false); code != jobs.ErrYourLevelLow {
 		t.Fatalf("a peaceful blow at level 1: %#x", code)
 	}
-	if code := jobs.AttackCodeWar(jobs.Fighter{Job: jobs.StateNone, InTown: true}, low, false, false, true); code != jobs.ErrNoBattleField {
+	if code := jobs.AttackCode(jobs.Fighter{Job: jobs.StateNone, InTown: true}, low, false, false, true); code != jobs.ErrNoBattleField {
 		t.Fatalf("war in town: %#x", code)
 	}
 	// Proclaiming again: already hostile 0x4c3a.

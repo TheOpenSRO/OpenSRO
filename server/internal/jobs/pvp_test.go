@@ -48,7 +48,7 @@ func TestAttackCode(t *testing.T) {
 		{"opposed area", thief, trader, false, true, 0},
 	}
 	for _, c := range cases {
-		if got := AttackCode(c.a, c.t, c.own, c.area); got != c.want {
+		if got := AttackCode(c.a, c.t, c.own, c.area, false); got != c.want {
 			t.Fatalf("%s: 0x%x, want 0x%x", c.name, got, c.want)
 		}
 	}

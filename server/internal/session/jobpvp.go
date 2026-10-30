@@ -131,7 +131,7 @@ func pvpRefusal(ctx context.Context, d combatDeps, attacker world.Entity, t pvpT
 	}
 	own := t.owner.CharacterID == attacker.CharacterID
 	// Round 844 (lane V): two guilds at war fight (guildwar.go).
-	return jobs.AttackCodeWar(pvpFighter(ctx, d, attacker), pvpFighter(ctx, d, t.owner), own, false,
+	return jobs.AttackCode(pvpFighter(ctx, d, attacker), pvpFighter(ctx, d, t.owner), own, false,
 		!own && guildsHostile(ctx, attacker.CharacterID, t.owner.CharacterID))
 }
 
