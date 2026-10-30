@@ -7663,6 +7663,82 @@ Not live: the dead pet's wash, the life flash and the switch flash. `slot_fx843_
 - The switch flash is built for the bag and the 13 worn slots. Whether 0x3040 mask 1 can name an
   avatar window's slot is not read.
 
+## Eight-hundred-and-forty-third round, lane P: Magic POP's own bag, every page
+
+The user (2026-10-29): "also another bug fix, the magic pop doesn't show inventory pages so you can't
+get pop cards from other pages. Please read exactly what does for magic pop and fix it. make no
+mistakes", with the standing rule to match the original's colours and behaviour exactly. Labels: READ
+(sro_client.exe, `c:`), MEASURED, INFERRED, OURS, OPEN. The whole reading is
+`docs/protocol/magic_pop.md` §3a; the census row is `window_companions.md` row 19.
+
+**What the original does (READ).**
+- Magic POP opens no inventory. `c:0x79c060(1)` creates the window hidden (so its toggle helper sounds
+  snd_window_close) and its Create shows the select window. The window draws the bag itself.
+- The Start's build (`c:0x749560`) makes, from IFInventory's own counts, **a page tab per bag page**
+  (`c:0x748790`: ID 500 + i at (475 + 62 i, 55), 60 x 24, `com_tab_on/_off.ddj`, "Page 1" then
+  UIIT_STT_INVENTORY_EXTENSION_TEB **"Page 2" for every other page** -- a third page reads "Page 2"
+  too) and **a cell per bag slot** (ID 200 + i, each page's 32 on the same places, `pt_block.ddj` and
+  disabled past the size). A tab shows its page (`c:0x747a40`), busy or not. The user's report is the
+  original's behaviour missing from ours: round 838 built the first 32 cells and no tabs.
+- The cells take the bag slot's own record (`c:0x749030`), so the seal star and the pet and spirit
+  edges show as in the bag (lane S's OPEN item); counts as the bag's rule; the purse on
+  GDR_CHACHA_STA_MONEY, grouped, uncoloured. Prizes: a fresh record with +0x28 set (a seal prize's
+  star), no count, not pickable.
+- The card goes in by the held icon -- click it up, click it down. `CIFGhaCha::vslot_028`
+  (`c:0x749a30`) takes every put-down in the window, only in state 1 (a prize chosen, no card); its
+  check `c:0x7478c0` loops over **the first 32 cells only**: a page-1 card is taken only on the card
+  slot, a page-2 or page-3 card wherever in the window it is put down (a quirk of the original, kept).
+  The card slot put down empties it. The card slot follows its bag slot (emptied unless a coupon).
+- The chosen prize turns the pet-edge sheet (`0x666680(1)`, the draw at `c:0x67ea55`), not a tint.
+- PLAY: snd_gacha_move and snd_gacha_turn, the DECO over the card slot plays `alcm_effect_prepare`
+  (additive, 64 x 64, 16 frames); the effect static holds 08 for ten ticks and 15 for fourteen; at
+  tick 41 it resets, and a win plays `ga_effect_sucess.ddj` (64 x 81, 15 frames) to frame 14. A loss
+  leaves the global tick at 1, so the next run holds 07 and 14. The result: snd_gacha_win or
+  snd_gacha_end; the coupon's arrival (0x3040 mask 1) flashes the cell and the bag slot.
+- Closing is refused while busy; the close sounds snd_window_close.
+
+**The cause.** `GachaWindow` (round 838) built 32 cells at the pane's places and no tabs (its own OURS
+line: "the inventory pane's page tabs (500+i) are not built"), so bag slots 32..95 were never drawn
+and a card there could not be registered.
+
+**Built** (`client/scripts/ui/hud/gacha_window.gd`; small hooks in `World3D.gd` and `hud_panels.gd`):
+the tabs and every page's cells per the reading, the locked cells, the purse, the held-icon put-down
+with vslot_028's rules (a new held kind `gacha_bag` / `gacha_card`, routed by HudPanels to the window;
+a press over a tab passes through, so a held card can be carried across pages), the card slot's
+following rule, the chosen prize's marker, the item effects on cells, card slot and prizes, the
+DECO, the effect's timing and quirk, the five sounds, the coupon flash, the close refused while busy.
+Gone OURS of round 838: the click that registered a card, the 32-slot pane, the tint, the
+`ga_effect_sucess_01/_02` alternation, the prizes' counts, the silent window.
+
+**Live QA** (render box, real input through OPENSRO_QA_INPUT; `/var/tmp/r843p/keep`): a bag of 96
+with cards in slots 1 (page 1), 39 (page 2) and 64 (page 3), a seal sword in 38. The machine clicked,
+"Participate in the game." clicked, Start, prize 0 clicked; then for each card: its page's tab, the
+card clicked up, the card slot clicked, PLAY. The log (`run1_client.log`): "bag pane -- 3 page(s), 96
+cell(s)", "card registered from bag slot 39 / 64 / 1", three 0x7118 sends naming slots 39, 64 and 1,
+the server's three draws (`run1_server.log`: `slot=39`, `slot=64`, `slot=1`, each LOSE), each card
+turned coupon in the card slot and its cell flashed. Frames: `run1_f0700.png` (page 2 shown, its tab
+selected, the tabs "Page 1 / Page 2 / Page 2", the purse 1,000), `run1_f0800.png` (the page-2 card in
+the card slot, "Click PLAY button."), `run1_f0880.png` (the roll and the DECO), `run1_f1086.png`
+(the loss line, the coupon, the cell's flash), `run1_f1135.png` (page 3), `run1_f1575.png` (page 1),
+`run1_play_sheet.png` (the play frames side by side).
+
+**Gates.**
+- `remote_godot.sh check`: ALL LOAD (1043 scripts).
+- `remote_godot.sh tests`: "ran 395 suite(s), 0 failing".
+- New: `gacha843_test.gd` (the real Media.pk2): the tabs, their texts and rects, the cells and locks,
+  the purse, the effects on cells and prizes, a page-1 card refused off the card slot, a page-1 card
+  carried across a page turn, page-2 and page-3 cards registered and sent (bag slot + 13), the
+  effect's sequence and the loss quirk, the DECO's sheets (MEASURED 256 x 256 and 256 x 512), the
+  sounds, the close.
+- Server untouched (it already took any slot inside the bag), so no `go test`.
+
+**OURS.** OpenSRO sends no 0x3040 for the card, so the flash plays when the bag list after the result
+shows the coupon; PLAY stays off from the result until the status line is redrawn; a card held from the
+pane is let go when the window closes.
+
+**OPEN.** What the original's PLAY button shows between the result and the next redraw; the select
+window's Degree box (round 838); the coupon's "Can be changed to" tooltip (round 838).
+
 ## Eight-hundred-and-forty-second round, lane T: the stall network's item tooltips
 
 The user's asks: "when using the stall network you should be able to hover over the item icon and

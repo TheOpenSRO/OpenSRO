@@ -223,5 +223,5 @@ named), so each draws §3 and §6 for a record whose `+0x28` is set.
 | Quick slots | the bag record (0x60c430 -> SetItem; 0x60a940 on 0x3040) | star | star + §6 |
 | Held icon | the slot itself, drawn at the cursor | star | star + §6 (copied) |
 | Store confirm boxes | CIFStatic, not slots | nothing | nothing (match) |
-| Magic POP (gacha) | CIFGhaCha vslot_004 c:0x745950 and its neighbours; records not traced | nothing | OPEN |
+| Magic POP (gacha), round 843 lane P | the pane's cells: SetItem with the bag slot's own record (c:0x74928d), so the bag's effects; the card slot: the same record (c:0x749b8c); the prizes: a fresh record with +0x28 = 1 (c:0x748eb1), so a seal prize's star; kind 0x8c, so no life flash (the switch flash's kinds include 0x8c: c:0x747890 on the coupon's arrival); the chosen prize: the pet-edge sheet on +0x596 (c:0x67ea55) | nothing | star + §6 on the cells and the card slot, the star on seal prizes, the chosen prize's pet-edge marker, the cell's switch flash (magic_pop.md §3a) |
 | Item chest | CIFItemMallStorageRoom (c:0x7d23d0); records not traced | no item icons here | OPEN |
