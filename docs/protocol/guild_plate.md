@@ -88,7 +88,9 @@ CICUser slot 15, event 4 (`GlobalDataManager::FUN_009dea30`, asm 0x9df082..0x9df
     the union id in the spawn and 0x30FF. OURS: the union is formed and left by the GM's `/union` only
     (the original's request flow, 0x70FB..0x70FD with the NPC, is not built); a 0x3102 replaces the
     client's record and an empty one clears it; a union under two guilds is dissolved by the server
-    (INFERRED from the client's < 2 rule). Red stays unfed: OpenSRO has no guild wars (OPEN).
+    (INFERRED from the client's < 2 rule). Round 844: red is fed by the hostile list (0x3109 and 0x38F5
+    0x19 / 0x1c, `HostileData`; [guild_war.md](guild_war.md)), and a hostile guild's member's NAME takes the
+    enemy colour 0xffff6262 (c:0x9cfd50).
 
 ## The grant name (READ, server unless marked)
 

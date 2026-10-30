@@ -81,19 +81,26 @@ static func opposed(a: int, b: int) -> bool:
 ## INFERRED: the suit test) are no enemies whatever is held; otherwise Alt
 ## makes one. OpenSRO has no teams, fortress war, capes or murder list, so
 ## those branches never apply.
-static func is_enemy(own_state: int, their_state: int, alt: bool, both_suits: bool) -> bool:
+##
+## Round 844 (lane V): after Alt, a player whose guild is in the hostile list
+## (FUN_00992a90 on the target's guild, 0x9de8f4..) is an enemy without Alt
+## -- `hostile_guild` (the caller rules out the own guild, the 0x10 branch).
+static func is_enemy(own_state: int, their_state: int, alt: bool, both_suits: bool, hostile_guild: bool = false) -> bool:
 	if opposed(own_state, their_state):
 		return true
-	return alt and not both_suits
+	return (alt or hostile_guild) and not both_suits
 
 ## c:0x792f00's player branch: "attack" (send it), "select", "party" (no
 ## attack), or "level" (0x3016, nothing sent).
-static func player_click(is_selection: bool, alt: bool, enemy: bool, party_member: bool, own_level: int) -> String:
+##
+## Round 844 (lane V): the level rule is waived while the guild is at war
+## (0x3016 only with the hostile map empty, 0x988a70) -- `at_war`.
+static func player_click(is_selection: bool, alt: bool, enemy: bool, party_member: bool, own_level: int, at_war: bool = false) -> String:
 	if not (is_selection or alt) or not enemy:
 		return "select"
 	if party_member:
 		return "party"
-	if own_level < PK_MIN_LEVEL:
+	if own_level < PK_MIN_LEVEL and not at_war:
 		return "level"
 	return "attack"
 

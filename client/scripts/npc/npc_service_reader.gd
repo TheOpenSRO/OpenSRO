@@ -85,6 +85,8 @@ const GUILD_GP_HISTORY_STRID := "UIIT_STT_GUILD_GP_HISTORY"
 ## Whether the player's guild has a master-release vote the client knows of
 ## (c:0x99da70; GuildData keeps it, World3D sets this).
 static var guild_vote_running := false
+## Round 844 (lane V): the master's war reward line (item 0x1b).
+const GUILD_COMPENSATION_STRID := "UIIT_CTL_GUILD_COMPENSATION"
 
 ## The job guilds' join lines (round 526), by job kind: 1 Trader, 2 Thief
 ## ("Robber"), 3 Hunter (docs/protocol/jobs.md, "Three job kinds"). The real
@@ -447,7 +449,8 @@ static func guild_services(guild_id: int, is_master: bool) -> Array:
 	# and 0x1d the storage (lane H).
 	return [Service.new("guild_level_up", "Promote the guild.", GUILD_LEVEL_UP_STRID),
 		Service.new("guild_disband", "Disband the guild", GUILD_BREAK_STRID),
-		Service.new("guild_master_leave", "Transfer leadership", GUILD_MASTER_LEAVE_STRID), vote, storage, history]
+		Service.new("guild_master_leave", "Transfer leadership", GUILD_MASTER_LEAVE_STRID),
+		Service.new("guild_compensation", "War reward gold received", GUILD_COMPENSATION_STRID), vote, storage, history]
 
 ## Whether the store window shows Repair and Repair All for the NPC with this
 ## codename (round 514). True exactly when the server registers interaction

@@ -2,8 +2,9 @@ package guild
 
 // Guild war. RECOVERED 2026-09-17 from FUN_005c6b60 (1,102 bytes), the
 // declaration handler, which docs/protocol/guild.md listed under "What is not
-// recovered". Nothing in OpenSRO declares a war yet; this is the rule set it
-// would need.
+// recovered". Round 844 (lane V) builds the whole war on it: war_rules.go
+// (the rest of the rules and the wire), war_store.go / sqlstore_war.go (the
+// wars kept) and session/guildwar.go (the requests, kills and the end).
 //
 // Located the same way the alliance rules were: every code the function raises
 // belongs to one vocabulary, which is what made it one of the 62 unambiguous
@@ -43,10 +44,9 @@ const MaxHostileGuilds = 50
 //	FUN_005c6870  count != 0   -> GUILD_ERROR_BREAK_WAR (0x4c46)
 //
 // A state would not be compared against 50, and a flag would not need a byte.
-// **No writer was found**: every access to that offset inside the guild module
-// is a comparison, so the count is maintained somewhere this pass did not
-// reach -- most likely from the `_GUILDWAR` rows on load. That is a gap in the
-// reading, stated rather than papered over.
+// Round 844 settled the writer: +0x44 is the size of the std::map of wars at
+// +0x3c (header +0x40), keyed by the enemy guild's id, so only the map's own
+// insert and erase change it (s:0x5d1ef0 adds a war, s:0x5d1fd0 removes it).
 
 // The guild-war refusal codes, with the branch each guards in FUN_005c6b60.
 const (
@@ -107,7 +107,5 @@ func CanDeclareWar(declarerHostiles, targetHostiles int, targetGuildID int64, al
 //	PointGain x2  Data1  Data2
 //
 // so a war has a TYPE, a victory-point index, **staked gold**, an end time, the
-// two guilds and a per-side point total. OpenSRO models none of this; it is
-// recorded because the shape rules out the simplest reading -- a war is not a
-// boolean between two guilds, and any implementation that starts there will
-// have to be undone.
+// two guilds and a per-side point total -- the War record in war_rules.go
+// (round 844).

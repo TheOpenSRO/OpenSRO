@@ -415,6 +415,9 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.guildGP(ctx, actor, args)
 	case "union":
 		res = d.union(ctx, actor, args)
+	// Round 844 (lane V): /guildwar, a QA aid (guildwar.go).
+	case "guildwar":
+		res = d.guildWar(ctx, actor, args)
 	case "silk":
 		res = d.silk(ctx, actor, args)
 	case "lottery":

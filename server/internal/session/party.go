@@ -329,6 +329,10 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 		if exchangeAnswer(sess, me, data) {
 			return
 		}
+		// Round 844 (lane V): a proclamation of war's answer (guildwar.go).
+		if guildWarAnswer(ctx, sess, me, data) {
+			return
+		}
 		// Round 822: a guild invitation's answer (kind 5, guildops.go), then
 		// the resurrection offer.
 		if guildInviteAnswer(ctx, sess, me, data) {

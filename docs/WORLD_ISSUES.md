@@ -7582,6 +7582,100 @@ untouched. UI-only round: no perf gate.
 - Status 8 is never sent by OpenSRO's server (it sends 1 and 2), so the NPC branch is tested only
   through its pieces.
 
+## Eight-hundred-and-forty-fourth round, lane V: guild war
+
+The user (2026-10-29): "Add guild storage and all other guild functionality." Guild war is lane V's part:
+the original's war, both sides, built exactly. Labels: READ (s: SR_GameServer.exe, m: SR_ShardManager.exe,
+c: sro_client.exe), MEASURED (Media.pk2), INFERRED, OURS, OPEN. The full reading, every address and every
+byte: [docs/protocol/guild_war.md](protocol/guild_war.md).
+
+**What the original does (READ unless marked).**
+- **Where and who.** The guild window's tab 73 "Guild rel." > sub-tab 88 "Hostility" (CNIFHostileGuild 2000,
+  `guild_r.2dt`) lists the hostile guilds (name, "-", the crest) with a details pane (the leader and member count
+  always "Unconfirmed"); its 52 "Request to start the war" is the master's only, 53 "Request to end the war" the
+  master's with a war and no countdown (c:0x5bca80). Tab 74 "Combat" (CNIFGuildWar 548, `guild_w.2dt`) shows
+  the war: the enemy, both scores, the victory points, the stakes, the time left, the members' contribution.
+- **Declaring.** CIFRequestGuildWar's three states (`ifguildwarrequest/confirm/agree.txt`): the name, the victory
+  points (Unlimited or 5000..300000), the period in days / hours / minutes (each "Unlimited" too) and a stake up to
+  500,000,000; client refusals SELFWAR, name length, the filter, LIMIT_COMPENSATION; 0x7110 {str, u8 0, u32
+  period, u8 index, u32 stake}. The server (s:0x5c6b60): the target master online **within 300.0** (the masters
+  meet), then the ladder (0x4c0d, 2, the master 0x4c1e, gold 0x4c43, the cap 0x4c5e, 50 wars 0x4c3e / 0x4c3f,
+  already 0x4c3a, the union 0x4c41). The target master gets 0x3080 kind 10 and an Agreement box (OK disabled
+  below the stake), 30 s; his {1, 1} begins the war and **both masters pay the stake**; LodgedGold is both.
+- **During.** 0x3109 / 0x38F5 0x19 put the enemy in the hostile map: its guild lines **red** 0xffff0000, its
+  members' **names 0xffff6262**, its members **enemies without Alt** (the hostile sword), the level-20 rule
+  waived; the server lets them fight **anywhere but towns**, before the PK rules (s:0x5293a0). A kill scores
+  **15 d + 100** (1 at d <= -6, 251 above 10; d = victim's level less killer's), counts kills / deaths /
+  contribution, tells both guilds (0x1d, KILLNEWS banner); a victim above level 10 loses 20 x the exp unit.
+- **Ending.** By time (past the end with the scores apart; a tie runs on), by the victory points, or by the
+  end proposal, which is a **surrender**: 0x7112, a minute of countdown (0x1a / 0x1b, ENDCOUNT and "Until the end
+  of war (%d seconds left)"), then the other guild wins. 0x1c: Won / Lost in a box, the lines back. The
+  winner's guild keeps both stakes as booty: the master's guild manager line 0x1b "War reward gold received"
+  (0x7114, any member may ask; 0x7113 the master claims). A guild at war cannot disband (0x4c46).
+- **Persistence.** The ShardManager keeps _GUILDWAR (a wall-clock end, points per kill) and _GUILD.Booty.
+
+**The user's description against the original.** Nothing to report: the user asked for "all other guild
+functionality"; war is the original's own feature, built as read.
+
+**What we built.**
+- Server: `guild/war_rules.go` (the rules, the wire), `war_store.go` + `sqlstore_war.go` (MemStore and SQLStore:
+  `guild_wars`, `guild_war_booty`, self-created; the members' counters), `session/guildwar.go` (0x7110 and its
+  question, the answer in the 0x3080 chain, kills from the PvP blow, the 1 s end check and the 60 s time sync,
+  the surrender, the reward, 0x3109 after every guild block, the disband refusal, the war cache read per blow),
+  `jobs.AttackCode`'s hostile argument, the KilledByPlayer death multiplier, lane U's `unionHostile` (0x4c42)
+  answered by the war, `/union` refused at war. OURS QA aids: `/guildwar`, `/guildwar end <guild> [s]`,
+  partybot `-war-answer`, `-war-declare`, `-war-surrender-after`.
+- Client: `GuildWarNet`, `HostileData` (in GuildData), `GuildWarPanes` (the two panes), `GuildWarRequestBox`
+  (three states), `GuildWarUi` (the boxes, the banners, the countdown, the reward), the red lines and enemy names,
+  IsEnemy and the level waiver (`JobPvpNet`), the master's NPC line 0x1b.
+
+**Live (render box, lane server 17060 in memory, region table `safezone674`; the rendered QaWin with real
+input; partybots Mate (Beta's master, `-war-answer accept`), Tobi (Beta, at 1 HP by `/hurt`), Cato (Gamma);
+the farmland south of Jangan, 96/168, a battlefield; evidence in `/var/tmp/r844v/keep`).**
+
+| Check | Result | Evidence |
+|---|---|---|
+| Before the war, Beta's and Gamma's lines (102, 185, 255) | PASS | r6_f0290_before_war_lines_blue.png (pixel mode of each line) |
+| QaWin (Alpha's master): U, real clicks on tab 73, sub-tab 88, "Request to start the war" (52): state 1 opens (points 10000, 01Day, wager box) | PASS | r6_f0480_wager_gold_box.png, run6.client.log QA INPUT 1-7 |
+| The wager typed in the gold box (20000, OK), the name typed, OK: state 2 "Proclaim war against [beta]guild." with the terms | PASS | r6_f0560_confirm_box_state2.png (the QA typist sends lower case; the server matches any case) |
+| Confirm: 0x7110; Mate gets 0x3080 kind 10 `0a 04 00 00 00 05 00 Alpha 00 00 04 00 00 02 20 4e 00 00` and accepts; 0x19 to both; GOTOWAR banner; the Hostility pane lists Beta ("-", the crest) | PASS | r6_f0610_hostility_pane_beta_gotowar.png, run6.Mate.log, server "guild war begun ... lodged=40000" |
+| The Combat tab: Beta, 0 / 0, 10000, "40,000 Gold", 24 : 00 : 00; QaWin in the contribution rows | PASS | r6_f0700_combat_pane.png |
+| Live: Mate's and Tobi's [Beta] lines (255, 0, 0), their names (255, 98, 98); Cato's [Gamma] still (102, 185, 255) | PASS | r6_f0760_red_lines_enemy_names.png (pixel modes) |
+| Two real clicks on Tobi (no Alt): select, attack (`attack_player`); Tobi (at 1 HP) dies; 0x1d to both guilds (100 points); KILLNEWS banner | PASS | r6_f0830_kill.png, run6.client.log CLICK lines, server "guild war kill ... points=100" |
+| `/guildwar end Beta 2` (QA aid): past the end with 100 - 0, the 1 s check ends it, Alpha wins; 0x1c; "Won the war against [Beta]guild" box | PASS | r6_f0940_won_box.png, server "GuildWar Guild[3,1] Winner[Alpha] ... why=time" |
+| After: the Hostility pane empty, the Combat tab "<No hostile Guild>" with QaWin's contribution 100 | PASS | r6_f1030_hostility_empty.png, r6_f1075_combat_no_hostile.png |
+| After: Mate's line back to (102, 185, 255), his name white | PASS | r6_f1092_lines_blue_again.png |
+| The guild manager (real click), line 6 "War reward gold received" (the master's lines: 3 level-up, 4 disband, 5 hand-over, 6 the reward, 7 vote, 8 storage, 9 GP history): 0xB114 {1, 40000}, the box "War refundable rewards is [40000]." | PASS | r6_f1290_reward_box.png |
+| Yes: 0x7113, 0xB113 {1}, the 40,000 to QaWin's gold | PASS | r6_f1340_after_claim.png, server "guild war reward claimed guild=Alpha gold=40000" |
+
+**Tests.** Go: `guild.TestRound844WarRules`, `TestRound844WarBytes`, `TestRound844Wars{Mem,SQL}`,
+`session.TestRound844WarFlow` (two clients: the ladder, 0x3080 kind 10, the acceptance, both stakes, 0x19,
+hostility and the union hook, the level-free blow, a kill's 0x1d and counters, the disband block, the surrender's
+0x1a / 0x1b, 0x1c and the booty, the 1 s end by time, the reward's talk check), `jobs.TestAttackCode`;
+`go test ./...` passes. Client: `world/guild_war844_test.gd` (the wire, HostileData's every type, the red line,
+IsEnemy, the panes and the three request states against the real Media.pk2), `npc_service_reader_test` and lane H's `guild_storage844_test` (the master's list now has the reward line
+fourth). `remote_godot.sh check` ALL LOAD (1071 scripts); `tests` "ran 402 suite(s), 1 failing" -- that
+storage test's old offset -- then that suite alone ALL PASS after the fix.
+
+**Perf gate** (`--base 93103a05 --head <lane V> --sites jangan --frames 24000`, median of 3): all SAME.
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 0.85 -> 0.86 | 10163 -> 8703 | 2762 -> 2739 | 5 -> 5 |
+
+**Harness notes.** A run stopped by killing `xwl_run.sh` alone left weston / Xwayland holding the lane's Godot
+lock (run 3 waited four hours; the coordinator freed it): stop the Godot process or the whole group, and check
+`lsof` on the lock first. A partybot `-tp "x z"` keeps the height the bot entered with (Jangan's, about -9), so
+at the farmland (ground about -40) the bodies float out of view and `playerclick` aims off screen (runs 2, 4, 5);
+`-tp "x y z"` with the ground's height (read from the debug panel, Shift+F3) puts them on the ground (run 6).
+
+**OPEN.** WarType, Data1, Data2; s:0x425210's test (code 3); the UIIT names of 0x4c43, 0x4c5e, 0x4c79 and
+0x4c10 (the client's category-0x10 table has no rows: nothing is shown, as in the original); why both 0x1a and
+0x1b exist; NOT_WEAR_JOBITEM (0x18c3); the instance refused 0x1c39 in war; the death's item roll and the killer's
+exp (no PvP drop exists anywhere here); the spawn record's war byte (written 0); the contribution rows' order;
+the battle-arena / ghost-hunt refusals (no such zones); the client's 0x7074 {2} at 0x1c (the server's keep-up
+stops at its next refused swing).
+
 ## Eight-hundred-and-forty-fourth round, lane H: the guild storage
 
 The user's ask: "Add guild storage and all other guild functionality." This lane is the guild storage

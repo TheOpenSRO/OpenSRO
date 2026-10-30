@@ -237,6 +237,12 @@ func handleGuildDisband(ctx context.Context, sess *gateway.Session, p *proto.Pac
 		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guild.CodePermissionDenied))
 		return nil
 	}
+	// Round 844 (lane V): a guild at war cannot disband (s:0x5c6870: the
+	// hostile count != 0 -> 0x4c46 GUILD_ERROR_BREAK_WAR, after the master).
+	if guildAtWar(g.ID) {
+		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guild.ErrWarBreakWar))
+		return nil
+	}
 	if !guildNPCInReach(e, binary.LittleEndian.Uint32(p.Data)) {
 		sendGuild(sess, guild.OpDisbandResult, guild.EncodeFail(guild.CodeNotInRange))
 		return nil

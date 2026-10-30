@@ -2332,6 +2332,9 @@ func _ready() -> void:
 	NetClient.guild_line_changed.connect(_on_guild_line_changed)
 	# Round 842: the union changed -- every line recoloured (FUN_009a4450).
 	NetClient.guild_data.union.changed.connect(_recolour_guild_lines)
+	# Round 844 (lane V): the wars changed -- lines and names recoloured
+	# (0x9a4450, 0x9dbd10), and the war's messages (GuildWarUi).
+	_wire_guild_war()
 	NetClient.crest_cache.changed.connect(_on_guild_crest_changed)
 	NetClient.guild_grant_result.connect(_on_guild_grant_result)
 	NetClient.guild_points_result.connect(_on_guild_points_result)
@@ -9822,7 +9825,7 @@ func _guild_line_colour(guild_name: String, own: bool) -> Color:
 	if own:
 		return GUILD_LINE_OWN_COLOUR
 	return GuildLineColour.colour_for(guild_name, String(NetClient.own_guild_line.get("guild_name", "")),
-		NetClient.guild_data.union.is_allied)
+		NetClient.guild_data.union.is_allied, NetClient.guild_data.hostile.is_hostile)
 
 ## Round 842: every other player's guild line recoloured (FUN_009a4450, after
 ## the own line or the union changed).
@@ -9996,7 +9999,7 @@ func _on_plate_colours_changed(uid: int) -> void:
 		var label := node.get_node_or_null("Name") as Label3D
 		if label != null:
 			label.modulate = Color(0, 0, 0, 0) # forces _colour_enemy_plate's redraw
-			_colour_enemy_plate(node, JobPvpNet.enemy_name(_own_job_state(), _their_job_state(int(id))))
+			_colour_enemy_plate(node, _enemy_name_of(int(id), _their_job_state(int(id))))
 		var title := node.get_node_or_null("JobTitle") as Label3D
 		if title != null:
 			var c := _plate_title_colour(uid)
@@ -10908,8 +10911,9 @@ func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	# Round 811: the original's plate; a batched one's box is the batch's.
 	# Round 838 (OURS): a Name Color scroll's colour instead of the white.
 	_retail_plate_look(plate, _plate_name_colour(int(node.get_meta("character_id", -1))), not batched)
-	# Round 802: an opposed job's name in the hostile colour (c:0x9cfd50).
-	if JobPvpNet.enemy_name(_own_job_state(), js):
+	# Round 802: an opposed job's name in the hostile colour (c:0x9cfd50);
+	# round 844, a hostile guild's member's too.
+	if _enemy_name_of(int(node.get_meta("character_id", -1)), js):
 		plate.modulate = JobPvpNet.ENEMY_NAME_COLOUR
 	node.add_child(plate)
 	if batched and not _plate_batch_add(plate, node):
@@ -14735,10 +14739,37 @@ func _wears_job_suit(character_id: int) -> bool:
 func _in_own_party(character_id: int) -> bool:
 	return NetClient.party.in_party and NetClient.party.member(character_id & 0xffffffff) != null
 
+## Round 844 (lane V): whether a player's guild is in the hostile list
+## (FUN_00992a90 on the target's guild, entity+0x7c4), never the own guild.
+func _in_hostile_guild(character_id: int) -> bool:
+	var g := String((NetClient.user_guilds.get(character_id & 0xffffffff, {}) as Dictionary).get("guild_name", ""))
+	return g != "" and g != String(NetClient.own_guild_line.get("guild_name", "")) \
+		and NetClient.guild_data.hostile.is_hostile(g)
+
+## Round 844: 0x9cfd50's hostile-guild branch -- a hostile guild's member
+## outside the party (0x992940) with IsEnemy(0) true draws 0xffff6262, the
+## same colour as an opposed job's.
+func _hostile_name(character_id: int) -> bool:
+	return _in_hostile_guild(character_id) and not _in_own_party(character_id) and _player_is_enemy(character_id, false)
+
+func _enemy_name_of(character_id: int, job_state: int) -> bool:
+	return JobPvpNet.enemy_name(_own_job_state(), job_state) or _hostile_name(character_id)
+
+## Round 844: the war's boxes, messages and panes (GuildWarUi).
+var _guild_war_ui: GuildWarUi
+
+func _wire_guild_war() -> void:
+	if _guild_war_ui != null:
+		return
+	_guild_war_ui = GuildWarUi.new()
+	_guild_war_ui.name = "GuildWarUi"
+	add_child(_guild_war_ui)
+	_guild_war_ui.setup(self)
+
 ## IsEnemy(Alt) on another player (c:0x9de780, JobPvpNet.is_enemy).
 func _player_is_enemy(character_id: int, alt: bool) -> bool:
 	return JobPvpNet.is_enemy(_own_job_state(), _their_job_state(character_id), alt,
-		_wears_job_suit(_own_id()) and _wears_job_suit(character_id))
+		_wears_job_suit(_own_id()) and _wears_job_suit(character_id), _in_hostile_guild(character_id))
 
 ## IsEnemy(Alt) on a COS: its owner's (CICCos vslot 42 judges the owner;
 ## INFERRED that the owner's job is the COS record's owner_job, and that two
@@ -14773,7 +14804,8 @@ func _click_player(character_id: int, char_name: String) -> String:
 			if body != null and is_instance_valid(body):
 				_issue_walk(body.global_position))
 	var what := JobPvpNet.player_click(_selected_character == character_id, alt,
-		_player_is_enemy(character_id, alt), _in_own_party(character_id), _player_level)
+		_player_is_enemy(character_id, alt), _in_own_party(character_id), _player_level,
+		NetClient.guild_data.hostile.count() > 0)
 	if what == "select" or _selected_character != character_id:
 		_select_character(character_id, char_name)
 	match what:
@@ -15095,7 +15127,8 @@ func _recolour_enemy_plates() -> void:
 		var body = _other_bodies[id]
 		if body == null or not is_instance_valid(body):
 			continue
-		_colour_enemy_plate(body as Node3D, JobPvpNet.enemy_name(own, _their_job_state(int(id))))
+		_colour_enemy_plate(body as Node3D, JobPvpNet.enemy_name(own, _their_job_state(int(id))) \
+			or _hostile_name(int(id)))
 
 func _colour_enemy_plate(body: Node3D, enemy: bool) -> void:
 	var label := body.get_node_or_null("Name") as Label3D
@@ -28860,6 +28893,11 @@ func _on_npc_service_selected(key: String) -> void:
 		"guild_master_leave":
 			# Round 844: line 0x18 opens CIFGuildMasterLeave; its confirm sends 0x7103.
 			_hud_panels.open_guild_master_leave(_talk_npc_uid())
+		"guild_compensation":
+			# Round 844 (lane V): line 0x1b "War reward gold received"
+			# (CIF_NPCTalk 0x7020c0 case 0x1b): 0x7114 {npc}.
+			if NetClient.is_connected_to_server() and _guild_war_ui != null:
+				_guild_war_ui.ask_reward(_talk_npc_uid())
 		"guild_disband":
 			# Round 822: line 0x14 opens box 0x13; its OK sends 0x70F1.
 			if NetClient.is_connected_to_server():

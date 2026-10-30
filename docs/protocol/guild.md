@@ -581,6 +581,10 @@ their absence.
 
 ## Guild war — RECOVERED 2026-09-17
 
+**Round 844 (lane V) completes the war and builds it, both sides: [guild_war.md](guild_war.md)** (the
+declaration with its question, the stakes, the wire, the PvP rule, the points, the end, the surrender,
+the reward, persistence). The sections below are the first reading, kept as it was.
+
 `FUN_005c6b60` (1,102 bytes) is the declaration handler, located the same way the
 alliance was: every code it raises belongs to one vocabulary. Implemented in
 `server/internal/guild/war.go`.

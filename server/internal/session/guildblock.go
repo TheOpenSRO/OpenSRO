@@ -82,6 +82,9 @@ func sendGuildBlock(ctx context.Context, sess *gateway.Session, g *guild.Guild) 
 	// Round 842: and its union (0x3102), which the client colours union
 	// members' guild lines by.
 	sendUnionInfo(ctx, sess, g)
+	// Round 844 (lane V): and its wars (0x3109), which turn the enemies'
+	// lines red.
+	sendHostileList(ctx, sess, g)
 }
 
 // sendOwnGuildBlock is the world entry's: characterID's guild, if any.

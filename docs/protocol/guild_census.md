@@ -52,10 +52,10 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | 0x7105 | ask for a master-release vote {u32 NPC} | line 0x19 UIIT_CTL_MASTERRELEASE, box type 2 | s:0x517600 -> 0x5c6ac0 | **built** (G, part 2) | G |
 | 0x7106 | open the vote {u32 NPC} | line 0x1a UIIT_CTL_MRELEASE_VOTE | CVoteManager s:0x5e7f00 | **built** (G, part 2) | G |
 | 0x7107 | vote {u32 NPC, u32 candidate, u8 choice} | CIFGuildMasterElection | s:0x517730 -> 0x5e7ea0 | **built** (G, part 2) | G |
-| 0x7110 | war declaration {str, u8, u32, u8, u32} | CIFGuildWar | s:0x518820 | missing | V |
-| 0x7112 | hostile-guild action {u32} | NIFHostileGuild | s:0x518930 | missing | V |
-| 0x7113 | war NPC {u32 NPC} | box type 3 | s:0x518a80 | missing | V |
-| 0x7114 | war compensation {u32 NPC} | master's line 0x1b UIIT_CTL_GUILD_COMPENSATION | s:0x5189a0 -> 0x5c72a0 | missing | V |
+| 0x7110 | war declaration {str, u8, u32, u8, u32} | CIFRequestGuildWar (button 52) | s:0x518820 -> 0x5c6b60 | **built** (V, guild_war.md) | V |
+| 0x7112 | the end proposal, a surrender {u32 war} | NIFHostileGuild (button 53) | s:0x518930 -> 0x5c7390 | **built** (V) | V |
+| 0x7113 | the war reward claimed {u32 NPC} | box type 3 (COMPENSATION_01/02) | s:0x518a80 -> 0x5c7330 | **built** (V) | V |
+| 0x7114 | war compensation {u32 NPC} | master's line 0x1b UIIT_CTL_GUILD_COMPENSATION | s:0x5189a0 -> 0x5c72a0 | **built** (V) | V |
 | 0x7250 / 0x7251 / 0x7252 | storage open / close / move | line 0x1d, CIFStorageRoom | s:0x5178b0 / 0x517980 / 0x517a50 | missing | H |
 | 0x7256 | grant name {u32 member, str name} | button 40 | s:0x517b70 -> 0x5c7560 | built (OURS: each member names themselves, round 814) | 814 |
 | 0x7258 | SP -> GP donation {u32 SP} | donation button 250, CIFGuildPointUp | s:0x517cc0 -> 0x5c7880 | **built** | G |
@@ -74,7 +74,7 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | 0x3100 | drop a player's guild line | built | 822 |
 | 0x3102 | the union block | built | 842 |
 | 0x3103 | fortress role notice | out of scope (fortress war) | -- |
-| 0x3109 | hostile-guild data (guild-line colours) | missing | V |
+| 0x3109 | hostile-guild data (guild-line colours) | **built** (V) | V |
 | 0x3253 / 0x3254 / 0x3255 | a buffered stream, INFERRED to be the storage | missing | H |
 | 0x3256 | grant name | built | 814 |
 | 0x3257 | crest revision | built | 824 |
@@ -90,7 +90,7 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | B105 / B106 / B107 | the vote's replies (category 0x15 for B106 / B107) | **built** (G, part 2) | G |
 | B031 | the recall answer's reply {1} / {2, code} | **built** (G, part 2) | G |
 | B501 | the GP usage history {1, n x {time, name, GP, kind}} | **built** (G, part 2) | G |
-| B110..B114 | war replies | missing | V |
+| B110..B114 | war replies | **built** (V) | V |
 | B250..B252 | storage replies | missing | H |
 | B256 | grant name | built | 814 |
 | B258 | donation: {1, u32} shows `UIIT_MSG_GUILD_GP_SUBSCRIPION_RESULT` | **built** | G |
@@ -111,8 +111,8 @@ A code with no row in category 0x10 shows nothing. Those codes are 0x4c08-0b, 0x
 | 0x12 | union: 1 left, 2 expelled, 3 dissolved | built | 842 |
 | **0x14** | {u8 n, n x {u32 id, u32 mask}}: permissions, silent | **built** | G |
 | **0x16** | {u8 n, u8 mask, n x {u32 id, fields}}: several members (the hand-over 0x54, the permission list 0x10, a fortress loss 0x40) | **built** | G |
-| 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1f, 0x32 | war and hostile updates | missing | V |
-| 0x23 | {u32, str}, INFERRED a guild rename in the union or hostile lists | missing | U / V |
+| 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1f, 0x32 | war and hostile updates | **built** (V; 0x32 read by the client, the server answers B110) | V |
+| 0x23 | {u32, str}: a hostile guild renamed (READ c:0x992ba0) | client **built** (V); no server rename yet | U / V |
 
 ## 3. The guild window (`res_ui\guild.2dt`, CNIFGuildWnd 621 x 434)
 
@@ -159,7 +159,7 @@ The community view 177 (friends, blocking, letters) is built (595, 834). Letters
 | CIFGuildMasterLeave (249 x 315) + slot | ifguildmasterleave*.txt | line 0x18 | **built** (G) |
 | CIFGuildMasterElection (274 x 315) + slot | ifguildmasterelection*.txt | line 0x1a | **built** (G, part 2) |
 | CIFGuildPositionGrant (286 x 310) | ifguildpositiongrant.txt | button 41 | out of scope (fortress war) |
-| CIFGuildWar / WarRequest / WarAgree / WarConfirm | ifguildwar*.txt | war | missing (V) |
+| CIFGuildWar / WarRequest / WarAgree / WarConfirm | ifguildwar*.txt | war | request / confirm / agree **built** (V); CIFGuildWar unused (no live path) |
 | CIFStorageRoom (254 x 317) | -- | line 0x1d | missing (H) |
 | CIFGuildSummonReq (360 x 160) | -- | 0x7030 | **built** (G, part 2) |
 | CNIFGPHistoryWnd (464 x 311) | res_ui\guild_gp.2dt | line 0x43 | **built** (G, part 2) |
@@ -173,7 +173,7 @@ The community view 177 (friends, blocking, letters) is built (595, 834). Letters
 | 0x17 | UIIT_MSG_GUILD_LEVEL_UP "Promote the guild." | master | **built** (G) |
 | 0x14 | UIIT_CTL_GUILD_BREAK | master | built (822) |
 | 0x18 | UIIT_CTL_MASTERLEAVE "Transfer leadership" | master | **built** (G) |
-| 0x1b | UIIT_CTL_GUILD_COMPENSATION "War reward gold received" (0x7114) | master | missing (V) |
+| 0x1b | UIIT_CTL_GUILD_COMPENSATION "War reward gold received" (0x7114) | master | **built** (V) |
 | 0x1c | UIIT_CTL_GUILD_SECESSION | member | built (822) |
 | 0x19 or 0x1a (by 0x99da70) | UIIT_CTL_MASTERRELEASE / UIIT_CTL_MRELEASE_VOTE | in a guild | **built** (G, part 2) |
 | 0x1d | UIIT_CTL_GUILD_WAREHOUSE | in a guild | missing (H) |

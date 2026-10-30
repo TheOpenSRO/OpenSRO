@@ -570,7 +570,13 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 		if fresh, err := chars.GetByID(ctx, characterID); err == nil {
 			c = fresh
 		}
-		loss, ok := levelTable.DeathPenaltyExp(c.Level, leveldata.DeathPenaltyKilledByMonster)
+		// Round 844 (lane V): a player's kill of an unflagged victim (a war
+		// death, cause 5, s:0x4e6980) takes the KilledByPlayer multiplier.
+		mult := leveldata.DeathPenaltyKilledByMonster
+		if hasCause && cause.byPlayer {
+			mult = leveldata.DeathPenaltyKilledByPlayer
+		}
+		loss, ok := levelTable.DeathPenaltyExp(c.Level, mult)
 		if ok && loss > 0 {
 			exp := c.Exp - loss
 			if exp < 0 {

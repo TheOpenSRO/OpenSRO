@@ -190,8 +190,8 @@ func _init() -> void:
 		"guild_leave's strid is UIIT_CTL_GUILD_SECESSION (FUN_006fcd60 case 0x1c)")
 	var master_lines: Array = from.call(guild_ids, store, 7, true)
 	# Round 844: the master's 0x17, 0x14, 0x18 in FUN_00700440's order.
-	_check(_keys(master_lines) == ["shop:G1", "guild_level_up", "guild_disband", "guild_master_leave", "guild_master_release", "guild_storage", "guild_gp_history"],
-		"a master gets level-up, disband, hand-over and the storage, never secession or creation (got %s)" % [_keys(master_lines)])
+	_check(_keys(master_lines) == ["shop:G1", "guild_level_up", "guild_disband", "guild_master_leave", "guild_compensation", "guild_master_release", "guild_storage", "guild_gp_history"],
+		"a master gets level-up, disband, hand-over, the war reward (0x1b) and the storage, never secession or creation (got %s)" % [_keys(master_lines)])
 	var lvl: Variant = _find(master_lines, "guild_level_up")
 	var mlv: Variant = _find(master_lines, "guild_master_leave")
 	_check(lvl != null and str(lvl.get("strid")) == "UIIT_MSG_GUILD_LEVEL_UP" and mlv != null

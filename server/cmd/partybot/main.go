@@ -168,6 +168,7 @@ func (b *bot) note(p *proto.Packet) {
 	b.noteGuild(p)
 	b.noteGStore(p)
 	b.noteSocial(p.Opcode, p.Data)
+	b.noteWar(p.Opcode, p.Data)
 	b.noteStall(p.Opcode, p.Data)
 	b.noteMall(p.Opcode, p.Data)
 	b.noteUse(p.Opcode, p.Data)
@@ -955,6 +956,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	b.mallSteps()
 	b.useSteps()
 	b.stallSteps()
+	b.warSteps()
 	b.netSteps()
 	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
 	// can invite it beside the leader first and then move it away.
@@ -1032,7 +1034,9 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 			}
 			// Round 834: kind 1 is the exchange's, answered by -exchange-answer
 			// (social.go).
-			if p.Opcode == party.OpInvitation && len(p.Data) > 0 && p.Data[0] != guild.RequestGuildInvite && p.Data[0] != 1 {
+			// Round 844: kind 10 is a proclamation of war (-war-answer, war.go).
+			if p.Opcode == party.OpInvitation && len(p.Data) > 0 && p.Data[0] != guild.RequestGuildInvite && p.Data[0] != 1 &&
+				p.Data[0] != guild.RequestKindWar {
 				k, _, _, _ := party.DecodeInvitation(p.Data)
 				if accept {
 					b.send(party.OpInvitation, party.EncodeAnswerYes())
@@ -1130,6 +1134,10 @@ func main() {
 	flag.StringVar(&botSocial.friendAnswer, "friend-answer", "", "bot (round 834): answer friend requests: accept, refuse, or nothing")
 	flag.StringVar(&botSocial.exchangeWith, "exchange-with", "", "bot (round 834): ask this character to exchange (0x7081) once it is in view")
 	flag.StringVar(&botSocial.exchangeAnswer, "exchange-answer", "", "bot (round 834): answer exchange requests: accept, refuse, or nothing")
+	flag.StringVar(&botWar.answer, "war-answer", "", "bot (round 844): answer a proclamation of war (0x3080 kind 10): accept, refuse, or nothing")
+	flag.StringVar(&botWar.declare, "war-declare", "", "bot (round 844): proclaim war on this guild (0x7110) after -war-after, \"<guild>,<victory index>,<days>,<hours>,<minutes>,<stake>\"")
+	flag.DurationVar(&botWar.after, "war-after", 20*time.Second, "bot (round 844): when -war-declare goes out after entering the world")
+	flag.DurationVar(&botWar.surrenderAfter, "war-surrender-after", 0, "bot (round 844): propose the end (0x7112) of the first war this long after it began")
 	flag.StringVar(&botSocial.exchangeSlots, "exchange-slots", "", "bot (round 834): the bag indexes it offers, \"0,1\"; it then confirms and approves")
 	flag.Int64Var(&botSocial.exchangeGold, "exchange-gold", 0, "bot (round 834): the gold it offers")
 	flag.DurationVar(&botSocial.askAfter, "exchange-ask-after", 0, "bot (round 834): wait this long more before -exchange-with's request (to walk into reach first)")
