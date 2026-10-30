@@ -3023,6 +3023,19 @@ func _flash_repaired(key: int) -> void:
 
 var _repair_sheet: Texture2D = null
 
+## Round 843 (lane S): the switchers' flash (RepairFlash.play_switch_on) on
+## the slot of `key` (a worn slot, or bag slot + 13), if shown: 0x3040 mask 1,
+## a new RefItemID (c:0x88bf30 -> 0x6ab8c0 / 0x6b44d0 -> 0x6665f0).
+func flash_switched(key: int) -> void:
+	var icon := _repair_slot_icon(key)
+	if icon == null:
+		return
+	if _switch_sheet == null and _builder != null:
+		_switch_sheet = _builder.load_texture(RepairFlash.SWITCH_DDJ)
+	RepairFlash.play_switch_on(icon, _switch_sheet)
+
+var _switch_sheet: Texture2D = null
+
 ## The icon control of a worn slot (key < 13) or of bag slot key - 13 on the
 ## page shown, or null.
 func _repair_slot_icon(key: int) -> Control:

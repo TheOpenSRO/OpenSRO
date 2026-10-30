@@ -399,6 +399,22 @@ func _bag(panels: Control, seal: ItemTableReader.Item, sword: ItemTableReader.It
 	awake.durability = 1 << 31
 	panels.call("bag_item_state_changed", 2, false)
 	_check(_fx(bag.call(2)) == PackedStringArray([ItemStateEdge.WASH_NAME]), "an awake spirit with no time left: the wash")
+	# 0x3040 mask 1 (a switcher's new RefItemID): the slot's 16-cell flash,
+	# 48 x 48 at (-8, -8) (0x6665f0, 0x67cfb0 from 0x67e2c7).
+	var wire := PackedByteArray([3 + CosNet.BAG_WIRE_OFFSET, 0x01])
+	wire.append_array(PackedByteArray([0x39, 0x30, 0, 0]))
+	var dec := CosNet.decode_item_state(wire)
+	_check(int(dec["slot"]) == 3 and int(dec["mask"]) == 1 and int(dec["ref"]) == 0x3039, "0x3040 mask 1: the slot and the new RefItemID")
+	panels.call("flash_switched", int(dec["slot"]) + CosNet.BAG_WIRE_OFFSET)
+	var sw := (bag.call(3) as Node).get_node_or_null("SwitchFlash") as RepairFlash
+	_check(sw != null and sw.frames == 16 and sw.columns == 4 and sw.size == Vector2(48, 48) and sw.position == Vector2(-8, -8)
+		and sw.frame() == 0 and sw.sheet != null, "the switch flash: 16 cells of 4 x 4, 48 x 48 at (-8, -8), from frame 0")
+	if sw != null and sw.sheet != null:
+		print("MEASURED icon_mall_transgender %s" % str(sw.sheet.get_size()))
+		sw.step(50.0 * 15)
+		_check(sw.frame() == 15, "a cell each 50 ms: frame 15 after 750 ms")
+		sw.step(50.0)
+		_check(sw.is_queued_for_deletion(), "gone after 16 cells (800 ms)")
 	# Refills do not add nodes.
 	for k in 3:
 		panels.call("_fill_inventory_grid", slots)

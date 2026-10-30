@@ -95,6 +95,13 @@ below is READ from `sro_client.exe` (decomp dump `/var/tmp/decomp_client` on the
   - the quick slots (`HudUnderbar.set_slot_seals`, from `World3D._refresh_quickslot_seals` on
     every change to the bar). An item there is set from its bag record: `0x60c430` finds the bag
     item (`0x6b3e50`), checks its `+0x28`, and calls SetItem with it;
+  - round 843 (lane S): the player stall's ten slots, owner and visitor (`StallWindowView._draw_slots`;
+    `CIFStallSlot` c:0x6cada0 calls SetItem on the entry's record, +0x48, at c:0x6cb011; a
+    visitor's records are read by `0x8be4f0(stream, 1)` at c:0x874208, so their `+0x28` is set),
+    the stall network's rows (round 842), the exchange's two grids, the pet and transport bags
+    (`HudCosWindow.refresh_inventory`; IFCOSInventory's SetItem at c:0x7a75b4) and the grant
+    window's item (c:0x80a237). All go through `HudPanels._set_item_slot_fx`, which adds §6's
+    effects from the item's record;
   - the held icon on the cursor (`HudPanels.pick_up_icon`):
     - the original holds the slot itself;
     - `CGame 0x8423d0` draws it at the cursor through its vslot 24, `0xb9d810`. That calls vslot
@@ -110,8 +117,12 @@ below is READ from `sro_client.exe` (decomp dump `/var/tmp/decomp_client` on the
   seal slot each time would make every star jump at once.
 - **OURS: hidden slots.** A hidden edge does not tick. The original's timer runs on, but nothing
   is drawn either way.
-- **OURS: dimming.** The edge inherits the icon's `modulate`: the grey of a broken item (itself
-  OURS). The original draws the edge undimmed.
+- **OURS: dimming.** The edge inherits the icon's `modulate`. The original draws the edge
+  undimmed: the icon's draw (`0x655d50`) sets stage 0's alpha to MODULATE(TFACTOR, TEXTURE) with
+  the slot's alpha in TFACTOR (`0x655ca0`) and puts it back to SELECTARG1(TEXTURE) when it ends
+  (`0x6554c0`), before `0x67cfb0`'s overlays (READ). Round 843: the stall's visitor icons, at alpha
+  0x80 while the stall is modified (c:0x6bad9a, `0x655460` writes the slot's alpha byte +0x12d),
+  take it as `self_modulate`, so their star is undimmed as in the original.
 - **Tests and probe.**
   - `item_seal_edge_test.gd` checks the step, cell, UV, phase and timer rules;
   - `inventory_pages_test.gd` checks the bag, the worn slots, the store's goods, the quick slots
@@ -121,8 +132,96 @@ below is READ from `sro_client.exe` (decomp dump `/var/tmp/decomp_client` on the
 
 ## 5. OPEN
 
-- **The exchange, guild storage and stall slots:** not built in this client yet. Each is a
-  `CIFSlotWithHelp`; SetItem's callers include `CIFStorageRoom` and `CIFStoreForPackage`. When
-  those slots are built, they take the same `_set_item_seal_edge` call. The alchemy window's
-  strengthening slots draw it since round 768 (`AlchemyWindow._refresh_slots`).
+- **Guild storage:** not built in this client (FEATURES "Guild storage: not yet"). It is
+  `CIFStorageRoom`, kind `0x91`, the warehouse's class; when built it takes `_set_item_slot_fx`.
+- ~~The exchange and stall slots~~: built (the exchange in round 834, the stall in round 843). The
+  alchemy window's strengthening slots draw it since round 768 (`AlchemyWindow._refresh_slots`).
 - **`+0x64c`**, the flag that skips the whole overlay pass: not read.
+
+## 6. The slot's other per-item effects (round 843, lane S)
+
+The user (2026-10-29): "make sure item icons show any effects in the stall, so if it's a seal weapon
+show the spinning stars." Reading the whole of `0x67cfb0` for "any effects" found four more drawn from
+the item itself, besides kind-bound overlays. Every fact READ unless marked;
+`client/scripts/ui/item_state_edge.gd` (`ItemStateEdge`) builds them.
+
+- **The sheets** (`vslot_010` 0x66b460): `icon\item\etc\icon_edge_nasrun.ddj` (+0x648; MEASURED
+  512 x 32), `interface\pet\pt_edge_effect.ddj` (+0x640; MEASURED 288 x 32),
+  `interface\pet\pt_life_effect.ddj` (+0x644; MEASURED 256 x 32). Each is one row of 32-wide cells.
+- **The devil's spirit's edge.** SetItem: a 3/1/14 item (`0x55edf0`, Bionic 0) on any slot but the
+  item mall's (kind `0xa7`) gets `0x666640`: `+0x668 = rand() % 12`, timer `0x14` at `0x50` ms; the
+  step (`vslot_005` case `0x14`) `--c; if (c < 1) c = 12`. The draw: when the record's state (`+0x5c`,
+  the period word's bit 31, set by the record reader, c:0x8be5e2..0x8be62f) is 1 (awake) and its time
+  (`+0x60`, the word's low 31 bits x 1000 ms) is > 0, and `+0x668 > 0`: cell `(12 - c) & 15`, u
+  `cell * 32 / 512` (1/512 at `0xda3768`) to `(cell + 1) * 32 / 512`, v 0..1. The counter is the seal
+  star's `+0x668`; an item is never both.
+- **The wash `0x80004b7e`.** Awake with no time left: the slot's wash colour (`0x652e00`, +0x1f8) is
+  `0x80004b7e`; asleep, 0 (none). The base draw (`0x6550c0`) draws it after the icon through
+  `0x654d10`: a flat quad, COLOROP SELECTARG1(TFACTOR), alpha 0x80 -- RGB (0x00, 0x4b, 0x7e) at half
+  alpha. A pet's scroll gets it when dead (state 4, `0x667ac0`).
+- **The summoned pet's edge.** SetItem runs `0x667ac0(state)` for every non-spirit item: state 2 (out)
+  -> `0x666680(1)`: `+0x66c = rand() % 9`, timer 4 at `0x32` ms, step `--c; if (c < 1) c = 9`; any other
+  state stops it (`+0x66c = 0`, timer 4 killed). The draw: state 2 and `+0x66c > 0`: u `(9 - c) * 32 /
+  288` (288.0 at `0xda3780`) to `(10 - c) * 32 / 288`, v 0..1.
+- **The life flash.** `0x6666d0`: `+0x670 = 8`, timer 5 at `0x50` ms, step `--c; if (c < 1) { c = 0;
+  kill }`. Run by `0x667ac0` for state 3 over a record still at 4 (a revival), and by `0x6b4500` when
+  0x3040 mask `0x80` brings more rent seconds than a record with some left (c:0x88c6dc..0x88c701).
+  Drawn on the bag (kind `0x46`) or a quick slot over the bag (`0x0c` / `0x46`) only: u `(8 - c) * 32 /
+  256` to `(9 - c) * 32 / 256`, v 0..1.
+- **The order** in `0x67cfb0`: the pet edge, the seal star, the spirit's edge, [the kind-bound
+  overlays], the life flash; the wash before them all (the icon's own draw). Every one needs a record
+  (`+0x390`) whose `+0x28` is set.
+- **The 0x3040 update** (c:0x88bf30): mask `0x40` runs the bag slot's `0x667ac0(new state)`
+  (`0x6b4390`), then every quick slot over that bag slot (`0x60a940`). Mask 1 (a new RefItemID: the
+  switchers) flashes the slot with `icon_mall_transgender.ddj` (`0x6665f0`; `RepairFlash.play_switch_on`,
+  16 cells of 4 x 4, 50 ms, drawn 48 x 48 at (-8, -8); MEASURED 128 x 128; kinds `0x46` / `0x47` /
+  `0x8c` only, the repair flash's own test).
+- **Not item effects** (kind-bound, built elsewhere): the use cooldown (`skill_delay.ddj`), the worn-out
+  marks (`icon_item_broken` / `icon_item_warning`, round 829's DurabilityMark), the repair flash (round
+  829), `com_item_exchange.ddj` (+0x595), `int_effect.ddj` (+0x6b0).
+- **None read the plus.** No test in `0x67cfb0` or SetItem reads OptLevel: there is no plus glow on an
+  icon. One sheet serves every seal (Rarity 2 or 6): Star, Moon, Sun and Nova draw the same star.
+- **Rentals:** a rent object (`+0x168`, `+0xc` set and `+0x10` 0 or 2) draws a half-black wash
+  (`0x654d10(0x80000000)`) in the overlay pass. OpenSRO has no rentals (the server's rent word is 0),
+  so it is not built.
+- **In this client.** `HudPanels._set_item_slot_fx(icon, id, inst)` puts the star and these on a slot
+  from its ItemInstance (`cos_state`, the spirit's period word in `durability`); an emptied slot loses
+  them all (`_set_item_seal_edge(icon, -1)`). The quick slots: `HudUnderbar.set_slot_states` from
+  `World3D._refresh_quickslot_states` (every bar change and bag list). 0x3040: `World3D._on_cos_item_state`
+  redraws the bag (`HudPanels.bag_item_state_changed`) and the bar, and plays the life flash; mask 1:
+  `HudPanels.flash_switched`. The held icon copies the slot's (`ItemStateEdge.copy_from`).
+- **OURS.** The spirit's time is the record's as last read: the original counts `+0x60` down each
+  second (`vslot_005` case 200, a 1000 ms timer SetItem starts) and turns the edge into the wash at 0 by itself; this client waits
+  for the server's next record. A life flash still running when its item leaves the slot is not drawn
+  (the original's draw needs a record) but its node lives out its 640 ms.
+- **Tests.** `slot_fx843_test.gd` (the real Media.pk2): the rules, the four sheets' sizes, the
+  stall's ten slots as owner and visitor (a list, a Modify, a sale, a close and a reopen; the visitor's
+  dim not on the star), the exchange, the warehouse, the bag with 0x3040's changes and the life flash,
+  the switch flash, the worn spirit, the quick slots and the held icon. `hud_cos_test.gd`: the pet bag.
+
+## 7. Census: the windows with item slots (round 843)
+
+READ: every window below holds `CIFSlotWithHelp`s filled through SetItem (`0x6871d0`; its callers
+named), so each draws §3 and §6 for a record whose `+0x28` is set.
+
+| Window | Original (READ) | Before round 843 | Now |
+|---|---|---|---|
+| Stall, owner | CIFStallSlot -> SetItem on the entry's record (c:0x6cb011) | nothing | star + §6 |
+| Stall, visitor | the same; records read with flag 1 (c:0x874208) | nothing | star + §6, undimmed at alpha 0x80 |
+| Stall network rows | c:0x6caa40 -> SetItem, flag 1 (c:0x6c993d) | star | star + §6 |
+| Exchange, both grids | UI_EXCHANGE c:0x7b32a0 / 0x7b3380 / 0x7b3400 / 0x7b3ad0 | star | star + §6 |
+| Warehouse | CIFStorageRoom (c:0x6cc868, 0x6ccbf0, 0x6ccf80) | star | star + §6 |
+| Guild storage | CIFStorageRoom, kind 0x91 | not built | not built (OPEN) |
+| NPC store goods | 0x6d1ff0 sets +0x28, then SetItem | star | star (goods carry no state) |
+| Buy-back row | kind 0x45: the star without +0x28 | star | star; §6 OPEN (no record kept) |
+| Item mall goods | c:0x7cf9a0 SetItem on a record from the ref (+0x28 0, `0x8bcbc0`); kind 0xa7 never starts the spirit's edge | nothing | nothing (match) |
+| Bag | IFInventory c:0x6b6620 .. | star | star + §6 + 0x3040 + life flash + switch flash |
+| Worn slots, avatar slots | c:0x6ae1b0 (also 0x3040's worn branch) | star | star + §6 + switch flash |
+| Pet / transport bag | IFCOSInventory c:0x7a75b4, 0x7a7c10 | nothing | star + §6 |
+| Alchemy | UI_ALCHEMYBOX c:0x579f70 .. | star | star + §6 |
+| Grant (avatar options) | CIFGrantMagicAttributeWnd c:0x80a237 | star | star + §6 |
+| Quick slots | the bag record (0x60c430 -> SetItem; 0x60a940 on 0x3040) | star | star + §6 |
+| Held icon | the slot itself, drawn at the cursor | star | star + §6 (copied) |
+| Store confirm boxes | CIFStatic, not slots | nothing | nothing (match) |
+| Magic POP (gacha) | CIFGhaCha vslot_004 c:0x745950 and its neighbours; records not traced | nothing | OPEN |
+| Item chest | CIFItemMallStorageRoom (c:0x7d23d0); records not traced | no item icons here | OPEN |

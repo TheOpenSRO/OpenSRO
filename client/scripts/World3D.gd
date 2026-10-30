@@ -18093,6 +18093,9 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       item id; the report adds the tooltip (round 842)
 #   stalllog            report the stall window's log (its chat module's
 #                       lines; round 842)
+#   stallfx / bagfx     report each filled stall slot's (shown bag cell's)
+#                       visible item effects, their counters and the icon's
+#                       own alpha (round 843)
 #   worn:<slot>         left click that worn slot's icon (round 838)
 #   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
 #   type:<text>         a key per character
@@ -19362,6 +19365,34 @@ func _qa_input_step() -> void:
 			var slw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null
 			_qa_input_report = "stalllog shown=%s log=[%s]" % [slw != null and slw.visible,
 				StallWindowView.chat_text(slw).strip_edges().replace("\n", " | ")]
+		"stallfx", "bagfx":
+			# Round 843: the item effects each stall slot (or shown bag cell)
+			# draws -- slot: item id, the visible effect nodes and their
+			# counters, the icon's own alpha -- as the live window holds them.
+			var fx_out := PackedStringArray()
+			var fx_icons := {}
+			if kind == "stallfx":
+				for si in StallNet.SLOTS:
+					var sic := _hud_panels.qa_stall_slot_control(si, "icon") if _hud_panels != null else null
+					if sic != null:
+						fx_icons[si] = sic
+			else:
+				var biw: HudWindow = _hud_panels._windows.get("inventory") if _hud_panels != null else null
+				var blat := biw.node("GDR_INVENTORY_LATTICE") as Control if biw != null else null
+				if blat != null:
+					for bi in blat.get_child_count():
+						fx_icons[bi] = blat.get_child(bi).get_node_or_null("ItemIcon")
+			for si in fx_icons:
+				var sic: Control = fx_icons[si]
+				if sic == null or (sic as TextureRect).texture == null:
+					continue
+				var parts := PackedStringArray()
+				for fxn in sic.get_children():
+					if fxn is ItemSealEdge or fxn is ItemStateEdge or String(fxn.name) == ItemStateEdge.WASH_NAME:
+						if (fxn as CanvasItem).visible:
+							parts.append("%s%s" % [fxn.name, ("(c%d)" % int(fxn.get("counter"))) if "counter" in fxn else ""])
+				fx_out.append("%d:[%s] a%.2f" % [si, ",".join(parts), sic.self_modulate.a])
+			_qa_input_report = "%s %s" % [kind, " ".join(fx_out)]
 		"tipshown":
 			_qa_input_report = "tipshown tip=[%s]" % ItemTooltipLines.as_text(
 				_hud_panels.item_tip_shown() if _hud_panels != null else []).replace("\n", " | ")
@@ -38892,6 +38923,11 @@ func _on_cos_update_hud(u: CosNet.Update) -> void:
 
 ## 0x3040: a bag item's COS state or rent (the pet scroll's tooltip reads it).
 func _on_cos_item_state(d: Dictionary) -> void:
+	# Round 843 (lane S): a new RefItemID (mask 1, a switcher's result)
+	# flashes its slot, worn or in the bag (c:0x88bf30 -> 0x6ab8c0 /
+	# 0x6b44d0 -> 0x6665f0, icon_mall_transgender).
+	if int(d.get("mask", 0)) & 0x01 and _hud_panels != null:
+		_hud_panels.flash_switched(int(d.get("slot", -1)) + CosNet.BAG_WIRE_OFFSET)
 	var it: ItemInstance = NetClient.last_inventory_instances.get(int(d.get("slot", -1)))
 	if it == null:
 		return
