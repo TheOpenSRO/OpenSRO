@@ -7710,9 +7710,14 @@ item mall character preview and it does not. It shows up in the inventory previe
   +12, 4 effect(s))`, the dress on and off included. A watcher saw the actor (a second client)
   arrive in the sword (`0x3038 uid 1 slot 6 item 62081 plus 12 own 62605`, the spawn's after
   frame) and put the shield on (`... slot 7 item 62207 plus 12 own 62610`); after a relog the
-  actor's own body drew both with glow and effects. The v0.1.607 build, the same steps: no glow
-  and no effects on the switched sword, and the mall preview drew the original sword. Frames:
-  `/var/tmp/r843w/keep/` on the box.
+  actor's own body drew both with glow and effects. The v0.1.607 build, the same steps:
+  `ITEM_CH_SWORD_11_A_RARE_SWITCH05 +12: no glow (no glow type in itemoption.txt) and no
+  particle row`, a plain switched sword, and the mall preview drew the original sword. Its
+  other-player frame was not captured (in three tries the two characters did not stand in view of
+  each other); a v0.1.607 observer gets the same row and no own id, so INFERRED the same plain
+  sword. Frames and logs: `/var/tmp/r843w/keep/` on the box.
+- **No perf gate.** The change is at build time (the wear's codes, the kind string, the far
+  recipe's lookups), not per frame, and the crowd's GPU glow code is untouched.
 - **Tests.** Server `go test ./...` passes (`switcher843_test.go`: the trailer's bytes, the
   spawn's after frame, the equip broadcast to an observer). Client: `check` ALL LOAD (1043
   scripts), `tests` "ran 395 suite(s), 0 failing" on the tree rebased onto dev 8a92fc80
