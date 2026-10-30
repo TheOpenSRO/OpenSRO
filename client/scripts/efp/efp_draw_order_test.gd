@@ -105,6 +105,7 @@ func _initialize() -> void:
 	_test_twins()
 	_test_pass()
 	_test_mtrl_display_blend()
+	_test_node_order()
 	if _failures == 0:
 		print("ALL PASS")
 	else:
@@ -259,3 +260,44 @@ func _test_mtrl_display_blend() -> void:
 		and ObjectLoader.DISPLAY_BLEND_ADD.contains("srr_mb_shown(srr_bg) + srr_mb_shown(srr_src) * srr_a")
 		and ObjectLoader.DISPLAY_BLEND_ADD.contains("ALPHA = 1.0;"),
 		"the mix and the sum are taken on display values, the fog folded into the source first")
+
+## Round 843 (the quest scroll's flicker): one effect's nodes draw in a fixed
+## order, the file's first node on top -- READ, the original draws the
+## newest-born particle's group first (EfpEffect.DRAW_ORDER_STEP). The quest
+## mark's shape: a holder, then an additive shine, then the alpha-blended
+## scroll; the scroll draws first and the shine is added over it.
+func _test_node_order() -> void:
+	var made := _build(_tree([_plate(30, 1), _plate(30, 1, 5, 6)]))
+	var fx: EfpEffect = made[1]
+	var ok := fx._draws.size() == 2
+	var shine: GeometryInstance3D = null
+	var scroll: GeometryInstance3D = null
+	if ok:
+		shine = fx._draws[0][1]
+		scroll = fx._draws[1][1]
+		ok = int(fx._draws[0][0]) == 1 and int(fx._draws[1][0]) == 2
+	_check(ok, "the holder draws nothing; the shine is template node 1, the scroll node 2")
+	if ok:
+		_check(shine.sorting_offset > scroll.sorting_offset,
+			"the shine (the file's earlier node) sorts nearer, so Godot draws it after -- over -- the scroll (%.4f > %.4f)" % [shine.sorting_offset, scroll.sorting_offset])
+		_check(is_equal_approx(shine.sorting_offset, EfpEffect.draw_order_offset(1)) and absf(scroll.sorting_offset) <= EfpEffect.DRAW_ORDER_STEP * 2.0 + 1e-9
+			and EfpEffect.draw_order_offset(0) == 0.0,
+			"a thousandth of a unit a node, nothing for the root: it decides only draws that tie")
+		_check(shine.get_aabb() == scroll.get_aabb() and (shine as Node3D).global_transform == (scroll as Node3D).global_transform,
+			"the two draws share a transform and box -- without the offset Godot's depth sort ties them")
+	fx.sim.clear()
+	(made[0] as Node3D).free()
+	# The display pass: equal distances fall to the node order, whatever order
+	# the list came in; a nearer draw still draws later.
+	var a := [null, 1, null, 400.0, AABB(), 1]
+	var b := [null, 1, null, 400.0, AABB(), 2]
+	var c := [null, 1, null, 900.0, AABB(), 1]
+	var orders := [[a, b, c], [b, a, c], [c, b, a], [a, c, b], [b, c, a], [c, a, b]]
+	var same := true
+	for o in orders:
+		var l: Array = (o as Array).duplicate()
+		l.sort_custom(EfpDisplayPass.draw_before)
+		same = same and l[0] == c and l[1] == b and l[2] == a
+	_check(same, "the pass sorts far to near, and at one distance the later node first, from every starting order")
+	_check(not EfpDisplayPass.draw_before([null, 1, null, 400.0, AABB()], [null, 1, null, 400.0, AABB()]),
+		"an item without a node index (none is made so) ties as before")

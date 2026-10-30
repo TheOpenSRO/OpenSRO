@@ -186,6 +186,45 @@ const LINK_MODES := ["RenderLinkDPipe", "RenderLinkPipe", "RenderLinkObj"]
 ## box of this kind (OURS throughout; its own limits: round 761).
 const DRAW_AABB := AABB(Vector3(-200, -200, -200), Vector3(400, 400, 400))
 
+## Round 843 (the user's report: the quest scroll over an NPC flickered
+## bright / dim): the order one effect's nodes draw in.
+## READ (sro_client.exe): the effect keeps every live particle in one list
+## in spawn order (the particle init FUN_00c88490 appends it to the effect's
+## list at +0x258, 0x00c8878d; FUN_00c87360 appends at the tail). The update
+## (CEFEffect::vslot_000 -> FUN_00caeff0, with DAT_00edbd44 = 1 in .data and
+## no write to it) walks that list from its tail (+0x284) through the
+## previous links (+0x260), newest particle first, and files each particle
+## under its texture (+0x1d8), then its 36-byte RenderState, a new group
+## going last; the draw (CEFEffect::vslot_001) draws the groups in that
+## order. The children's emitters run in the order of the node's child list
+## (FUN_00c86cd0, CEFUpdater::vslot_002: head +0x24, next links) -- the
+## file's order (INFERRED: the loader appends them as it reads them; the
+## list class FUN_00c85ae0 appends at the tail). So nodes whose particles are
+## born together draw last-born first: the file's later node under the
+## earlier one. The quest mark (system_questmark_*.efp: the root, then
+## quest_sign_shine (SRCALPHA/ONE), then quest_sign_a (SRCALPHA/INVSRCALPHA))
+## draws the scroll, then the shine added over it.
+## Here every node is its own MultiMesh with the same transform and box
+## (DRAW_AABB), so Godot's transparent sort -- by depth, which ties, in an
+## unstable sort (OURS reading: the engine's SortArray is an introsort) --
+## gave no order at all: MEASURED, the same view drew the shine over the
+## scroll in a movie run and under it in a real-time one, and the user's clip
+## switches between the two from frame to frame. OURS: each node's draw is
+## given a fixed order by its place in the file, the first node on top
+## (sorting_offset, a thousandth of a unit a node: it decides only between
+## draws that otherwise tie, and EfpDisplayPass breaks its ties the same
+## way). The original's order follows the particles' births frame by frame;
+## for nodes that keep emitting at different times this static order is an
+## approximation (OPEN).
+const DRAW_ORDER_STEP := 0.001
+## OPENSRO_QA_FX_NODE_ORDER=off (QA A/B only): no fixed node order, as before
+## round 843 (Godot's pass and EfpDisplayPass both).
+static var qa_no_node_order := OS.get_environment("OPENSRO_QA_FX_NODE_ORDER") == "off"
+
+## The sorting offset of the draw of template node `index` (DRAW_ORDER_STEP).
+static func draw_order_offset(index: int) -> float:
+	return 0.0 if qa_no_node_order else -DRAW_ORDER_STEP * float(index)
+
 ## The compiled template of a file in Particles.pk2, decoded once.
 static func template_for(efp_path: String, particles: Pk2Reader) -> EfpSim.Template:
 	var key := efp_path.to_lower()
@@ -296,6 +335,8 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		mmi.multimesh = mm
 		mmi.material_override = material_for(tex, n.state, billboard)
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# Round 843: the nodes' fixed order (DRAW_ORDER_STEP).
+		mmi.sorting_offset = draw_order_offset(tp.index)
 		# Round 757: given to the RenderingServer, not stored on the node: a
 		# Node.duplicate() of a body (the portrait, CrowdGpu's layout until this
 		# round) copies a stored `custom_aabb` before the `multimesh`, and the
@@ -412,7 +453,9 @@ func pass_items(items: Array, planes: Array, eye: Vector3, display_pass) -> void
 		pc.append_array(EfpDisplayPass.tail_bytes((stat as Dictionary)["ops"], clampi(_glow_alpha, 0, 255) if glow else 255,
 			-5 if glow or EfpDisplayPass.qa_no_depth else 5, glow_anchor if glow else EfpDisplayPass.NO_ANCHOR,
 			(stat as Dictionary)["fade"]))
-		items.append([stat, mini(n, mm.instance_count), pc, eye.distance_squared_to(box.get_center()), box])
+		# Round 843: the node's template index last, for the pass's ties
+		# (DRAW_ORDER_STEP).
+		items.append([stat, mini(n, mm.instance_count), pc, eye.distance_squared_to(box.get_center()), box, int(_draws[di][0])])
 
 ## A draw's unchanging part for the display pass, built once: the MultiMesh
 ## and texture (held, so neither is freed before a frame drawing them is
@@ -722,6 +765,7 @@ static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture:
 	mi.mesh = ArrayMesh.new()
 	mi.material_override = link_material_for(tex, n.state)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.sorting_offset = draw_order_offset(tp.index)
 	# Round 757: not a stored property (the node above's note).
 	RenderingServer.instance_set_custom_aabb(mi.get_instance(), DRAW_AABB)
 	mi.name = "link_%d" % tp.index
