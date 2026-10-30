@@ -7483,6 +7483,85 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-third round, lane Q: the quest scroll's flicker
+
+The user's ask: "Can you please also remove the flickering quest icons that appear above NPCs", with a
+2.1 s clip of the golden scroll over Stable-Keeper Machun (Jangan) whose glow jumps between bright and
+dim from frame to frame, camera still. Reading: the original does draw these marks (round 785), so
+"remove the flicker" means drawing the mark as the original does. Labels: READ (sro_client.exe, c:),
+MEASURED, INFERRED, OURS, OPEN. The reading with every address is `docs/protocol/EFP_FORMAT.md`, "The
+order of one effect's particles".
+
+**The mark (MEASURED, `efpcensus -show`).** `system_questmark_start.efp` is a holder (1 frame), then
+`quest_sign_shine.ddj` (SRCALPHA/ONE, colour 0xFDBE02 with alpha keyed 0x8C -> 0x48 -> 0x8C over 30
+frames: the original's slow pulse) and `quest_sign_a.ddj` (SRCALPHA/INVSRCALPHA, scale (5, 5, 1)), two
+billboards at one point. `_end` is the same with `quest_sign_c`; `_start_r` has the scroll first and the
+shine second; `_going` is its scroll alone.
+
+**The cause.**
+- MEASURED, the user's clip (65 x 55 box on the scroll, 63 frames): mean 128.9, sd 4.17, frame-to-frame
+  jumps up to 9.5; the bright-pixel count is bimodal, 61-75 in 21 frames and 226-335 in the other 42. The
+  dim frames show the scroll crisp, its ink and rolled ends dark, with the halo still around it; the
+  bright ones show the shine added over the scroll. That is the shine drawn under or over the scroll,
+  not a glow switched off (no occlusion toggle, no restart: the halo stays).
+- MEASURED on the box, one still view (`qa843.sh`, local NPCs, `OPENSRO_QA_QUEST_MARKS=0`): a movie
+  run drew the shine over the scroll (bright pixels 259-399), a real-time run (`QA_SHOT_REALTIME=1`,
+  xcapture, 481 distinct frames over 25 s) under it (95-138). Same build, same view, opposite orders.
+- Why: each node is its own MultiMesh with the same transform and cull box (`DRAW_AABB`) at one render
+  priority, so Godot's transparent depth sort ties them, and its sort is not stable (OURS reading of
+  the engine: an introsort). INFERRED: in a live town, things moving around change the sort's input
+  every frame, which flips the tie; the box's still scenes keep one order a run (also with damage
+  numbers or casts in view, `xc3c` / `xc4c`).
+- Ruled out: the mark is a plain effect (QuestMarks), not an ambient glow, so round 807's occlusion
+  test and the glow pass never touch it; its fog fade is steady with the camera; the loop restarts on
+  the 30-frame period, not at random.
+
+**What the original does (READ).** The effect's particles sit on one list in spawn order (c:0x00c8878d,
+the list at +0x258). The update (CEFEffect::vslot_000 -> c:0xcaeff0; `DAT_00edbd44` is 1 in .data and
+nothing writes it) walks it from the tail, newest first, filing particles by texture then RenderState,
+new groups last; the draw (CEFEffect::vslot_001) draws the groups in that order. Children run in the
+child list's order (c:0xc86cd0, CEFUpdater::vslot_002; INFERRED the file's). So the scroll draws first
+and the shine is added over it, every frame: the bright look, pulsing slowly. For `_start_r` the
+scroll is over the shine.
+
+**What we built (OURS).** `EfpEffect.DRAW_ORDER_STEP`: every plate, mesh and Link draw of an effect
+gets `sorting_offset = -0.001 x its template index`, the file's first node on top, which decides only
+draws that otherwise tie; `EfpDisplayPass.draw_before` breaks its equal distances the same way (the
+objects' ambient effects). `OPENSRO_QA_FX_NODE_ORDER=off` drops both for an A/B. The shine's pulse is
+kept as the file keys it. `QuestMarks`' header records the finding.
+
+**MEASURED after** (the same real-time view): bright pixels 259-399 throughout (the original's order),
+mean 91.5, sd 3.46, largest step 1.07 between 50 ms effect steps, none above 2: the sd is the keyed
+pulse (period 30 effect frames, 1.5 s), no frame-to-frame jump.
+
+**Other effects.** A night lamp view (97/167, 21:00, the display pass with its glows): frames 150, 200,
+299 identical with the order on and off (max channel difference 1). A cast view (skills 3, 30, 47, 1381
+on the player): differences on and off only in the sky's clouds and the hand effect, the same size as
+two runs of the same build (hand box at 299: 541 pixels on/off, 637 on/on).
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1040 scripts); `tests` "ran 393 suite(s), 0 failing";
+`efp_draw_order_test` gains the node order (the quest mark's shape: shine sorts over scroll, a
+thousandth a node, the pass's tie-break from every starting order). Perf gate `--base aa75c75d --head
+1a3edff8 --sites jangan --frames 24000` (3000 frames now gives fewer than 10 FPS samples at ~600 fps):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.87 | 0.86 | SAME |
+| entry ms | 8831 | 8824 | SAME |
+| freeze ms | 2769 | 2792 | SAME |
+| hitches | 5 | 5 | SAME |
+
+Evidence: `/var/tmp/r843q/keep` on the render box (crops, the full view, the A/B frames,
+`measurements.txt`, the QA scripts).
+
+**OPEN.**
+- The original's order follows the particles' births frame by frame; for an effect whose nodes emit at
+  different times the fixed file order is an approximation.
+- Two nodes sharing a texture and RenderState merge into one group in the original (drawn at the first
+  one's place); here they stay separate draws.
+- The flip itself was not reproduced on the box (its still scenes give the sort the same input every
+  frame); the cause stands on the two runs' opposite orders and the clip's two looks.
+
 ## Eight-hundred-and-forty-second round, lane T: the stall network's item tooltips
 
 The user's asks: "when using the stall network you should be able to hover over the item icon and

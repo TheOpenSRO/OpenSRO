@@ -374,6 +374,47 @@ depth:
     before; OPEN.
 - `OPENSRO_QA_FX_PRIORITY=<n>` draws every effect at n, for an A/B (0 is the old order).
 
+### The order of one effect's particles (READ, round 843)
+
+The user's report: the quest scroll over an NPC flickered between bright and dim, camera still.
+- **The particle list.** Every live particle of an effect is on one list in spawn order: the
+  particle init `FUN_00c88490` appends it to the list object at effect +0x258 (the call at
+  0x00c8878d; `FUN_00c87360` appends at the tail, the list class's +8 prev offset / +0x18 next
+  offset / +0x24 count / +0x28 head / +0x2c tail).
+- **The batch.** The effect's update `CEFEffect::vslot_000` (0xcaf550) calls `FUN_00caeff0` while
+  `DAT_00edbd44` is set. That global is 1 in `.data` and no instruction writes it (MEASURED:
+  `objdump` finds only compares). `FUN_00caeff0` walks the list **from its tail (+0x284) through the
+  prev links (+0x260), newest particle first**, and files each one under its texture (+0x1d8; a
+  mesh node's group, byte +4, writes depth), then under its 36-byte RenderState; a new group is
+  appended last. When the effect's flag `FUN_00ca9410` is set only the last group is tried, else
+  every group back to the last mesh group.
+- **The draw.** `CEFEffect::vslot_001` (0xcac6a0) draws the groups in that order: per texture
+  group the RenderState groups, per RenderState group its particles (`EFEffect::FUN_00cabda0`, the
+  unbatched draw, walks the same list the same way).
+- **Children's order.** A spawned particle makes its child emitters in the node's child-list order
+  (`FUN_00c86cd0`), and the node's update runs its children in that order
+  (`CEFUpdater::vslot_002`): from the list's head (+0x24) by next links (the list class
+  `FUN_00c85ae0` appends at the tail). INFERRED: the loader appends the children as it reads them, so
+  this is the file's order.
+- **So** nodes whose particles are born in one update draw last-born first: the file's later node
+  under the earlier one. `system_questmark_start.efp` and `_end.efp` are a holder, then
+  `quest_sign_shine.ddj` (SRCALPHA/ONE, its colour keyed 0x8C → 0x48 → 0x8C alpha over 30 frames:
+  the slow pulse) and then the scroll (`quest_sign_a` / `_c`, SRCALPHA/INVSRCALPHA, scale (5, 5, 1)),
+  so the scroll draws first and the shine is added over it; `_start_r.efp` has them the other way
+  round, the scroll over the shine; `_going.efp` has only its scroll (MEASURED, `efpcensus -show`).
+
+**This client (`EfpEffect.DRAW_ORDER_STEP`).**
+- Each node is its own MultiMesh with the same transform and box (`DRAW_AABB`), so Godot's
+  transparent sort tied them, and its sort is not stable. MEASURED at one still view over
+  Stable-Keeper Machun: a movie run drew the shine over the scroll, a real-time run under it (bright
+  pixels in the mark's box 259-399 against 95-138); the user's clip switches between the two looks
+  from frame to frame (21 of 63 frames dim).
+- OURS: each draw gets `sorting_offset = -0.001 × its template index`, the file's first node on top,
+  and `EfpDisplayPass.draw_before` breaks equal distances the same way. The original's order follows
+  the particles' births frame by frame; for nodes that keep emitting at different times this fixed
+  order is an approximation (OPEN).
+- `OPENSRO_QA_FX_NODE_ORDER=off` drops both, for an A/B.
+
 ### Display-value blending under Forward+ (round 786: `EfpDisplayPass`)
 
 Direct3D 9 blends in the values the screen shows: there is no SRGBWRITE (round 705), and the back

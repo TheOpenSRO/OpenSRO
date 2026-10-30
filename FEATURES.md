@@ -331,7 +331,7 @@ Retail models, particles and lighting re-created in Godot.
 |---|---|---|
 | Character models | ✅ Supported | Retail bodies dressed from the item table's models, drawn the right way round: weapons in the right hand, shields and bows on the left, as retail |
 | Equipment visuals | ✅ Supported | Worn weapons and armour drawn on every character |
-| Particle effects (EFP) | ✅ Supported | Retail particle effects for skill casts, projectiles, hits and level-up |
+| Particle effects (EFP) | ✅ Supported | Retail particle effects for skill casts, projectiles, hits and level-up; an effect's layers draw in the original's order every frame (quest marks over NPCs hold steady) |
 | Effects stay on moving bodies | ✅ Supported | Effects follow their holder at any frame rate |
 | Lighting and shadows | ✅ Supported | Sun, character light, shadow detail options; shadows follow the sun (option) |
 | Bloom and ambient occlusion | ✅ Supported | Retail-style bloom and SSAO options |
