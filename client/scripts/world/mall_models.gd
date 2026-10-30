@@ -162,7 +162,10 @@ func build_body(avatars: Array) -> Dictionary:
 	if world == null:
 		return {}
 	var body := String(world.get("_player_body"))
-	var equipped: Dictionary = (world.get("_player_equipped_last") as Dictionary).duplicate()
+	# Round 843: the worn items as the world and the equipment window draw
+	# them -- a model switcher's choice as its row (World3D._display_equipped),
+	# with the item's own glow and seal where that row has none (_player_fx).
+	var equipped: Dictionary = (world.call("_display_equipped", (world.get("_player_equipped_last") as Dictionary).duplicate()) as Dictionary).duplicate()
 	for key in equipped.keys():
 		if CharacterAppearance.is_avatar_key(int(key)):
 			equipped.erase(key)
@@ -179,7 +182,7 @@ func build_body(avatars: Array) -> Dictionary:
 			# OURS keys: build() reads an avatar from its type, never its key.
 			dressed[CharacterAppearance.AVATAR_KEY_BASE + k] = int(ref)
 			k += 1
-	var skel = world.call("_build_assembled_character", dressed, body, int(world.get("_player_scale")), pluses)
+	var skel = world.call("_build_assembled_character", dressed, body, int(world.get("_player_scale")), pluses, world.call("_player_fx"))
 	if skel == null:
 		return {}
 	var b := String((skel as Node).get_meta("body", body))
