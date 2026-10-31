@@ -76,6 +76,7 @@ func _initialize() -> void:
 		var has := _declares(LoadingScreen, name)
 		_check(has, "LoadingScreen declares %s" % name)
 		complete = complete and has
+	_test_layout_848()
 	if complete:
 		_test_reused_handle()
 		_test_no_handle()
@@ -102,12 +103,40 @@ func _test_reused_handle() -> void:
 		"the gauge fills without a backdrop")
 	screen.set_progress(1.7)
 	_check(screen.progress == 1.0, "the gauge clamps at full (%.2f)" % screen.progress)
+	# Round 848: the client's screen has no caption text; set_caption stays
+	# callable and draws nothing.
 	screen.set_caption("Loading")
-	_check(screen._caption != null and screen._caption.text == "Loading",
-		"the caption is settable without a backdrop")
+	_check(screen.find_children("*", "Label", true, false).is_empty(),
+		"round 848: no caption label (nowloading.ddj is the client's caption)")
+	_check(screen.find_children("*", "Panel", true, false).is_empty() \
+			and screen.find_children("*", "PanelContainer", true, false).is_empty(),
+		"round 848: no Godot panel (the trough was OURS; the gauge is gauge_loading.ddj)")
 	_test_paint(screen)
 	root.remove_child(screen)
 	screen.free()
+
+## Round 848: the client's placement (FUN_0084b6e0 / FUN_00849c70, READ).
+## NEGATIVE (fails before round 848): LoadingScreen had no scaled_rect or
+## backdrop_rect and drew a 760-wide trough 80 above the bottom.
+func _test_layout_848() -> void:
+	var has := _declares(LoadingScreen, "scaled_rect") and _declares(LoadingScreen, "backdrop_rect")
+	_check(has, "LoadingScreen declares scaled_rect and backdrop_rect")
+	if not has:
+		return
+	var s: GDScript = LoadingScreen
+	# At the design size itself every rect is as authored.
+	var g: Rect2 = s.call("scaled_rect", Rect2i(268, 985, 1064, 20), Vector2(1600, 1200))
+	_check(g == Rect2(268, 985, 1064, 20), "the gauge at 1600x1200 is its authored rect (%s)" % g)
+	# 1280x720: x by 0.8, y by 0.6.
+	g = s.call("scaled_rect", Rect2i(268, 985, 1064, 20), Vector2(1280, 720))
+	_check(g == Rect2(214, 591, 851, 12), "the gauge at 1280x720 is (214, 591, 851 x 12) (%s)" % g)
+	var f: Rect2 = s.call("scaled_rect", Rect2i(241, 973, 1121, 64), Vector2(1280, 720))
+	_check(f == Rect2(193, 584, 897, 38), "the form at 1280x720 is (193, 584, 897 x 38) (%s)" % f)
+	# The backdrop 4:3 from its height: 720 * 4 / 3 = 960, (1280 - 960) / 2 = 160.
+	var b: Rect2 = s.call("backdrop_rect", Vector2(1280, 720))
+	_check(b == Rect2(160, 0, 960, 720), "the backdrop at 1280x720 is 960 wide from x 160 (%s)" % b)
+	b = s.call("backdrop_rect", Vector2(1024, 768))
+	_check(b == Rect2(0, 0, 1024, 768), "the backdrop at 4:3 fills the screen (%s)" % b)
 
 ## Round 785: `paint` is the client's FUN_00ba3fc0 -- it sets the gauge every
 ## time and repaints only when more than PAINT_INTERVAL_MS have passed since

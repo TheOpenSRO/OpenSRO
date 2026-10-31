@@ -171,15 +171,20 @@ func _tile(cell: int) -> Button:
 	b.size = Vector2(TILE, TILE)
 	b.custom_minimum_size = b.size
 	b.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[4])
-	b.add_theme_color_override("font_color", Color(0.1, 0.1, 0.12))
-	b.add_theme_color_override("font_hover_color", Color(0.1, 0.1, 0.12))
-	b.add_theme_color_override("font_pressed_color", Color(0.1, 0.1, 0.12))
+	# Round 848: every state's colour set, so none of Godot's own shows (its
+	# grey, half-transparent disabled text was what a locked pad drew).
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color",
+			"font_focus_color", "font_disabled_color"]:
+		b.add_theme_color_override(c, Color(0.1, 0.1, 0.12))
 	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	b.pressed.connect(press_cell.bind(cell))
 	return b
 
 func _skin(b: Button, base: String) -> void:
-	for pair in [["normal", ""], ["hover", "_focus"], ["pressed", "_press"], ["disabled", ""]]:
+	# Round 848: hover_pressed is the press art and focus draws nothing (the
+	# tiles take no focus), so no state falls back to Godot's theme box.
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	for pair in [["normal", ""], ["hover", "_focus"], ["pressed", "_press"], ["hover_pressed", "_press"], ["disabled", ""]]:
 		var tex := _builder.load_texture(base + str(pair[1]) + ".ddj") if _builder != null else null
 		if tex == null:
 			continue

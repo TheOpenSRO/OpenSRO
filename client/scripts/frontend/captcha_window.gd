@@ -97,6 +97,8 @@ func build(builder: UiBuilder) -> void:
 	edit.name = "CodeIn"
 	edit.placeholder_text = ""
 	edit.max_length = EDIT_MAX
+	# Round 848: CIFEdit's caret and rules (CifEditStyle, READ).
+	CifEditStyle.apply(edit)
 	edit.text_submitted.connect(func(_t: String) -> void: _on_enter())
 	var acc := _control(_def(main, ID_ACCEPT, "CIFButton", Rect2i(257, 121, 55, 18)))
 	_set_text(acc, _text("UIIS_CTL_CONFIRM", "OK"))

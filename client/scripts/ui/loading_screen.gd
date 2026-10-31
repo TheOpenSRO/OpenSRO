@@ -3,8 +3,9 @@ extends Control
 
 ## The "NOW LOADING" screen over world entry, so the ~minute of region loading
 ## is not a black, frozen window. Real backdrop art (loading_default.ddj) from
-## the player's own Media.pk2, a "NOW LOADING..." caption and a gold gauge that
-## fills as region cells stream in. Added as the top child of the HUD Control
+## the player's own Media.pk2, with the client's loading_form, gauge_loading
+## and nowloading art over it (round 848, below); the gauge fills as region
+## cells stream in. Added as the top child of the HUD Control
 ## (so it renders over everything) and freed when the load is done.
 ##
 ## Since round 562 World3D puts it up BEFORE the centre cell is built and
@@ -21,8 +22,8 @@ extends Control
 ## every login and every teleport -- opened a reader of its own through
 ## FrontEndUi.open_media(). `_ready` prints which it did and what it cost.
 ##
-## The gauge and caption are our styling, disclosed; the backdrop is the
-## client's own art. It animates while the loader yields the main thread
+## Every part is the client's own art, placed as the client places it (round
+## 848, below). It animates while the loader yields the main thread
 ## (World3D pumps the region queue with awaits), and since round 785 a phase
 ## that does not yield -- a dungeon's build -- repaints it as it goes with
 ## `paint`, as the client repaints its loading screen through a synchronous
@@ -62,29 +63,63 @@ extends Control
 ## screen goes on the next frame. `paint` is FUN_00ba3fc0 (the 50 ms rule,
 ## the forced last repaint); the screen's caption never changes. The art is
 ## FUN_0084b6e0's choice (LoadingBackdrop, round 785's follow-up).
+##
+## Round 848: drawn with the client's own parts, no Godot styling left. READ,
+## FUN_0084b6e0 (0x84bc60..0x84be1b): three windows made by gwnd::FUN_00ba20b0
+## on the screen, in this order (each drawn over the one before), every rect
+## in the front end's 1600x1200 design space and scaled to the screen by
+## FUN_00849c70(window, 0) -- x and width by W/1600, y and height by H/1200
+## (FrontEndFrame.design_scale):
+##   0x65 CIFStatic (class 0xee9720)  241, 973, 1121 x 64  loading_form.ddj
+##   0x64 CIFGauge  (class 0xee9560)  268, 985, 1064 x 20  gauge_loading.ddj,
+##        both its values (+0x380, +0x384) zeroed; FUN_0084c060 sets both to
+##        the load's thousandths / 1000.0 each update, and CIFGauge's draw
+##        (0x6387d0 -> 0x653140) scales the drawn width AND the texture's U
+##        by the value: the art is cut off at the right, never squashed
+##   0x66 CIFStatic (class 0xee9720)  268, 1025, 252 x 35  nowloading.ddj
+## The backdrop is psmission.txt's "First" section's GDR_BACK (id 1, 0, 0,
+## 1600 x 1200), placed by FUN_00849c70(window, 1) (0x84b7ac..0x84b7ba): the
+## 4:3 flag, so its width is the scaled height x 4 / 3, centred: x += (W - H
+## * 4 / 3) / 2 in integers. Nothing else is drawn: the gold caption, the
+## gold-edged trough and the vignette this screen had before were OURS and
+## are gone. OPEN: what shows beside a 4:3 backdrop on a wider screen
+## (psmission's GDR_MASK, id 2, Style 1, has no art); black here.
 
 const DEFAULT_BACKDROP := "interface\\loading\\loading_default.ddj"
+## The three parts (READ, above): art, design rect.
+const FORM_DDJ := "interface\\loading\\loading_form.ddj"
+const GAUGE_DDJ := "interface\\loading\\gauge_loading.ddj"
+const NOWLOADING_DDJ := "interface\\loading\\nowloading.ddj"
+const FORM_RECT := Rect2i(241, 973, 1121, 64)
+const GAUGE_RECT := Rect2i(268, 985, 1064, 20)
+const NOWLOADING_RECT := Rect2i(268, 1025, 252, 35)
+const DESIGN_SIZE := Vector2(1600.0, 1200.0)
 
 ## A repaint inside a synchronous load waits until more than this many ms
 ## have passed since the last one (READ: FUN_00ba3fc0, `0x32 < GetTickCount()
 ## - last`), unless forced.
 const PAINT_INTERVAL_MS := 50
-## The gauge's fill colour (OURS, as the trough's; the client's gauge is
-## gauge_loading.ddj, not drawn here).
-const FILL_COLOR := Color(0.86, 0.66, 0.20)
 
 ## The art this screen shows (LoadingBackdrop picks it; DEFAULT_BACKDROP when
 ## the caller names none, or the named one is not in the archive).
 var _backdrop_path: String
 ## The Media.pk2 handed in by the caller, or null to open one in _ready.
 var _media: Pk2Reader
-## The gauge's fill, a canvas item of the trough's drawn straight through the
+## The gauge's fill, a canvas item of the gauge's drawn straight through the
 ## RenderingServer (round 785): a Control's size reaches the server only at
 ## its deferred redraw, so a fill set inside a synchronous load would not be
 ## in a repaint made there (`paint`). Freed with the screen.
 var _fill_item := RID()
+## The gauge's full width on screen (GAUGE_RECT scaled).
 var _bar_width := 0.0
-var _caption: Label
+## The parts as built (round 848): the backdrop, loading_form, the gauge's
+## holder and nowloading -- each null when the archive lacks its art (the
+## gauge's holder is always made).
+var _backdrop: TextureRect = null
+var _form: TextureRect = null
+var _gauge: Control = null
+var _gauge_tex: Texture2D = null
+var _nowloading: TextureRect = null
 ## The art this screen shows (after any fallback).
 func backdrop_path() -> String:
 	return _backdrop_path
@@ -129,41 +164,97 @@ func _ready() -> void:
 		media_open_ms = Time.get_ticks_msec() - t_open
 		media_source = "opened" if media != null else "none"
 	var t_backdrop := Time.get_ticks_msec()
-	var bg := FrontEndUi.backdrop(media, _backdrop_path)
+	var bg := _art(media, _backdrop_path)
 	# An archive without the zone's art (LoadingBackdrop's choice) falls back
 	# to the default (OURS), so the screen is never bare.
 	if bg == null and _backdrop_path != DEFAULT_BACKDROP and media != null:
 		print("LoadingScreen: %s not in Media.pk2 -- %s instead" % [_backdrop_path, DEFAULT_BACKDROP])
 		_backdrop_path = DEFAULT_BACKDROP
-		bg = FrontEndUi.backdrop(media, _backdrop_path)
+		bg = _art(media, _backdrop_path)
 	var backdrop_ms := Time.get_ticks_msec() - t_backdrop
+	_backdrop = bg
 	if bg != null:
+		bg.name = "Back"
 		add_child(bg)
-	add_child(FrontEndUi.vignette())
-
-	var bar_w := 760.0
-	_caption = FrontEndUi.label("NOW LOADING...", 22)
-	_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_caption.size = Vector2(400, 30)
-	_caption.position = Vector2(screen.x * 0.5 - 200, screen.y - 118)
-	add_child(_caption)
-
-	var trough := Panel.new()
-	trough.add_theme_stylebox_override("panel", FrontEndUi.plate_style(Color(0.05, 0.05, 0.06, 0.95), FrontEndUi.GOLD_EDGE))
-	trough.size = Vector2(bar_w, 26)
-	trough.position = Vector2(screen.x * 0.5 - bar_w * 0.5, screen.y - 80)
-	add_child(trough)
-	_bar_width = bar_w - 8.0
+	# READ (FUN_0084b6e0): loading_form, then the gauge, then nowloading.
+	_form = _art(media, FORM_DDJ)
+	if _form != null:
+		_form.name = "Form"
+		add_child(_form)
+	_gauge = Control.new()
+	_gauge.name = "Gauge"
+	_gauge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_gauge)
+	_gauge_tex = FrontEndUi.load_ddj(media, GAUGE_DDJ) if media != null else null
+	_nowloading = _art(media, NOWLOADING_DDJ)
+	if _nowloading != null:
+		_nowloading.name = "NowLoading"
+		add_child(_nowloading)
 	_fill_item = RenderingServer.canvas_item_create()
-	RenderingServer.canvas_item_set_parent(_fill_item, trough.get_canvas_item())
-	_draw_fill()
+	RenderingServer.canvas_item_set_parent(_fill_item, _gauge.get_canvas_item())
+	_relayout(screen)
+	resized.connect(func() -> void: _relayout(size))
 	# The frame this screen joined the tree in (it is drawn from the next one
 	# on), how its archive was come by, and what the screen itself cost --
 	# the line a load log is read by (client/tools/README.md, "Load
 	# benchmark").
-	print("LoadingScreen: up at frame %d (media %s, %d ms; backdrop %s %s, %d ms; built in %d ms)" % [
+	print("LoadingScreen: up at frame %d (media %s, %d ms; backdrop %s %s, %d ms; form %s, gauge %s, nowloading %s; built in %d ms)" % [
 		Engine.get_frames_drawn(), media_source, media_open_ms, _backdrop_path.get_file(),
-		"decoded" if bg != null else "missing", backdrop_ms, Time.get_ticks_msec() - t_start])
+		"decoded" if bg != null else "missing", backdrop_ms, "drawn" if _form != null else "missing",
+		"drawn" if _gauge_tex != null else "missing", "drawn" if _nowloading != null else "missing",
+		Time.get_ticks_msec() - t_start])
+
+## A part's art as a TextureRect scaled to the rect it is given, or null.
+static func _art(media: Pk2Reader, path: String) -> TextureRect:
+	var tex := FrontEndUi.load_ddj(media, path) if media != null else null
+	if tex == null:
+		return null
+	var tr := TextureRect.new()
+	tr.texture = tex
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_SCALE
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return tr
+
+## READ (FUN_00849c70 with its 4:3 flag off): a design rect on a screen of
+## `screen` pixels, x and width by W / 1600, y and height by H / 1200, each
+## made whole (FUN_00b42d10).
+static func scaled_rect(rect: Rect2i, screen: Vector2) -> Rect2:
+	var k := Vector2(screen.x / DESIGN_SIZE.x, screen.y / DESIGN_SIZE.y)
+	return Rect2(roundf(rect.position.x * k.x), roundf(rect.position.y * k.y),
+		roundf(rect.size.x * k.x), roundf(rect.size.y * k.y))
+
+## READ (FUN_00849c70 with its 4:3 flag on, 0x849cb4..0x849cd0): the backdrop
+## (0, 0, 1600 x 1200 scaled) made 4:3 from its height and centred: d = (w -
+## h * 4 / 3) / 2 in integer division, x + d, width w - 2d.
+static func backdrop_rect(screen: Vector2) -> Rect2:
+	var r := scaled_rect(Rect2i(0, 0, 1600, 1200), screen)
+	var w := int(r.size.x)
+	var h := int(r.size.y)
+	@warning_ignore("integer_division")
+	var d: int = (w - (h * 4) / 3) / 2
+	return Rect2(r.position.x + d, r.position.y, w - 2 * d, h)
+
+func _relayout(screen: Vector2) -> void:
+	if screen.x <= 0.0 or screen.y <= 0.0 or _gauge == null:
+		return
+	if _backdrop != null:
+		var b := backdrop_rect(screen)
+		_backdrop.position = b.position
+		_backdrop.size = b.size
+	if _form != null:
+		var f := scaled_rect(FORM_RECT, screen)
+		_form.position = f.position
+		_form.size = f.size
+	var g := scaled_rect(GAUGE_RECT, screen)
+	_gauge.position = g.position
+	_gauge.size = g.size
+	_bar_width = g.size.x
+	if _nowloading != null:
+		var n := scaled_rect(NOWLOADING_RECT, screen)
+		_nowloading.position = n.position
+		_nowloading.size = n.size
+	_draw_fill()
 
 ## Puts this screen over every sibling added after it. CanvasItem draw order
 ## is child order, so a screen put up before the HUD is built (World3D._ready
@@ -191,12 +282,17 @@ func set_progress(fraction: float) -> void:
 func fill_width() -> float:
 	return _bar_width * progress
 
+## READ (CIFGauge 0x6387d0 -> 0x653140): the drawn width and the texture's U
+## both scale by the value, so gauge_loading.ddj is cut at the fill's edge.
 func _draw_fill() -> void:
 	if not _fill_item.is_valid():
 		return
 	RenderingServer.canvas_item_clear(_fill_item)
-	if progress > 0.0:
-		RenderingServer.canvas_item_add_rect(_fill_item, Rect2(4, 4, _bar_width * progress, 18), FILL_COLOR)
+	if progress > 0.0 and _gauge_tex != null and _gauge != null:
+		var tex_size := _gauge_tex.get_size()
+		RenderingServer.canvas_item_add_texture_rect_region(_fill_item,
+			Rect2(0, 0, _bar_width * progress, _gauge.size.y), _gauge_tex.get_rid(),
+			Rect2(0, 0, tex_size.x * progress, tex_size.y))
 
 ## The gauge at `fraction`, repainted now from inside a load that does not
 ## yield the main thread (round 785; the client's FUN_00ba3fc0): when more
@@ -228,6 +324,7 @@ func paint(fraction: float, force: bool = false) -> bool:
 ## `paint` makes is logged too, on the same clock.
 static var _qa_framelog := OS.get_environment("OPENSRO_QA_FRAMELOG") != ""
 
+## Kept for callers: the client's screen has no caption text (its "NOW
+## LOADING" is nowloading.ddj's art, READ above), so this only logs.
 func set_caption(text: String) -> void:
-	if _caption != null:
-		_caption.text = text
+	print("LoadingScreen: caption '%s' not drawn (the client's screen has none)" % text)

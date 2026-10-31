@@ -52,9 +52,11 @@ const SLOT_HEIGHT_FRAC := 0.135
 var server_address_edit: LineEdit
 var username_edit: LineEdit
 var password_edit: LineEdit
-var login_button: Button
-var register_button: Button
+var login_button: BaseButton
+var register_button: BaseButton
 var status_label: Label
+## OURS (round 848): the Register button's caption.
+const REGISTER_TEXT := "Register"
 
 var _pending_action := "" # "login" or "register", sent once connected
 
@@ -64,9 +66,6 @@ var _pending_action := "" # "login" or "register", sent once connected
 ## into window 9 by hand (0x8667d0, 39 chars at 0xdd8b6c), over the layout's
 ## own login_window.ddj.
 const LOGIN_WINDOW_DDJ := "interface\\outer\\login_window_europe.ddj"
-## The buttons' three states: the layout's button.ddj and its _focus/_press
-## siblings in Media.pk2 (the same naming every outer button uses).
-const BUTTON_STATES := ["", "_focus", "_press"]
 ## The labels' and buttons' text keys (READ, pstitle.txt's Text= fields):
 ## UIO_CTL_ID, UIO_CTL_PASSWORD, UIO_CTL_SELECT_SERVER, UIO_CTL_CONNECT,
 ## UIO_CTL_EXIT, looked up in textuisystem.txt.
@@ -96,7 +95,7 @@ var _title: TitleIntro = null
 var _query: ThemeQuery = null
 var _theme: FrontEndTheme = null
 var _login_window: Control = null
-var _exit_button: Button = null
+var _exit_button: BaseButton = null
 var _text: UiTextTable = null
 var _skip_pending := false
 var _layout: UiLayoutParser.LayoutDef = null
@@ -110,7 +109,7 @@ var _selected: ClientConfig.ServerEntry = null
 ## OPENSRO_QA_SERVER's address, which a QA run connects to whatever the
 ## config lists.
 var _address_override := ""
-var _list_button: Button = null
+var _list_button: BaseButton = null
 var _server_list: ServerListWindow = null
 ## What the open server list hid (_set_login_visible).
 var _hidden_for_list: Array = []
@@ -496,14 +495,13 @@ func _build_title_ui(custom_dir: String) -> void:
 	_exit_button.pressed.connect(func(): get_tree().quit())
 	add_child(_exit_button)
 
-	# OURS: account creation for testers (retail has no such link), small,
-	# under the buttons.
-	register_button = Button.new()
-	register_button.text = "Register a new account"
-	register_button.flat = true
-	register_button.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-	register_button.add_theme_color_override("font_color", Color(0.86, 0.78, 0.5))
-	register_button.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.72))
+	# OURS: account creation (retail has no such button). Round 848: built
+	# from the title's own parts -- Connect's def (outer\button.ddj, 91x41,
+	# its font and colour) with the caption "Register" -- centred under
+	# Connect and Exit (_layout_login_window), where it was a flat Godot
+	# Button in a gold of our own.
+	register_button = _art_button(_frame.def(FrontEndFrame.ID_OK), "", REGISTER_TEXT)
+	register_button.name = "RegisterButton"
 	register_button.pressed.connect(_on_register_pressed)
 	add_child(register_button)
 
@@ -548,9 +546,10 @@ func _layout_login_window() -> void:
 	_login_window.position = Vector2(c.x - 0x90, c.y + 6)
 	login_button.position = Vector2(c.x - 100, c.y + 0x9c)
 	_exit_button.position = Vector2(c.x + 9, c.y + 0x9c)
+	# OURS: Register centred under the pair (which spans cx - 100 .. cx + 100),
+	# 6 below it.
 	var below := login_button.position.y + login_button.size.y
-	register_button.size = Vector2(220, 22)
-	register_button.position = Vector2(c.x - 110, below + 6)
+	register_button.position = Vector2(c.x - floorf(register_button.size.x * 0.5), below + 6)
 	var mr := _frame.message_rect()
 	status_label.position = mr.position
 	status_label.size = mr.size
@@ -599,6 +598,10 @@ static func style_login_edit(field: LineEdit, d: UiLayoutParser.ControlDef, secr
 	for sb in ["normal", "focus", "read_only"]:
 		field.add_theme_stylebox_override(sb, empty)
 	field.custom_minimum_size = Vector2.ZERO
+	# Round 848: CIFEdit's caret, no selection, no clipboard, no context
+	# menu (CifEditStyle, READ); the login's two edits keep the class's
+	# 512-character default (CPSTitle sets none).
+	CifEditStyle.apply(field, d.font_color if d != null else Color.WHITE)
 	if parent != null:
 		parent.add_child(field)
 	if d != null:
@@ -642,26 +645,16 @@ static func _make_read_only(field: LineEdit) -> void:
 	# Read-only keeps the font colour (Godot greys it by default).
 	field.add_theme_color_override("font_uneditable_color", field.get_theme_color("font_color"))
 
-func _art_button(d: UiLayoutParser.ControlDef, text_key: String, fallback: String) -> Button:
-	var b := Button.new()
-	b.text = _text_for(text_key, fallback)
-	b.size = Vector2(d.rect.size) if d != null else Vector2(91, 41)
-	b.custom_minimum_size = b.size
-	b.add_theme_font_size_override("font_size", _font_size(d.font_index if d != null else 0))
-	b.add_theme_color_override("font_color", d.font_color if d != null else Color.WHITE)
-	var base := d.ddj if d != null and d.ddj != "" else "interface\\outer\\button.ddj"
-	var styles := ["normal", "hover", "pressed"]
-	for i in range(BUTTON_STATES.size()):
-		var path: String = base.get_basename() + str(BUTTON_STATES[i]) + ".ddj"
-		var tex := FrontEndUi.load_ddj(_media, path)
-		if tex == null:
-			continue
-		var sb := StyleBoxTexture.new()
-		sb.texture = tex
-		b.add_theme_stylebox_override(styles[i], sb)
-		if i == 1:
-			b.add_theme_stylebox_override("focus", sb)
-	return b
+## A layout button as the client builds a CIFButton (round 848,
+## FrontEndUi.cif_button): its art's states, its caption in the client's face.
+func _art_button(d: UiLayoutParser.ControlDef, text_key: String, fallback: String) -> TextureButton:
+	return FrontEndUi.cif_button(_ui_builder(), d, _text_for(text_key, fallback))
+
+var _builder_cache: UiBuilder = null
+func _ui_builder() -> UiBuilder:
+	if _builder_cache == null:
+		_builder_cache = UiBuilder.new(_media, _text)
+	return _builder_cache
 
 func _font_size(index: int) -> int:
 	return UiBuilder.FONT_SIZES[clampi(index, 0, UiBuilder.FONT_SIZES.size() - 1)]
@@ -687,6 +680,14 @@ func _load_text_table() -> UiTextTable:
 func _on_title_login_shown() -> void:
 	print("LOGIN: usable at %d ms" % (Time.get_ticks_msec() - _started_ms))
 	_focus_first_empty()
+	# OPENSRO_QA_SERVER_LIST=<seconds> (round 848, QA only, OURS): that long
+	# after the login window is up, LIST is pressed (the server list's
+	# buttons in a render); needs setting/config.yaml's servers.
+	var qa_list := OS.get_environment("OPENSRO_QA_SERVER_LIST")
+	if qa_list != "" and is_inside_tree():
+		get_tree().create_timer(qa_list.to_float()).timeout.connect(func() -> void:
+			print("QA SERVER LIST: LIST pressed at frame %d" % Engine.get_frames_drawn())
+			_open_server_list())
 
 ## READ: a left button press (CPSTitle::vslot_017, message 0x201) or any key
 ## (FUN_0086ae50) while the login window is not up brings it in at once.
@@ -717,6 +718,11 @@ func _input(event: InputEvent) -> void:
 
 # --- Building the screen ---------------------------------------------------
 
+## The screen without the player's Media.pk2 or its pstitle.txt (round 848's
+## census: reachable only by a run with no game data, where none of the
+## original's art exists to build from -- so these stay plain Godot widgets,
+## dev-only by construction; every install a player logs in from has the
+## archive and takes _build_title_ui).
 func _build_ui() -> void:
 	# A dark ground under everything, so a missing backdrop is black, not the
 	# host's theme.
@@ -798,16 +804,17 @@ func _build_ui() -> void:
 
 	# Register kept as a small link under the buttons -- the original has a
 	# separate flow, but a tester needs to make an account first.
-	register_button = _text_button("Register a new account", Vector2(220.0, 30.0))
-	register_button.flat = true
-	register_button.add_theme_font_size_override("font_size", 13)
-	register_button.add_theme_color_override("font_color", Color(0.86, 0.78, 0.5))
-	register_button.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.72))
-	register_button.add_theme_color_override("font_outline_color", Color.BLACK)
-	register_button.add_theme_constant_override("outline_size", 3)
-	register_button.position = Vector2(panel_size.x * 0.5 - 110.0, panel_size.y + 62.0)
-	register_button.pressed.connect(_on_register_pressed)
-	panel.add_child(register_button)
+	var reg := _text_button("Register a new account", Vector2(220.0, 30.0))
+	reg.flat = true
+	reg.add_theme_font_size_override("font_size", 13)
+	reg.add_theme_color_override("font_color", Color(0.86, 0.78, 0.5))
+	reg.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.72))
+	reg.add_theme_color_override("font_outline_color", Color.BLACK)
+	reg.add_theme_constant_override("outline_size", 3)
+	reg.position = Vector2(panel_size.x * 0.5 - 110.0, panel_size.y + 62.0)
+	reg.pressed.connect(_on_register_pressed)
+	panel.add_child(reg)
+	register_button = reg
 
 	status_label = Label.new()
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
