@@ -291,7 +291,7 @@ func (r *LobbyResult) Encode() []byte {
 // trailer is what 0x3038's Own is to an observer, the item's own id, whose
 // glow and seal the model keeps (docs/protocol/item_switchers.md 3a). A
 // retail client reads the count and that many records and stops (READ, the
-// list handler around 0x85f9c0: FUN_0085e620 then FUN_0085a580 per record,
+// list handler FUN_0085f840: FUN_0085e620 then FUN_0085a580 per record,
 // nothing after), so it never sees the trailer.
 func (r *LobbyResult) appendOwnTrailer(out []byte) []byte {
 	type entry struct {
