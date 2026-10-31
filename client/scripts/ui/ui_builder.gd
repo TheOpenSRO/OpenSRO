@@ -600,8 +600,33 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 		label.name = "ButtonLabel"
 		label.text = _resolve_text(def.text)
 		btn.add_child(label)
-
+	# READ (round 848, lane F): a disabled CIFButton draws its caption in
+	# 0xffe6e6e6 -- SetEnable 0x655ec0(false) switches the text to state 3,
+	# whose colour CIFButton's slot 40 (0x655ea0, called by the loader at
+	# 0x8b5974) sets to 0xffe6e6e6 -- and enabling it again brings back the
+	# colour it had. A TextureButton redraws when its disabled flag changes,
+	# so the caption follows on `draw`.
+	btn.draw.connect(func() -> void: sync_disabled_caption(btn))
 	return btn
+
+## READ (above): CIFButton's disabled caption colour.
+const DISABLED_CAPTION := Color8(0xe6, 0xe6, 0xe6, 0xff)
+const _ENABLED_CAPTION_META := &"enabled_caption_colour"
+
+## Greys `b`'s caption while it is disabled and gives it back the colour it
+## had (the layout's, or whatever its window set since) when enabled again.
+static func sync_disabled_caption(b: BaseButton) -> void:
+	var l := b.get_node_or_null("ButtonLabel") as Label
+	if l == null:
+		return
+	if b.disabled:
+		if not b.has_meta(_ENABLED_CAPTION_META):
+			b.set_meta(_ENABLED_CAPTION_META, l.get_theme_color(&"font_color"))
+		if l.get_theme_color(&"font_color") != DISABLED_CAPTION:
+			l.add_theme_color_override(&"font_color", DISABLED_CAPTION)
+	elif b.has_meta(_ENABLED_CAPTION_META):
+		l.add_theme_color_override(&"font_color", b.get_meta(_ENABLED_CAPTION_META))
+		b.remove_meta(_ENABLED_CAPTION_META)
 
 ## Artwork from this directory is a repeating pattern, whatever control
 ## names it. A `CIFStatic` carrying one -- ifguild's `GDR_GUILD_BG` is

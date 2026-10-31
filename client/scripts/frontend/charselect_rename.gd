@@ -62,10 +62,10 @@ func open_for(char_name: String) -> void:
 		_line("Enter the new name of your character.")
 		return
 	box.accepted.connect(_on_typed)
-	# Round 848: CIFEdit's caret and rules (CifEditStyle, READ); HudCosBox is
-	# another lane's file, so they are applied here, its limit kept.
-	if box.edit != null:
-		CifEditStyle.apply(box.edit)
+	# Round 848: the box's edit is the layout's, so already a CifEdit
+	# (UiBuilder._build_edit); a plain one still gets CIFEdit's rules.
+	if box.edit != null and not box.edit is CifEdit:
+		CifEdit.style(box.edit, box.edit.get_theme_color(&"font_color"))
 	host.add_child(box)
 	box.centre_on(host.get_viewport().get_visible_rect().size)
 	print("SELECT: rename box for %s" % char_name)

@@ -90,15 +90,15 @@ func build(builder: UiBuilder) -> void:
 	var ed := _control(_def(main, ID_EDIT, "CIFEdit", Rect2i(260, 88, 95, 15)))
 	edit = ed as LineEdit
 	if edit == null:
-		edit = LineEdit.new()
+		edit = CifEdit.new()
 		edit.position = Vector2(260, 88)
 		edit.size = Vector2(95, 15)
 		add_child(edit)
 	edit.name = "CodeIn"
 	edit.placeholder_text = ""
 	edit.max_length = EDIT_MAX
-	# Round 848: CIFEdit's caret and rules (CifEditStyle, READ).
-	CifEditStyle.apply(edit)
+	# Round 848: CIFEdit's caret and rules (CifEdit, READ).
+	CifEdit.style(edit, (edit as CifEdit).colour() if edit is CifEdit else edit.get_theme_color(&"font_color"))
 	edit.text_submitted.connect(func(_t: String) -> void: _on_enter())
 	var acc := _control(_def(main, ID_ACCEPT, "CIFButton", Rect2i(257, 121, 55, 18)))
 	_set_text(acc, _text("UIIS_CTL_CONFIRM", "OK"))

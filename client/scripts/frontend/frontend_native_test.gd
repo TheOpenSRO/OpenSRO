@@ -3,7 +3,7 @@ extends SceneTree
 ## Round 848: no native Godot GUI before the world.
 ##   godot4 --headless --path client --script res://scripts/frontend/frontend_native_test.gd
 ##
-## - CifEditStyle (READ, CIFEdit): a 2 px caret in the font's colour blinking
+## - CifEdit (READ, CIFEdit; the one shared edit, ui/cif_edit.gd): a 2 px caret in the font's colour blinking
 ##   every 0.2 s; no context menu, no shortcut keys, no selecting; a click
 ##   only focuses the edit (the caret stays put) and typing still types;
 ##   Ctrl+V pastes nothing; Up / Down keep the focus; 512 characters by
@@ -17,7 +17,7 @@ extends SceneTree
 ##   Button.new() / Panel.new() outside the no-archive fallbacks; the
 ##   loading screen draws no Panel and no caption Label.
 ##
-## NEGATIVE (fails before round 848): CifEditStyle, FrontMessageBox and
+## NEGATIVE (fails before round 848): CifEdit, FrontMessageBox and
 ## FrontEndUi.cif_button do not exist (the suite's script loads FAIL),
 ## Boot.gd makes a ConfirmationDialog, CharacterSelect / ServerListWindow /
 ## Login make their buttons with Button.new(), the loading screen a Panel.
@@ -37,9 +37,9 @@ func _initialize() -> void:
 		print("FAIL the suite never reported (a script error stopped it)")
 		quit(1))
 	await process_frame
-	var have_edit := ResourceLoader.exists("res://scripts/frontend/cif_edit_style.gd")
+	var have_edit := ResourceLoader.exists("res://scripts/ui/cif_edit.gd")
 	var have_box := ResourceLoader.exists("res://scripts/frontend/front_message_box.gd")
-	_check(have_edit, "CifEditStyle exists")
+	_check(have_edit, "CifEdit exists")
 	_check(have_box, "FrontMessageBox exists")
 	if have_edit:
 		await _edit_rules()
@@ -76,24 +76,38 @@ func _edit_rules() -> void:
 	var holder := Control.new()
 	holder.size = Vector2(400, 200)
 	root.add_child(holder)
-	var a := LineEdit.new()
+	var a := CifEdit.new()
 	a.position = Vector2(10, 10)
 	a.size = Vector2(200, 20)
 	holder.add_child(a)
-	var b := LineEdit.new()
+	var b := CifEdit.new()
 	b.position = Vector2(10, 60)
 	b.size = Vector2(200, 20)
 	holder.add_child(b)
 	var colour := Color8(255, 103, 29)
-	CifEditStyle.apply(a, colour)
-	CifEditStyle.apply(b, colour)
-	_check(not a.context_menu_enabled and not a.shortcut_keys_enabled and not a.selecting_enabled \
+	CifEdit.style(a, colour)
+	CifEdit.style(b, colour)
+	# CifEdit keeps LineEdit's selecting on for the whole-text mark (Shift+Home
+	# / End, READ 0x635030) and refuses mouse selection itself: checked by a
+	# drag below rather than by the flag.
+	_check(not a.context_menu_enabled and not a.shortcut_keys_enabled \
 			and not a.middle_mouse_paste_enabled and not a.drag_and_drop_selection_enabled,
-		"no context menu, shortcut keys, selecting, middle-click paste or drag (READ: CIFEdit has none)")
+		"no context menu, shortcut keys, middle-click paste or drag (READ: CIFEdit has none)")
 	_check(a.get_theme_constant(&"caret_width") == 2, "the caret is 2 px wide (READ 0xe1b898)")
 	_check(a.get_theme_color(&"caret_color") == colour, "the caret is the font's colour (READ +0xa0)")
 	_check(a.caret_blink and is_equal_approx(a.caret_blink_interval, 0.2), "the caret blinks every 0.2 s (READ, rate 5)")
-	_check(a.max_length == 512, "512 characters by default (READ, +0x400 = 0x200)")
+	# No byte limit set (+0x3fc -1): the constructor's 512 characters
+	# (READ, +0x400 = 0x200 at 0x635d85), cut back as 0x636330 does.
+	a.text = "x".repeat(CifEdit.DEFAULT_CHAR_LIMIT - 1)
+	a.caret_column = a.text.length()
+	a.grab_focus()
+	await process_frame
+	for i in 3:
+		_key(KEY_Y, "y".unicode_at(0))
+		await process_frame
+	_check(a.max_length == 0 and a.text.length() == CifEdit.DEFAULT_CHAR_LIMIT and CifEdit.DEFAULT_CHAR_LIMIT == 512,
+		"typing stops at 512 characters by default (READ, +0x400 = 0x200; got %d)" % a.text.length())
+	a.text = ""
 	await process_frame
 	a.text = "abc"
 	a.caret_column = 1
@@ -114,6 +128,24 @@ func _edit_rules() -> void:
 	_key(KEY_DOWN)
 	await process_frame
 	_check(a.has_focus() and not b.has_focus(), "Down keeps the focus in the edit (READ: a no-op)")
+	# A press, a move and a release across the text select nothing (READ:
+	# 0x637290 case 0x201 only focuses; no mouse selection).
+	for ev in [[true, Vector2(14, 20)], [null, Vector2(150, 20)], [false, Vector2(150, 20)]]:
+		var e: InputEvent
+		if ev[0] == null:
+			var mm := InputEventMouseMotion.new()
+			mm.button_mask = MOUSE_BUTTON_MASK_LEFT
+			e = mm
+		else:
+			var mb := InputEventMouseButton.new()
+			mb.button_index = MOUSE_BUTTON_LEFT
+			mb.pressed = ev[0]
+			e = mb
+		e.position = ev[1]
+		e.global_position = ev[1]
+		root.push_input(e)
+		await process_frame
+	_check(not a.has_selection(), "a mouse drag selects nothing")
 	_click(Vector2(50, 20), MOUSE_BUTTON_RIGHT)
 	await process_frame
 	_check(a.get_menu() == null or not a.get_menu().visible, "a right click opens no menu")
@@ -213,4 +245,4 @@ func _sources() -> void:
 		"the loading screen draws no Panel and no caption label")
 	for p in ["res://scripts/Login.gd", "res://scripts/CharacterCreate.gd", "res://scripts/frontend/captcha_window.gd",
 			"res://scripts/frontend/charselect_rename.gd"]:
-		_check(_src(p).contains("CifEditStyle.apply("), "%s gives its edits CIFEdit's rules" % p.get_file())
+		_check(_src(p).contains("CifEdit"), "%s gives its edits CIFEdit's rules (CifEdit)" % p.get_file())

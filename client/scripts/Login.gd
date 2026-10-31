@@ -575,7 +575,7 @@ func _login_label(id: int, fallback: String) -> void:
 ## text -- the layout parser's own 0 = left, 1 = centre, 2 = right -- where
 ## the labels carry 0; the password field masks with PASSWORD_CHAR.
 func _login_edit(id: int, secret: bool) -> LineEdit:
-	var field := LineEdit.new()
+	var field := CifEdit.new()
 	KeyInput.line_edit_as_42(field)  # round 754
 	style_login_edit(field, _frame.login_def(id), secret, _login_window)
 	return field
@@ -599,9 +599,9 @@ static func style_login_edit(field: LineEdit, d: UiLayoutParser.ControlDef, secr
 		field.add_theme_stylebox_override(sb, empty)
 	field.custom_minimum_size = Vector2.ZERO
 	# Round 848: CIFEdit's caret, no selection, no clipboard, no context
-	# menu (CifEditStyle, READ); the login's two edits keep the class's
-	# 512-character default (CPSTitle sets none).
-	CifEditStyle.apply(field, d.font_color if d != null else Color.WHITE)
+	# menu (CifEdit, READ); the login's two edits keep the class's
+	# 512-character default (CPSTitle sets none: CifEdit.DEFAULT_CHAR_LIMIT).
+	CifEdit.style(field, d.font_color if d != null else Color.WHITE)
 	if parent != null:
 		parent.add_child(field)
 	if d != null:

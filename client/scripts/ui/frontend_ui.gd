@@ -153,20 +153,14 @@ static func cif_button(builder: UiBuilder, d: UiLayoutParser.ControlDef, text: S
 	# (+0x390); pressing changes the image only (0x656160), never the
 	# caption's place or colour. A TextureButton redraws when its disabled
 	# flag changes, so the caption follows on `draw`.
-	var normal: Color = def.font_color
-	b.draw.connect(func() -> void: _sync_caption(b, normal))
+	# UiBuilder._build_button greys the caption while disabled (READ there);
+	# the no-builder fallback above gets the same.
+	if builder == null:
+		b.draw.connect(func() -> void: UiBuilder.sync_disabled_caption(b))
 	return b
 
-## READ (above): CIFButton's disabled caption colour.
-const DISABLED_CAPTION := Color8(0xe6, 0xe6, 0xe6, 0xff)
-
-static func _sync_caption(b: BaseButton, normal: Color) -> void:
-	var l := b.get_node_or_null("ButtonLabel") as Label
-	if l == null:
-		return
-	var want := DISABLED_CAPTION if b.disabled else normal
-	if l.get_theme_color(&"font_color") != want:
-		l.add_theme_color_override(&"font_color", want)
+## READ (UiBuilder.DISABLED_CAPTION): CIFButton's disabled caption colour.
+const DISABLED_CAPTION := UiBuilder.DISABLED_CAPTION
 
 ## A CIFButton's caption (SetText): the label UiBuilder keeps under it,
 ## made the first time.

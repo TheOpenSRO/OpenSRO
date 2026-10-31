@@ -60,6 +60,19 @@ class_name CifEdit
 ## edit takes LineEdit's `max_length` as that byte count; which code page the
 ## player has is INFERRED from the OS locale (DBCS for ko / zh / ja).
 ##
+## **An edit no code limits takes 512 characters (READ).** The byte limit is
+## its own field: the constructor (0x635cc0) sets `+0x3fc` to -1 (0x635d39 /
+## 0x635d59, "no byte limit") and `+0x400` to 0x200 (0x635d85). WM_CHAR tests
+## `+0x3fc` first (0x6375db): -1 makes it insert only while the shown text's
+## length (`+0x1b0`, its wide string's) is below `+0x400` (0x6375f3..0x6375ff),
+## and 0x636330 cuts back to `+0x400` characters the same way. Only 0x634f80
+## (clamped 1..0x1000) sets the byte limit; 0x634fb0 sets `+0x400` and has no
+## direct caller. So the login's ID and password (CPSTitle sets none) take 512.
+## Here: `max_length` > 0 is a 0x634f80 byte limit; 0 is the 512 default,
+## counted in Godot's characters (the original counts UTF-16 units, so a
+## character outside the BMP counts two there -- not reproduced). OPEN: which
+## setter each of our callers' limits came from was not traced site by site.
+##
 ## **The whole-text mark (READ).** Shift+Home or Shift+End sets the edit's
 ## mark (`+0x41a`, 0x635030(1)), which gives the text board the background
 ## colour 0xff3b457a (0x635044); Home, End, Left and Right clear it
@@ -88,6 +101,8 @@ const CARET_WIDTH := 2
 const CARET_BLINK_SEC := 0.2
 ## The whole-text mark's background (READ, 0x635044: 0xff3b457a).
 const MARK_COLOUR := Color8(0x3b, 0x45, 0x7a)
+## The constructor's character limit with no byte limit set (READ, above).
+const DEFAULT_CHAR_LIMIT := 0x200
 
 var _colour := Color.WHITE
 
@@ -139,7 +154,14 @@ static func acp_bytes(s: String, dbcs: bool = dbcs_code_page()) -> int:
 ## `max_length` bytes is not taken (0x6375e6); any other change over it is cut
 ## back from the end (0x6362d0).
 func _hold_byte_limit(t: String) -> void:
-	if max_length <= 0 or acp_bytes(t) <= max_length:
+	if max_length <= 0:
+		# No byte limit: the 512-character default, cut back as 0x636330 does.
+		if t.length() > DEFAULT_CHAR_LIMIT:
+			var at0 := caret_column
+			text = t.left(DEFAULT_CHAR_LIMIT)
+			caret_column = mini(at0, DEFAULT_CHAR_LIMIT)
+		return
+	if acp_bytes(t) <= max_length:
 		return
 	var at := caret_column
 	var without := t.substr(0, at - 1) + t.substr(at) if at > 0 else t
@@ -163,6 +185,10 @@ static func style(edit: LineEdit, colour: Color) -> void:
 	edit.context_menu_enabled = false
 	edit.shortcut_keys_enabled = false
 	edit.middle_mouse_paste_enabled = false
+	edit.selecting_enabled = false
+	edit.drag_and_drop_selection_enabled = false
+	if "emoji_menu_enabled" in edit:
+		edit.set("emoji_menu_enabled", false)
 	edit.caret_blink = true
 	edit.caret_blink_interval = CARET_BLINK_SEC
 	edit.add_theme_constant_override("caret_width", CARET_WIDTH)

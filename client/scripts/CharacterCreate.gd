@@ -377,7 +377,7 @@ func _build_custom_panel() -> void:
 			var l := _label(d, _t(d.text))
 			_panel.add_child(l)
 	var ed := FrontEndFrame.by_id(sec, CharCreateModel.ID_NAME)
-	_name_edit = LineEdit.new()
+	_name_edit = CifEdit.new()
 	KeyInput.line_edit_as_42(_name_edit)  # round 754
 	_name_edit.name = "NameEdit"
 	_name_edit.max_length = CharCreateModel.NAME_MAX
@@ -387,9 +387,9 @@ func _build_custom_panel() -> void:
 		_name_edit.add_theme_stylebox_override(s, empty)
 	_name_edit.add_theme_font_size_override("font_size", _font_size(ed.font_index if ed != null else 0))
 	_name_edit.add_theme_color_override("font_color", ed.font_color if ed != null else Color.WHITE)
-	# Round 848: CIFEdit's caret and rules (CifEditStyle, READ); the limit
-	# stays the name's own.
-	CifEditStyle.apply(_name_edit, ed.font_color if ed != null else Color.WHITE)
+	# Round 848: CIFEdit's caret and rules (CifEdit, READ); the limit
+	# stays the name's own (as bytes, CifEdit's 0x634f80 rule).
+	CifEdit.style(_name_edit, ed.font_color if ed != null else Color.WHITE)
 	if ed != null:
 		_place_centred(_name_edit, Rect2(ed.rect))
 	_name_edit.text_submitted.connect(func(_t): _on_confirm())
