@@ -495,10 +495,8 @@ func _fixture_moved() -> PackedByteArray:
 func _test_world_rewalk(world_script: GDScript) -> void:
 	var world: Node = world_script.new()
 	var player := CharacterBody3D.new()
-	var label := Label.new()
 	var body := Node3D.new()
 	world.set("player", player)
-	world.set("monster_status_label", label)
 	(world.get("_monster_bodies") as Dictionary)[7] = body
 	(world.get("_monster_snapshots") as Dictionary)[7] = _snapshot(7, 30, 0)
 	var released := {"monster": 7, "skill": 0, "code": "", "stop": 10.0, "reach": 10.0, "tight": false, "retries": 0}
@@ -549,36 +547,17 @@ func _test_world_rewalk(world_script: GDScript) -> void:
 
 	# NEGATIVE (round 534): a released swing the server dropped gets no reply,
 	# so its entry used to outlive it. Any later request forgets it: the next
-	# swing or cast (_send_attack; not connected here, so nothing is sent) and
-	# the debug panel's Use button, which calls NetClient.use_skill itself.
+	# swing or cast (_send_attack; not connected here, so nothing is sent).
+	# (The debug tabs' Skills > Use, which did the same, went in round 848.)
 	world.set("_released_attack", released.duplicate())
 	world.call("_send_attack", 7, 0, "")
 	_check((world.get("_released_attack") as Dictionary).is_empty(), "a newer request forgets a stale release")
-	var skill_list := ItemList.new()
-	var monster_list := ItemList.new()
-	skill_list.add_item("Smash")
-	skill_list.select(0)
-	monster_list.add_item("Mangyang")
-	monster_list.select(0)
-	var skill_snap := SkillNet.SkillSnapshot.new()
-	skill_snap.skill_id = 50
-	var skills: Array[SkillNet.SkillSnapshot] = [skill_snap]
-	var monsters: Array[CombatNet.MonsterSnapshot] = [_snapshot(7, 30, 0)]
-	world.set("skill_list", skill_list)
-	world.set("monster_list", monster_list)
-	world.set("_skills", skills)
-	world.set("_monsters", monsters)
-	world.set("_released_attack", released.duplicate())
-	world.call("_on_skill_use_pressed")
-	_check((world.get("_released_attack") as Dictionary).is_empty(), "the debug panel's cast forgets a stale release")
 	world.set("_released_attack", released.duplicate())
 	world.call("_on_attack_result", refused)
 	_check(not (world.get("_pending_attack") as Dictionary).is_empty(),
 		"a refusal right after a release still walks again (the release is not stale)")
 	world.set("_pending_attack", {})
 	world.set("_has_move_target", false)
-	skill_list.free()
-	monster_list.free()
 
 	# The release itself records the attack: standing inside the reach, the
 	# pending attack goes out (not connected here, so nothing is sent).
@@ -590,6 +569,5 @@ func _test_world_rewalk(world_script: GDScript) -> void:
 	world.call("_drop_pending_attack")
 	_check((world.get("_released_attack") as Dictionary).is_empty(), "anything the player does next forgets it")
 	body.free()
-	label.free()
 	player.free()
 	world.free()

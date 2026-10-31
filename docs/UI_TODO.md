@@ -503,7 +503,8 @@ buttons, a scrollback over `GDR_LIST_CHATTING` and a real input line over `GDR_C
 and the developer ChatPanel is retired. Verified end to end: a message typed by the QA run went to
 the server and came back into the window.
 
-Still there: the Change Zone box, which has to stay until there is another way to travel. Since
+The Change Zone box went in round 848 with the rest of the prototype's native UI (travel is the
+teleport gates; the developer panel keeps a zone box in developer builds). Since
 round 634 the chat has its five code-built tabs, each list fed by type as CIFChatViewer files it,
 the left scroll bar and the channel marks (docs/protocol/chat.md; what is left is in TODO.md's
 "Chat (round 634)").

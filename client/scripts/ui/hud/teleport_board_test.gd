@@ -264,8 +264,6 @@ func _world_checks(panels_script: GDScript) -> void:
 	if not world_ok:
 		return
 	var world: Node = world_script.new()
-	var chat := RichTextLabel.new()
-	world.set("chat_log", chat)
 	var panels: Node = panels_script.new(_builder())
 	root.add_child(panels)
 	world.set("_hud_panels", panels)
@@ -286,7 +284,7 @@ func _world_checks(panels_script: GDScript) -> void:
 	# The gate's talk line lists the point's six links in the talk box, in the
 	# link table's file order. NEGATIVE: round 578 opened a board window.
 	world.call("_on_npc_service_selected", "teleport")
-	_check(chat.get_parsed_text().find("not available yet") < 0, "the teleport line no longer answers 'not available yet' (chat: %s)" % chat.get_parsed_text().strip_edges())
+	_check(String(world.call("log_text")).find("not available yet") < 0, "the teleport line no longer answers 'not available yet' (chat: %s)" % String(world.call("log_text")).strip_edges())
 	var shown: bool = panels.call("teleport_list_shown") if panels.has_method("teleport_list_shown") else false
 	_check(shown, "the teleport line lists the destinations in the talk box")
 	_check(_shown(panels) == ["npctalk"], "and opens no other window (got %s)" % [_shown(panels)])
@@ -298,11 +296,11 @@ func _world_checks(panels_script: GDScript) -> void:
 		_check(drawn[8] == "7. Fixture end.", "the end line is numbered after the destinations (got %s)" % drawn[8])
 	_check(world.get("_teleport_gate_point_id") == 1, "the list remembers Jangan's point, 1, as the click's source")
 	# Offline, a click on a line says so rather than sending.
-	chat.clear()
+	world.set("_log_tail", PackedStringArray())
 	var body := _talk_body(panels)
 	if body != null:
 		body.meta_clicked.emit("teleport_dest:2")
-	_check(chat.get_parsed_text().find("needs the server") >= 0, "a line clicked offline says it needs the server (chat: %s)" % chat.get_parsed_text().strip_edges())
+	_check(String(world.call("log_text")).find("needs the server") >= 0, "a line clicked offline says it needs the server (chat: %s)" % String(world.call("log_text")).strip_edges())
 
 	# One request at a time (round 578's review): with a request out, a second
 	# click is ignored before anything else -- here it does not even reach the
@@ -311,17 +309,17 @@ func _world_checks(panels_script: GDScript) -> void:
 	_check(has_pending, "World3D has _teleport_request_pending")
 	if has_pending:
 		world.set("_teleport_request_pending", true)
-		chat.clear()
+		world.set("_log_tail", PackedStringArray())
 		if body != null:
 			body.meta_clicked.emit("teleport_dest:2")
-		_check(chat.get_parsed_text().find("needs the server") < 0, "a click while a request is pending is ignored (chat: %s)" % chat.get_parsed_text().strip_edges())
+		_check(String(world.call("log_text")).find("needs the server") < 0, "a click while a request is pending is ignored (chat: %s)" % String(world.call("log_text")).strip_edges())
 		# Round 582: listing the destinations again keeps the request pending,
 		# so a second click before the reply is still ignored.
 		world.call("_on_npc_service_selected", "teleport")
 		_check(world.get("_teleport_request_pending") == true, "listing the destinations again keeps the pending request")
-		chat.clear()
+		world.set("_log_tail", PackedStringArray())
 		world.call("_on_teleport_requested", 2)
-		_check(chat.get_parsed_text().find("needs the server") < 0, "a click after listing them again, before the reply, is still ignored (chat: %s)" % chat.get_parsed_text().strip_edges())
+		_check(String(world.call("log_text")).find("needs the server") < 0, "a click after listing them again, before the reply, is still ignored (chat: %s)" % String(world.call("log_text")).strip_edges())
 
 	# The server's refusal leaves the list up to choose again; its yes marks
 	# the arrival, and the zone change after it closes the talk box.
@@ -347,10 +345,10 @@ func _world_checks(panels_script: GDScript) -> void:
 	# (the server would charge again). NEGATIVE: dae2dc9 cleared the request
 	# on the yes, so the click reached the send path ("needs the server").
 	_check(world.get("_teleport_request_pending") == true, "an accepted reply leaves the request pending until the zone change")
-	chat.clear()
+	world.set("_log_tail", PackedStringArray())
 	if body != null:
 		body.meta_clicked.emit("teleport_dest:175")
-	_check(chat.get_parsed_text().find("needs the server") < 0, "a click after the yes and before the zone change is ignored (chat: %s)" % chat.get_parsed_text().strip_edges())
+	_check(String(world.call("log_text")).find("needs the server") < 0, "a click after the yes and before the zone change is ignored (chat: %s)" % String(world.call("log_text")).strip_edges())
 	# The move then fails (warpTo's "not in the world"; the server refunds):
 	# the refused zone change ends the request, so a line works again.
 	var failed := WorldNet.ChangeZoneResult.new()
@@ -358,10 +356,10 @@ func _world_checks(panels_script: GDScript) -> void:
 	failed.reason = "fixture refusal"
 	world.call("_on_change_zone_result", failed)
 	_check(world.get("_teleport_request_pending") == false, "a refused zone change after the yes clears the request")
-	chat.clear()
+	world.set("_log_tail", PackedStringArray())
 	if body != null:
 		body.meta_clicked.emit("teleport_dest:175")
-	_check(chat.get_parsed_text().find("needs the server") >= 0, "and a click works again (chat: %s)" % chat.get_parsed_text().strip_edges())
+	_check(String(world.call("log_text")).find("needs the server") >= 0, "and a click works again (chat: %s)" % String(world.call("log_text")).strip_edges())
 	# A refused zone change that is no teleport's arrival leaves a request
 	# that is still out alone.
 	world.set("_teleport_request_pending", true)
@@ -369,15 +367,14 @@ func _world_checks(panels_script: GDScript) -> void:
 	_check(world.get("_teleport_request_pending") == true, "NEGATIVE: an unrelated refused zone change keeps a pending request")
 	world.set("_teleport_request_pending", false)
 
-	_zone_change_checks(world, panels, chat)
+	_zone_change_checks(world, panels)
 	world.free()
-	chat.free()
 	panels.queue_free()
 
 ## No gate UI survives a zone change (round 578's review): a talk box left up
 ## after the Jangan -> Donwhang arrival would list Jangan's destinations in
 ## Donwhang, and a click would send Jangan's links from there.
-func _zone_change_checks(world: Node, panels: Node, chat: RichTextLabel) -> void:
+func _zone_change_checks(world: Node, panels: Node) -> void:
 	panels.call("open_npc_talk", "Fixture Gate", "", [])
 	world.call("_on_npc_service_selected", "teleport")
 	var shown: bool = panels.call("teleport_list_shown") if panels.has_method("teleport_list_shown") else false
@@ -409,9 +406,9 @@ func _zone_change_checks(world: Node, panels: Node, chat: RichTextLabel) -> void
 		"a zone change forgets the gate being talked to (code '%s', point %s)" % [world.get("_talk_npc_code"), world.get("_teleport_gate_point_id")])
 	# The teleport line chosen afterwards (a stale click) lists nothing and
 	# says nothing.
-	chat.clear()
+	world.set("_log_tail", PackedStringArray())
 	world.call("_on_npc_service_selected", "teleport")
 	_check(_shown(panels).is_empty(), "the teleport line after a zone change opens nothing (got %s)" % [_shown(panels)])
-	_check(chat.get_parsed_text().strip_edges() == "", "and logs nothing (chat: %s)" % chat.get_parsed_text().strip_edges())
+	_check(String(world.call("log_text")).strip_edges() == "", "and logs nothing (chat: %s)" % String(world.call("log_text")).strip_edges())
 	world.set("_loading_screen", null)
 	screen.free()

@@ -100,6 +100,15 @@ func _make_world() -> Node:
 	var scene := load("res://scenes/World3D.tscn") as PackedScene
 	if not sub.can_instantiate() or scene == null:
 		return null
+	# Round 848: World3D.tscn no longer carries the first prototype's Labels,
+	# whose entry into the tree loaded Godot's default font before the first
+	# name plate did. With no archive face here a plate draws in that font,
+	# and its first load (about 3 ms, MEASURED) fell inside the dressing's
+	# 4 ms frame budget, leaving the second body for the next frame. The
+	# suite loads the font first, as the scene's Labels used to.
+	var warm := Label.new()
+	warm.text = "Bram Cleo Dara Eun Aria 0123456789"
+	root.add_child(warm)
 	var world: Node = scene.instantiate()
 	world.set_script(sub)
 	root.add_child(world)

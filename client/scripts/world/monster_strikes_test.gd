@@ -225,13 +225,11 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	var world: Node = world_script.new()
 	var player := CharacterBody3D.new()
 	player.position = Vector3(10, 0, 0)
-	var label := Label.new()
 	var body := Node3D.new()
 	body.set_meta("model", "mob\\china\\mangnyang.bsr")
 	var other := Node3D.new()
 	other.position = Vector3(0, 0, 10)
 	world.set("player", player)
-	world.set("monster_status_label", label)
 	(world.get("_monster_bodies") as Dictionary)[7] = body
 	(world.get("_other_bodies") as Dictionary)[55] = other
 	var waits: Dictionary = world.get("_strike_waits")
@@ -274,9 +272,9 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	# A killing counter shows the death line.
 	var r4 := _result(200, 76, false, true, true)
 	MonsterStrikes.expect(waits, 7, r4)
-	label.text = ""
+	world.set("_combat_line", "")
 	world.call("_on_monster_attacked", _push_for(r4, 42))
-	_check(label.text == "You were killed. Lost 25900 experience.", "a killing blow on this player shows the death line (got '%s')" % label.text)
+	_check(String(world.get("_combat_line")) == "You were killed. Lost 25900 experience.", "a killing blow on this player shows the death line (got '%s')" % String(world.get("_combat_line")))
 	waits.clear()
 
 	# A late push for a killing counter the result already drew (CLAIM_DRAWN)
@@ -285,10 +283,10 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	# Until round 544 it wrote the death line and the push's HP over them.
 	var r5 := _result(200, 76, false, true, true)
 	world.call("_draw_counter_at_landing", 7, r5, 0.0)
-	label.text = "Hit for 30 -- it died!"
+	world.set("_combat_line", "Hit for 30 -- it died!")
 	world.call("_on_monster_attacked", _push_for(r5, 42))
-	_check(label.text == "Hit for 30 -- it died!" and not waits.has(7),
-		"a late push for a counter the result drew is swallowed without repainting (got '%s')" % label.text)
+	_check(String(world.get("_combat_line")) == "Hit for 30 -- it died!" and not waits.has(7),
+		"a late push for a counter the result drew is swallowed without repainting (got '%s')" % String(world.get("_combat_line")))
 
 	# A body walking a leg is not turned by a blow it deals: it keeps facing
 	# its path, as a spawn heading leaves it (round 544).
@@ -304,26 +302,25 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	# turned to the player, and a killing one shows the death line. Before
 	# this round it was the swing alone, unturned, and no line.
 	body.rotation.y = 0.0
-	label.text = ""
+	world.set("_combat_line", "")
 	world.call("_on_monster_attacked", _push_for(_result(200, 76, false, true, true), 77))
 	world.call("_step_combat_faces", 1.0)
 	_check(_front(body).is_equal_approx(Vector3(1, 0, 0)),
 		"an unpaired blow on an undrawn target is drawn on this player: the monster turns to +X (front %s)" % str(_front(body)))
-	_check(label.text == "You were killed. Lost 25900 experience.",
-		"and a killing one shows the death line (got '%s')" % label.text)
+	_check(String(world.get("_combat_line")) == "You were killed. Lost 25900 experience.",
+		"and a killing one shows the death line (got '%s')" % String(world.get("_combat_line")))
 	_check(not waits.has(7), "and it leaves no wait behind")
 	# ...unless that target left the zone a moment ago: the swing alone.
 	body.rotation.y = 0.0
-	label.text = ""
+	world.set("_combat_line", "")
 	(world.get("_recently_left") as Dictionary)[78] = Time.get_ticks_msec()
 	world.call("_on_monster_attacked", _push_for(_result(200, 76, false, true, true), 78))
-	_check(body.rotation.y == 0.0 and label.text == "",
-		"a blow on a player who left inside the grace window is the swing alone (label '%s')" % label.text)
+	_check(body.rotation.y == 0.0 and String(world.get("_combat_line")) == "",
+		"a blow on a player who left inside the grace window is the swing alone (line '%s')" % String(world.get("_combat_line")))
 	(world.get("_recently_left") as Dictionary).clear()
 
 	other.free()
 	body.free()
-	label.free()
 	player.free()
 	world.free()
 
@@ -375,14 +372,12 @@ func _test_world_exchange_line(world_script: GDScript) -> void:
 func _test_world_dead_state(world_script: GDScript) -> void:
 	var world: Node = world_script.new()
 	var player := CharacterBody3D.new()
-	var label := Label.new()
 	world.set("player", player)
-	world.set("monster_status_label", label)
 
 	# Today's server: the kill and the respawn in one report, HP 76 after.
 	world.call("_on_monster_attacked", _push_for(_result(200, 76, false, true, true), 77))
 	_check(not bool(world.get("_player_dead")), "a kill reported with the respawned HP leaves the player alive (today's server)")
-	_check(label.text == "You were killed. Lost 25900 experience.", "and still shows the death line (got '%s')" % label.text)
+	_check(String(world.get("_combat_line")) == "You were killed. Lost 25900 experience.", "and still shows the death line (got '%s')" % String(world.get("_combat_line")))
 
 	# A server with the dead state: HP 0, and the player stays down.
 	world.set("_has_move_target", true)
@@ -395,25 +390,9 @@ func _test_world_dead_state(world_script: GDScript) -> void:
 	_check(String(world.call("_dispatch_left_click", Vector2.ZERO)) == "dead", "a world click does nothing while dead")
 	world.call("_attack_monster", 7)
 	_check((world.get("_pending_attack") as Dictionary).is_empty(), "an attack while dead is neither walked nor sent")
-	# Round 550: the Skills tab's Use, the one cast route round 548 missed. A
-	# skill and a target are selected, so the ungated path would reach the
-	# send -- and would first forget the released attack (_released_attack),
-	# which is the sentinel here (NetClient is not connected in this suite).
-	var skill_list := ItemList.new()
-	skill_list.add_item("Smash")
-	skill_list.select(0)
-	var monster_list := ItemList.new()
-	monster_list.add_item("Mangyang")
-	monster_list.select(0)
-	var skills: Array[SkillNet.SkillSnapshot] = [SkillNet.SkillSnapshot.new()]
-	var monsters: Array[CombatNet.MonsterSnapshot] = [CombatNet.MonsterSnapshot.new()]
-	world.set("skill_list", skill_list)
-	world.set("monster_list", monster_list)
-	world.set("_skills", skills)
-	world.set("_monsters", monsters)
-	world.set("_released_attack", {"monster_id": 7})
-	world.call("_on_skill_use_pressed")
-	_check(not (world.get("_released_attack") as Dictionary).is_empty(), "the Skills tab's Use while dead sends nothing (the released attack is not forgotten)")
+	# Round 550's Skills tab's Use (the one cast route round 548 missed) went
+	# with the debug tabs in round 848: the casts left go through the dead
+	# gate _attack_monster shows above.
 	# Round 550: a held pose is not replaced. The die clip is held; a swing
 	# whose result arrives after it is refused, and the held clip stays.
 	var die := _clip(2)
@@ -441,20 +420,13 @@ func _test_world_dead_state(world_script: GDScript) -> void:
 	world.call("_on_revive_result", revived)
 	_check(not bool(world.get("_player_dead")), "a revive result with no error brings the player back")
 	_check(not bool(world.get("_player_one_shot_hold")), "and releases the held pose")
-	# Alive again: the Skills tab's Use goes through (to a NetClient that is
-	# not connected, which sends nothing), and a one-frame die clip -- one
-	# that cannot start -- sets no hold on the swing that is playing.
-	world.set("_released_attack", {"monster_id": 7})
-	world.call("_on_skill_use_pressed")
-	_check((world.get("_released_attack") as Dictionary).is_empty(), "revived, the Skills tab's Use goes through")
+	# Alive again: a one-frame die clip -- one that cannot start -- sets no
+	# hold on the swing that is playing.
 	world.call("_play_player_once", swing)
 	world.call("_hold_player_one_shot", _clip(1))
 	_check(is_same(world.get("_player_one_shot"), swing) and not bool(world.get("_player_one_shot_hold")),
 		"a die clip of one frame starts nothing and holds nothing (the swing under way is not pinned)")
 
-	skill_list.free()
-	monster_list.free()
-	label.free()
 	player.free()
 	world.free()
 

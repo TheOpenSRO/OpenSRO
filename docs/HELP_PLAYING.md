@@ -1,8 +1,8 @@
 # Playing the client
 
 A short guide to what the client actually does today. If something here does
-not work, that is a bug worth reporting (see **Debug tools**, or press Shift+F3
-→ Copy).
+not work, that is a bug worth reporting (see **Debug tools**, or type `/copy`
+in chat for a full report on your clipboard).
 
 ## Moving
 
@@ -69,12 +69,13 @@ An item's name shows while the mouse is on it, or while you hold **Z**; it is
 hidden otherwise, as in the original.
 
 While the chat line (or any other text box) is open, the letter and number
-keys type into it; the F keys, Shift+F1 to F3 and Print Screen still work.
+keys type into it; the F keys and Print Screen still work.
 
 As in the original, Ctrl, Shift and Alt do not change a key: Ctrl+S opens
-Skills like S. The exceptions are Ctrl+1 to 8 (select), Shift+F1 to F3
-(developer panels) and Alt+1 to 0 (the extra quick slot bar, this client's
-own); Alt+Tab, Alt+F4 and Alt+Space are left to your system.
+Skills like S. The exceptions are Ctrl+1 to 8 (select), Shift+F10 (hides the
+interface; press it again to bring it back) and Alt+1 to 0 (the extra quick
+slot bar, this client's own); Alt+Tab, Alt+F4 and Alt+Space are left to your
+system.
 
 Click an NPC to talk, buy, or use storage. An NPC or a teleport gate too far
 away is walked to first, as in the original: the ring shows where you are
@@ -223,8 +224,9 @@ sets all three to 50 and clears the mutes, and **Cancel**, the close button or
 Escape put back what was saved. The starting volumes are the original's:
 **Music 30, Effects 50, Environment 50** (0 is -20 dB, 100 is full). They are
 kept in the `[audio]` section of `settings.cfg` (next to the log). The Input
-and Game tabs are drawn but do nothing yet; the debug panel (Shift+F3) still
-has the UI scale and camera settings.
+and Game tabs are drawn but do nothing yet. Type `/uiscale <0.5 to 3>` in chat
+to scale the interface (1 is the original's size) and `/names <0 to 400>` for
+how near a name shows; both are remembered.
 
 **Night and shadows (this client's own Video rows):** **Night Darkness**
 decides how dark the night gets -- *Original* (the default) draws it exactly as the
@@ -235,13 +237,17 @@ and dusk, short at noon, faint from the moon at night; it shows with **Shadow
 Detail** on *Detail*. Off keeps the original's one fixed shadow direction. Without `Music.pk2` in your `pk2`
 folder the world is silent and the log says so.
 
-## Developer and debug panels
+## Reports and the developer panel
 
-- **Shift+F1** — developer tools: zone travel and log out.
-- **Shift+F2** — the old debug tabs (inventory, shop, party and the rest).
-- **Shift+F3** — the debug panel: build, position, entities, loading and
-  performance, with a **Copy** button that puts a full report on your
-  clipboard.
+- **`/copy`** in chat puts a full report on your clipboard: build, position,
+  entities, loading and performance.
+- **Log out** is the system menu's **Restart** (Escape), as in the original.
+- **Shift+F3** — the debug panel (build, position, entities, loading,
+  performance, zone travel), in a developer build only: a run from source, or
+  a release build started with `OPENSRO_DEV=1` or with `tools=true` under
+  `[dev]` in `settings.cfg`. In a player's build Shift+F3 is F3. (Shift+F1's
+  zone box and Log Out and Shift+F2's debug tabs were the first prototype's;
+  the original's windows replaced them.)
 
 Your session writes a log to `user://logs/opensro.log`; type `/log` to see
 exactly where, or to open the folder on desktop.

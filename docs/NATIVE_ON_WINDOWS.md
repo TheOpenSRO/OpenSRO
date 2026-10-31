@@ -12,8 +12,8 @@ INFERRED from `OS.get_executable_path()`, not seen.
 ## Where to look
 
 The log the game writes is named on its second line, `OpenSRO log file: …/opensro.log`. It
-lives under `%APPDATA%\Godot\app_userdata\OpenSRO\logs\`. The same line also shows in game: open
-Shift+F3 (the debug panel). Its first block, `== build`, carries the readers' line, without the
+lives under `%APPDATA%\Godot\app_userdata\OpenSRO\logs\`. The same line also shows in game: type
+`/copy` and paste the report. Its first block, `== build`, carries the readers' line, without the
 `NativeAssets: ` prefix.
 
 ## The lines, one per outcome

@@ -15,7 +15,7 @@ class_name Console
 ## from the original client, which had no slash console.
 
 ## Client-side commands the console runs itself.
-const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe", "layer", "grantname", "friend", "invite"]
+const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe", "layer", "grantname", "friend", "invite", "duel", "uiscale", "names"]
 
 ## GM commands the console forwards to the server, which gates and runs them.
 ## Listed so a typo gets the help line while a real GM word reaches the
@@ -124,6 +124,33 @@ func submit(line: String) -> bool:
 				_log("Usage: /grantname <name> (at most %d letters; nothing clears it)" % GuildPlateNet.MAX_NICKNAME_BYTES)
 			else:
 				_call("grant_name", [nick])
+		"duel":
+			# Round 848 (OURS): the prototype duel (DuelNet), whose only way in
+			# was the native Duel tab. /duel <name> challenges; accept,
+			# decline and hit answer and strike.
+			var verb := String(args[0]).to_lower() if args.size() == 1 else ""
+			if args.is_empty():
+				_log("Usage: /duel <name> | /duel accept | /duel decline | /duel hit")
+			elif args.size() == 1 and verb in ["accept", "decline", "hit"]:
+				_call("duel", [verb, ""])
+			else:
+				_call("duel", ["challenge", " ".join(args)])
+		"uiscale":
+			# Round 848 (OURS): the debug panel's UI scale, for everyone.
+			if args.size() != 1 or not String(args[0]).is_valid_float():
+				_log("Usage: /uiscale <0.5 to 3> (the interface's scale; 1 is the original's size)")
+			else:
+				var applied := float(_call("set_ui_scale", [float(args[0])], -1.0))
+				if applied > 0.0:
+					_log("UI scale %.2f." % applied)
+		"names":
+			# Round 848 (OURS): the debug panel's name range, for everyone.
+			if args.size() != 1 or not String(args[0]).is_valid_float():
+				_log("Usage: /names <0 to 400> (how near a name plate shows)")
+			else:
+				var range_set := float(_call("set_name_range", [float(args[0])], -1.0))
+				if range_set >= 0.0:
+					_log("Names shown within %d." % int(range_set))
 		"friend", "invite":
 			# Round 834: retail's own chat commands (UIIT_STT_CHAT_COMMAND_
 			# FRIEND_INVITE1 / 2, c:0x7af513): ask the named player to be
@@ -142,7 +169,7 @@ func submit(line: String) -> bool:
 
 ## The one-line help. The client commands always; the GM line only for a GM.
 func help_line() -> String:
-	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /layer <path> /w <name> <msg> /grantname <name>"
+	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /layer <path> /w <name> <msg> /grantname <name> /uiscale <n> /names <n> /duel <name>"
 	if is_gm:
 		return base + "\n" + gm_help_line()
 	return base

@@ -1285,95 +1285,32 @@ var _load_timings := LoadTimings.new()
 ## shadow map holds the characters' silhouettes, which ShadowCatcher lays on
 ## the terrain.
 @onready var directional_light: DirectionalLight3D = $DirectionalLight3D
-@onready var zone_label: Label = $UI/Control/ZoneLabel
-@onready var character_label: Label = $UI/Control/CharacterLabel
+## The UI root (World3D.tscn's UI/Control): every original-built HUD window
+## goes under it and takes its text theme (UiBuilder.apply_ui_theme).
+## Round 848 removed the prototype's native widgets that sat beside it --
+## the corner labels, the developer chat panel, the zone box, Log Out, Hide
+## UI and the ten-tab ActionTabs (docs/WORLD_ISSUES.md, round 848 lane W);
+## what World3D still needs of them is plain state below.
 @onready var ui_control: Control = $UI/Control
-@onready var hide_ui_button: Button = $UI/HideUIButton
-@onready var action_tabs: TabContainer = $UI/Control/ActionTabs
-@onready var zone_input: LineEdit = $UI/Control/ZoneInput
-@onready var chat_log: RichTextLabel = $UI/Control/ChatPanel/ChatLog
-@onready var chat_input: LineEdit = $UI/Control/ChatPanel/ChatInputRow/ChatInput
-@onready var send_button: Button = $UI/Control/ChatPanel/ChatInputRow/SendButton
 
-## Action-tab panels, ported from the 2D World.gd HUD (see docs/PROGRESS.md)
-## -- this scene is becoming the one real client, so its UI needs to cover
-## everything the 2D view used to.
-@onready var monster_list: ItemList = $UI/Control/ActionTabs/Monsters/MonsterList
-@onready var monster_refresh_button: Button = $UI/Control/ActionTabs/Monsters/MonsterButtonRow/RefreshButton
-@onready var attack_button: Button = $UI/Control/ActionTabs/Monsters/MonsterButtonRow/AttackButton
-@onready var monster_status_label: Label = $UI/Control/ActionTabs/Monsters/MonsterStatusLabel
-
-@onready var inventory_list: ItemList = $UI/Control/ActionTabs/Inventory/InventoryList
-@onready var inventory_refresh_button: Button = $UI/Control/ActionTabs/Inventory/InventoryButtonRow/RefreshButton
-@onready var equip_weapon_button: Button = $UI/Control/ActionTabs/Inventory/InventoryButtonRow/EquipWeaponButton
-@onready var equip_armor_slot_option: OptionButton = $UI/Control/ActionTabs/Inventory/InventoryButtonRow/EquipArmorSlotOption
-@onready var equip_armor_button: Button = $UI/Control/ActionTabs/Inventory/InventoryButtonRow/EquipArmorButton
-@onready var inventory_status_label: Label = $UI/Control/ActionTabs/Inventory/InventoryStatusLabel
-
-@onready var equipment_list: ItemList = $UI/Control/ActionTabs/Equipment/EquipmentList
-@onready var equipment_refresh_button: Button = $UI/Control/ActionTabs/Equipment/EquipmentButtonRow/RefreshButton
-@onready var unequip_weapon_button: Button = $UI/Control/ActionTabs/Equipment/EquipmentButtonRow/UnequipWeaponButton
-@onready var unequip_armor_slot_option: OptionButton = $UI/Control/ActionTabs/Equipment/EquipmentButtonRow/UnequipArmorSlotOption
-@onready var unequip_armor_button: Button = $UI/Control/ActionTabs/Equipment/EquipmentButtonRow/UnequipArmorButton
-@onready var equipment_status_label: Label = $UI/Control/ActionTabs/Equipment/EquipmentStatusLabel
-
-## Real, decompiler-confirmed armor slot names (see
-## docs/protocol/EQUIP_SLOTS.md), shown in that same real order in both
-## armor-slot pickers.
-const ARMOR_SLOT_LABELS := {
-	EquipmentNet.SLOT_HELM: "Helm",
-	EquipmentNet.SLOT_MAIL: "Mail",
-	EquipmentNet.SLOT_SHOULDER_GUARD: "Shoulder Guard",
-	EquipmentNet.SLOT_GAUNTLET: "Gauntlet",
-	EquipmentNet.SLOT_PANTS: "Pants",
-	EquipmentNet.SLOT_BOOTS: "Boots",
-}
-
-@onready var quest_list: ItemList = $UI/Control/ActionTabs/Quests/QuestList
-@onready var quest_refresh_button: Button = $UI/Control/ActionTabs/Quests/QuestButtonRow/RefreshButton
-@onready var quest_accept_button: Button = $UI/Control/ActionTabs/Quests/QuestButtonRow/AcceptButton
-@onready var quest_status_label: Label = $UI/Control/ActionTabs/Quests/QuestStatusLabel
-
-@onready var skill_list: ItemList = $UI/Control/ActionTabs/Skills/SkillList
-@onready var skill_refresh_button: Button = $UI/Control/ActionTabs/Skills/SkillButtonRow/SkillRefreshButton
-@onready var skill_learn_button: Button = $UI/Control/ActionTabs/Skills/SkillButtonRow/SkillLearnButton
-@onready var skill_use_button: Button = $UI/Control/ActionTabs/Skills/SkillButtonRow/SkillUseButton
-@onready var skill_status_label: Label = $UI/Control/ActionTabs/Skills/SkillStatusLabel
-
-@onready var shop_list: ItemList = $UI/Control/ActionTabs/Shop/ShopList
-@onready var shop_refresh_button: Button = $UI/Control/ActionTabs/Shop/ShopButtonRow/RefreshButton
-@onready var shop_buy_button: Button = $UI/Control/ActionTabs/Shop/ShopButtonRow/BuyButton
-@onready var shop_status_label: Label = $UI/Control/ActionTabs/Shop/ShopStatusLabel
-
-
-@onready var guild_list: ItemList = $UI/Control/ActionTabs/Guild/GuildList
-@onready var guild_name_input: LineEdit = $UI/Control/ActionTabs/Guild/GuildCreateRow/GuildNameInput
-@onready var guild_create_button: Button = $UI/Control/ActionTabs/Guild/GuildCreateRow/CreateButton
-@onready var guild_join_id_input: LineEdit = $UI/Control/ActionTabs/Guild/GuildJoinRow/JoinIdInput
-@onready var guild_join_button: Button = $UI/Control/ActionTabs/Guild/GuildJoinRow/JoinButton
-@onready var guild_leave_button: Button = $UI/Control/ActionTabs/Guild/GuildJoinRow/LeaveButton
-@onready var guild_status_label: Label = $UI/Control/ActionTabs/Guild/GuildStatusLabel
-@onready var guild_level_up_button: Button = $UI/Control/ActionTabs/Guild/LevelUpButton
-
-@onready var duel_target_input: LineEdit = $UI/Control/ActionTabs/Duel/ChallengeRow/TargetInput
-@onready var duel_challenge_button: Button = $UI/Control/ActionTabs/Duel/ChallengeRow/ChallengeButton
-@onready var duel_invite_label: Label = $UI/Control/ActionTabs/Duel/InviteRow/InviteLabel
-@onready var duel_accept_button: Button = $UI/Control/ActionTabs/Duel/InviteRow/AcceptButton
-@onready var duel_decline_button: Button = $UI/Control/ActionTabs/Duel/InviteRow/DeclineButton
-@onready var duel_attack_button: Button = $UI/Control/ActionTabs/Duel/AttackButton
-@onready var duel_status_label: Label = $UI/Control/ActionTabs/Duel/DuelStatusLabel
+## Round 848: the last lines this client wrote to the chat and system windows,
+## oldest first, at most LOG_TAIL_LINES (OURS) -- what the retired developer
+## chat log (a hidden RichTextLabel that grew without bound) held, kept as
+## plain text for the suites and the debug panel. `log_text()` joins it.
+const LOG_TAIL_LINES := 200
+var _log_tail := PackedStringArray()
+## The last combat line (a blow, the exchange, a kill or this player's death),
+## which the retired Monsters tab showed; the debug panel's diagnostics carry it.
+var _combat_line := ""
 
 
 
-# Parallel to monster_list/inventory_list's items -- ItemList doesn't carry
-# structured data per row on its own, so track what each row actually is.
+# The server's last monster list and this player's bag, as it sent them.
 var _monsters: Array[CombatNet.MonsterSnapshot] = []
 var _inventory_slots: Array[InventoryNet.Slot] = []
-var _skills: Array[SkillNet.SkillSnapshot] = []
-var _shop_entries: Array[ShopNet.CatalogEntry] = []
 
-# Name of whoever last challenged/requested-trade-with us, so Accept/
-# Decline know who to respond to (the server needs it explicitly).
+# Name of whoever last challenged us to a duel, so `/duel accept` and
+# `/duel decline` know who to answer (the server needs it explicitly).
 var _pending_duel_challenger := ""
 
 
@@ -2182,7 +2119,6 @@ func _ready() -> void:
 	if OS.get_environment("OPENSRO_QA_SERVER") != "" and not NetClient.is_connected_to_server():
 		await QaSignIn.run(get_tree())
 
-	character_label.text = "Character: %s" % NetClient.current_character_name
 	WindowTitle.apply_in_world(NetClient.current_character_name)
 
 	var _t_assets := Time.get_ticks_msec()
@@ -2206,7 +2142,6 @@ func _ready() -> void:
 
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok:
-		zone_label.text = "Zone: %s" % result.zone
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		_walked_since_send = 0.0
@@ -2244,9 +2179,6 @@ func _ready() -> void:
 	NetClient.unique_notice.connect(_on_unique_notice)
 	NetClient.chat_result.connect(_on_chat_result)
 	NetClient.disconnected.connect(_on_disconnected)
-	send_button.pressed.connect(_on_send_pressed)
-	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
-	hide_ui_button.pressed.connect(_toggle_ui_visibility)
 	# The keyboard: the retail key table (KeyMap) run by KeyInput (round 608).
 	_setup_keys()
 
@@ -2313,9 +2245,8 @@ func _ready() -> void:
 	# a stat-point spend and a kill already bring a stats packet, which
 	# _on_world_stats applies.
 	NetClient.equipment_result.connect(_stat_panel_on_equipment)
-	# Round 785: the quest log (QuestState) -- the dev tab's list, the bag
-	# after a quest moved items, the progress notice, the marks.
-	NetClient.quest.log_changed.connect(_on_quest_log_changed)
+	# Round 785: the quest log (QuestState) -- the bag after a quest moved
+	# items, the progress notice, the marks.
 	NetClient.quest.bag_may_have_changed.connect(func() -> void:
 		if NetClient.is_connected_to_server():
 			NetClient.list_inventory(NetClient.current_character_name))
@@ -2325,10 +2256,8 @@ func _ready() -> void:
 	NetClient.quest.reward_window.connect(func(_id: int, _text: String) -> void: hide_npc_talk_silently())
 	NetClient.quest.event_message.connect(_on_quest_event_message)
 	NetClient.quest.marks_changed.connect(_apply_quest_marks)
-	NetClient.skill_list_result.connect(_on_skill_list_result)
 	NetClient.learn_skill_result.connect(_on_learn_skill_result)
 	NetClient.learn_skill_done.connect(_on_skill_learned_for_hotbar)
-	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
 	_wire_party_state()
@@ -2370,38 +2299,6 @@ func _ready() -> void:
 	NetClient.friend_failed.connect(_on_friend_failed)
 	NetClient.friend_pushed.connect(_on_friend_pushed)
 	NetClient.friend_delete_result.connect(_on_friend_delete_result)
-
-	monster_refresh_button.pressed.connect(func(): NetClient.list_monsters())
-	attack_button.pressed.connect(_on_attack_pressed)
-	inventory_refresh_button.pressed.connect(func(): NetClient.list_inventory(NetClient.current_character_name))
-	for slot in EquipmentNet.ARMOR_SLOTS:
-		equip_armor_slot_option.add_item(ARMOR_SLOT_LABELS[slot], slot)
-		unequip_armor_slot_option.add_item(ARMOR_SLOT_LABELS[slot], slot)
-
-	equip_weapon_button.pressed.connect(func(): _on_equip_pressed(EquipmentNet.SLOT_WEAPON))
-	equip_armor_button.pressed.connect(func(): _on_equip_pressed(equip_armor_slot_option.get_selected_id()))
-	equipment_refresh_button.pressed.connect(func(): NetClient.list_equipment(NetClient.current_character_name))
-	unequip_weapon_button.pressed.connect(func(): _on_unequip_pressed(EquipmentNet.SLOT_WEAPON))
-	unequip_armor_button.pressed.connect(func(): _on_unequip_pressed(unequip_armor_slot_option.get_selected_id()))
-	quest_refresh_button.pressed.connect(_on_quest_log_changed)
-	# Round 785: quests are taken from their NPCs (0x30D4), not this tab.
-	quest_accept_button.disabled = true
-	skill_refresh_button.pressed.connect(func(): NetClient.list_skills(NetClient.current_character_name))
-	skill_learn_button.pressed.connect(_on_skill_learn_pressed)
-	skill_use_button.pressed.connect(_on_skill_use_pressed)
-	shop_refresh_button.pressed.connect(func(): NetClient.list_shop())
-	shop_buy_button.pressed.connect(_on_shop_buy_pressed)
-
-	guild_create_button.pressed.connect(_on_guild_create_pressed)
-	guild_join_button.pressed.connect(_on_guild_join_pressed)
-	guild_leave_button.pressed.connect(func(): NetClient.leave_guild(NetClient.current_character_name))
-	guild_level_up_button.pressed.connect(func(): NetClient.guild_level(NetClient.current_character_name, true))
-
-	duel_challenge_button.pressed.connect(_on_duel_challenge_pressed)
-	duel_accept_button.pressed.connect(func(): _on_duel_respond_pressed(true))
-	duel_decline_button.pressed.connect(func(): _on_duel_respond_pressed(false))
-	duel_attack_button.pressed.connect(func(): NetClient.duel_attack(NetClient.current_character_name))
-
 
 
 	# Guarded, unlike 2D World.gd's equivalent block: this scene doubles as a
@@ -2827,8 +2724,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.mouse_mode_changed.connect(set_mouse_mode)
 	# Restart is one scene change: NetClient.disconnect_from_server() emits
 	# `disconnected` unconditionally, and _on_disconnected is what takes this
-	# instance to Login -- for a dropped peer, for the Log Out button
-	# (_on_disconnect_pressed) and for this. Until round 560 this lambda
+	# instance to Login -- for a dropped peer and for this (the native Log
+	# Out button that did the same went in round 848). Until round 560 this lambda
 	# queued Login a second time itself, from a node _on_disconnected had
 	# already detached, where get_tree() is null. That state -- detached and
 	# not yet freed, `data.tree` null -- is what round 558's runs C and D
@@ -2843,7 +2740,7 @@ func _try_initialize_pk2_ui() -> void:
 		if _help_window != null:
 			_help_window.open()
 		else:
-			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. I inventory, S skill, M map, G pick up, hold V to hide others, hold Z for item names. Shift+F1 dev tools, Shift+F3 debug panel. Type /help for commands."))
+			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. I inventory, S skill, M map, G pick up, hold V to hide others, hold Z for item names, Shift+F10 hides the interface. Type /help for commands."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
@@ -3093,13 +2990,9 @@ func _try_initialize_pk2_ui() -> void:
 		_hud_panels.set_character_vitals(_last_enter_world_hp, _last_enter_world_max_hp, 1)
 	_hud_underbar.menu_action.connect(_on_underbar_menu_action)
 
-	# The authentic HUD replaces the developer UI it would otherwise draw
-	# on top of: the ten-tab panel is the same systems these windows now
-	# show, and the corner labels duplicate the minimap's own readout. The
-	# chat box and zone box stay -- chat has no authored window built yet,
-	# and the zone box is still the only way to travel. See docs/UI_TODO.md.
-	# (It also builds the target window.)
-	_hide_debug_ui_replaced_by_hud()
+	# The debug panel where developer tools are on, the first hints and the
+	# target window (round 848: the prototype's native UI is gone).
+	_set_up_dev_tools()
 	# Every STOP surface now exists: the middle button fires the first
 	# quickslot over them too.
 	_relay_middle_button_to_hotbar()
@@ -3383,36 +3276,21 @@ func _on_underbar_menu_action(action_name: String) -> void:
 	# opens (0x798e20(1)).
 	_hud_panels.menu_action(action_name)
 
-## Hides the parts of the developer UI the authentic HUD now covers.
-## Hidden rather than deleted: the scene still owns those nodes and
-## World3D's own handlers still reference them, so removing them is a
-## separate change (docs/TODO.md item 5).
-func _hide_debug_ui_replaced_by_hud() -> void:
-	# ZoneLabel goes too: the minimap now shows the zone name and the
-	# client's own X/Y readout, which is what that label was standing in
-	# for, and it was drawing straight across the player block.
-	# ChatPanel goes now that the authored chat window is built: it was the
-	# last of the developer HUD that overlapped the real one, sitting across
-	# the bottom-left corner where ifchatviewer's own window belongs.
-	for path in ["ActionTabs", "CharacterLabel", "HelpLabel", "ZoneLabel", "ChatPanel"]:
-		var node := ui_control.get_node_or_null(path)
-		if node is CanvasItem:
-			(node as CanvasItem).visible = false
-
-	# The rest of the developer chrome is *hidden*, not retired: the zone
-	# box is still the only way to travel and Log Out is still the only way
-	# out. They sat over the player block and across the bottom-right corner
-	# in every screenshot of this game, which is not what it should look
-	# like when someone plays it.
-	_set_dev_ui_visible(false)
-	_log_system("Developer tools (zone travel, log out): Shift+F1")
-
-	# The debug panel, and the three things a player asked to be able to
-	# change from a couch: name range, UI scale (applied at boot) and chat
-	# font, all remembered by ClientSettings.
-	_debug_panel = DebugPanel.new(self)
-	$UI.add_child(_debug_panel)
-	_log_system("Debug panel (build, position, entities, loading, performance): Shift+F3")
+## The developer side of the HUD's set-up, and the first hints. Round 848
+## removed the prototype's native UI (World3D.tscn kept only UI/Control);
+## what is left for a developer is the Shift+F3 debug panel, which exists
+## only where DevTools.enabled() (a debug build -- a run from source, the
+## box's QA runs -- or OPENSRO_DEV=1 / [dev] tools=true): a release build
+## builds no panel and Shift+F3 is retail's F3, quick slot page 3.
+func _set_up_dev_tools() -> void:
+	if DevTools.enabled():
+		# The debug panel (dev-only, native widgets by design): build,
+		# position, entities, loading, performance, zone travel, the draw
+		# modes. The name range and UI scale it also sets are /names and
+		# /uiscale for everyone (Console).
+		_debug_panel = DebugPanel.new(self)
+		$UI.add_child(_debug_panel)
+		_log_system("Debug panel (build, position, entities, loading, performance, zone travel): Shift+F3")
 	_log_system("Stuck in a wall or building? Type /unstuck to return to the zone's landing spot (once a minute).")
 	# Round 700: no game cursor -- say where sro_client.exe goes (GameCursor).
 	GameCursor.load_once()
@@ -3420,9 +3298,6 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 		_log_system(GameCursor.missing_hint())
 	_build_target_window()
 	set_name_plate_range(ClientSettings.name_plate_range(NAME_PLATE_RANGE))
-	var chat_font_size := ClientSettings.chat_font_size()
-	if chat_font_size > 0:
-		chat_log.add_theme_font_size_override("normal_font_size", chat_font_size)
 
 	# The camera arm leaves the player's body for a pivot of its own (see
 	# CAMERA_VIEW_FREE): the arm keeps its local offset and angles, the
@@ -3657,9 +3532,8 @@ func _load_regioninfo() -> RegioninfoReader.ParsedTable:
 ## coordinates are directly checkable against that region's own real authored
 ## minimap art (`Media.pk2`'s `minimap\\<y>x<x>.ddj`), which is what makes a
 ## report like that actionable rather than anecdotal.
-## The last real zone name resolved for the player's region, kept so the
-## label's position part can be refreshed as they walk without re-resolving
-## the zone every frame.
+## The last real zone name resolved for the player's region (the debug
+## panel's and the help hints' zone).
 var _current_zone_name := "-"
 var _zone_label_tick := 0
 
@@ -3693,16 +3567,15 @@ func _audio_area_tick() -> void:
 	var local := group.to_local(player.global_position)
 	music.set_area_at(parts[0].to_int(), parts[1].to_int(), local.x, local.z)
 
-## Refreshes the position shown in the zone label as the player moves.
-## Throttled: the text only has to be readable, not per-frame accurate.
+## The zone tick, every tenth call (the name is the retired zone label's,
+## which this refreshed until round 848): the music's area, the water
+## environment and the minimap's NPC dots.
 func _refresh_zone_label_position() -> void:
 	_zone_label_tick += 1
 	if _zone_label_tick % 10 != 0:
 		return
 	_audio_area_tick()
 	_water_env_tick()
-	if zone_label != null:
-		zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
 
 	_minimap_npcs_cache = _minimap_npc_positions()
 
@@ -4204,16 +4077,6 @@ func _qa_open_panels(spec: String) -> void:
 			" (its own placement)" if in_place else ""])
 	print("QA PANELS: %d of %d ids opened, in %d window(s)" % [placed, ids.size(), windows.size()])
 
-func _zone_label_position_suffix() -> String:
-	var pair := _nav_graph_for(player.global_position)
-	if pair.is_empty():
-		return " @ %d, %d, %d (no region)" % [
-			player.global_position.x, player.global_position.y, player.global_position.z]
-	var group: Node3D = pair[1]
-	var local := group.to_local(player.global_position)
-	var suffix := String(group.name).replace("RealTerrain_", "")
-	return " [%s] local %d, %d, %d" % [suffix, local.x, local.y, local.z]
-
 ## The client's own per-region zone names (Media.pk2's
 ## `server_dep\\silkroad\\textdata\\textzonename.txt`), loaded once per run.
 ## Empty means "already tried, nothing usable" -- see _zone_name_for_region.
@@ -4262,7 +4125,6 @@ func _update_zone_label_for_region(region_x: int, region_y: int) -> void:
 	if zone_name == "":
 		return
 	_current_zone_name = zone_name
-	zone_label.text = "Zone: %s%s" % [zone_name, _zone_label_position_suffix()]
 	if _hud_minimap != null and is_instance_valid(_hud_minimap):
 		_hud_minimap.set_area_name(zone_name)
 
@@ -7744,7 +7606,6 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	if not is_inside_tree():
 		EfpEffect.pause_world(false)
 		return
-	zone_label.text = "Zone: %s" % result.zone
 	# In the server's frame (result.frame, round 570). That frame is the
 	# zone's own centre by default, so (0, 0, 0) is the centre region's
 	# middle. Under the server's -single-frame (round 571, default off) it is
@@ -15083,8 +14944,7 @@ func _on_player_struck(d: Dictionary) -> void:
 		print("World3D: struck by player %d for %d (HP %d)%s" % [attacker, int(d["damage"]), int(d["hp"]),
 			", killed, lost %d exp" % int(d["exp_lost"]) if bool(d["died"]) else ""])
 		if bool(d["died"]):
-			if monster_status_label != null:
-				monster_status_label.text = _death_line(int(d["exp_lost"]))
+			_combat_line = _death_line(int(d["exp_lost"]))
 			if MonsterStrikes.leaves_dead(true, int(d["hp"])):
 				_enter_dead_state(int(d["exp_lost"]))
 		if int(d["damage"]) > 0 or _player_dead:
@@ -16279,15 +16139,15 @@ func _own_skill_result(result: CombatNet.AttackResult, skill: int, code: String)
 	_start_deco(player, skill, target, "own cast at monster %d" % monster,
 		{"code": code, "hits": n_hits, "on_hit": _own_skill_hit.bind(result, skill, code, monster, blow)})
 	if result.monster_died:
-		monster_status_label.text = "Hit for %d%s -- it died!" % [
+		_combat_line = "Hit for %d%s -- it died!" % [
 			result.monster_damage, " CRITICAL!" if result.player_critical else ""]
 		# No quest list is asked for (round 785's client review, finding 2:
 		# NetClient.list_quests went with the quest lane; a kill's progress
 		# comes as 0x30D5, QuestNet).
 	else:
-		monster_status_label.text = _exchange_line(result)
+		_combat_line = _exchange_line(result)
 		if result.player_died:
-			monster_status_label.text = _death_line(result.death_exp_lost)
+			_combat_line = _death_line(result.death_exp_lost)
 			if MonsterStrikes.leaves_dead(result.player_died, result.player_hp):
 				_enter_dead_state(result.death_exp_lost)
 	NetClient.list_skills(NetClient.current_character_name)
@@ -18288,8 +18148,8 @@ func _qa_reequip_step() -> void:
 	if _qa_tick == int(parts[0]):
 		_qa_reequip_item = int(_player_equipped_last.get(EquipmentNet.SLOT_WEAPON, 0))
 		print("QA REEQUIP: tick %d taking off weapon %d" % [_qa_tick, _qa_reequip_item])
-		# As the window's button does (_on_unequip_pressed): the ack refreshes
-		# the bag the weapon lands in.
+		# As the retired Equipment tab's button did: the ack refreshes the bag
+		# the weapon lands in.
 		_awaiting_equip_ack = true
 		NetClient.unequip(who, EquipmentNet.SLOT_WEAPON)
 	elif _qa_tick == int(parts[1]):
@@ -19592,6 +19452,13 @@ func _qa_input_step() -> void:
 			motion.position = Vector2(float(hv[0]), float(hv[1]))
 			motion.global_position = motion.position
 			get_viewport().push_input(motion)
+		"nativecensus":
+			# Round 848: every native widget and default-font text a player
+			# can see now (NativeGuiCensus), MEASURED from the live tree.
+			var nlines := NativeGuiCensus.census(get_tree().root)
+			for nl in nlines:
+				print("QA NATIVE %s: %s" % [arg, nl])
+			_qa_input_report = "%s: %d native or default-font control(s) shown" % [action, nlines.size()]
 		"census":
 			for node in get_tree().root.find_children("*", "Control", true, false):
 				var c := node as Control
@@ -19742,8 +19609,7 @@ func _qa_step() -> void:
 		if OS.get_environment("OPENSRO_QA_NOUI") != "":
 			# Comparing a render against the authored minimap is a lot
 			# easier without a chat box across the bottom of it.
-			for node in [$UI/Control, $UI/HideUIButton]:
-				(node as CanvasItem).visible = false
+			($UI/Control as CanvasItem).visible = false
 		# OPENSRO_QA_ATTACK needs a server. This block runs on the first
 		# physics frame, which can come while _ready is still awaiting the QA
 		# sign-in, so a run signing in to a QA server is armed here and swings
@@ -20195,7 +20061,7 @@ func _qa_step() -> void:
 					if qh != null and qh.guide != null:
 						qh.guide.clicked.emit()
 				"log":
-					_on_quest_log_changed()
+					pass  # the state line below is the log (round 848: the dev tab's list is gone)
 			print("QA QUEST %s at tick %d: %d active, %d completed, tracked %d, %d mark(s)" % [qparts[0], _qa_tick,
 				NetClient.quest.active.size(), NetClient.quest.completed.size(), NetClient.quest.tracked, NetClient.quest.marks.size()])
 			for qpair in NetClient.quest.entries():
@@ -26072,12 +25938,11 @@ func _on_entity_left_now(character_id: int) -> void:
 	if FrameSplit.on:
 		FrameSplit.add("w_left", Time.get_ticks_usec() - tl)
 
-func _on_disconnect_pressed() -> void:
-	NetClient.disconnect_from_server()
-
-## Sends a real OpChangeZone for whatever's typed in zone_input.
+## Sends a real OpChangeZone for a zone typed in the debug panel's zone box
+## (dev-only since round 848; the native zone box beside the player block is
+## gone -- players travel by the teleport gates, GMs by /tp and /goto).
 ## _on_change_zone_result (connected in _ready()) handles the reply --
-## success updates zone_label and reloads real terrain/objects for the new
+## success reloads real terrain/objects for the new
 ## zone, failure is silently ignored here (no dedicated error UI for this
 ## yet, same honest scope as the rest of this scene's dev-facing controls).
 ## The region-local spot a zone change should land on, parsed out of the
@@ -26302,8 +26167,8 @@ func _place_at_zone_spawn(zone: String) -> bool:
 	_refresh_zone_label_position()
 	return true
 
-func _on_change_zone_pressed() -> void:
-	var typed := zone_input.text.strip_edges()
+func travel_to_zone(zone_text: String) -> void:
+	var typed := zone_text.strip_edges()
 	if typed == "":
 		return
 	var target := _split_zone_target(typed)
@@ -26410,8 +26275,7 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 		_hud_chat.add_chat(u.type, u.sender_name, u.message_text, false, u.color)
 	if u.type == HudChat.TYPE_NOTICE:
 		_show_banner("gm_notice", u.message_text)
-	if chat_log != null:
-		chat_log.add_text("%s: %s\n" % [u.sender_name, u.message_text])
+	_tail_log("%s: %s" % [u.sender_name, u.message_text])
 
 ## The server's answer to a line this client sent (0xB025's fields): the
 ## player's own line, or the refusal. A global's answer refreshes the bag,
@@ -26660,9 +26524,18 @@ func _log_system(text: String, type: int = HudSystemMessage.TYPE_ALWAYS) -> void
 		_hud_syslog.add_message(type, text)
 	elif _hud_chat != null:
 		_hud_chat.add_message("", "* " + text)
-	# Null on a bare World3D (the headless suites drive one with no scene).
-	if chat_log != null:
-		chat_log.add_text("* %s\n" % text)
+	_tail_log("* " + text)
+
+## Keeps a line in the plain-text tail (LOG_TAIL_LINES; round 848).
+func _tail_log(line: String) -> void:
+	_log_tail.append(line)
+	if _log_tail.size() > LOG_TAIL_LINES:
+		_log_tail = _log_tail.slice(_log_tail.size() - LOG_TAIL_LINES)
+
+## The tail's lines, one a line -- what the suites read (a bare World3D, no
+## HUD windows) and the debug panel can quote.
+func log_text() -> String:
+	return "\n".join(_log_tail)
 
 # --- Debug console and Help window ----------------------------------------
 
@@ -26724,7 +26597,9 @@ func _console_host() -> Dictionary:
 		"where": Callable(self, "_where_report"),
 		"log_path": func() -> String: return ProjectSettings.globalize_path("user://logs/opensro.log"),
 		"open_log_dir": Callable(self, "_open_log_dir"),
-		"copy_payload": func() -> String: return _debug_panel.diagnostics() if _debug_panel != null else "",
+		# Round 848: the report without the panel, which a release build does
+		# not build (DevTools).
+		"copy_payload": func() -> String: return DebugPanel.diagnostics_for(self),
 		"set_clipboard": func(s: String) -> void: DisplayServer.clipboard_set(s),
 		"fps": func() -> float: return Engine.get_frames_per_second(),
 		"entities": Callable(self, "_entities_report"),
@@ -26737,8 +26612,30 @@ func _console_host() -> Dictionary:
 		"grant_name": func(nick: String) -> void: NetClient.send_guild_grant_name(nick),
 		"friend_ask": func(who: String) -> void: friend_ask(who),
 		"ground_probe": Callable(self, "_run_ground_probe"),
+		# Round 848: the prototype duel's commands (its native tab is gone),
+		# and the two settings only the debug panel used to set (OURS).
+		"duel": func(verb: String, arg: String) -> void: duel_command(verb, arg),
+		"set_ui_scale": func(v: float) -> float: return _console_set_ui_scale(v),
+		"set_name_range": func(v: float) -> float: return _console_set_name_range(v),
 		"forward_gm": func(line: String) -> void: NetClient.gm_command(NetClient.current_character_name, line, _last_attack_target if _last_attack_target > 0 else 0),
 	}
+
+## /uiscale (round 848, OURS): the UI scale the debug panel's slider set,
+## remembered and applied now. Returns the scale applied.
+func _console_set_ui_scale(v: float) -> float:
+	var scale := clampf(v, 0.5, 3.0)
+	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_UI_SCALE, scale)
+	if is_inside_tree():
+		ClientSettings.apply_ui_scale(get_window(), scale)
+	return scale
+
+## /names (round 848, OURS): how near a name plate shows, as the debug
+## panel's slider set it, remembered. Returns the range applied.
+func _console_set_name_range(v: float) -> float:
+	var distance := clampf(v, 0.0, 400.0)
+	set_name_plate_range(distance)
+	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_NAME_PLATE_RANGE, distance)
+	return distance
 
 ## This World3D's entry number in the process: 1 on a fresh launch, 2 after
 ## the first reconnect or return from character select (GroundProbe.next_entry
@@ -27093,27 +26990,10 @@ func _place_player_at_world(x: float, z: float) -> void:
 	_move_heading_run = false
 	_send_placement()
 
-## The developer chrome that has no authored equivalent yet: the zone travel
-## box, Log Out, and the Hide UI button. Shown with Shift+F1 (KeyMap, run by
-## KeyInput; F1..F4 are the quickslot pages).
-const DEV_UI_NODES := ["ZoneInput", "ChangeZoneButton", "DisconnectButton"]
-var _dev_ui_visible := true
-## The Shift+F3 panel: build, server, position, entities, loading failures,
-## frame times, and the sliders for UI scale, chat font and name range.
+## The Shift+F3 panel (dev-only, DevTools.enabled; null otherwise): build,
+## server, position, entities, loading failures, frame times, zone travel and
+## the sliders for UI scale and name range.
 var _debug_panel: DebugPanel = null
-
-func _set_dev_ui_visible(shown: bool) -> void:
-	_dev_ui_visible = shown
-	for path in DEV_UI_NODES:
-		var node := ui_control.get_node_or_null(path)
-		if node is CanvasItem:
-			(node as CanvasItem).visible = shown
-	if hide_ui_button != null:
-		hide_ui_button.visible = shown
-
-func _toggle_dev_ui() -> void:
-	_set_dev_ui_visible(not _dev_ui_visible)
-	_log_system("Developer tools %s" % ("shown" if _dev_ui_visible else "hidden"))
 
 func _qa_mall(what: String) -> String:
 	if _hud_panels == null:
@@ -27287,42 +27167,12 @@ func _qa_mall(what: String) -> String:
 				String(m._view.get("kind", "")), m._cells.size(), m.buy_list.size(), str(NetClient.silk_balances)]
 	return "unknown"
 
-## Toggles the whole hideable UI panel (character/zone labels, chat, action
-## tabs, etc.) -- see HideUIButton's own doc-free scene node and Shift+F10
-## (KeyMap's "hide_ui", ours; F10 until round 837, now retail's item mall). HideUIButton
-## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
-## a child of Control) specifically so it stays clickable to toggle the UI
-## back on even while everything else is hidden.
-##
-## It is Control's LATER sibling, and sits left of the minimap (round 531).
-## Godot 4.2 hit-tests a later sibling first. It used to be the earlier one,
-## under the minimap's top-right corner, and once round 529 made the minimap
-## STOP the minimap took every click on the part it covered: the button could
-## no longer hide the UI. Later in the tree, nothing in UI/Control can cover
-## it. Left of the minimap (place_minimap), it no longer covers the minimap's
-## area name either (GDR_MINIMAP_TEXT_AREANAME, 12,9 104x12 in the archive's
-## ifminimap.txt, dumped in round 531). The position is our own; this button
-## has no authored equivalent. hud_click_routing_test.gd measures it.
+## Hides or shows the whole HUD (UI/Control and every window under it) --
+## Shift+F10 (KeyMap's "hide_ui", ours; F10 until round 837, now retail's
+## item mall). The key brings it back: round 848 retired the native Hide UI
+## button that sat beside the minimap.
 func _toggle_ui_visibility() -> void:
 	ui_control.visible = not ui_control.visible
-	hide_ui_button.text = "Show UI" if not ui_control.visible else "Hide UI"
-
-## Toggles the tabbed panel holding inventory, equipment, skills, shop, party
-## and the rest -- the developer's debug tabs, on Shift+F2 (Ctrl+F2 from round 608 to round 698)
-## (they were on Tab, which is retail's berserk key; KeyMap).
-##
-## It used to be a permanently visible strip spanning the full window width and
-## 220 pixels tall, sitting directly above an equally full-width chat panel. A
-## real headless render of the real Jangan spawn measured the two of them, plus
-## the log-out row beneath, covering roughly 70% of the window -- the world was
-## reduced to a letterbox strip along the top. Real Silkroad keeps inventory,
-## skills and shop in windows the player opens and closes, and leaves the view
-## itself clear, so the panel is now hidden until asked for. Chat stays visible
-## (it is, as in the real client, a running log rather than a window) but is
-## narrowed to the bottom-left corner instead of spanning the full width.
-func _toggle_action_panels() -> void:
-	action_tabs.visible = not action_tabs.visible
-	_fill_monster_rows()
 
 ## Releases the viewport's focus owner for a LEFT button press, and says
 ## whether it did. Only the left button: a right drag orbits the camera and the
@@ -29115,8 +28965,6 @@ func _guild_name_passes(guild_name: String) -> bool:
 	var fallback := "A guild name is 2 to 12 letters or digits." if key == NameFilter.GUILD_MSG_LENGTH else "That guild name cannot be used."
 	var text := _resolve_any_text(key, fallback)
 	_log_system("Could not found the guild: %s" % text)
-	if guild_status_label != null:
-		guild_status_label.text = text
 	return false
 
 ## The talk box's guild leave prompt was confirmed (round 521).
@@ -29678,12 +29526,7 @@ func _walk_pick(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceState3D, l
 	var cells := GroundPick.object_cells_hit(_grid.nav_graph_pairs(), from, dir, length)
 	return GroundPick.nearest(from, terrain, cells)
 
-func _on_send_pressed() -> void:
-	var text := chat_input.text.strip_edges()
-	chat_input.text = ""
-	_send_chat(text)
-
-## The authored chat window's input line, which does the same thing.
+## The authored chat window's input line (HudChat).
 func _on_chat_submitted(text: String) -> void:
 	_send_chat(text)
 
@@ -29712,8 +29555,9 @@ func _send_chat(text: String) -> void:
 ## Frees a player wedged into geometry: teleports them back to the zone's own
 ## entry spawn (a known-open point the server placed them at) and clears any
 ## velocity. A stopgap until movement is navmesh-constrained -- free-physics
-## movement lets the capsule wedge into a concave building corner. Shift+F1's
-## zone travel does the same the heavy way; this stays in the zone. The move
+## movement lets the capsule wedge into a concave building corner. The debug
+## panel's zone travel (dev-only) does the same the heavy way; this stays in
+## the zone. The move
 ## sync in _process sends the new position (it differs from _last_sent_pos).
 func _unstuck_player() -> void:
 	# Round 749's verification (FP6): online, /unstuck is the server's -- it
@@ -29727,7 +29571,7 @@ func _unstuck_player() -> void:
 		return
 	var result = NetClient.last_enter_world_result
 	if result == null or not result.ok:
-		_log_system("Unstuck: no spawn point known yet -- try zone travel (Shift+F1).")
+		_log_system("Unstuck: no spawn point known yet.")
 		return
 	player.velocity = Vector3.ZERO
 	# A restored entry's point is where the character logged out (round 573)
@@ -29753,7 +29597,7 @@ func _on_unstuck_result(ok: bool, wait_seconds: int) -> void:
 	elif wait_seconds > 0:
 		_log_system("Unstuck: wait %d s before using it again." % wait_seconds)
 	else:
-		_log_system("Unstuck: not possible right now -- try zone travel (Shift+F1).")
+		_log_system("Unstuck: not possible right now.")
 	print("World3D: /unstuck answered ok=%s wait=%d" % [str(ok), wait_seconds])
 
 func _on_disconnected() -> void:
@@ -31761,19 +31605,8 @@ func _sync_monster_bodies(live: Array) -> void:
 	# The first share at once, so a small list is drawn in the frame it came.
 	_pump_monster_builds()
 
-## The debug tabs' monster rows (round 655): filled only while the tabs are
-## shown -- a 500-monster list was 500 ItemList rows rebuilt per list, for a
-## panel nobody had open. _toggle_action_panels fills it when it opens.
-func _fill_monster_rows() -> void:
-	monster_list.clear()
-	if not action_tabs.visible:
-		return
-	for m in _monsters:
-		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
-
 func _on_monster_list_result(monsters: Array, error: String) -> void:
 	if error != "":
-		monster_status_label.text = "Error: %s" % error
 		push_warning("World3D: monster list refused: %s" % error)
 		return
 	# One line, not one per monster (round 655); OPENSRO_QA_MOB_LOG or /wire
@@ -31786,7 +31619,6 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 	# Before the sync: it rewrites a walking monster's listed position.
 	var goto_plan := _qa_goto_plan(monsters)
 	_monsters.assign(monsters)
-	_fill_monster_rows()
 	_sync_monster_bodies(_monsters)
 	if not goto_plan.is_empty():
 		_qa_goto_from_list(goto_plan)
@@ -31796,7 +31628,7 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 ## town (round 674, session/safezone.go) is told the same way: each body
 ## fades out over 1.5 s and frees itself (round 677, _fade_out_body; READ:
 ## retail's despawn 0x3016 makes a CIDecoDisappear), and the monster leaves
-## the list the panel shows. A corpse still lying there fades too: retail's
+## the list. A corpse still lying there fades too: retail's
 ## corpse leaves through the same despawn. A monster listed but not built
 ## yet (queued, or waiting for its region) is forgotten, so no body is built
 ## for it later.
@@ -31812,9 +31644,6 @@ func _on_monster_left(ids: Array) -> void:
 			kept.append(m)
 	if kept.size() != _monsters.size():
 		_monsters = kept
-		monster_list.clear()
-		for m in _monsters:
-			monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
 	if _mob_logging():
 		print("World3D: %d monster(s) left the area of interest" % gone.size())
 
@@ -32111,16 +31940,6 @@ func _step_heights(delta: float) -> void:
 	if _ground_items != null:
 		_ground_items.resolve_pending(budget - spent)
 
-func _on_attack_pressed() -> void:
-	var selected := monster_list.get_selected_items()
-	if selected.is_empty():
-		monster_status_label.text = "Select a monster first."
-		return
-	var target: CombatNet.MonsterSnapshot = _monsters[selected[0]]
-	_last_attack_target = target.monster_id
-	_show_target(target.monster_id)
-	_attack_monster(target.monster_id)
-
 func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result == null:
 		return
@@ -32155,7 +31974,7 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			NetClient.list_skills(NetClient.current_character_name)
 		return
 	if result.error != "":
-		monster_status_label.text = "Attack failed: %s" % result.error
+		_combat_line = "Attack failed: %s" % result.error
 		print("World3D: attack refused: %s" % result.error)
 		if _combat_trace and result.monster_id != 0:
 			var rs = _monster_snapshots.get(result.monster_id)
@@ -32378,18 +32197,18 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if OS.get_environment("OPENSRO_QA_MOB_STRIKE") != "":
 		_qa_mob_strike(monster, result)
 	if result.monster_died:
-		monster_status_label.text = "Hit for %d%s -- it died!" % [
+		_combat_line = "Hit for %d%s -- it died!" % [
 			result.monster_damage, " CRITICAL!" if result.player_critical else ""]
 		# A kill's quest progress arrives as 0x30D5 (round 785): nothing to
 		# ask.
 	else:
-		monster_status_label.text = _exchange_line(result)
+		_combat_line = _exchange_line(result)
 		# Dying was silent until now: the server has reported it since the
 		# first combat release and nothing read the flag. Above level 10 it
 		# also costs experience -- the real penalty, see
 		# leveldata.DeathPenaltyExp.
 		if result.player_died:
-			monster_status_label.text = _death_line(result.death_exp_lost)
+			_combat_line = _death_line(result.death_exp_lost)
 			# Left dead, at HP 0 (round 548) -- or, from today's server, put
 			# back on its feet in the same call (MonsterStrikes.leaves_dead).
 			if MonsterStrikes.leaves_dead(result.player_died, result.player_hp):
@@ -32627,8 +32446,7 @@ func _show_own_strike(attacked: CombatNet.MonsterAttacked, write_hp: bool = true
 		if _hud_panels != null:
 			_hud_panels.set_character_vitals(attacked.target_hp, _last_enter_world_max_hp, 1)
 	if attacked.target_died:
-		if monster_status_label != null:
-			monster_status_label.text = _death_line(attacked.death_exp_lost)
+		_combat_line = _death_line(attacked.death_exp_lost)
 		# Left dead, at HP 0 (round 548): the monster's own swing under
 		# -monster-battle reports a kill here alone, with no result before it.
 		if MonsterStrikes.leaves_dead(attacked.target_died, attacked.target_hp):
@@ -34627,12 +34445,6 @@ func _run_key_action(action: String, arg: int) -> String:
 			return "item mall entry box"
 		"screenshot":
 			return _save_screenshot()
-		"dev_tools":
-			_toggle_dev_ui()
-			return "developer tools %s" % ("shown" if _dev_ui_visible else "hidden")
-		"debug_tabs":
-			_toggle_action_panels()
-			return "debug tabs %s" % ("shown" if action_tabs.visible else "hidden")
 		"debug_panel":
 			if _debug_panel == null:
 				return "no debug panel"
@@ -36407,32 +36219,17 @@ func _on_loot_dropped(dropped: CombatNet.LootDropped) -> void:
 		_log_system(_acquired_item_line(_item_label_for_line(d.item_id), d.quantity), HudSystemMessage.TYPE_GAIN)
 	NetClient.list_inventory(NetClient.current_character_name)
 
-# --- Inventory tab ---------------------------------------------------------
+# --- The bag and what is worn ----------------------------------------------
 
 func _on_inventory_list_result(slots: Array, error: String) -> void:
 	if error != "":
-		inventory_status_label.text = "Error: %s" % error
+		print("World3D: inventory list refused: %s" % error)
 		return
 	_inventory_slots.assign(slots)
 	# Anything on the quickslot bar points at a BAG SLOT, and spending or
 	# moving items shifts what lives in one, so re-resolve before the player
 	# can press it and use the wrong thing.
 	_resync_quickslot_items(slots)
-	inventory_list.clear()
-	for s in _inventory_slots:
-		# The dev list names items too: the client's own name, else the code name.
-		inventory_list.add_item("Slot %d: %s x%d" % [s.slot_index, _item_label_for_line(s.item_id), s.quantity])
-
-func _on_equip_pressed(slot: int) -> void:
-	var selected := inventory_list.get_selected_items()
-	if selected.is_empty():
-		inventory_status_label.text = "Select an item first."
-		return
-	var chosen: InventoryNet.Slot = _inventory_slots[selected[0]]
-	_awaiting_equip_ack = true
-	NetClient.equip(NetClient.current_character_name, slot, chosen.slot_index)
-
-# --- Equipment tab ---------------------------------------------------------
 
 func _on_equipment_result(items: Array, error: String) -> void:
 	# Round 829: the bar's items follow what is worn (after HudPanels has
@@ -36442,7 +36239,7 @@ func _on_equipment_result(items: Array, error: String) -> void:
 	call_deferred("_resync_quickslot_items", _inventory_slots, false)
 	call_deferred("_refresh_equip_state")
 	if error != "":
-		equipment_status_label.text = "Error: %s" % error
+		print("World3D: equipment refused: %s" % error)
 		# Round 800: a job suit's refusal names the client's own message
 		# (the server's suitErrKeys): its text in the system window.
 		if error.begins_with("UIIT_"):
@@ -36455,16 +36252,12 @@ func _on_equipment_result(items: Array, error: String) -> void:
 		# "nothing equipped" list -- re-request the real list, and refresh
 		# inventory since equip/unequip moves an item between the two.
 		_awaiting_equip_ack = false
-		equipment_status_label.text = "Equipment updated."
 		NetClient.list_equipment(NetClient.current_character_name)
 		NetClient.list_inventory(NetClient.current_character_name)
 		return
 
-	equipment_list.clear()
 	var equipped := {}
 	for e in items:
-		var slot_name: String = "Weapon" if e.slot == EquipmentNet.SLOT_WEAPON else ARMOR_SLOT_LABELS.get(e.slot, "Slot %d" % e.slot)
-		equipment_list.add_item("%s: %s" % [slot_name, _item_label_for_line(e.item_id)])
 		equipped[e.slot] = e.item_id
 	# REDRESS THE CHARACTER. This list is the server's word on what is worn, and
 	# until now only a text widget listened to it -- the 3D body kept whatever
@@ -36473,22 +36266,7 @@ func _on_equipment_result(items: Array, error: String) -> void:
 			or CharacterLook.models_of(NetClient.last_equipment_instances) != _player_models_last):
 		_apply_player_equipment_visual(equipped)
 
-func _on_unequip_pressed(slot: int) -> void:
-	_awaiting_equip_ack = true
-	NetClient.unequip(NetClient.current_character_name, slot)
-
-# --- Quests tab --------------------------------------------------------
-
-## The dev tab's list (round 785): the quest log as the server keeps it.
-func _on_quest_log_changed() -> void:
-	quest_list.clear()
-	for pair in NetClient.quest.entries():
-		var v := pair[1] as QuestNet.View
-		var counts := PackedStringArray()
-		for m in v.missions:
-			counts.append(str(Array((m as QuestNet.Mission).values)))
-		quest_list.add_item("quest %d status %d %s" % [int(pair[0]), v.status, " ".join(counts)])
-	quest_status_label.text = "%d active, %d completed" % [NetClient.quest.active.size(), NetClient.quest.completed.size()]
+# --- Quests -------------------------------------------------------------------
 
 ## A mission's count changed (0x30D5): the progress line in
 ## GDR_UPDATE_QUEST_INFO (HudNotice.STYLE_QUEST_INFO), and the system log.
@@ -36602,84 +36380,14 @@ func _update_quest_signs(here_region: Vector2i, player_local: Vector2) -> void:
 			_quest_npcpos = QuestMarks.index_positions(NpcTableReader.parse_positions(_media_pk2.read_file(e)))
 	_hud_minimap.update_quest(player_local, QuestMarks.targets_local(ids, here_region, _quest_npcpos))
 
-# --- Skills tab ------------------------------------------------------------
+# --- Skills and the store -----------------------------------------------------
 
-func _on_skill_list_result(skills: Array, error: String) -> void:
-	if error != "":
-		skill_status_label.text = "Error: %s" % error
-		return
-	_skills.assign(skills)
-	skill_list.clear()
-	for s in _skills:
-		var state: String
-		if not s.known:
-			state = "not learned"
-		elif s.ready_seconds > 0:
-			state = "cooldown %ds" % s.ready_seconds
-		else:
-			state = "ready"
-		skill_list.add_item("%s (+%d dmg, %ds cooldown) [%s]" % [s.skill_name, s.damage_bonus, s.cooldown_seconds, state])
-
-func _on_skill_learn_pressed() -> void:
-	var selected := skill_list.get_selected_items()
-	if selected.is_empty():
-		skill_status_label.text = "Select a skill first."
-		return
-	var chosen: SkillNet.SkillSnapshot = _skills[selected[0]]
-	NetClient.learn_skill(NetClient.current_character_name, chosen.skill_id)
-
-func _on_learn_skill_result(ok: bool, reason: String) -> void:
-	skill_status_label.text = "Skill learned." if ok else "Learn failed: %s" % reason
+## A learn's answer: the skill list again (HudPanels repaints the skill board
+## from its own handler of the same signal).
+func _on_learn_skill_result(_ok: bool, _reason: String) -> void:
 	NetClient.list_skills(NetClient.current_character_name)
 
-## Uses the selected skill on whichever monster is currently selected in the
-## Monsters tab -- reuses that tab's own selection/target list rather than
-## duplicating a second monster picker just for skills.
-func _on_skill_use_pressed() -> void:
-	if _player_dead:
-		# Dead (round 550): the one cast route round 548's lock missed. The
-		# server refuses it anyway (its OpUseSkill gate), so nothing goes out.
-		_log_system(DEAD_INPUT_LINE)
-		return
-	var selected := skill_list.get_selected_items()
-	if selected.is_empty():
-		skill_status_label.text = "Select a skill first."
-		return
-	var target_selected := monster_list.get_selected_items()
-	if target_selected.is_empty():
-		skill_status_label.text = "Select a target in the Monsters tab first."
-		return
-	var chosen: SkillNet.SkillSnapshot = _skills[selected[0]]
-	var target: CombatNet.MonsterSnapshot = _monsters[target_selected[0]]
-	# Its reply is not the reply to an attack the approach walk released, so
-	# that one is forgotten: a refusal of this cast must not walk it again
-	# (_rewalk_after_refusal; round 534).
-	_released_attack = {}
-	NetClient.use_skill(NetClient.current_character_name, chosen.skill_id, target.monster_id)
-
-# --- Shop tab ------------------------------------------------------------
-
-func _on_shop_list_result(entries: Array, error: String) -> void:
-	if error != "":
-		shop_status_label.text = "Error: %s" % error
-		return
-	_shop_entries.assign(entries)
-	shop_list.clear()
-	for e in _shop_entries:
-		shop_list.add_item("%s (class %d, atk %.1f/def %.1f) -- %dg" % [
-			_item_label_for_line(e.item_id), e.item_class, e.phys_attack_max, e.phys_defense_max, e.price
-		])
-
-func _on_shop_buy_pressed() -> void:
-	var selected := shop_list.get_selected_items()
-	if selected.is_empty():
-		shop_status_label.text = "Select an item first."
-		return
-	var chosen: ShopNet.CatalogEntry = _shop_entries[selected[0]]
-	NetClient.shop_buy(NetClient.current_character_name, chosen.item_id, 1)
-
 func _on_shop_buy_result(ok: bool, reason: String) -> void:
-	shop_status_label.text = "Purchased." if ok else "Purchase failed: %s" % reason
 	# Round 844 lane G part 2: the guild goods' refusals, the 0xB034 switch's
 	# system line (c:0x7b93d7 / 0x7b94cb -> 0x7781b0(5, text)).
 	if not ok and reason in GUILD_GOODS_REASONS:
@@ -37535,31 +37243,12 @@ func _qa_party_answer_pending() -> void:
 		_qa_party_answer = ""
 		btn.pressed.emit()
 
-# --- Guild tab -------------------------------------------------------------
-
-func _refresh_guild_list(result: GuildNet.Result) -> void:
-	guild_list.clear()
-	for m in result.members:
-		var role_name := "Leader" if m.role == GuildNet.ROLE_LEADER else "Member"
-		if _guild_donations.has(m.member_name):
-			var donation: int = _guild_donations[m.member_name]
-			guild_list.add_item("%s [%s] %d GP" % [m.member_name, role_name, donation])
-		else:
-			guild_list.add_item("%s [%s]" % [m.member_name, role_name])
-
-## The Guild tab's status line for a guild: name, id and size, the guild's
-## level and member cap once a level reply has arrived (round 528), and its
-## GatheredSP once a points reply has (round 525).
-func _guild_status_text(result: GuildNet.Result) -> String:
-	var text: String
-	if _guild_level > 0:
-		text = "%s (#%d, level %d, %d/%d members)." % [result.guild_name, result.guild_id,
-			_guild_level, result.members.size(), _guild_max_members]
-	else:
-		text = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
-	if _guild_gathered_sp >= 0:
-		text += " %d GP" % _guild_gathered_sp
-	return text
+# --- The guild state ----------------------------------------------------------
+#
+# What the guild replies leave for the rest of the client (the guild NPC's
+# talk lines, the level-up's system lines). The guild window draws the guild
+# itself (HudPanels, rounds 822-844); round 848 removed the prototype's Guild
+# tab (its member list, status line and Level Up button).
 
 ## Forgets the guild points and level shown, when the guild they belong to is
 ## gone or replaced (rounds 525, 528).
@@ -37570,23 +37259,6 @@ func _clear_guild_points() -> void:
 	_guild_max_members = 0
 	_guild_next_gold = 0
 	_guild_next_gp = 0
-	_refresh_guild_level_button()
-
-## The master's "Level Up Guild" button (round 528): shown only to the master
-## once the guild's level is known, with the next level's gold and guild-point
-## cost as the server quoted it (guild.LevelUpCost of the current level), and
-## disabled at the top level. The server holds every gate (CGuild::HandleLevelUp's
-## ladder); the button only hides what the master cannot use.
-func _refresh_guild_level_button() -> void:
-	if guild_level_up_button == null:
-		return
-	guild_level_up_button.visible = _guild_master and _guild_level > 0
-	if _guild_next_gold > 0:
-		guild_level_up_button.disabled = false
-		guild_level_up_button.text = "Level Up Guild (%d gold, %d GP)" % [_guild_next_gold, _guild_next_gp]
-	else:
-		guild_level_up_button.disabled = true
-		guild_level_up_button.text = "Guild at the top level"
 
 ## A guild reply (info, join or create). A success also records the player's
 ## guild state for the guild NPC's talk lines (round 521): the id (0 = none),
@@ -37598,7 +37270,7 @@ func _on_guild_result(result: GuildNet.Result) -> void:
 	if result == null:
 		return
 	if result.error != "":
-		guild_status_label.text = "Error: %s" % result.error
+		print("World3D: guild reply refused: %s" % result.error)
 		# Round 800: 0x4c56 UIIT_CTL_GUILD_JOIN_JOB_ERROR and the like.
 		if result.error.begins_with("UIIT_"):
 			_log_system(_resolve_any_text(result.error, result.error))
@@ -37612,17 +37284,12 @@ func _on_guild_result(result: GuildNet.Result) -> void:
 			_guild_master = true
 	if result.guild_id == 0:
 		_guild_roster = null
-		guild_status_label.text = "Not in a guild."
-		guild_list.clear()
 	else:
 		_guild_roster = result
-		guild_status_label.text = _guild_status_text(result)
-		_refresh_guild_list(result)
 		# The points ride on their own reply (round 525): OpGuildPoints, and
 		# the level on another (round 528): OpGuildLevel, a report only.
 		NetClient.guild_points(NetClient.current_character_name)
 		NetClient.guild_level(NetClient.current_character_name, false)
-	_refresh_guild_level_button()
 	_refresh_open_talk_menu()
 
 ## A guild points reply (round 525): the guild's GatheredSP and each member's
@@ -37639,17 +37306,15 @@ func _on_guild_points_result(result: GuildNet.PointsResult) -> void:
 	_guild_donations = {}
 	for m in result.members:
 		_guild_donations[m.member_name] = m.gp_donation
-	guild_status_label.text = _guild_status_text(_guild_roster)
-	_refresh_guild_list(_guild_roster)
 
 ## A guild level reply (round 528): a report of the level and the next
 ## level's cost, or a level-up's outcome. A refusal carrying an engine code is
 ## a level-up the server refused in CGuild::HandleLevelUp's order (dead,
-## guildless, not the master, level 5, gold, guild points); it is shown on the
-## tab and in chat in the game's own words where ErrorText has them, else the
-## server's. Any other refusal only goes on the tab. On the tab a refusal goes
-## after the guild's summary, which stays (round 531). A reply for a guild this
-## client no longer shows changes nothing. A level-up spends gold and guild
+## guildless, not the master, level 5, gold, guild points); it goes to the
+## system window in the game's own words where ErrorText has them, else the
+## server's. Any other refusal is printed only (the prototype's Guild tab
+## showed it until round 848). A reply for a guild this client no longer
+## shows changes nothing. A level-up spends gold and guild
 ## points and the server pushes neither, so a success re-reads the purse and
 ## the points.
 func _on_guild_level_result(result: GuildNet.LevelResult) -> void:
@@ -37657,13 +37322,7 @@ func _on_guild_level_result(result: GuildNet.LevelResult) -> void:
 		return
 	if result.error != "":
 		var line: String = ErrorText.guild_level_up_line(result.code, _ui_text_table, result.error)
-		# Beside the guild's summary, not in place of it (round 531): the
-		# summary used to vanish until the next guild reply. The next reply
-		# rewrites the line without the refusal.
-		var refusal := "Guild level: %s" % line
-		if _guild_roster != null:
-			refusal = "%s %s" % [_guild_status_text(_guild_roster), refusal]
-		guild_status_label.text = refusal
+		print("World3D: guild level refused (code 0x%x): %s" % [result.code, line])
 		if result.code != 0:
 			_log_system("Could not level up the guild: %s" % line)
 		return
@@ -37673,8 +37332,6 @@ func _on_guild_level_result(result: GuildNet.LevelResult) -> void:
 	_guild_max_members = result.max_members
 	_guild_next_gold = result.next_gold
 	_guild_next_gp = result.next_gp
-	guild_status_label.text = _guild_status_text(_guild_roster)
-	_refresh_guild_level_button()
 	if result.levelled_up:
 		_log_system("The guild reached level %d; it can now hold %d members." % [result.level, result.max_members])
 		_request_world_stats()
@@ -37701,22 +37358,6 @@ func _on_guild_create_result(result: GuildNet.Result) -> void:
 	elif result.error != "":
 		_log_system("Could not found the guild: %s" % result.error)
 
-func _on_guild_create_pressed() -> void:
-	var guild_name := guild_name_input.text.strip_edges()
-	if guild_name.is_empty():
-		guild_status_label.text = "Enter a guild name first."
-		return
-	if not _guild_name_passes(guild_name):
-		return
-	NetClient.create_guild(NetClient.current_character_name, guild_name)
-
-func _on_guild_join_pressed() -> void:
-	var id_text := guild_join_id_input.text.strip_edges()
-	if not id_text.is_valid_int():
-		guild_status_label.text = "Enter a numeric guild ID."
-		return
-	NetClient.join_guild(NetClient.current_character_name, id_text.to_int())
-
 ## A leave reply. Success leaves the player guildless (round 521), so a guild
 ## NPC's open talk menu turns to the create line. A refusal means the state
 ## this client held may be stale -- the server's "not in a guild" is exactly
@@ -37728,76 +37369,80 @@ func _on_guild_leave_result(ok: bool, reason: String) -> void:
 		_guild_master = false
 		_guild_roster = null
 		_clear_guild_points()
-		guild_status_label.text = "Left the guild."
-		guild_list.clear()
 		_log_system("Left the guild.")
 	else:
-		guild_status_label.text = "Leave failed: %s" % reason
 		_log_system("Leave failed: %s" % reason)
 		if NetClient.is_connected_to_server():
 			NetClient.guild_info(NetClient.current_character_name)
 	_refresh_open_talk_menu()
 
-# --- Duel tab --------------------------------------------------------------
+# --- The duel (OpenSRO's own; DuelNet) ------------------------------------------
+#
+# OURS throughout: the duel is the prototype's (server/internal/duel), not the
+# original's, and its only way in was the native Duel tab until round 848.
+# It is now the console's /duel (Console: /duel <name>, /duel accept,
+# /duel decline, /duel hit), and its answers are system lines in the
+# original's system message window -- the tab's own wording.
 
-func _on_duel_challenge_pressed() -> void:
-	var target := duel_target_input.text.strip_edges()
-	if target.is_empty():
-		duel_status_label.text = "Enter a target name first."
-		return
-	NetClient.duel_challenge(NetClient.current_character_name, target)
+## The console's /duel: "challenge" with a name, "accept", "decline" or "hit".
+func duel_command(verb: String, arg: String = "") -> void:
+	match verb:
+		"challenge":
+			if arg.strip_edges() == "":
+				_log_system("Usage: /duel <name>")
+				return
+			NetClient.duel_challenge(NetClient.current_character_name, arg.strip_edges())
+		"accept", "decline":
+			if _pending_duel_challenger.is_empty():
+				_log_system("No pending duel challenge to answer.")
+				return
+			NetClient.duel_respond(NetClient.current_character_name, _pending_duel_challenger, verb == "accept")
+			_pending_duel_challenger = ""
+		"hit":
+			NetClient.duel_attack(NetClient.current_character_name)
 
 func _on_duel_challenge_result(ok: bool, reason: String) -> void:
-	duel_status_label.text = "Challenge sent." if ok else "Challenge failed: %s" % reason
+	_log_system("Duel challenge sent." if ok else "Duel challenge failed: %s" % reason)
 
 func _on_duel_invite(invite: DuelNet.Invite) -> void:
 	if invite == null:
 		return
 	_pending_duel_challenger = invite.challenger_name
-	duel_invite_label.text = "%s challenges you to a duel!" % invite.challenger_name
-
-func _on_duel_respond_pressed(accept: bool) -> void:
-	if _pending_duel_challenger.is_empty():
-		duel_status_label.text = "No pending challenge to respond to."
-		return
-	NetClient.duel_respond(NetClient.current_character_name, _pending_duel_challenger, accept)
-	_pending_duel_challenger = ""
-	duel_invite_label.text = "(no pending challenge)"
+	_log_system("%s challenges you to a duel. Type /duel accept or /duel decline." % invite.challenger_name)
 
 func _on_duel_respond_result(ok: bool, reason: String) -> void:
 	if not ok:
-		duel_status_label.text = "Respond failed: %s" % reason
+		_log_system("Duel answer failed: %s" % reason)
 
 func _on_duel_started(started: DuelNet.Started) -> void:
 	if started == null:
 		return
-	duel_status_label.text = "Dueling %s! Attack away." % started.opponent_name
+	_log_system("Dueling %s! /duel hit attacks." % started.opponent_name)
 
 func _on_duel_declined(declined: DuelNet.Declined) -> void:
 	if declined == null:
 		return
-	duel_status_label.text = "%s declined your challenge." % declined.target_name
+	_log_system("%s declined your duel challenge." % declined.target_name)
 
 func _on_duel_attack_result(result: DuelNet.AttackResult) -> void:
 	if result == null:
 		return
 	if result.error != "":
-		duel_status_label.text = "Attack failed: %s" % result.error
-		return
-	if result.opponent_died:
-		duel_status_label.text = "Hit for %d -- you won!" % result.damage
+		_log_system("Duel blow failed: %s" % result.error)
+	elif result.opponent_died:
+		_log_system("Hit for %d -- you won the duel!" % result.damage)
 	else:
-		duel_status_label.text = "Hit for %d (opponent HP %d)." % [result.damage, result.opponent_hp]
+		_log_system("Hit for %d (opponent HP %d)." % [result.damage, result.opponent_hp])
 
 func _on_duel_opponent_damaged(damaged: DuelNet.OpponentDamaged) -> void:
 	if damaged == null:
 		return
-	duel_status_label.text = "Took %d damage (HP %d)." % [damaged.damage, damaged.remaining_hp]
+	_log_system("Took %d damage in the duel (HP %d)." % [damaged.damage, damaged.remaining_hp])
 
 func _on_duel_ended(ended: DuelNet.Ended) -> void:
 	if ended == null:
 		return
-	duel_status_label.text = "Duel over -- %s won." % ended.winner_name
+	_log_system("The duel is over -- %s won." % ended.winner_name)
 
 # --- The exchange (round 834) --------------------------------------------------
 #

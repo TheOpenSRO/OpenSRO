@@ -227,10 +227,12 @@ func _init() -> void:
 	_test_encode_level()
 	_test_decode_level_result()
 
-## World3D's Guild tab after a level reply (round 528), on a bare World3D (no
-## scene; the tab's nodes are set by hand). This runs in _initialize, not
-## _init: World3D names the NetClient autoload, which a --script suite
-## registers only after _init (error_text_test.gd does the same).
+## World3D's guild state after a level reply (round 528), on a bare World3D
+## (no scene). Round 848 removed the prototype's Guild tab (its status line
+## and Level Up button); what is checked is the state the replies leave and
+## the system lines. This runs in _initialize, not _init: World3D names the
+## NetClient autoload, which a --script suite registers only after _init
+## (error_text_test.gd does the same).
 func _test_world_guild_level() -> void:
 	var world_script := load("res://scripts/World3D.gd") as GDScript
 	var world_ok := world_script != null and world_script.can_instantiate()
@@ -238,13 +240,6 @@ func _test_world_guild_level() -> void:
 	if not world_ok:
 		return
 	var world: Node = world_script.new()
-	var status := Label.new()
-	var button := Button.new()
-	var chat := RichTextLabel.new()
-	button.visible = false
-	world.set("guild_status_label", status)
-	world.set("guild_level_up_button", button)
-	world.set("chat_log", chat)
 	var roster := GuildNet.Result.new()
 	roster.guild_id = 7
 	roster.guild_name = "Silk Legion"
@@ -258,43 +253,37 @@ func _test_world_guild_level() -> void:
 
 	world.call("_on_guild_level_result", GuildNet.decode_level_result(
 		_build_level_result("", 0, 7, 2, false, 20, 9000000, 50400)))
-	_check(status.text == "Silk Legion (#7, level 2, 1/20 members).",
-		"the Guild tab shows the level and the cap (got '%s')" % status.text)
-	_check(button.visible and not button.disabled and button.text == "Level Up Guild (9000000 gold, 50400 GP)",
-		"the master's button quotes the next level's cost (got '%s')" % button.text)
+	_check(int(world.get("_guild_level")) == 2 and int(world.get("_guild_max_members")) == 20,
+		"a level reply records the level and the cap (got %s, %s)" % [world.get("_guild_level"), world.get("_guild_max_members")])
+	_check(int(world.get("_guild_next_gold")) == 9000000 and int(world.get("_guild_next_gp")) == 50400,
+		"and the next level's cost as the server quoted it")
 
 	world.call("_on_guild_level_result", GuildNet.decode_level_result(
 		_build_level_result("", 0, 7, 5, false, 50, 0, 0)))
-	_check(button.visible and button.disabled, "at level 5 the button is shown but disabled")
+	_check(int(world.get("_guild_level")) == 5 and int(world.get("_guild_next_gold")) == 0, "at level 5 there is no next cost")
 
 	# NEGATIVE: a reply for another guild changes nothing.
 	world.call("_on_guild_level_result", GuildNet.decode_level_result(
 		_build_level_result("", 0, 8, 3, false, 25, 15000000, 135000)))
-	_check(status.text == "Silk Legion (#7, level 5, 1/50 members).",
-		"a level reply for another guild is ignored (got '%s')" % status.text)
+	_check(int(world.get("_guild_level")) == 5 and int(world.get("_guild_max_members")) == 50,
+		"a level reply for another guild is ignored")
 
-	# Round 531: a refusal goes beside the summary, which stays. Without an
-	# archive text table ErrorText falls back to the server's words.
-	# NEGATIVE (fails before round 531: the refusal replaced the summary).
+	# A refusal with an engine code is a system line; without an archive
+	# text table ErrorText falls back to the server's words. The state stays.
 	world.call("_on_guild_level_result", GuildNet.decode_level_result(
 		_build_level_result("the guild is already at the top level", 0x4c21, 0, 0, false, 0, 0, 0)))
-	_check(status.text == "Silk Legion (#7, level 5, 1/50 members). Guild level: the guild is already at the top level",
-		"a level-up refusal keeps the guild's summary (got '%s')" % status.text)
-	# The next reply rewrites the line without the refusal.
-	world.call("_on_guild_level_result", GuildNet.decode_level_result(
-		_build_level_result("", 0, 7, 5, false, 50, 0, 0)))
-	_check(status.text == "Silk Legion (#7, level 5, 1/50 members).",
-		"the next level reply clears the refusal (got '%s')" % status.text)
+	var said := String(world.call("log_text"))
+	_check(said.contains("Could not level up the guild: the guild is already at the top level"),
+		"a level-up refusal is a system line (got '%s')" % said)
+	_check(int(world.get("_guild_level")) == 5, "and leaves the level as it was")
 
-	# NEGATIVE: a member who is not the master gets no button.
-	world.set("_guild_master", false)
-	world.call("_refresh_guild_level_button")
-	_check(not button.visible, "a member who is not the master sees no level-up button")
+	# A level-up reached: its system line.
+	world.call("_on_guild_level_result", GuildNet.decode_level_result(
+		_build_level_result("", 0, 7, 5, true, 50, 0, 0)))
+	_check(String(world.call("log_text")).contains("The guild reached level 5; it can now hold 50 members."),
+		"a level-up says the new level and cap")
 
 	world.free()
-	status.free()
-	button.free()
-	chat.free()
 
 func _initialize() -> void:
 	_test_world_guild_level()

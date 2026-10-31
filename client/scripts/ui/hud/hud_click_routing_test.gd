@@ -6,9 +6,10 @@ extends SceneTree
 ## GUI, then _unhandled_input), and a recorder node stands in for World3D's
 ## handlers, so "reaches the world" is measured, not read off a filter value.
 ##
-##   (a) The developer Hide UI button (World3D.tscn, UI/HideUIButton) takes a
-##       click at its centre over anything in UI/Control, and sits clear of
-##       the minimap as World3D places it.
+##   (a) World3D.tscn's UI is the CanvasLayer and its Control alone (round
+##       848 removed the developer Hide UI button and the rest of the
+##       prototype's native widgets), and the minimap sits where World3D
+##       places it.
 ##   (b) A middle press on the minimap, the player-info block or the target
 ##       window fires the hotbar's first quickslot once, through
 ##       World3D._relay_middle_button_to_hotbar, as a press over the world does.
@@ -61,21 +62,19 @@ func _make_recorder() -> Node:
 	recorder.set_script(recorder_script)
 	return recorder
 
-## (a) The Hide UI button. World3D.tscn is instantiated but World3D never
-## enters the tree (its _ready would open archives and the network); only its
-## UI CanvasLayer is moved into the live viewport.
-func _test_hide_ui_button(world: Node, recorder: Node) -> void:
+## (a) The UI root. World3D.tscn is instantiated but World3D never enters
+## the tree (its _ready would open archives and the network); only its UI
+## CanvasLayer is moved into the live viewport.
+func _test_ui_root(world: Node, _recorder: Node) -> void:
 	var ui := world.get_node_or_null("UI") as CanvasLayer
 	var control := world.get_node_or_null("UI/Control") as Control
-	var button := world.get_node_or_null("UI/HideUIButton") as Button
-	_check(ui != null and control != null and button != null,
-		"World3D.tscn has UI, UI/Control and UI/HideUIButton")
-	if ui == null or control == null or button == null:
+	_check(ui != null and control != null, "World3D.tscn has UI and UI/Control")
+	if ui == null or control == null:
 		return
-	# NEGATIVE (fails before round 531: the button was Control's EARLIER
-	# sibling, and Godot 4.2 hit-tests a later sibling first).
-	_check(button.get_index() > control.get_index(),
-		"HideUIButton comes after UI/Control (index %d, Control %d)" % [button.get_index(), control.get_index()])
+	# NEGATIVE (fails before round 848: HideUIButton beside the Control, and
+	# the labels, chat panel, zone box, Log Out and ActionTabs inside it).
+	_check(world.get_node_or_null("UI/HideUIButton") == null and ui.get_child_count() == 1 and control.get_child_count() == 0,
+		"World3D.tscn's UI holds no native widget: UI has %d child(ren), UI/Control %d" % [ui.get_child_count(), control.get_child_count()])
 	world.remove_child(ui)
 	# The nodes leave World3D's scene, so they drop it as their owner.
 	for n in ui.find_children("*", "", true, false):
@@ -93,7 +92,6 @@ func _test_hide_ui_button(world: Node, recorder: Node) -> void:
 	if has_place:
 		world.call("place_minimap", minimap)
 	else:
-		# The same offsets, by hand, so the hit tests below still run.
 		minimap.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 		minimap.offset_left = -150.0
 		minimap.offset_right = -14.0
@@ -113,9 +111,6 @@ func _test_hide_ui_button(world: Node, recorder: Node) -> void:
 		_check(false, "World3D turns the player's facing into the region's frame for the arrow (minimap_facing)")
 	var view := root.get_visible_rect()
 	var map_rect := minimap.get_global_rect()
-	var button_rect := button.get_global_rect()
-	# The probes: both rects are real and on screen, and the minimap is STOP
-	# (round 529), so it can take a click from the button.
 	# Round 630: flush with the top-right corner, as 0x79f030 puts it --
 	# SetPos(width - 0x81, 0) on the 140x184 window, whose art is opaque over
 	# its first 129 columns, so the 11 transparent ones hang off the edge.
@@ -123,37 +118,7 @@ func _test_hide_ui_button(world: Node, recorder: Node) -> void:
 		"the minimap is 140x184 at (width - 129, 0) (%s in %s)" % [map_rect, view])
 	_check(view.encloses(Rect2(map_rect.position, Vector2(129, 184))),
 		"the probe: its opaque 129 columns are on screen (%s in %s)" % [map_rect, view])
-	_check(button_rect.size.x > 0 and button_rect.size.y > 0 and view.encloses(button_rect),
-		"the probe: the button has a rect on screen (%s)" % [button_rect])
 	_check(minimap.mouse_filter == Control.MOUSE_FILTER_STOP, "the probe: the minimap is STOP")
-	# NEGATIVE (fails before round 531: the button sat under the minimap's
-	# top-right corner, over its area-name line).
-	_check(not button_rect.intersects(map_rect),
-		"the button is clear of the minimap (button %s, minimap %s)" % [button_rect, map_rect])
-
-	var presses: Array = []
-	button.pressed.connect(func() -> void: presses.append(1))
-	var centre := button_rect.get_center()
-	# NEGATIVE (fails before round 531: the minimap took the click).
-	_check(not _click_reaches_world(recorder, centre) and presses.size() == 1,
-		"a click at the button's centre presses it (presses %d)" % presses.size())
-	# Nothing in UI/Control can cover it: a full-screen STOP control added
-	# last to UI/Control still loses the button's centre.
-	var cover := Control.new()
-	cover.mouse_filter = Control.MOUSE_FILTER_STOP
-	control.add_child(cover)
-	cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_check(not _click_reaches_world(recorder, view.get_center()),
-		"the probe: the full-screen cover takes a click anywhere else")
-	presses.clear()
-	# NEGATIVE (fails before round 531).
-	_check(not _click_reaches_world(recorder, centre) and presses.size() == 1,
-		"the button wins its centre over a full-screen STOP control in UI/Control (presses %d)" % presses.size())
-	# Hidden with the developer tools (Shift+F1), it takes nothing.
-	button.visible = false
-	presses.clear()
-	_click_reaches_world(recorder, centre)
-	_check(presses.is_empty(), "a hidden button takes no click")
 	ui.free()
 
 ## (b) The middle button over the three STOP surfaces.
@@ -269,7 +234,7 @@ func _initialize() -> void:
 	var world: Node = scene.instantiate() if scene != null else null
 	_check(world != null and world.get_script() != null, "World3D.tscn instantiates with its script")
 	if world != null:
-		_test_hide_ui_button(world, recorder)
+		_test_ui_root(world, recorder)
 		_test_middle_button(world, recorder)
 		world.free()
 	recorder.free()

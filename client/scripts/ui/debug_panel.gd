@@ -1,17 +1,26 @@
 extends PanelContainer
 class_name DebugPanel
 
-## The debug panel, F3 in the world: everything a tester would otherwise
-## have to be asked for, on one screen, with a Copy button.
+## The debug panel, Shift+F3 in the world: everything a tester would
+## otherwise have to be asked for, on one screen, with a Copy button.
+##
+## **Developer-only (round 848).** It is built only where DevTools.enabled()
+## (a debug build, OPENSRO_DEV=1 or `[dev] tools=true`); a release build has
+## no panel and Shift+F3 is retail's F3. Its widgets are Godot's own on
+## purpose -- a developer's tool, not the game's interface -- and the native
+## GUI guard (native_gui848_test.gd) allows them for that reason only. What
+## a player needs of it is elsewhere: /copy builds the same report
+## (diagnostics_for), /uiscale and /names set the two settings.
 ##
 ## What it shows is what has settled this project's bug reports so far --
 ## which build is running (a screenshot of an old release against a new
 ## server looks like six unrelated bugs), where the player is in region
 ## terms, what every nearby entity resolved to and from which archive,
-## what failed to load, and how long a frame takes. What it changes is
-## the handful of things a player at a TV wants to change: UI scale, chat
-## font, how near a name shows. Those three are remembered
-## (ClientSettings); the draw mode, free camera and teleport are not.
+## what failed to load, and how long a frame takes. What it changes: UI
+## scale and how near a name shows (remembered, ClientSettings), the draw
+## mode, free camera, teleport and zone travel (not remembered). The chat
+## font spinner went in round 848: it sized the retired developer chat log,
+## which nobody could see.
 ##
 ## It reads World3D's state directly, underscored members included: this
 ## is a view of that scene, not a component with a contract of its own.
@@ -43,7 +52,7 @@ var _range_slider: HSlider
 var _range_value: Label
 var _scale_slider: HSlider
 var _scale_value: Label
-var _chat_font: SpinBox
+var _zone_edit: LineEdit
 var _draw_mode: OptionButton
 var _view_mode: OptionButton
 var _teleport_edit: LineEdit
@@ -70,6 +79,7 @@ func _init(world: Node3D) -> void:
 	column.add_child(_build_slider_row())
 	column.add_child(_build_tools_row())
 	column.add_child(_build_town_row())
+	column.add_child(_build_zone_row())
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(scroll)
@@ -123,13 +133,6 @@ func _build_slider_row() -> HBoxContainer:
 	row.add_child(_scale_slider)
 	_scale_value = _label("%.2f" % ClientSettings.ui_scale())
 	row.add_child(_scale_value)
-	row.add_child(_label("  Chat font"))
-	_chat_font = SpinBox.new()
-	_chat_font.min_value = 0
-	_chat_font.max_value = 72
-	_chat_font.value = ClientSettings.chat_font_size()
-	_chat_font.value_changed.connect(_on_chat_font_changed)
-	row.add_child(_chat_font)
 	return row
 
 func _build_tools_row() -> HBoxContainer:
@@ -189,10 +192,30 @@ func _build_town_row() -> HBoxContainer:
 	for town in TOWNS:
 		var target: String = town[1]
 		row.add_child(_button(town[0], func() -> void:
-			_world.zone_input.text = target
-			_world._on_change_zone_pressed()
+			_world.travel_to_zone(target)
 			_world._log_system("Travelling to %s (%s)" % [town[0], target])))
 	return row
+
+## The zone box that sat beside the player block until round 848 (World3D's
+## ZoneInput / Change Zone): `97/168`, or `97/168@1002,917` for a spot.
+func _build_zone_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_child(_label("Zone"))
+	_zone_edit = LineEdit.new()
+	KeyInput.line_edit_as_42(_zone_edit)
+	_zone_edit.placeholder_text = "97/168 or 97/168@1002,917"
+	_zone_edit.custom_minimum_size.x = 220.0
+	_zone_edit.text_submitted.connect(func(_t): _change_zone())
+	row.add_child(_zone_edit)
+	row.add_child(_button("Change Zone", _change_zone))
+	return row
+
+func _change_zone() -> void:
+	var typed := _zone_edit.text.strip_edges()
+	if typed == "":
+		return
+	_world.travel_to_zone(typed)
+	_world._log_system("Travelling to %s" % typed)
 
 func _button(text: String, on_pressed: Callable) -> Button:
 	var button := Button.new()
@@ -255,10 +278,17 @@ static func _git_head() -> String:
 
 ## Everything, as plain text: what Copy and Save hand over.
 func diagnostics() -> String:
+	return diagnostics_for(_world, _build_line)
+
+## The report for `world` without a panel (round 848): /copy runs it in a
+## release build, which builds no panel.
+static func diagnostics_for(world: Node3D, build_line: String = "") -> String:
+	if build_line == "":
+		build_line = build_description()
 	var lines := PackedStringArray()
-	var p: Vector3 = _world.player.global_position
+	var p: Vector3 = world.player.global_position
 	lines.append("== build")
-	lines.append("client %s" % _build_line)
+	lines.append("client %s" % build_line)
 	lines.append("Godot %s on %s | gpu %s | api %s" % [
 		Engine.get_version_info().string, OS.get_name(),
 		RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_api_version()])
@@ -273,26 +303,29 @@ func diagnostics() -> String:
 	lines.append("%s:%d, %s | character %s | zone %s" % [
 		NetClient.server_host, NetClient.server_port,
 		"connected" if NetClient.is_connected_to_server() else "not connected",
-		NetClient.current_character_name, _world._current_zone_name])
+		NetClient.current_character_name, world._current_zone_name])
 
 	lines.append("== player")
-	lines.append("world %.1f, %.1f, %.1f | ground %.1f" % [p.x, p.y, p.z, _world._terrain_height_at(p)])
-	var pair: Array = _world._nav_graph_for(p)
+	lines.append("world %.1f, %.1f, %.1f | ground %.1f" % [p.x, p.y, p.z, world._terrain_height_at(p)])
+	var pair: Array = world._nav_graph_for(p)
 	if pair.size() >= 2 and pair[1] is Node3D:
 		var group: Node3D = pair[1]
 		var local: Vector3 = group.to_local(p)
 		lines.append("region node %s | local %.1f, %.1f, %.1f" % [group.name, local.x, local.y, local.z])
 	else:
 		lines.append("region: not streamed in yet")
-	var arm: SpringArm3D = _world.camera_arm
+	var arm: SpringArm3D = world.camera_arm
 	lines.append("camera yaw %.0f pitch %.0f dist %.0f | gender %s | body %s scale 0x%02x | weapon group %s | names within %d" % [
 		arm.rotation_degrees.y, arm.rotation_degrees.x, arm.spring_length,
-		_world._player_gender, _world._player_body, _world._player_scale, _world._player_weapon_group, int(_world._name_plate_range)])
+		world._player_gender, world._player_body, world._player_scale, world._player_weapon_group, int(world._name_plate_range)])
+	# Round 848: the last combat line, which the retired Monsters tab showed.
+	if String(world._combat_line) != "":
+		lines.append("last combat line: %s" % world._combat_line)
 
 	lines.append("== equipment (slot: item -> model)")
 	# The last answer the server gave, not a fresh request: asking is a
 	# coroutine, and this runs twice a second.
-	var equipped: Dictionary = _world._player_equipped_last
+	var equipped: Dictionary = world._player_equipped_last
 	if equipped.is_empty():
 		lines.append("nothing worn, or the equipment list has not arrived")
 	var slots: Array = equipped.keys()
@@ -300,42 +333,42 @@ func diagnostics() -> String:
 	for slot in slots:
 		var item_id: int = int(equipped[slot])
 		lines.append("%s: %d -> %s" % [SLOT_NAMES.get(slot, str(slot)), item_id,
-			str(_world._item_models.get(item_id, "(no model in the item table)"))])
+			str(world._item_models.get(item_id, "(no model in the item table)"))])
 
-	lines.append("== other players (%d)" % _world._other_bodies.size())
-	for id in _world._other_bodies:
-		var body: Node3D = _world._other_bodies[id]
+	lines.append("== other players (%d)" % world._other_bodies.size())
+	for id in world._other_bodies:
+		var body: Node3D = world._other_bodies[id]
 		var plate := body.get_node_or_null("Name") as Label3D
-		var gait: Dictionary = _world._other_gaits.get(id, {})
-		var worn: Dictionary = _world._other_worn(int(id))
+		var gait: Dictionary = world._other_gaits.get(id, {})
+		var worn: Dictionary = world._other_worn(int(id))
 		lines.append("%s (id %d) %.0f away | %s, %s | worn %s" % [
 			plate.text if plate != null else "?", id, body.global_position.distance_to(p),
 			str(gait.get("gender", "?")), str(gait.get("group", "?")), str(worn)])
 
-	lines.append("== monsters (%d)" % _world._monster_bodies.size())
-	for id in _world._monster_bodies:
-		var body: Node3D = _world._monster_bodies[id]
-		var snap = _world._monster_snapshots.get(id)
+	lines.append("== monsters (%d)" % world._monster_bodies.size())
+	for id in world._monster_bodies:
+		var body: Node3D = world._monster_bodies[id]
+		var snap = world._monster_snapshots.get(id)
 		if snap == null:
 			lines.append("id %d %.0f away" % [id, body.global_position.distance_to(p)])
 			continue
 		lines.append("%s (%s) %d/%d hp, %.0f away -> %s" % [
 			snap.monster_name, snap.code_name if snap.code_name != "" else "no code",
 			snap.hp, snap.max_hp, body.global_position.distance_to(p),
-			_world._monster_model_path(snap.code_name, snap.monster_name)])
+			world._monster_model_path(snap.code_name, snap.monster_name)])
 
 	# Round 708: the server's spawns (NetClient's roster), and how many of
 	# them stand (a holder in a loaded region).
 	var placed := 0
-	for uid in _world._npc_holders:
-		if is_instance_valid(_world._npc_holders[uid]):
+	for uid in world._npc_holders:
+		if is_instance_valid(world._npc_holders[uid]):
 			placed += 1
 	lines.append("== npcs: %d spawned by the server, %d placed, %d named, %d with models" % [
-		_world._npc_records.size(), placed, _world._npc_names.size(), _world._npc_models.size()])
+		world._npc_records.size(), placed, world._npc_names.size(), world._npc_models.size()])
 
 	lines.append("== nearest name plates")
 	var plates: Array = []
-	for node in get_tree().get_nodes_in_group("name_plates"):
+	for node in world.get_tree().get_nodes_in_group("name_plates"):
 		var label := node as Label3D
 		if label != null and label.is_inside_tree():
 			plates.append([label.global_position.distance_to(p), label.text])
@@ -357,8 +390,8 @@ func diagnostics() -> String:
 	# OPENSRO_QA_WHICH or client/tools/which_layer.gd (docs/DEBUG_TOOLS.md).
 	for line in AssetArchives.current().describe():
 		lines.append("  " + line)
-	lines.append("species by code %d, by name %d" % [_world._monster_models_by_code.size(), _world._monster_models_by_name.size()])
-	var names: UiTextTable = _world._object_name_table
+	lines.append("species by code %d, by name %d" % [world._monster_models_by_code.size(), world._monster_models_by_name.size()])
+	var names: UiTextTable = world._object_name_table
 	if names != null:
 		lines.append("%s reads \"%s\" in this archive" % [NAME_PROBE_TOKEN, names.get_text(NAME_PROBE_TOKEN)])
 
@@ -400,7 +433,7 @@ func diagnostics() -> String:
 
 ## The last `n` lines of the session log (user://logs/opensro.log), or empty
 ## if it cannot be read -- for the Copy payload above.
-func _tail_log_lines(n: int) -> PackedStringArray:
+static func _tail_log_lines(n: int) -> PackedStringArray:
 	var path := "user://logs/opensro.log"
 	if not FileAccess.file_exists(path):
 		return PackedStringArray()
@@ -466,21 +499,6 @@ func _on_scale_changed(value: float) -> void:
 			ClientSettings.apply_ui_scale(get_window(), _scale_slider.value))
 		add_child(_scale_timer)
 	_scale_timer.start()
-
-func _on_chat_font_changed(value: float) -> void:
-	# A click on the spinner's arrows grabs its inner line's focus (Godot 4.2
-	# spin_box.cpp), and a focused line counts as typing (World3D._is_typing),
-	# which stops movement. Hand the keyboard back once the value is set, so
-	# a step with the arrows does not leave the keys and click-to-move dead
-	# (round 522).
-	_chat_font.get_line_edit().release_focus()
-	var size := int(value)
-	var chat: RichTextLabel = _world.chat_log
-	if size > 0:
-		chat.add_theme_font_size_override("normal_font_size", size)
-	else:
-		chat.remove_theme_font_size_override("normal_font_size")
-	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_CHAT_FONT_SIZE, size)
 
 ## Shows the world's camera view in the selector (after F9 changed it).
 ## select() does not emit item_selected, so nothing loops.

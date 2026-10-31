@@ -190,11 +190,11 @@ const OTHER_KEYS: Array = [
 	# WM_KEYUP of VK_SNAPSHOT (0x2c) in the frame's message handler 0xba7240
 	# saves `ScreenShot\SRO[YYYY-MM-DD hh-mm-ss]_NN.jpg` -- on the release.
 	{"keys": "PrintScreen", "mods": "", "action": "screenshot", "source": "read 0xba7240"},
-	# Developer toggles. Retail answers no Ctrl+F key: its F1..F4 cases do not
-	# test Ctrl, and Ctrl reaches only the digit path (0x780c21). Ours.
-	{"keys": "F1", "mods": "ctrl", "action": "dev_tools", "source": "ours"},
-	{"keys": "F2", "mods": "ctrl", "action": "debug_tabs", "source": "ours (was Tab before round 608)"},
-	{"keys": "F3", "mods": "ctrl", "action": "debug_panel", "source": "ours"},
+	# The developer toggle (ours): Shift+F3, the debug panel, only where
+	# DevTools.enabled() (round 848; Shift+F1's zone box and Log Out and
+	# Shift+F2's debug tabs went with the prototype's native UI). Retail
+	# reads no modifier on an F key, so elsewhere Shift+F1-F3 are F1-F3.
+	{"keys": "F3", "mods": "shift", "action": "debug_panel", "source": "ours (developer builds only)"},
 	# Enter (char 0x0d, 0x78b660 -> 0x7a9a70) opens the chat line -- HudChat,
 	# round 606. Escape (char 0x1b, 0x79d620) closes the top window or opens
 	# the system menu -- HudPanels, round 600. Listed, not dispatched here.
@@ -335,11 +335,14 @@ static func is_hold(action: String) -> bool:
 ## The only modifier retail reads is in the path for keys the table does
 ## not bind (0x778310 returned -1): GetKeyState(VK_SPACE) at 0x780c11 and
 ## GetKeyState(VK_CONTROL) at 0x780c21, where Ctrl+'1'..'8' selects and
-## Ctrl+'9'/'0' does nothing; the digits are that path. Ours on top: Shift+F1,
-## Shift+F2 and Shift+F3 are the developer toggles (in retail they are F1-F3,
-## the pages; round 699 moved them from Ctrl, which macOS keeps for itself --
-## Ctrl+F1/F2/F3 are its keyboard-access, menu-bar and Dock shortcuts, so
-## under CrossOver they never reached the game), and a key with Meta (the Windows key) does nothing -- the OS
+## Ctrl+'9'/'0' does nothing; the digits are that path. Ours on top: Shift+F3
+## is the debug panel where DevTools.enabled() (in retail it is F3, the page;
+## round 699 moved the developer toggles from Ctrl, which macOS keeps for
+## itself -- Ctrl+F1/F2/F3 are its keyboard-access, menu-bar and Dock
+## shortcuts, so under CrossOver they never reached the game; round 848 kept
+## Shift+F3 alone, and only in a developer build, so Shift+F1, Shift+F2 and a
+## release build's Shift+F3 are retail's pages), Shift+F10 hides the
+## interface, and a key with Meta (the Windows key) does nothing -- the OS
 ## owns those. Alt: the retail message map (0xd71100) registers WM_CHAR,
 ## WM_KEYDOWN and WM_KEYUP only, and Win32 sends a key with Alt held (and F10)
 ## as WM_SYSKEYDOWN; since 0x780610 does have an F10 case, how system keys
@@ -352,12 +355,9 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 		return []
 	if shift:
 		match keycode:
-			KEY_F1:
-				return ["dev_tools", 0]
-			KEY_F2:
-				return ["debug_tabs", 0]
 			KEY_F3:
-				return ["debug_panel", 0]
+				if DevTools.enabled():
+					return ["debug_panel", 0]
 			KEY_F10:
 				return ["hide_ui", 0]
 	if ctrl:
