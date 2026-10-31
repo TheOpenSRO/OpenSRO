@@ -412,8 +412,16 @@ func _bubble_tests() -> void:
 		"the frame and fill at alpha 200/255, the text opaque")
 	b.show_lines([lines[0]], Rect2(100, 50, 32, 32))
 	_check(b.size.y == 14 + 16, "a one-line box is 14 px a line (got %s)" % b.size.y)
-	_check(ItemTooltipBubble.place(Rect2(1250, 700, 32, 32), Vector2(200, 300), Rect2(0, 0, 1280, 720)) == Vector2(1050, 420),
-		"kept on screen: left of the slot at the right edge, raised at the bottom")
+	# Round 848, READ (0x776c00): flipped left when the right edge would come
+	# within 4 px of the screen's, and a low box ends 7 px above the bottom.
+	_check(ItemTooltipBubble.place(Rect2(1250, 700, 32, 32), Vector2(200, 300), Rect2(0, 0, 1280, 720)) == Vector2(1050, 413),
+		"left of the slot at the right edge, raised to 7 px above the bottom (READ 0x776c00)")
+	_check(ItemTooltipBubble.place(Rect2(1000, 50, 32, 32), Vector2(244, 30), Rect2(0, 0, 1280, 720)) == Vector2(1032, 50),
+		"a box whose right edge lands exactly 4 px in stays right of the slot")
+	_check(ItemTooltipBubble.place(Rect2(1000, 50, 32, 32), Vector2(245, 30), Rect2(0, 0, 1280, 720)) == Vector2(755, 50),
+		"one pixel wider flips it left")
+	_check(ItemTooltipBubble.place(Rect2(10, 50, 32, 32), Vector2(1300, 30), Rect2(0, 0, 1280, 720)).x == 10 - 1300,
+		"nothing clamps the left (READ)")
 	b.hide_bubble()
 	_check(not b.visible and b.shown_lines().is_empty(), "hidden")
 	holder.queue_free()

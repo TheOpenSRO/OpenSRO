@@ -34,6 +34,9 @@ Audio="*res://scripts/audio/audio_service.gd"
 ; shaders at quit while the RenderingServer still exists; under 4.7.2 a world
 ; run on Forward+ aborted at exit without it (scripts/shutdown_release.gd).
 ShutdownRelease="*res://scripts/shutdown_release.gd"
+; Round 848: every hover help in the original's bubble (HelpTips, READ in
+; its header) and no native right-click menu on a text input.
+NativeGuiGuard="*res://scripts/ui/help_tips.gd"
 
 [debug]
 
@@ -85,6 +88,11 @@ driver/threads/thread_model=2
 ; ClientSettings.apply_ui_scale has why it is on from start-up and never
 ; toggled (docs/WORLD_ISSUES.md round 672).
 fonts/dynamic_fonts/use_oversampling=true
+
+; Round 848: Godot's own tooltip popup never shows (a grey sub-window in the
+; default face); HelpTips shows every tooltip_text and _get_tooltip in the
+; original's bubble instead, at once on hover as the original does.
+timers/tooltip_delay_sec=1e+06
 
 [shader_globals]
 

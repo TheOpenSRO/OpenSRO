@@ -75,6 +75,10 @@ func _body_edit() -> void:
 	body_edit.position = host.position
 	body_edit.size = host.size
 	body_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	# Round 848: ifguildnotifywrite.txt gives the body no scroll control
+	# (MEASURED: its 14 controls hold no CIFVerticalScroll), so no bar shows;
+	# the text still scrolls with the caret and the wheel.
+	OriginalScroll.hide_bars(body_edit)
 	for style in ["normal", "focus", "read_only"]:
 		body_edit.add_theme_stylebox_override(style, StyleBoxEmpty.new())
 	if _builder != null and _builder.font_at(0) != null:

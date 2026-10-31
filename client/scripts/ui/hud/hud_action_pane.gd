@@ -24,9 +24,10 @@ class_name HudActionPane
 ##     (the held icon, round 652), and the quick slot bar takes it (kind 0x4a
 ##     in CIFUnderBar::vslot_028, 0x68dd10).
 ##
-## OURS: the tooltip is Godot's (tooltip_text); 1015's tooltip is its text key
-## although Create gives it 0x652d60(0x80) instead (what that draws is not
-## read).
+## The tooltip is the slot's tooltip_text, shown in the help bubble by
+## HelpTips (round 848; a CIFSlotWithHelp's help, 0x686db0). OURS: 1015's
+## tooltip is its text key although Create gives it 0x652d60(0x80) instead
+## (what that draws is not read).
 
 ## A filled slot was right-clicked: run its action (ActionCommands).
 signal use_requested(action_id: int)

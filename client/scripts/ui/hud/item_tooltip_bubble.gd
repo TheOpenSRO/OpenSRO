@@ -43,10 +43,10 @@ class_name ItemTooltipBubble
 ##     client's own bold face (weight 600) is not loaded here, so it is drawn
 ##     with FontVariation's embolden (OURS, measured to give 2-px stems).
 ##
-## OURS: the placement (right of the hovered slot, top aligned with it --
-## MEASURED in the one screenshot, x 346 after a slot ending at 345, y 228 for
-## a slot top of 229 -- and kept on screen), and the frame's NEAREST filter so
-## its 1-px lines stay whole at UI scale 2.0.
+## The placement: READ in round 848 (place()), agreeing with round 731's
+## measurement -- right of the hovered slot, top aligned with it, x 346 after
+## a slot ending at 345. OURS: the frame's NEAREST filter, so its 1-px lines
+## stay whole at UI scale 2.0.
 
 const CORNER_DDJ := "interface\\ifcommon\\com_tooltip_corner.ddj"
 const EDGE_DDJ := "interface\\ifcommon\\com_tooltip_edge.ddj"
@@ -83,6 +83,9 @@ var _sign: Texture2D = null
 var _line_height := LINE_HEIGHT
 ## The control the bubble describes; it closes when that one leaves the screen.
 var source: Control = null
+## Whether the bubble hides itself when the cursor enters it (_process);
+## HelpTips, which re-shows by the frame, does that test itself.
+var hide_under_cursor := true
 
 func _init(builder: UiBuilder = null) -> void:
 	name = "ItemTooltipBubble"
@@ -269,6 +272,13 @@ func hide_bubble() -> void:
 func _process(_delta: float) -> void:
 	if visible and source != null and (not is_instance_valid(source) or not source.is_visible_in_tree()):
 		hide_bubble()
+	# CIFHelperBubbleWindow::vslot_013 (0x776bb0, READ round 848): the
+	# bubble hides itself while the cursor is inside its window rect (the
+	# frame is drawn outside that rect). HelpTips does this itself.
+	elif visible and hide_under_cursor and is_inside_tree():
+		var inner := Rect2(position + Vector2(FRAME, FRAME), size - Vector2(FRAME, FRAME) * 2.0)
+		if inner.has_point(get_viewport().get_mouse_position()):
+			hide_bubble()
 
 ## The lines on show, for tests and logs.
 func shown_lines() -> Array:
@@ -279,18 +289,30 @@ func _view_rect() -> Rect2:
 		return get_viewport_rect()
 	return Rect2(0, 0, 1e6, 1e6)
 
-## Right of the anchor, top aligned (MEASURED); flipped left of it when it
-## would leave the screen on the right and moved up when it would leave it
-## at the bottom (OURS).
+## Where the bubble goes for the hovered control's rect `anchor` (READ, round
+## 848: CIFHelperBubbleWindow's 0x776c00 and CNIFHelperBubbleWindow's
+## 0x497350, the same code; CIFSlotWithHelp::vslot_048 0x686db0, the generic
+## help 0x6528c0 and the world map's signs all call it with the control's own
+## rect, +0x40..+0x4c). In the window's own coordinates, whose 8-px frame is
+## drawn outside it: x = anchor right + 8, or anchor left - width - 8 when
+## anchor left + anchor width + width + 0x14 > the screen's width; y = anchor
+## top + 8, or the screen's height - height - 0xf when anchor top + 8 + height
+## >= the screen's height - 0xf. Nothing clamps the left or the top. With the
+## frame outside: the box touches the anchor's right edge, top aligned with
+## it (round 731's measurement, x 346 after a slot ending at 345); it flips
+## when its right edge would come within 4 px of the screen's; and a low one
+## ends 7 px above the bottom. `box` is the whole box, frame included.
+## (The style word +0x204 == 1 instead puts the window at the anchor's
+## top-left less 40 in y; no OpenSRO control sets it.)
 static func place(anchor: Rect2, box: Vector2, view: Rect2) -> Vector2:
-	var p := Vector2(anchor.end.x, anchor.position.y)
-	if p.x + box.x > view.end.x:
-		p.x = anchor.position.x - box.x
-	if p.y + box.y > view.end.y:
-		p.y = view.end.y - box.y
-	p.x = maxf(p.x, view.position.x)
-	p.y = maxf(p.y, view.position.y)
-	return p.round()
+	var inner := box - Vector2(FRAME, FRAME) * 2.0
+	var x := anchor.position.x + anchor.size.x + FRAME
+	if anchor.position.x + anchor.size.x + inner.x + 0x14 > view.end.x:
+		x = anchor.position.x - inner.x - FRAME
+	var y := anchor.position.y + FRAME
+	if y + inner.y >= view.end.y - 0xf:
+		y = view.end.y - inner.y - 0xf
+	return (Vector2(x, y) - Vector2(FRAME, FRAME)).round()
 
 func _draw() -> void:
 	var w := size.x

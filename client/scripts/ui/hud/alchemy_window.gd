@@ -375,8 +375,8 @@ static func _set_tab_look(tab: Control, checked: bool) -> void:
 		(tab as TextureButton).texture_normal = tab.get_meta(key)
 
 ## Hover strings set with style 0x80 (0x46d840 / 0x46d880, then 0x46d7d0).
-## The strings are read; that the client shows them on hover is **inferred**,
-## as for the guild window.
+## The strings are read, and so is the hover (round 848, 0x46cee0 -> 0x46cdf0,
+## see GuildWindow.GUILD_TOOLTIPS); HelpTips shows them in the help bubble.
 func _tooltips(root: Control, table: Dictionary) -> void:
 	for id in table:
 		var node := TwoDtBuilder.child(root, int(id))
