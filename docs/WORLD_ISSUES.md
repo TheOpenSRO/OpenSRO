@@ -7483,6 +7483,107 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-eighth round, lane W: World3D's native UI, the debug panel, the native GUI guard
+
+The user: "Can you investigate all the cases where use the native gui and not the original gui?
+Please find and fix all instances of this and make sure you match original as close as possible."
+Lane W's area: World3D.tscn's native nodes, World3D.gd's own GUI, the debug panel, the client-wide
+font census and a guard test. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
+
+**Measured first, in a live run** (`/var/tmp/r848w/run.sh before`, the lane server, Jangan, a tour
+of keys with the new QA `nativecensus` action: every visible Control of a native class or drawing
+Godot's default font, `QA NATIVE <tag>: <path><class> rect=... default_theme= default_font=`,
+NativeGuiCensus). With nothing pressed the world showed **0** native widgets; the prototype's nodes
+were hidden, not gone, and any player reached them:
+
+| Key (any build) | Shown (MEASURED, before) |
+|---|---|
+| Shift+F1 | 4: `DisconnectButton` "Log Out" (1140,680 132x32), `ZoneInput` (8,92), `ChangeZoneButton`, `UI/HideUIButton` (1046,8 76x32) -- all default theme; Hide UI in Godot's default font (it sat outside UI/Control's theme) |
+| Shift+F2 | 5: the `ActionTabs` TabContainer (720,272 552x308), its TabBar, an ItemList, two Buttons |
+| Shift+F3 | 36: the debug panel (PanelContainer, 15 Buttons, 2 HSliders, SpinBox, 2 OptionButtons, CheckButton, LineEdit, ScrollContainer + VScrollBar, Labels and the report, all default theme and font) |
+| I, C, S, Q, U, P, M, Escape | 0 |
+| H | 2: the Help window's `DocList` ItemList and its VScrollBar (default theme; lane H / T) |
+| Enter | 2: the chat line's `Input` LineEdit inside `GDR_CHAT_INPUTBOX` -- `flat`, but Godot's focus box shows (a grey rounded rectangle round the line, frame 1175) (lane H) |
+
+What World3D.gd still read of the prototype: the hidden `ChatLog` RichTextLabel took every chat
+and system line and grew without bound (the debug panel's "Chat font" spinner sized it -- nobody
+could see it); the Monsters tab's label took the combat lines; the Guild tab's label and Level Up
+button the guild level replies; `ZoneLabel` was rewritten every tenth tick with a navgraph lookup;
+the Duel tab was the prototype duel's only way in; the debug panel's town buttons typed into
+`ZoneInput`. Seven suites set these nodes by name.
+
+**Done.**
+- **World3D.tscn keeps `UI` and `UI/Control` only** (381 lines out). The labels, ChatPanel,
+  ZoneInput / Change Zone, Log Out, Hide UI and ActionTabs (Monsters, Inventory, Equipment, Quests,
+  Skills, Shop, Guild, Duel) are deleted with their handlers and wiring. Each was replaced by the
+  original's control long ago: the minimap and player block (labels), HudChat (chat), the
+  original windows on their keys (tabs), the system menu's **Restart** (Log Out, READ 0x79d620
+  path, round 600), the teleport gates (travel; GMs `/tp`). Hide UI is Shift+F10 alone (OURS key).
+- **Plain state** for what is still read: `_log_tail` / `log_text()` (the last 200 lines, OURS
+  bound), `_combat_line` (now in the `/copy` report), the guild level state (`_guild_level`,
+  `_guild_next_gold`, ...; a coded level-up refusal is a system line as before). The zone tick
+  keeps its music / water / minimap work without the label string.
+- **Keys** (KeyMap): Shift+F1 and Shift+F2 are retail's F1/F2 (pages; retail reads no modifier on
+  an F key, keymap.gd's READ note). **Shift+F3 is the debug panel only where `DevTools.enabled()`**
+  -- a debug build (a run from source, every box QA run), `OPENSRO_DEV=1`, or `[dev] tools=true`
+  in settings.cfg; releases are `--export-release`, so a player's Shift+F3 is F3, page 3, and no
+  panel is built. OURS gate.
+- **The debug panel stays native, dev-only** (DEV, never a player's): its chat-font spinner went
+  (it sized the dead log); a zone row (the old box) is added; its report is `static
+  DebugPanel.diagnostics_for(world)`, so **`/copy` works in every build**.
+- **Console (OURS)**: `/uiscale <0.5-3>` and `/names <0-400>` (the panel's two player settings,
+  remembered), `/duel <name> | accept | decline | hit` (the prototype duel, not retail's; answers
+  are system lines in the tab's wording).
+- **Guard: `native_gui848_test.gd`** scans every non-test `.gd` / `.tscn` (682 files) for the 18
+  native classes and `tooltip_text` (comments stripped; `.tscn` node types) and holds each
+  (file, token) count to an allowlist with a reason: dev-only, references only, styled with the
+  original's art, or **LANE F / H / T pending** (to trim at merge; a lower count prints TRIM). It
+  also fails if World3D.tscn gets any native node back.
+
+**After** (`run.sh after`, same tour): Shift+F1 **0** (page F1), Shift+F2 **0** (page F2), every
+window 0, H 2 and the chat line 2 (lane H/T's), Shift+F3 36 in this debug build; `/names 150`,
+`/uiscale 1`, `/duel`, `/copy` (4387 chars) answered. `run.sh rel` with `OPENSRO_DEV=0` (a release build's
+gate): Shift+F3 ran `page 3`, **0** shown, no panel built; `/copy` gave 5286 chars; Shift+F1 page 1, 0 shown. Frames on the box: `/var/tmp/r848w/evidence/{before,after}_f00000445.png` (Shift+F1), `_f00000505.png`
+(Shift+F2), `_f00000575.png` (Shift+F3), `_f00001065.png` (Help), `_f00001175.png` (chat line).
+
+**Font census** (static, every text site; plus the live census above). In a normal run only two
+sites draw Godot's default font: the debug panel (dev-only) and **`Boot.gd:96`'s "Update
+available" ConfirmationDialog** (lane F). The rest are no-archive fallbacks (Login `_build_ui`,
+CharacterCreate `_build_bare`, `ThemeDB.fallback_font` in the HUD's draw paths, damage_text's
+digits, name plates with no face): there is no original art or face to draw with then, left as
+they are. Hard-coded looks found (lane F/H to check against the original): the front end's theme
+sets the face but no size, so front-end text without its own size draws at Godot's 16 px
+(FrontEndUi.apply_client_font; `frontend_frame.gd:158/163` version and copyright lines); the
+chat line's LineEdit sets no `font_color` (Godot's default) and no `focus` box (MEASURED above);
+`hud_panels.gd` talk/revive/recall prompts are OURS Buttons with Godot's default colours;
+`quest_hud.gd:300` is a native ConfirmationDialog; `help_window.gd`'s DocList ItemList is
+default-theme; `loading_screen.gd:145` "NOW LOADING..." is OURS 22 px gold with a black outline 4.
+Lane W's own text sites (World3D's name plates and titles) all take the archive face
+(`_retail_plate_look`); the NPC plate colour (1, 0.94, 0.72) is OURS and the original's NPC name
+colour is **OPEN**.
+
+**Lane F/H/T files touched by this lane** (tests only, because they set the deleted nodes):
+`scripts/ui/hud/hud_click_routing_test.gd` (part (a) is now "UI holds no native widget" plus the
+minimap placement checks it carried) and `scripts/ui/hud/teleport_board_test.gd` (reads
+`log_text()`).
+
+**Gates.** UI-only round (no world drawing changed: the zone tick does less), so no perf gate.
+`check` ALL LOAD (1078 scripts); `tests` "ran 405 suite(s), 0 failing". Two
+suites failed at first, MEASURED and fixed in the suites: `seated_spawn_test` and `buff_persist_test`
+dress two bodies in one 4 ms frame budget, and the first name plate (Godot's default font, no
+archive in a suite) cost 3.4 ms against 0.55 at the base -- the deleted scene Labels had loaded
+that font on entering the tree. Each suite now loads it first with a Label (plate 1.0 ms, body
+1.4 ms; per-stage timings in `_dress_other`). The game is not affected: in play the plates draw
+the archive face, which the HUD has loaded long before.
+
+QA leftover: `qa_shot.sh` leaves `override.cfg` (the window size, appended once per run) in the
+client copy; removed by hand before the suites (it did not cause the failures above). No server change.
+
+**OPEN / decisions.** (1) The prototype duel (DuelNet, server/internal/duel) had no UI but the
+dev tab; it is `/duel` now -- keep it, or retire it on the server (retail has no such duel).
+(2) UI scale and name range are console commands; the natural home is the Option window's Extra
+Settings tab (OURS rows, lane H's file). (3) The original's NPC name colour.
+
 ## Eight-hundred-and-forty-seventh round, lane B: a status effect's look ends with the status
 
 The user: "sometimes the status effects cast on the players (maybe more?) lingers even after it's
