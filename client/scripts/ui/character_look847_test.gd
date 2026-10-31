@@ -324,3 +324,10 @@ func _test_guard() -> void:
 	for gone in GONE_FROM_WORLD:
 		_check(not world.contains(gone), "World3D no longer has %s" % gone.strip_edges())
 	_check(world.contains("func _build_assembled_character(look: CharacterLook"), "World3D's funnel takes a look")
+	# No reference cycle: the look's code never names the builder (a cycle cost
+	# World3D's load 12.3 MB, MEASURED).
+	var cycle := 0
+	for line in FileAccess.get_file_as_string("res://scripts/ui/character_look.gd").split("\n"):
+		if not line.strip_edges().begins_with("#") and line.contains("CharacterAppearance"):
+			cycle += 1
+	_check(cycle == 0, "CharacterLook's code does not name CharacterAppearance (%d line(s))" % cycle)

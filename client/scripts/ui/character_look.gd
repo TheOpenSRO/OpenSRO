@@ -54,12 +54,30 @@ class_name CharacterLook
 const SLOT_WEAPON := 6
 const SLOT_SHIELD := 7
 const SLOT_SUIT := 8
+## READ: the scale byte a body is drawn at when nothing names one (Height 2,
+## Volume 2).
+const DEFAULT_SCALE := 0x22
+## OURS (round 789): the keys the avatars are held under: this + the avatar's
+## storage slot (own character) or its order in the spawn block or record.
+const AVATAR_KEY_BASE := 200
+const AVATAR_KEYS := 5
+
+## Round 847: these constants live here, not in CharacterAppearance, and
+## nothing in this file names CharacterAppearance in code: the builder refers
+## to the look, the look never to the builder. A reference both ways made
+## every script that names both (World3D) cost 12.3 MB more to load (MEASURED:
+## World3D.gd 70.8 MB of static memory with the base, 83.1 MB with the cycle,
+## 70.8 MB without it).
+
+## Whether a key is an avatar's (AVATAR_KEY_BASE).
+static func is_avatar_key(key: int) -> bool:
+	return key >= AVATAR_KEY_BASE and key < AVATAR_KEY_BASE + AVATAR_KEYS
 
 var ref_obj_id := 0
 var gender := ""
 var race := -1
 var body := ""
-var scale := CharacterAppearance.DEFAULT_SCALE
+var scale := DEFAULT_SCALE
 var worn: Dictionary = {}
 var pluses: Dictionary = {}
 var own: Dictionary = {}
@@ -67,7 +85,7 @@ var own: Dictionary = {}
 # --- the sources ------------------------------------------------------------
 
 ## A body wearing nothing.
-static func bare(ref: int = 0, scale_byte: int = CharacterAppearance.DEFAULT_SCALE) -> CharacterLook:
+static func bare(ref: int = 0, scale_byte: int = DEFAULT_SCALE) -> CharacterLook:
 	var l := CharacterLook.new()
 	l.ref_obj_id = ref
 	l.scale = scale_byte
@@ -100,7 +118,7 @@ static func from_lobby(c: LobbyNet.Character) -> CharacterLook:
 		l._put(i, int(it.get("id", 0)), int(it.get("plus", 0)), int(it.get("own", 0)))
 	for i in c.avatars.size():
 		var a: Dictionary = c.avatars[i]
-		l._put(CharacterAppearance.AVATAR_KEY_BASE + i, int(a.get("id", 0)), int(a.get("plus", 0)), 0)
+		l._put(AVATAR_KEY_BASE + i, int(a.get("id", 0)), int(a.get("plus", 0)), 0)
 	return l
 
 ## Another player as its spawn names it (WorldNet.EntitySnapshot, from the
@@ -111,7 +129,7 @@ static func from_lobby(c: LobbyNet.Character) -> CharacterLook:
 static func from_spawn(snap: WorldNet.EntitySnapshot, body_key: String = "") -> CharacterLook:
 	var l := bare(snap.ref_obj_id if snap.has_model else 0)
 	l.gender = snap.gender
-	l.spawned(snap.equipped, snap.pluses, snap.scale if snap.has_model else CharacterAppearance.DEFAULT_SCALE, body_key, true)
+	l.spawned(snap.equipped, snap.pluses, snap.scale if snap.has_model else DEFAULT_SCALE, body_key, true)
 	return l
 
 ## A spawn (or a repeat of one) on a look already held -- World3D
@@ -232,7 +250,7 @@ func apply_broadcast(slot: int, ref_id: int, plus: int, own_ref: int, avatar: bo
 static func avatar_into(w: Dictionary, p: Dictionary, ref_id: int, plus: int) -> void:
 	var held := -1
 	for key in w:
-		if CharacterAppearance.is_avatar_key(int(key)) and int(w[key]) == ref_id:
+		if is_avatar_key(int(key)) and int(w[key]) == ref_id:
 			held = int(key)
 	if plus < 0:
 		if held >= 0:
@@ -240,9 +258,9 @@ static func avatar_into(w: Dictionary, p: Dictionary, ref_id: int, plus: int) ->
 			p.erase(held)
 		return
 	if held < 0:
-		for k in CharacterAppearance.AVATAR_KEYS:
-			if not w.has(CharacterAppearance.AVATAR_KEY_BASE + k):
-				held = CharacterAppearance.AVATAR_KEY_BASE + k
+		for k in AVATAR_KEYS:
+			if not w.has(AVATAR_KEY_BASE + k):
+				held = AVATAR_KEY_BASE + k
 				break
 	if held < 0:
 		return
@@ -294,15 +312,15 @@ func arms_only() -> CharacterLook:
 func with_avatars(refs: Array) -> CharacterLook:
 	var l := copy()
 	for key in worn.keys():
-		if CharacterAppearance.is_avatar_key(int(key)):
+		if is_avatar_key(int(key)):
 			l.worn.erase(key)
 	for key in pluses.keys():
-		if CharacterAppearance.is_avatar_key(int(key)):
+		if is_avatar_key(int(key)):
 			l.pluses.erase(key)
 	var k := 0
 	for ref in refs:
 		if int(ref) != 0:
-			l.worn[CharacterAppearance.AVATAR_KEY_BASE + k] = int(ref)
+			l.worn[AVATAR_KEY_BASE + k] = int(ref)
 			k += 1
 	return l
 
@@ -310,7 +328,7 @@ func with_avatars(refs: Array) -> CharacterLook:
 func equipment() -> Dictionary:
 	var out := worn.duplicate()
 	for key in worn:
-		if CharacterAppearance.is_avatar_key(int(key)):
+		if is_avatar_key(int(key)):
 			out.erase(key)
 	return out
 

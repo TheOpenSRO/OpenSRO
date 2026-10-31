@@ -143,7 +143,7 @@ static var BONE_GROUP_NAMES := [
 	"Bip01 L Thigh", "Bip01 L Calf", "Bip01 L Foot", "Bip01 L Toe0",
 	"Bip01 R Thigh", "Bip01 R Calf", "Bip01 R Foot", "Bip01 R Toe0", "Bone01",
 ]
-const DEFAULT_SCALE := 0x22
+const DEFAULT_SCALE := CharacterLook.DEFAULT_SCALE
 
 ## A held weapon's TypeID4 -> the body's animation group: BodyAnimations
 ## (round 689; READ FUN_00a5a7d0, the fortress weapon by race), the one table
@@ -173,8 +173,8 @@ const SLOT_AVATAR := 100
 ## equipped dictionaries, a spawn snapshot's) hold avatars under: this + the
 ## avatar's storage slot (own character) or its order in the spawn block
 ## (others). build() reads an avatar from its item type, never its key.
-const AVATAR_KEY_BASE := 200
-const AVATAR_KEYS := 5
+const AVATAR_KEY_BASE := CharacterLook.AVATAR_KEY_BASE
+const AVATAR_KEYS := CharacterLook.AVATAR_KEYS
 
 ## QA only (round 789): OPENSRO_QA_AVATAR_ARBITRATION=0 builds every
 ## appearance without the arbitration (the "before" of a render: every worn
@@ -184,7 +184,7 @@ static func _qa_arbitration_off() -> bool:
 
 ## Whether a key of the world's equipped maps is an avatar's (AVATAR_KEY_BASE).
 static func is_avatar_key(key: int) -> bool:
-	return key >= AVATAR_KEY_BASE and key < AVATAR_KEY_BASE + AVATAR_KEYS
+	return CharacterLook.is_avatar_key(key)
 
 ## One built character. Its child is the body's Skeleton3D; it faces its own
 ## local -Z, as every assembled body does (World3D turns its player's by PI).
