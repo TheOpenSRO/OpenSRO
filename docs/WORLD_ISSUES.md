@@ -7483,6 +7483,72 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-seventh round, lane B: a status effect's look ends with the status
+
+The user: "sometimes the status effects cast on the players (maybe more?) lingers even after it's
+been removed naturally or through pills. It eventually goes away but it takes awhile." Labels: READ
+(`c:` sro_client.exe), MEASURED, INFERRED, OURS, OPEN. The reading and the numbers are
+`docs/protocol/status_effects.md`, "How a state's look ends".
+
+**How it was measured.** A lane server with prod's flags (no `-trust-client-positions`, the navmesh,
+in memory) and two real clients on the render box: QaB847 afflicted with `/afflict` (typed through
+the console at fixed ticks, the bag opened with `I` and the pills right-clicked in it) and Watch847
+beside it, once with the afflicted player rendered and the observer headless, once the other way
+round. Each run: a poison left to expire, a burn ended by the universal pill (ITEM_ETC_CURE_ALL_01),
+a darkness ended by the purification pill (ITEM_ETC_CURE_RANDOM_01), a confusion left to expire, and
+a bleeding on 1 HP that kills. Timing lines (commit `50467b69`): the server's "status sent" per
+character mask, the client's receipt frame, and when each of the ended aura's effects stopped
+drawing. Evidence: `/var/tmp/r847b/keep` (logs and contact sheets per path, before and after).
+
+**The cause (MEASURED).** The server ended every state on time and told the owner and the observer
+in the same pass (the status pass, the pill, the death); both clients took the message at once, and
+the icons, the colour pulse and the clip speed ended with it. What lingered was the state's body
+effect: the client let the `PARAM_` aura go (`EfpEffect.release`, round 785) and it played its
+particles out -- by the probe (`client/tools/state_aura_release_probe.gd`) 0.5-4 s per state, and
+confusion's `status_bad_temptation.efp` never ends by itself, so it drew until the 30 s one-shot
+guard. Live, base: the observer drew poison 1.04 s, burn 2.47 s, darkness 1.54 s, bleeding 1.50 s
+and confusion 29.97 s past the message; the owner's frames 40, 181, 90, 289 and over 1,042.
+
+**What the original does (READ).** `c:FUN_009cd5e0` ends the bit's decoration through
+`FUN_009cd2b0` -> `FUN_00a53120` -> `IDecoSkill::FUN_00a4ffe0` -> `FUN_00a4db00`, which starts an
+alpha fade over the row's Fade first value (`FUN_00a48690` -> `FUN_00a48190`) and clears the keep
+flag; `CIDecoSkill::vslot_014` frees the effect at alpha 0. Every `PARAM_` row's Fade is 300 ms
+(MEASURED). So a state's look ends in 300 ms, fading, and the brief's "the moment the state ends"
+is that fade -- the pulse, the speed and the icons are immediate.
+
+**The fix** (`d915f9a5`): `SkillEffects._end_kept` -- a kept effect's end releases it and, with its
+row's Fade (`EfpEffect.end_fade_ms`), fades it out over that many ms and frees it. Every state aura
+and every buff aura (0xB072 and the grace end) goes this way; a row with no Fade still plays out
+(87 of the 146 ACT_L AT_LOOP rows). **After**, the same schedule: every aura on every path gone 18
+frames (300 ms) after the message, owner and observer, confusion included; headless 297-332 ms.
+
+**Tests.** `server/internal/session/status847_test.go`: expiry (and none before its time), the
+universal pill, the purification pill, a death by a bleeding tick, and a renewal ending at its own
+time, each reaching the owner and the observer. `client/scripts/world/state_end847_test.gd`: the
+same paths through World3D's `_on_object_status` on this player and on another player's body (fade
+at 150 ms, gone at 300, the pulse gone at once, a cure of one of two, a renewal keeping one aura);
+`skill_effects_test.gd`: a buff aura's Fade end and the grace end.
+
+**OPEN.** A cast's kept loops (`SkillEffects.stop_all`) take the same `FUN_00a4ffe0` path in the
+original and are still only let go. The buff bar's own abnormal icons are not drawn by OpenSRO (an
+older OPEN). OURS: another player's 0x3057 waits behind a player group being spawned. The target
+and party windows' icons refresh every 1000 ms, READ, as the original's. Teleport: OpenSRO's server
+drops a character's states when a pass finds her out of the world and the client clears its books on
+the zone change; whether the original keeps them through a teleport is not read.
+
+**Gates.** `go test ./...` ok; `check` ALL LOAD (1073 scripts); `tests` 403 suites, 0 failing;
+perf (`--base f2a20b92 --head d915f9a5 --sites jangan --frames 24000`, median of 3):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.87 | 0.87 | SAME |
+| entry ms | 10204 | 10077 | SAME |
+| freeze ms | 2773 | 2790 | SAME |
+| hitches | 5 | 5 | SAME |
+
+(Two earlier gate attempts returned an empty run line: their long ssh calls lost the shared
+control master. The gate was rerun with ssh unmultiplexed.)
+
 ## Eight-hundred-and-forty-sixth round, lane M: every step another player takes, walked
 
 The user: "if I take small steps it doesn't register on another client. It only registers when I take
