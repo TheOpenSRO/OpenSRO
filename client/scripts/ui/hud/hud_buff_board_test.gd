@@ -137,15 +137,22 @@ func _test_right_click() -> void:
 	board.on_slot_right_click(21)
 	_check(sent == [[1, 21]], "plain click sends cancel(skill 1, token 21)")
 	sent.clear()
+	# Round 848: the original's box 0x20 (MsgBoxInif) from MsgBoxFixture's
+	# synthetic message box layout.
+	board.set("_builder", MsgBoxFixture.builder())
 	board.on_slot_right_click(24)
-	var box := root.get_node_or_null(HudBuffBoard.CONFIRM_NAME)
-	_check(box != null and sent.is_empty(), "cbuf opens the confirm box and sends nothing yet")
+	var box := root.get_node_or_null(HudBuffBoard.CONFIRM_NAME) as MsgBoxInif
+	_check(box != null and sent.is_empty(), "cbuf opens the original's box 0x20 and sends nothing yet")
 	if box != null:
 		_check(box.custom_minimum_size == Vector2(308, 148), "the box is 308 x 148 (0x6ec5d0)")
-		var ok := box.find_child("OK", true, false) as Button
+		_check((box.find_child("Body", true, false) as Label).text == "<UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_1>"
+			and box.line(1) == "<UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_2>", "its lines are CANCLE_1 and CANCLE_2")
+		var ok := box.find_child("OK", true, false) as BaseButton
+		_check(ok is TextureButton, "its Yes is the layout's button, not a Godot Button")
 		ok.pressed.emit()
 		_check(sent == [[4, 24]], "its OK sends cancel(skill 4, token 24)")
 		box.free()
+	board.set("_builder", null)
 	sent.clear()
 
 	# A real button-up through the live viewport, the way the OS delivers it.

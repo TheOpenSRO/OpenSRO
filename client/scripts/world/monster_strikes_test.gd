@@ -447,6 +447,11 @@ func _clip(frames: int) -> BanReader.ParsedAnimation:
 ## level 10 or under and the disabled "Waiting for other player's help." above
 ## it, which sends nothing (FUN_00797d90, 0x797efd). A second show replaces
 ## the first; hide takes it down.
+## A button's caption (its ButtonLabel).
+static func _caption(b: Node) -> String:
+	var l := b.get_node_or_null("ButtonLabel") as Label if b != null else null
+	return l.text if l != null else "none"
+
 func _test_hud_revive_prompt() -> void:
 	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
 	var panels_ok := panels_script != null and panels_script.can_instantiate()
@@ -454,20 +459,21 @@ func _test_hud_revive_prompt() -> void:
 	if not panels_ok:
 		return
 	var panels: Control = panels_script.new()
+	# Round 848: the dead window is the original's box (ReviveBox), built from
+	# the message box layout -- MsgBoxFixture's synthetic copy, its texts
+	# "<KEY>". Without layouts no box is built (checked last).
+	panels.set("_builder", MsgBoxFixture.builder())
 	var options := []
 	panels.connect("revive_requested", func(option: int) -> void: options.append(option))
 	panels.call("show_revive_prompt", "You were killed.", 10)
 	var prompt := panels.get_node_or_null("RevivePrompt")
-	_check(prompt != null, "show_revive_prompt puts the prompt on the HUD")
-	var point: Button = prompt.find_child("RevivePoint", true, false) as Button if prompt != null else null
-	var here: Button = prompt.find_child("ReviveHere", true, false) as Button if prompt != null else null
-	_check(point != null and point.text == "Resurrect at the specified point.",
-		"level 10: the return-point button, retail's UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON text (got %s)" % (point.text if point != null else "none"))
-	_check(here != null and here.text == "Resurrect at the present point.",
-		"level 10: the present-point button, UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON (got %s)" % (here.text if here != null else "none"))
-	var labels := prompt.find_children("*", "Label", true, false) if prompt != null else []
-	_check(labels.any(func(l: Node) -> bool: return (l as Label).text == "Choose a method to resurrect yourself."),
-		"with retail's line UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2")
+	_check(prompt is ReviveBox, "show_revive_prompt puts the original's box on the HUD")
+	var point: BaseButton = prompt.find_child("RevivePoint", true, false) as BaseButton if prompt != null else null
+	var here: BaseButton = prompt.find_child("ReviveHere", true, false) as BaseButton if prompt != null else null
+	_check(point != null and _caption(point) == "<UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON>",
+		"level 10: the return-point button, retail's UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON (got %s)" % _caption(point))
+	_check(here != null and _caption(here) == "<UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON>",
+		"level 10: the present-point button, UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON (got %s)" % _caption(here))
 	if point != null:
 		point.pressed.emit()
 	if here != null:
@@ -476,11 +482,11 @@ func _test_hud_revive_prompt() -> void:
 	options.clear()
 	panels.call("show_revive_prompt", "You were killed.", 11)
 	prompt = panels.get_node_or_null("RevivePrompt")
-	point = prompt.find_child("RevivePoint", true, false) as Button if prompt != null else null
-	var help: Button = prompt.find_child("ReviveHelp", true, false) as Button if prompt != null else null
+	point = prompt.find_child("RevivePoint", true, false) as BaseButton if prompt != null else null
+	var help: BaseButton = prompt.find_child("ReviveHelp", true, false) as BaseButton if prompt != null else null
 	_check(prompt != null and prompt.find_child("ReviveHere", true, false) == null,
 		"level 11: no present-point button (the handler honours option 2 only up to 10)")
-	_check(help != null and help.disabled and help.text == "Waiting for other player's help.",
+	_check(help != null and help.disabled and _caption(help) == "<UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON>",
 		"level 11: the second button is UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON, and it sends nothing")
 	if point != null:
 		point.pressed.emit()
@@ -490,6 +496,9 @@ func _test_hud_revive_prompt() -> void:
 	_check(prompts.size() == 1, "a second show replaces the first (%d prompt(s) on the HUD)" % prompts.size())
 	panels.call("hide_revive_prompt")
 	_check(panels.get_node_or_null("RevivePrompt") == null, "hide_revive_prompt takes it down")
+	panels.set("_builder", null)
+	panels.call("show_revive_prompt", "You were killed.")
+	_check(panels.get_node_or_null("RevivePrompt") == null, "round 848: without layouts no box (and no Godot panel) is built")
 	# Round 550: the bag's right-click use while dead goes to chat, not out.
 	var notices: Array[String] = []
 	panels.connect("system_notice", func(text: String) -> void: notices.append(text))
@@ -510,59 +519,42 @@ func _test_hud_revive_prompt() -> void:
 	icon.free()
 	panels.free()
 
-## Round 550: a prompt whose HUD leaves the tree before the frame it waits
-## for is left where it is -- no viewport is read off the tree. Until then
-## is_instance_valid let get_viewport_rect run on the node outside the tree
-## (an engine error) and placed it at a negative x. Needs the root in the
-## tree, which a --script suite has only after _initialize's first frame.
+## Round 848 (replacing rounds 550 and 551's checks of the old panel's
+## one-frame wait, which is gone): the original's box is placed at once, by
+## 0x6ec5d0's rule at its opening 308 x 148, on a HUD in the tree.
 func _test_hud_prompt_off_the_tree() -> void:
 	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
 	if panels_script == null:
 		return
 	var panels: Control = panels_script.new()
+	panels.set("_builder", MsgBoxFixture.builder())
 	root.add_child(panels)
-	_check(panels.is_inside_tree(), "the probe: the HUD is in the tree")
+	root.size = Vector2i(1280, 720)
 	panels.call("show_revive_prompt", "You were killed.")
 	var prompt: Control = panels.get_node_or_null("RevivePrompt")
-	_check(prompt != null and prompt.is_inside_tree(), "the prompt is up, waiting for its frame")
+	_check(prompt != null and prompt.position == Vector2(640 - 0x9a, 360 - 0x4a),
+		"the box is placed at once where 0x6ec5d0 puts it (position %s)" % (str(prompt.position) if prompt != null else "none"))
 	root.remove_child(panels)
-	await process_frame
-	await process_frame
-	_check(is_instance_valid(prompt) and prompt.position == Vector2.ZERO,
-		"a prompt whose HUD left the tree before its frame is left unplaced (position %s)" % (str(prompt.position) if is_instance_valid(prompt) else "freed"))
 	panels.free()
 
-## Round 551: a prompt hidden in the same frame it was shown -- a kill result
-## and a revive result in one NetClient batch, or a second show, which hides
-## first -- is FREED before show_revive_prompt's coroutine resumes:
-## hide_revive_prompt's queue_free runs at the end of that frame, the
-## coroutine on the next frame's process_frame. The coroutine must test
-## is_instance_valid before it asks the node anything; round 550's
-## is_inside_tree alone was "Attempt to call function 'is_inside_tree' in
-## base 'previously freed'", a script error. The harness greps output for
-## FAIL and a script error prints no such word, so the negative's evidence is
-## that SCRIPT ERROR line (RE_COMPLETION round 551); this case asserts what a
-## script can see -- the freed prompt (the probe), a HUD left clean, and a
-## fresh prompt afterwards placed after its own frame.
+## A box hidden in the frame it was shown is gone, and a fresh one is placed.
 func _test_hud_prompt_freed() -> void:
 	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
 	if panels_script == null:
 		return
 	var panels: Control = panels_script.new()
+	panels.set("_builder", MsgBoxFixture.builder())
 	root.add_child(panels)
 	panels.call("show_revive_prompt", "You were killed.")
 	var prompt: Control = panels.get_node_or_null("RevivePrompt")
-	_check(prompt != null and prompt.is_inside_tree(), "the prompt is up, waiting for its frame")
 	panels.call("hide_revive_prompt") # the same frame: removed now, freed at its end
 	await process_frame
 	await process_frame
-	_check(not is_instance_valid(prompt), "the probe: the hidden prompt was freed before the coroutine resumed")
-	_check(panels.get_node_or_null("RevivePrompt") == null, "no prompt is left on the HUD")
+	_check(not is_instance_valid(prompt), "the hidden box was freed")
+	_check(panels.get_node_or_null("RevivePrompt") == null, "no box is left on the HUD")
 	panels.call("show_revive_prompt", "You were killed again.")
 	var again: Control = panels.get_node_or_null("RevivePrompt")
-	await process_frame
-	await process_frame
 	_check(is_instance_valid(again) and again.is_inside_tree() and again.position != Vector2.ZERO,
-		"a fresh prompt after the freed one is placed after its frame (position %s)" % (str(again.position) if is_instance_valid(again) else "freed"))
+		"a fresh box after the freed one is placed (position %s)" % (str(again.position) if is_instance_valid(again) else "freed"))
 	root.remove_child(panels)
 	panels.free()

@@ -91,6 +91,9 @@ var font: Font
 var font_size := 12
 ## The face's weight-600 file, or null for the simulation (HudNotice).
 var bold_face: Font
+## The paragraph's starting alignment, the control's HAlign (0x64b2c0, READ:
+## the paragraph state starts from it): TAG_LEFT, TAG_CENTER or TAG_RIGHT.
+var base_align := TAG_LEFT
 ## The markup shown.
 var markup := ""
 ## Laid-out lines: {y, h, runs: [{x, text, color, style}]}.
@@ -152,6 +155,36 @@ func _gui_input(event: InputEvent) -> void:
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			set_scroll(scroll + WHEEL_PIXELS)
 			accept_event()
+
+## Round 848: a PmlText over a CIFPML record's node `host` (made by
+## UiBuilder, which keeps the record: UiBuilder.PML_DEF_META), in the record's
+## FontColor and HAlign and font 0, showing `markup_text`; the one already
+## there is reused. `colour` and `halign` (0 left, 1 centre, 2 right) stand in
+## for a node without its record (a .2dt one); halign -1 takes the record's.
+static func put_on(host: Control, builder: UiBuilder, markup_text: String, colour := Color.WHITE,
+		halign := -1) -> PmlText:
+	if host == null:
+		return null
+	var def = host.get_meta(UiBuilder.PML_DEF_META, null)
+	var c := colour
+	var h := halign
+	if def != null:
+		c = (def as UiLayoutParser.ControlDef).font_color
+		if h < 0:
+			h = (def as UiLayoutParser.ControlDef).halign
+	var p := host.get_node_or_null("PmlText") as PmlText
+	if p == null:
+		p = PmlText.new()
+		p.name = "PmlText"
+		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var r: Rect2 = host.get_meta(UiBuilder.AUTHORED_RECT_META, Rect2(Vector2.ZERO, host.size))
+		p.position = Vector2.ZERO
+		p.size = r.size
+		host.add_child(p)
+	p.base_align = TAG_CENTER if h == 1 else (TAG_RIGHT if h == 2 else TAG_LEFT)
+	p.setup(builder.font_at(0) if builder != null else null, UiBuilder.FONT_SIZES[0], c)
+	p.set_markup(markup_text)
+	return p
 
 # --- The parse --------------------------------------------------------------
 
@@ -294,7 +327,7 @@ static func style_of(value: String) -> int:
 func layout(items: Array, width: int) -> Array:
 	var limit := width if width > 0 else 0x7fffffff
 	var out: Array = []
-	var line := {"y": 0, "h": 0, "runs": [], "align": TAG_LEFT}
+	var line := {"y": 0, "h": 0, "runs": [], "align": base_align}
 	out.append(line)
 	var x := 0
 	for item: Dictionary in items:

@@ -21,9 +21,12 @@ signal declined
 
 ## `box` is 0x643e50's size (round 822: the guild window's ban question
 ## passes 280x144); the party match's is 360x151.
-func build(builder: UiBuilder, message: String, box: Vector2 = SIZE) -> bool:
+## `caption_key` is 0x788270's title (round 848: the quest give-up passes
+## UIIT_STT_AGREEMENT_BOX).
+func build(builder: UiBuilder, message: String, box: Vector2 = SIZE, caption_key: String = "UIIT_STT_CONFIRM_BOX") -> bool:
 	name = "PartyMatchConfirm"
-	if not build_shell(builder, box, "UIIT_STT_CONFIRM_BOX", "Confirmation window", LAYOUT, "MsgBoxSimple"):
+	if not build_shell(builder, box, caption_key, "Confirmation window" if caption_key == "UIIT_STT_CONFIRM_BOX" else caption_key,
+			LAYOUT, "MsgBoxSimple"):
 		return false
 	var layout: UiLayoutParser.LayoutDef = builder.load_layout(LAYOUT)
 	if layout != null and layout.sections.has("Create"):

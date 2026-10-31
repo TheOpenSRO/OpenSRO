@@ -201,24 +201,11 @@ static func sml2_to_bbcode(s: String) -> String:
 		out = out.replace(m.get_string(0), "[color=#%s]" % c.to_html(c.a8 < 255))
 	return out.replace("</font>", "[/color]")
 
-## A RichTextLabel over a CIFPML record, centred (INFERRED from screenshots
-## 08 and 09: CIFPML's own alignment was not read), with `bbcode`.
-func fill_pml(control_name: String, bbcode: String) -> RichTextLabel:
-	var holder := node(control_name)
-	if holder == null:
-		return null
-	var rt := holder.get_node_or_null("PmlText") as RichTextLabel
-	if rt == null:
-		rt = RichTextLabel.new()
-		rt.name = "PmlText"
-		rt.bbcode_enabled = true
-		rt.scroll_active = false
-		rt.fit_content = false
-		rt.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		rt.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		if _builder != null and _builder.font_at(0) != null:
-			rt.add_theme_font_override("normal_font", _builder.font_at(0))
-		rt.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
-		holder.add_child(rt)
-	rt.text = "[center]%s[/center]" % bbcode
-	return rt
+## The client's PML control over a CIFPML record (round 848: PmlText, the
+## CIFPML parse and draw round 845 read, where it was a Godot RichTextLabel fed
+## BBCode), with `sml` -- the `<sml2>` markup itself. Its colour and alignment
+## are the record's FontColor and HAlign (0x64b2c0, READ): the party dialogs'
+## two PML records are HAlign 1, which is the centring screenshots 08 and 09
+## show.
+func fill_pml(control_name: String, sml: String) -> PmlText:
+	return PmlText.put_on(node(control_name), _builder, sml)

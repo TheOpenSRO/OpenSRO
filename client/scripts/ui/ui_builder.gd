@@ -562,6 +562,13 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 	var btn := TextureButton.new()
 	btn.ignore_texture_size = true
 	btn.stretch_mode = TextureButton.STRETCH_SCALE
+	# Round 848: no keyboard focus. A CIFButton's `_focus` art is its hover
+	# (the mouse over it), and the client has no keyboard focus on buttons
+	# (KeyInput's header); as Godot's texture_focused it was laid OVER the
+	# button for as long as a clicked button kept the keyboard -- the hover
+	# art stuck after the mouse left -- and a focused button took Space and
+	# Enter.
+	btn.focus_mode = Control.FOCUS_NONE
 
 	var art := def.ddj
 	if art == "" and def.type == "CIFCloseButton":
@@ -575,7 +582,6 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 		var disable_path := _insert_suffix(art, "_disable")
 
 		btn.texture_hover = load_texture(focus_path)
-		btn.texture_focused = btn.texture_hover
 		btn.texture_pressed = load_texture(press_path)
 		btn.texture_disabled = load_texture(disable_path)
 
@@ -963,9 +969,11 @@ func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false
 ## Name edit and the register dialog's level edits are HAlign 2.
 ## **ClientRect** (left, top, right, bottom insets) becomes the styles'
 ## content margins, as `0x652800` takes it off the rect.
+##
+## **Round 848:** a CifEdit -- CIFEdit's caret, keys, mouse and whole-text mark,
+## with Godot's selection, context menu and shortcuts taken away (its header).
 func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
-	var edit := LineEdit.new()
-	KeyInput.line_edit_as_42(edit)  # round 754: Godot 4.4+ editing state
+	var edit := CifEdit.new()
 	if def.text != "":
 		edit.placeholder_text = _resolve_text(def.text)
 	var cr := def.client_rect
@@ -998,7 +1006,7 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 		edit.add_theme_font_override("font", font)
 	var size: int = FONT_SIZES[def.font_index] if def.font_index >= 0 and def.font_index < FONT_SIZES.size() else FONT_SIZE_FALLBACK
 	edit.add_theme_font_size_override("font_size", size)
-	edit.add_theme_color_override("font_color", def.font_color)
+	edit.set_colour(def.font_color)
 	return edit
 
 ## CIFEdit's right inset for HAlign 2: 2.0 (`0xe1b898`, READ).
@@ -1400,7 +1408,14 @@ func make_checkbox(holder: Control, box_ddj: String, checked: bool = true) -> Te
 func _build_generic(def: UiLayoutParser.ControlDef) -> Control:
 	var ctrl := Control.new()
 	ctrl.mouse_filter = Control.MOUSE_FILTER_PASS
+	# Round 848: a CIFPML keeps its record, whose FontColor and HAlign start
+	# its text's state (PmlText.put_on).
+	if def.type == "CIFPML":
+		ctrl.set_meta(PML_DEF_META, def)
 	return ctrl
+
+## Where a CIFPML node keeps its record (PmlText.put_on).
+const PML_DEF_META := "opensro_pml_def"
 
 ## Loads a .ddj texture from Media.pk2, using an in-memory cache to avoid duplicate decodes.
 ## `cache` false leaves the texture out of the builder's cache, which keeps

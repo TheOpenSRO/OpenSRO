@@ -364,7 +364,6 @@ func _set_open(o: bool) -> void:
 		var art := ExtQuickSlotLayout.onoff_art(current_type, o)
 		onoff.texture_normal = _builder.load_texture(art)
 		onoff.texture_hover = _builder.load_texture(art.replace(".ddj", "_focus.ddj"))
-		onoff.texture_focused = onoff.texture_hover
 		onoff.texture_pressed = _builder.load_texture(art.replace(".ddj", "_press.ddj"))
 	_show_page_slots()
 	for b in ExtQuickSlotLayout.board_count(current_type):

@@ -117,14 +117,19 @@ func _init() -> void:
 	_check(CompositeNet.decode_end(PackedByteArray()).is_empty(), "a short end push decodes to nothing")
 
 	var win := CompositeItemWindow.new()
+	# Round 848: the buttons are CIFButtons from the builder (no archive here:
+	# no art, the captions as given).
+	win.set("_builder", UiBuilder.new(null, null))
 	root.add_child(win)
 	win.show_entries([[23937, "Hwan regeneration fill", 1]])
-	var cancel := win.get_node_or_null("CompositeCancel") as Button
+	var cancel := win.get_node_or_null("CompositeCancel") as BaseButton
 	_check(cancel != null, "a Cancel button follows the item buttons (count + 1)")
 	_check(cancel != null and cancel.position == CompositeItemWindow.BUTTON_ORIGIN + Vector2(0, CompositeItemWindow.BUTTON_STEP),
 		"Cancel sits one step below the last item button")
-	var fill := win.get_node_or_null("CompositeButton0") as Button
-	_check(fill != null and fill.text == "Hwan regeneration fill(1)", "the item button reads name(count)")
+	_check(cancel is TextureButton and not (cancel is Button), "round 848: a CIFButton (TextureButton), not a Godot Button")
+	_check(cancel != null and cancel.size == CompositeItemWindow.BUTTON_SIZE, "150 x 25 (got %s)" % [cancel.size if cancel != null else null])
+	var fill := win.get_node_or_null("CompositeButton0") as BaseButton
+	_check(fill != null and CompositeItemWindow.button_text(fill) == "Hwan regeneration fill(1)", "the item button reads name(count)")
 	win.show()
 	if cancel != null:
 		cancel.pressed.emit()

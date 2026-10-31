@@ -9,7 +9,8 @@ class_name JobConfirmBox
 ## 0x7030bc: kind 5) and the box's OK sends the request (0x6f7acc..0x6f7b0b);
 ## the alias window's OK opens UIIT_STT_CONFIRM_BOX with the alias text
 ## (CIFJobAlias 0x74b110). The texts are sml2 PML (centred lines, a coloured
-## cost), drawn here as BBCode. OURS: the box is the party dialogs' question
+## cost), drawn by PmlText (round 848; a Godot RichTextLabel fed BBCode
+## before), white as the box's message line. OURS: the box is the party dialogs' question
 ## box (PartyMatchConfirm, ifmessagebox's MsgBoxSimple, Yes / No); kinds 4
 ## and 5's own geometry and button words were not read.
 
@@ -18,19 +19,14 @@ func build_sml(builder: UiBuilder, sml: String) -> bool:
 		return false
 	name = "JobConfirmBox"
 	var plain := get_node_or_null("Message") as Label
-	var rich := RichTextLabel.new()
+	var rich := PmlText.new()
 	rich.name = "Sml"
-	rich.bbcode_enabled = true
-	rich.fit_content = true
-	rich.scroll_active = false
 	rich.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var body := PartyMatchBox.sml2_to_bbcode(sml)
-	if sml.contains("<center>"):
-		body = "[center]" + body.replace("<center>", "").replace("</center>", "") + "[/center]"
-	rich.text = body
 	if plain != null:
 		rich.position = plain.position
 		rich.size = plain.size
 		plain.visible = false
 	add_child(rich)
+	rich.setup(builder.font_at(0) if builder != null else null, UiBuilder.FONT_SIZES[0], Color.WHITE)
+	rich.set_markup(sml)
 	return true

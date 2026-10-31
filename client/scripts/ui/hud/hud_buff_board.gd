@@ -638,70 +638,67 @@ func _send_cancel(skill_id: int, token: int) -> void:
 	else:
 		print("HudBuffBoard: no NetClient.send_buff_cancel in this build -- cancel for buff %d not sent" % token)
 
-## The cbuf confirmation (0x6ec5d0: box type 0x20, 308x148, centred). Its
-## text is OPEN -- retail passes an empty string (DAT_00e17460) -- so the
-## body line is empty. OURS: the box is this client's own confirm style (the
-## PanelContainer HudPanels' confirms use), titled with the client's own
-## UIIT_STT_CONFIRM_BOX, with OK and Cancel; OK sends the cancel (INFERRED:
-## what box type 0x20's OK does was not read).
+## The cbuf confirmation: CMessageBoxManager box 0x20 (0x6ec5d0, 308x148,
+## centred). Round 848: the original's box (MsgBoxInif.Kind.BUFF_CANCEL, READ
+## in UI_SILKMALL::FUN_00644c90 case 0x647d9a: UIIT_STT_CONFIRM_BOX, the
+## lines UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_1 and _CANCLE_2 -- the
+## empty string 0x6ec5d0 is passed is not the box's text -- and the layout's
+## Yes / No), where it was this client's own dark panel with an empty body.
+## Yes sends the cancel (INFERRED: what box type 0x20's OK does was not read).
 func _open_confirm(skill_id: int, token: int) -> void:
-	open_confirm_box("", func() -> void: _send_cancel(skill_id, token))
+	var host := _drop_confirm()
+	if _builder == null:
+		return
+	var box := MsgBoxInif.new()
+	if not box.build_kind(_builder, MsgBoxInif.Kind.BUFF_CANCEL, CONFIRM_NAME):
+		box.free()
+		return
+	_qa_names(box, box.button("GDR_MBIN_BTN_OK"), box.node("GDR_MBIN_STATIC_MESSAGE1"))
+	box.accepted.connect(func(_t: String) -> void: _send_cancel(skill_id, token))
+	host.add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(800, 600))
 
-## The confirm box above with `body` as its line and `on_ok` run at OK
-## (round 838: the Gold Time's pause question uses it too).
+## The Gold Time's pause / resume question (round 838) with `body_text` as its
+## line and `on_ok` run at Yes. Round 848: the original's box --
+## CIFMagicStateBoard::vslot_029 (0x800430) asks through GInterface 0x788270
+## (title UIIT_STT_CONFIRM_BOX at 0x80055b, style 1 at 0x800543: Yes / No;
+## the MsgBoxSimple box PartyMatchConfirm builds, 360 x 151 and centred) --
+## where it was this client's own dark panel.
 func open_confirm_box(body_text: String, on_ok: Callable) -> void:
+	var host := _drop_confirm()
+	if _builder == null:
+		return
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, body_text):
+		box.free()
+		return
+	box.name = CONFIRM_NAME
+	var yes: BaseButton = null
+	for n in box.root.get_children():
+		if n is BaseButton and (yes == null or (n as Control).position.x < yes.position.x):
+			yes = n
+	_qa_names(box, yes, box.get_node_or_null("Message"))
+	box.confirmed.connect(func() -> void: on_ok.call())
+	host.add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(800, 600))
+
+## The box up is taken down; returns the host a new one goes on.
+func _drop_confirm() -> Node:
 	var host: Node = get_parent() if get_parent() != null else self
 	var old := host.get_node_or_null(CONFIRM_NAME)
 	if old != null:
 		host.remove_child(old)
 		old.queue_free()
-	var panel := PanelContainer.new()
-	panel.name = CONFIRM_NAME
-	panel.custom_minimum_size = CONFIRM_SIZE
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	var title := Label.new()
-	title.name = "Title"
-	title.text = _text("UIIT_STT_CONFIRM_BOX")
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var body := Label.new()
-	body.name = "Body"
-	body.text = body_text
-	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	# A wrapping label needs its width, or the box grows to its full height.
-	body.custom_minimum_size = Vector2(280, 0)
-	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	box.add_child(body)
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(row)
-	var ok := Button.new()
-	ok.name = "OK"
-	ok.text = "OK"
-	ok.custom_minimum_size = Vector2(96, 0)
-	ok.pressed.connect(func() -> void:
-		on_ok.call()
-		panel.queue_free())
-	row.add_child(ok)
-	var cancel := Button.new()
-	cancel.name = "Cancel"
-	cancel.text = "Cancel"
-	cancel.custom_minimum_size = Vector2(96, 0)
-	cancel.pressed.connect(func() -> void: panel.queue_free())
-	row.add_child(cancel)
-	host.add_child(panel)
-	var view := get_viewport_rect().size if is_inside_tree() else Vector2(800, 600)
-	panel.position = ((view - CONFIRM_SIZE) * 0.5).round()
+	return host
+
+## The QA hooks' names for a box's Yes and its line (World3D's "board_ok"
+## finds "OK" and the Label "Body"); the boxes look their nodes up only while
+## they build, so the names are free to change afterwards.
+static func _qa_names(_box: Control, yes: Control, line: Control) -> void:
+	if yes != null:
+		yes.name = "OK"
+	if line is Label:
+		line.name = "Body"
 
 ## The tooltip text for a buff (0x800a10, kind 1).
 func tooltip_for(token: int) -> String:

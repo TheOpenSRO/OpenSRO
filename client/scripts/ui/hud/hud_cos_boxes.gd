@@ -103,6 +103,30 @@ const STALL_GREETING_OK_AT := Vector2(128, 104)
 const STALL_GREETING_CANCEL_AT := Vector2(216, 104)
 const STALL_GREETING_MAX := 64
 
+## Round 848: the guild founding's name box -- the same MsgBoxInsertMsg box,
+## purpose 2 of UI_SILKMALL 0x641f40 (asm 0x642443..0x642550, then the
+## shared tail 0x6421a4; READ). The guild manager's talk line 0x12
+## (UIIT_CTL_GUILD_CREATE: the click's jump table 0x703c6c / 0x703d2c sends
+## item 0x12 to 0x702af5) calls CIF_NPCTalk 0x6f77c0(2), which destroys the
+## talk box's last box (+0x7b8, 0x6f73d0), creates this one as the talk
+## box's child at 0x118 x 0x90 (280 x 144) with ID 0x64, mode 4
+## (0x643c20(4)), purpose 2, shows it and centres it on the screen
+## (0x798b70). The static +0x8f4 at (0x1b, 0x2f), 0xe1 x 0xe, the text
+## UIIT_MSG_GUILD_NAME_INPUT (0xd9bd70), its colour not set on this path (so
+## the record's own); control 11 at (0xb, 0x44) 0x104 x 0x1c; control 12 at
+## (0xf, 0x48) 0xfc x 0x14; the edit +0x8f8 limited to 12 (0x634f80(0xc)),
+## emptied, at (0x12, 0x46) 0xf3 x 0x14, style 2; OK +0x800 at (0x37, 0x68),
+## Cancel +0x804 at (0x8f, 0x68). OPEN: whether the box gives the edit the
+## keyboard (neither purpose 2 nor 0x6f77c0 is seen to; this client does, as
+## round 521's prompt did).
+const GUILD_NAME_SIZE := Vector2(0x118, 0x90)
+const GUILD_NAME_PROMPT_RECT := Rect2(0x1b, 0x2f, 0xe1, 0xe)
+const GUILD_NAME_FRAME_RECT := Rect2(0xb, 0x44, 0x104, 0x1c)
+const GUILD_NAME_BG_RECT := Rect2(0xf, 0x48, 0xfc, 0x14)
+const GUILD_NAME_EDIT_RECT := Rect2(0x12, 0x46, 0xf3, 0x14)
+const GUILD_NAME_OK_AT := Vector2(0x37, 0x68)
+const GUILD_NAME_CANCEL_AT := Vector2(0x8f, 0x68)
+
 const CLEAN_SIZE := Vector2(388, 144)
 const CLEAN_SHIFT := 40.0
 
@@ -261,6 +285,29 @@ func build_grant_name_input(builder: UiBuilder, member: String) -> bool:
 		edit.call_deferred("grab_focus")
 	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), GRANT_OK_AT, press_ok)
 	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), GRANT_CANCEL_AT, press_cancel)
+	return true
+
+## Builds the guild founding's name box (round 848). False without the layout.
+func build_guild_name_input(builder: UiBuilder) -> bool:
+	name = "GuildNamePrompt"
+	if not build_shell(builder, GUILD_NAME_SIZE, "UIIT_STT_INPUT_BOX", "UIIT_STT_INPUT_BOX", LAYOUT, "MsgBoxInsertMsg"):
+		return false
+	_add_background(builder, GUILD_NAME_SIZE)
+	var title := node("GDR_MB_INSERT_MSG_TITLE")
+	if title != null:
+		_place(title, GUILD_NAME_PROMPT_RECT)
+		builder.set_static_text(title, text("UIIT_MSG_GUILD_NAME_INPUT", "UIIT_MSG_GUILD_NAME_INPUT"))
+	_rebuild(builder, "MsgBoxInsertMsg", "GDR_MB_INSERT_MSG_EDIT_FRAME", GUILD_NAME_FRAME_RECT)
+	_place(node("GDR_MB_INSERT_MSG_EDIT_BG"), GUILD_NAME_BG_RECT)
+	edit = node("GDR_MB_INSERT_MSG_EDIT") as LineEdit
+	if edit != null:
+		_place(edit, GUILD_NAME_EDIT_RECT)
+		edit.max_length = NAME_MAX
+		edit.text = ""
+		edit.text_submitted.connect(func(_t: String) -> void: press_ok())
+		edit.call_deferred("grab_focus")
+	_wire(node("GDR_MB_INSERT_MSG_BTN_OK"), GUILD_NAME_OK_AT, press_ok)
+	_wire(node("GDR_MB_INSERT_MSG_BTN_CANC"), GUILD_NAME_CANCEL_AT, press_cancel)
 	return true
 
 ## Builds the transport's terminate question. False without the layout.

@@ -210,23 +210,13 @@ func build_window() -> bool:
 	# your Silk charge history for the most recent 3 months.</sml2>"). Drawn
 	# as the party-match boxes draw a PML record (PartyMatchBox.fill_pml:
 	# centred; CIFPMLEx's own draw is not read, INFERRED).
+	# Round 848: through PmlText (the CIFPML draw), not a Godot RichTextLabel;
+	# white and centred as before (INFERRED; the record's own colour is the
+	# .2dt's text style).
 	var note := _at([ID_NOTE])
 	if note != null:
-		var rt := RichTextLabel.new()
-		rt.name = "PmlText"
-		rt.bbcode_enabled = true
-		rt.scroll_active = false
-		rt.fit_content = false
-		rt.autowrap_mode = TextServer.AUTOWRAP_OFF
-		rt.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		rt.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		var font := _builder.font_at(0)
-		if font != null:
-			rt.add_theme_font_override("normal_font", font)
-		rt.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
-		UiBuilder.crisp_text(rt)
-		rt.text = "[center]%s[/center]" % PartyMatchBox.sml2_to_bbcode(_text(NOTE_KEY, ""))
-		note.add_child(rt)
+		var style: Array = note.get_meta(TwoDtBuilder.META_TEXT_STYLE, [0xffffffff, 1, 0, 0])
+		PmlText.put_on(note, _builder, _text(NOTE_KEY, ""), TwoDtBuilder.argb(int(style[0])), 1)
 	_slots.clear()
 	for c in panel_root.get_children():
 		if c is Control and str(c.get_meta(TwoDtBuilder.META_CLASS, "")) == SLOT_CLASS:
@@ -371,8 +361,8 @@ func status_text() -> String:
 
 ## The CIFPMLEx line under the tab, as plain text.
 func note_text() -> String:
-	var rt := _at([ID_NOTE]).get_node_or_null("PmlText") as RichTextLabel if _at([ID_NOTE]) != null else null
-	return rt.get_parsed_text() if rt != null else ""
+	var rt := _at([ID_NOTE]).get_node_or_null("PmlText") as PmlText if _at([ID_NOTE]) != null else null
+	return "\n".join(rt.plain_lines()) if rt != null else ""
 
 func total_text() -> String:
 	return TwoDtBuilder.text_of(_at([ID_TOTAL]))

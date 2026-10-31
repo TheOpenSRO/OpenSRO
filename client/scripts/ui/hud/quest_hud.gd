@@ -286,8 +286,16 @@ func _set_button_text(b: BaseButton, text: String) -> void:
 		builder.set_button_text(b, text)
 
 ## The detail's button: the reward (0x70D8) for an achieved quest, else the
-## give-up after the agreement box (UIIT_STT_AGREEMENT_BOX; READ that it
-## asks first). OURS: the agreement box is a ConfirmationDialog.
+## give-up after the agreement box. Round 848: the box is the original's, where
+## it was a Godot ConfirmationDialog. READ: CIFQuestReward's button
+## (0x6e4ec0) for a quest of status 1, 7 or 8 calls 0x6e4d10(100), or (0x65)
+## when the quest's RefQuest byte +0xb1 (kept at +0x378 by 0x6e4c00) is set;
+## that asks GInterface 0x788270 with UIIT_STT_AGREEMENT_BOX (0xd938d0), the
+## text UIIT_MSG_QUEST_GIVEUP_WINDOW_1 (0xdaa05c) for 100 or _WINDOW_2
+## (0xdaa01c) for 0x65, through "%s", and style 1 (`push 0x1` at 0x6e4df1:
+## Yes / No) -- the MsgBoxSimple box, 360 x 151, centred (PartyMatchConfirm).
+## OPEN: which RefQuest column +0xb1 is, so _WINDOW_1 ("you will be unable to
+## take it again") is shown for every quest.
 func _on_detail_button() -> void:
 	if state == null or detail_quest == 0:
 		return
@@ -297,15 +305,24 @@ func _on_detail_button() -> void:
 	if v.status == QuestNet.STATUS_ACHIEVED_NOT_PAID:
 		state.claim(detail_quest)
 		return
-	var box := ConfirmationDialog.new()
-	box.dialog_text = _ui("UIIT_STT_QUEST_GIVEUP", "Give up this quest?")
+	if builder == null:
+		return
+	var old := panels.get_node_or_null(GIVEUP_BOX) if panels != null else null
+	if old != null:
+		old.free()
+	var box := PartyMatchConfirm.new()
+	if not box.build(builder, _ui("UIIT_MSG_QUEST_GIVEUP_WINDOW_1", "UIIT_MSG_QUEST_GIVEUP_WINDOW_1"),
+			PartyMatchConfirm.SIZE, "UIIT_STT_AGREEMENT_BOX"):
+		box.free()
+		return
+	box.name = GIVEUP_BOX
 	var id := detail_quest
-	box.confirmed.connect(func() -> void:
-		state.abandon(id)
-		box.queue_free())
-	box.canceled.connect(func() -> void: box.queue_free())
+	box.confirmed.connect(func() -> void: state.abandon(id))
 	panels.add_child(box)
-	box.popup_centered()
+	box.centre_on(panels.get_viewport_rect().size if panels.is_inside_tree() else Vector2(1024, 768))
+
+## The give-up question's node name under the HUD.
+const GIVEUP_BOX := "QuestGiveUpBox"
 
 ## The reward lines of quest `id` (refqusetreward / refquestrewarditems).
 func reward_lines(id: int) -> PackedStringArray:

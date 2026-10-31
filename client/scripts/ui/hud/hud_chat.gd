@@ -255,7 +255,7 @@ const FRAME_OPEN := ["GDR_CHAT_BG_UP", "GDR_CHAT_BG_MID", "GDR_CHAT_BG_DOWN", "G
 const FRAME_HIDE_ONLY := ["GDR_WHISPERLIST", "GDR_CHAT_MODE_VIEW_WND"]
 
 var _builder: UiBuilder
-var _input: LineEdit
+var _input: CifEdit
 var _root: Control
 var _lists: Array = []
 ## What each list's visibility is switched on: its authored box, or the list
@@ -546,18 +546,34 @@ func _install_scroll() -> void:
 ## `GDR_CHAT_INPUTBOX` is a `CIFEInputChatBox` carrying an atlas slice of
 ## `window_all.ddj` for its own background, which UiBuilder already draws.
 ## What it needs is somewhere to type.
+## CIFEInputChatBox's limit (READ: 0x65cf46 push 0x64 -> 0x634f80, the edit's
+## +0x3fc, which CIFEdit's WM_CHAR compares before taking a character): 100
+## BYTES in the player's code page (+0x434 is the text's CP_ACP length,
+## 0x4fc870 at 0x636416; CifEdit holds max_length as bytes).
+const INPUT_MAX := 100
+
 func _install_input() -> void:
 	var box := _root.get_node_or_null("GDR_CHAT_INPUTBOX") as Control
 	if box == null:
 		return
-	_input = LineEdit.new()
-	# Round 754: Enter keeps the line editing, Escape gives the keyboard back,
-	# as under Godot 4.2.2 (KeyInput.line_edit_as_42 has the 4.4+ change).
-	KeyInput.line_edit_as_42(_input)
+	# Round 848: a CifEdit -- CIFEInputChatBox shares CIFEdit's draw and
+	# handlers (0x637b70, 0x637290: the 2 px caret in the line's colour, 200 ms
+	# blink, no selection, menu or paste; CifEdit's header). Round 754's Enter
+	# and Escape rules come with it (KeyInput.line_edit_as_42).
+	_input = CifEdit.new()
 	_input.name = "Input"
 	_input.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_input.flat = true
-	_input.caret_blink = true
+	# No box of Godot's own, the focus one included: the box's own art is
+	# the authored control's (UiBuilder._build_edit).
+	for style in ["normal", "focus", "read_only"]:
+		_input.add_theme_stylebox_override(style, StyleBoxEmpty.new())
+	# The line's FontColor is the authored control's.
+	_input.set_colour((box as CifEdit).colour() if box is CifEdit else Color.WHITE)
+	# CIFEInputChatBox's Create (0x65cf30): 0x634f80(100), the edit's limit.
+	_input.max_length = INPUT_MAX
+	if box is LineEdit:
+		box.focus_mode = Control.FOCUS_NONE
 	if _font != null:
 		_input.add_theme_font_override("font", _font)
 	_input.add_theme_font_size_override("font_size", _font_size)

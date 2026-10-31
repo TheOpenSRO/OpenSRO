@@ -7695,6 +7695,148 @@ own rect for a sign's help (not read); the CIF bubble's hit rect margins (+0x50.
 (INFERRED, as round 786). Both runs abort at exit with "finalize can only be called from the render
 thread" (base too: not this lane).
 
+## Eight-hundred-and-forty-eighth round, lane H: the in-world HUD's boxes and inputs are the original's
+
+The user: "Can you investigate all the cases where use the native gui and not the original gui?
+Please find and fix all instances of this and make sure you match original as close as possible.
+Make no mistakes." Lane H's area: the in-world HUD windows and their inputs (`ui/hud/*`,
+`help_window.gd`, and the edits UiBuilder / TwoDtBuilder make). Labels: READ (`sro_client.exe`,
+`/var/tmp/decomp_client` and `/var/tmp/sro_client.asm` on the box; wide strings read from the exe's
+`.rdata` by section mapping), MEASURED, INFERRED, OURS, OPEN. Tooltips and native scroll bars are
+lane T's; the debug panel and World3D are lane W's.
+
+**What the original's edit is (READ).** `CIFEdit` keeps its own text buffer (`+0x5474`, at most
+0x1000 characters) and caret; its Create (0x637a60) makes a hidden Win32 EDIT at (-100, -100) only
+to own the keyboard and the IME, subclassed by 0x637a30 -> 0x636cd0. Keys (0x637290): End, Home,
+Left, Right (one character each, 0x635460) and Delete; WM_CHAR Backspace, Enter, Tab / Escape (to
+the parent with style 2) and characters from 0x20. No range selection, no word moves, no caret
+placed by the mouse: a left press inside only gives the edit the focus (case 0x201 -> 0xb9d9f0).
+With Ctrl, A / C / X / Z are swallowed; V pastes only with style 0x200, which only the developer
+console sets (`push 0x1302` at 0x54170b); Shift+Insert is swallowed. Shift+Home / Shift+End set a
+whole-text mark (`+0x41a`, 0x635030) drawn on background 0xff3b457a (0x635044); Home / End / Left /
+Right clear it; Delete empties a marked edit (0x6354e0); a character or Backspace first empties it
+(0x635720). The caret (draw 0x637b70): a quad 2.0 wide (`0xe1b898`) in the edit's FontColor
+(`+0xa0`), tmHeight + 2 tall, shown while the blink flag `+0x3ec` is set and the edit has the focus;
+the flag starts clear (0x637b50) and flips on each tick of a CETime set to 5 a second (0x637b3c ->
+0xba9aa0(5): 200 ms). CIFEInputChatBox (the chat line) shares the draw and handlers; its Create
+(0x65cf30) sets style 2 and a limit of 100 (0x634f80(100)).
+
+**The hidden EDIT, checked against the stock control (READ, the coordinator's question).** Create
+subclasses the EDIT (`SetWindowLongA(hwnd, GWL_WNDPROC, 0x637a30)`, the old procedure at `+0x384`);
+0x636cd0 calls the stock EDIT (`CallWindowProcA`) only on its fall-through and returns 0 for
+WM_PASTE 0x302, WM_UNDO 0x304, Ctrl + A / C / X / Z / V keydowns (V pastes, through its own
+clipboard read 0x636bd0, only with style 0x200: the console's) and Shift+Insert. Ctrl+Left,
+Shift+arrows, WM_CHAR 0x16 and EM_SETSEL do reach the stock EDIT -- an off-screen window
+((-100, -100)) that is never drawn and never read back: the draw 0x637b70 reads the client's own
+buffer, caret and mark, and the class (0x634300..0x638300) has no GetWindowText, WM_GETTEXT or
+EM_GETSEL. The visible caret moves one character for Left / Right with or without Ctrl or Shift
+(0x637290 cases 0x25 / 0x27, 0x635460: 1, or 2 for a surrogate pair); WM_CHAR 0x16 is below 0x20
+and is not inserted. So CifEdit's no-paste, no-range-selection and one-character rules stand as
+READ. Corrected: the limit (`+0x3fc`, 0x634f80) is compared with `+0x434`, the text's length in
+**bytes** of the ANSI code page (0x4fc870 WideCharToMultiByte(CP_ACP) at 0x636416; the check
+0x6375e6, the cut-back 0x63642a -> 0x6362d0), so CifEdit now holds `max_length` as bytes (the
+player's code page INFERRED from the OS locale: two bytes a CJK character for ko / zh / ja). OURS:
+Ctrl+Backspace deletes one character (the original's WM_CHAR 0x7f is inserted as U+007F). OPEN:
+the Apps key (falls through to the stock EDIT's DefWindowProc).
+
+**Three frame checks (MEASURED on the after frames).**
+- Composite captions: with VAlign 0 the first caption's rows were 297..307 in a 295..319 button
+  (2 below the top); with the code-made text board's VAlign 1 (CTextBoard ctor 0x655c3b, READ)
+  302..312 -- centred (25 - 11 = 14, 7 above and below). The coordinator's frame was the first
+  set; `after2` is the fix.
+- Box 0x20's second line spans 328 px against the 308-px box (x 478..805, box 486..793). READ:
+  0x6ec5d0 creates the box 0x134 x 0x94 and calls 0x644c90; case 0x20 (0x647d9a..0x647dfa, then
+  0x645065..0x64508d) only sets texts, no resize (no vslot 0x54 call), and 0x6ec5d0 has no fitting
+  after it (0x6ec77b..0x6ec79c); the line is a CIFStatic, one line, its text not clipped (UI_TODO,
+  Fonts). So the original overruns too; by how much depends on the face (Tahoma on the player's
+  Windows, Arial here). Left as read. The other INIF lines fit: 0x1f 165 px, 0x20's first 236,
+  box 5's 163 and 300 (Jangan).
+- The dead window's buttons: "Resurrect at the specified point." x 512..677 in the 508..683
+  button, "Resurrect at the present point." 696..853 in 688..863 -- both inside.
+
+**Census (before -> after).** Base `992993b4` file:line. "play" = a player reaches it.
+
+| # | Site | Native | What it is | Reach | The original | After |
+|---|---|---|---|---|---|---|
+| 1 | ui_builder.gd:967 `_build_edit` | LineEdit: Godot caret (1 px, (242,242,242), 0.65 s), mouse selection, context menu, Ctrl shortcuts, middle paste | every resinfo CIFEdit (party match, mall, message box inputs, guild notice title...) | play | CIFEdit, READ above | `CifEdit` (new): 2 px caret in FontColor, 200 ms blink, no selection / menu / shortcuts / paste, click focuses without moving the caret, Shift+Home/End mark in 0x3b457a, one-character moves and deletes; the read-only and placeholder text in FontColor (INFERRED) |
+| 2 | twodt_builder.gd:293 `_edit` | LineEdit, as 1 | `.2dt` CNIFEdits (guild notice view, letter edits) | play | CNIFEdit's own draw OPEN; CIFEdit's rules INFERRED | `CifEdit` |
+| 3 | hud_chat.gd:553 | LineEdit with Godot's focus box and caret, no limit | the chat line | play | CIFEInputChatBox: CIFEdit's draw, limit 100 bytes of the code page (READ) | `CifEdit`, focus box removed, max 100 bytes |
+| 4 | hud_panels.gd:2054/2078/2117 guild name prompt | PanelContainer + StyleBoxFlat + LineEdit + Buttons "Create"/"Cancel", OURS | the guild founding's name | play | talk item 0x12 (jump tables 0x703c6c / 0x703d2c) -> CIF_NPCTalk 0x6f77c0(2): MsgBoxInsertMsg purpose 2, 280 x 144, the talk box's child, centred (0x798b70); UIIT_MSG_GUILD_NAME_INPUT at (0x1b, 0x2f) 0xe1 x 0xe, frame 11 (0xb, 0x44) 0x104 x 0x1c, tile 12 (0xf, 0x48) 0xfc x 0x14, edit (0x12, 0x46) 0xf3 x 0x14 max 12 style 2, OK (0x37, 0x68), Cancel (0x8f, 0x68) (asm 0x642443..0x642550, tail 0x6421a4) | `HudCosBox.build_guild_name_input` |
+| 5 | hud_panels.gd recall prompt (same helpers) | PanelContainer + Buttons "OK"/"Cancel", on the talk box | the gate's return point | play | purpose 5 (0x644f93): UIIT_STT_AGREEMENT_BOX, CURPOS with the zone, ASKCERTIFY, +0x808 hidden; 0x6ec5d0 places it | `MsgBoxInif` (new), over the HUD |
+| 6 | hud_panels.gd:2312 dead window | PanelContainer + StyleBoxFlat + 2 Buttons, our death line on top | the dead player's choice | play | purpose 3 (0x645092..0x6456d3, peace branch), 400 x 210: msgbox_rebirth.ddj at (0x80, 0x2b) 0x94 x 0x34; a CIFPML (class 0xee9634) at (0, 0x75) 400 x 16 with UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_1; two 176 x 24 buttons on msgbox_rebirth_button.ddj at (0x16 / 0xca, 0xa8); opened through 0x6ec5d0 (0x780f88, 0x9d6e39) | `ReviveBox` (new) |
+| 7 | hud_panels.gd:5969 `_open_simple_confirm` | PanelContainer + Buttons | an item used on another (box 0x1f) | play | purpose 0x1f (0x647d62): CONFIRM_BOX, UIIT_MSG_QUESTION_SILKMALL_ITEM_USE | `MsgBoxInif` |
+| 8 | hud_buff_board.gd:658 | PanelContainer + Buttons, empty body | cancellable buff (box 0x20) | play | purpose 0x20 (0x647d9a): CANCLE_1 + CANCLE_2 (the "" 0x6ec5d0 gets is not the text) | `MsgBoxInif` |
+| 8b | hud_buff_board.gd:658 (Gold Time) | same | Gold Time pause / resume | play | CIFMagicStateBoard::vslot_029 -> 0x788270, CONFIRM_BOX, style 1 (0x800543) | `PartyMatchConfirm` (MsgBoxSimple 360 x 151) |
+| 9 | quest_hud.gd:300 | ConfirmationDialog (an OS window) | quest give-up | play | 0x6e4ec0 -> 0x6e4d10(100 / 0x65) -> 0x788270: AGREEMENT_BOX, UIIT_MSG_QUEST_GIVEUP_WINDOW_1 / _2, style 1 (0x6e4df1) | `PartyMatchConfirm` with the agreement title |
+| 10 | composite_item_window.gd:54/73 | Buttons wearing sys_button.ddj in every state, Godot's font colours | the composite item's choices | play | FUN_007af830: code-made CIFButtons, sys_button.ddj, 150 x 25 (READ, round 632); text centred both ways (CTextBoard ctor 0x655c2f / 0x655c3b: +4 and +8 = 1) | layout-built CIFButtons (_focus / _press / _disable art) |
+| 11 | nif_page_manager.gd:73 | Buttons, flat, styles emptied, embolden 0.6 | the stall network's page numbers | play | CNIFPageManager (round 840) | art-less TextureButtons with a caption; the weight-600 face (HudNotice.bold_file, the embolden only without one) |
+| 12 | reverse_return_box.gd:235 | Button stand-in | none: tests without an archive | dev | -- | TextureButton stand-in |
+| 13 | help_window.gd:82..152 | ColorRect backings, ItemList, RichTextLabel (native scroll), a "X" Button in the fallback | Help (H, System > Help, release notes) | play (fallback: no layout) | ifgameguide.txt: GDR_GUIDE_DATA_PML (CIFPML) on gd_paper, GDR_GUIDE_DATA_SCL (CIFVerticalScroll) over GDR_GUIDE_DATA_SCL_BG, GDR_GUIDE_MENU (CIFGGMenu) with ifggmenu.txt (READ layouts; the menu's rows and the pages are OURS) | rows in com_bar01_ / com_bar01select_ (INFERRED), the page as PML (`MdToPml`, new, OURS), the guide-art scroll, ifggmenu.txt inside the menu, the start page hidden; fallback close a CIFCloseButton |
+| 14 | option_video_page.gd:259 | OptionButton | Option combos, party purpose, silk period, stall network | play | CNIFComboBox (rounds 696/700) | no change: the button draws only the value text (no Godot chrome); the list is ComboList since round 700 |
+| 15 | gacha_select_window.gd:64 | OptionButton in Godot's default look + PopupMenu | Magic POP "Choose item" | play | CIFComboBox::vslot_010 (0x6327f0): the same pieces (party_gui.md); value centred (CTextBoard ctor) | `OptionVideoPage.make_combo` + ComboList |
+| 16 | guild_notice_write.gd:73 | TextEdit: Godot caret, selection, menu, shortcuts | guild notice body | play | a multi-line CIFEdit (style 0x40; its pitch and scroll OPEN) | TextEdit with `CifEdit.style_text_edit` (caret, colour, rules) |
+| 17 | party_match_box.gd:212 `fill_pml` | RichTextLabel fed BBCode | party join request / progress | play | CIFPML (round 845), HAlign 1 (MEASURED records) | `PmlText.put_on` (new: the record's FontColor and HAlign) |
+| 18 | auto_potion_window.gd:408 | RichTextLabel | auto potion text | play | CIFPML, HAlign 0 | `PmlText.put_on` |
+| 19 | silk_history_window.gd:215 | RichTextLabel | silk history note | play | CIFPMLEx (draw not read) | PmlText, centred as before (INFERRED) |
+| 20 | mall_message_box.gd:363 | RichTextLabel | mall reserve question | play | CIFPML HAlign 1, VAlign 1 (VAlign OPEN) | `PmlText.put_on` |
+| 21 | job_confirm_box.gd:21 | RichTextLabel | job guild questions | play | PML | PmlText |
+| 22 | ui_builder.gd:578 `_build_button` | FOCUS_ALL + texture_focused = the hover art | every layout button: after a click the `_focus` art stayed on it while it held the keyboard; Space / Enter pressed it | play | `_focus` is the hover; the client has no keyboard focus on buttons | FOCUS_NONE, no focused overlay |
+| 23 | hud_ext_quick_slot.gd:367 | texture_focused | the quick slot bar's toggle | play | as 22 | removed |
+| -- | guild_gp_history_window.gd:48 | RichTextLabel, own scroll (953 hidden) | GP usage history | play | CNIFTextBox (draw not read) + scroll 953 | unchanged: OPEN; the scroll bar is lane T's |
+| -- | stall_window_view.gd:116 | RichTextLabel | stall chat lines | play | GDR_CHAT_CHATMESSAGE (class not read) | unchanged: font is the client's; scroll bar lane T's |
+| -- | npc_talk_view.gd:110 | RichTextLabel | NPC talk text | play | READ round 725 (font, colours, 18 px pitch, its own scroll) | unchanged: no Godot chrome drawn |
+| -- | ColorRects (hud_panels exchange dim, skill_practice_box fill, item_chest_window) | quads | READ / OURS colours | play | -- | unchanged: drawing, not widgets |
+
+**Behaviour changes a player will notice (the original's, built as read).** No Ctrl+V paste, no
+mouse selection and no right-click menu in any game edit; a click does not move the caret; Ctrl+Left
+moves one character; the chat line takes 100 characters; the dead window no longer repeats our death
+line (it stays in the chat); the chat line takes 100 bytes (50 Korean characters); the return-point box is over the screen's middle, not on the talk box.
+
+**Evidence** (render box, `client/tools/hud_boxes_shot.gd`, Forward+ through xwl_run, 1280 x 720,
+the same calls on the base tree and this branch; frames in `/var/tmp/r848h/shots/{before,after}`):
+
+| Scene | Before | After (MEASURED where a number is given) |
+|---|---|---|
+| dead window | dark panel, our line, two Godot buttons | 400 x 210 msgbox frame, the rebirth picture, "the character is now paralyzed." with "is now" in (255, 217, 83), two rebirth buttons |
+| guild name | dark panel "Create a new guild", Godot line with grey placeholder | the input box, "Enter your guild name", the edit on frame_msg_, Confirm / Cancel |
+| boxes 5 / 0x1f / 0x20 / Gold Time / give-up | dark panels, "OK" / "Cancel" Godot buttons, 0x20's body empty | MsgBoxINIF / MsgBoxSimple boxes with the layout's Yes / No, 0x20's two lines |
+| a typed edit (stall title box) | caret 1 px x 14, (242, 242, 242) | caret 2 px x 14, (255, 255, 255) = the edit's FontColor |
+| composite window | Godot buttons, the second wider than the frame | CIFButtons 150 x 25, the empty one on its _disable art |
+| Magic POP | Godot OptionButtons (bare text, Godot arrow) | com_blacksquare_ fields with the down-arrow button, values centred |
+| Help | dark ColorRects, ItemList, white RichTextLabel | the guide's paper, black PML text with orange bold headings, the guide-art scroll, rows on com_bar01 |
+
+**Tests.** `native_gui848h_test.gd` (new, synthetic layouts in `MsgBoxFixture`, new): CifEdit's
+properties and keys through `push_input` (typing, Enter keeps the keyboard, a press does not move the
+caret, a double click selects nothing, Ctrl+A/C/X/V/Z and Shift+Insert do nothing, Ctrl+Left and
+Shift+Left move one, Ctrl+Backspace deletes one, Shift+End marks and a character replaces, Delete
+empties the mark, Right clears it), the multi-line rules, MsgBoxInif 5 / 0x1f / 0x20, ReviveBox at
+levels 10 and 11, the guild name box, the give-up box, MdToPml, PmlText.put_on, the composite
+buttons. Updated: monster_strikes (the dead window), recall, npc_service_reader (the name box),
+hud_buff_board (box 0x20), composite, party_match_window (PML; its fixture's two PML records now
+carry their real HAlign 1), mall837_boxes.
+
+**OPEN.**
+- The caret's height: Godot draws it the line's height (14 px MEASURED), the original tmHeight + 2;
+  and its first blink phase (the original starts hidden). The IME composition underline
+  (0x637b70's dotted / solid lines) is Godot's.
+- CNIFEdit's (`.2dt`) own draw; the multi-line CIFEdit's pitch and scroll (guild notice body).
+- The dead window: the CIFPML's base colour (white, INFERRED) and centring (INFERRED from the 0x14
+  slot's 1); the table's `"""<sml2>...</sml2>"""` CSV quotes are left out (the client's loader is
+  not read); the fortress-war branch is not built; OURS kept: the help button disabled and the box
+  up (round 665).
+- The give-up's WINDOW_2 needs RefQuest +0xb1 (column not mapped): WINDOW_1 is shown for every quest.
+- Whether the guild name box gives its edit the keyboard (this client does).
+- CIFGGMenu's own rows (the Help list uses the list-row bars, INFERRED).
+- The player's code page for the byte limits (INFERRED from the OS locale).
+- GP history's CNIFTextBox and the stall chat list (unchanged, above).
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1081 scripts, 9 scenes); `tests` "ran 405 suite(s)": the
+first full run 1 failing (party_match_window's fixture, fixed above), the second 4 failing --
+retail_gateway's key-schedule timing, buff_persist (round 845's known flake), crowd_main_thread
+and seated_spawn -- each ALL PASS when run alone on the same tree (the box was shared with other
+lanes' Godot runs); `native_gui848h_test.gd` ALL PASS. The server is untouched. UI-only round (no
+world drawing changed): no perf gate.
+
 ## Eight-hundred-and-forty-seventh round, lane B: a status effect's look ends with the status
 
 The user: "sometimes the status effects cast on the players (maybe more?) lingers even after it's
