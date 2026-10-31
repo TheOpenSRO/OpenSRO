@@ -54,6 +54,9 @@ func build_history(builder: UiBuilder) -> bool:
 			text_box.add_theme_font_override("normal_font", builder.font_at(0))
 		text_box.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
 		host.add_child(text_box)
+	# 848 merge: OriginalScroll.attach_2dt(text_box, builder, TwoDtBuilder.child(root, ID_SCROLL))
+	# -- the text box's own bar 953 in place of the RichTextLabel's native
+	# one (lane T's OriginalScroll); until then 953 stays hidden.
 	var bar := TwoDtBuilder.child(root, ID_SCROLL)
 	if bar != null:
 		bar.visible = false

@@ -93,6 +93,9 @@ func _body_edit() -> void:
 			body_edit.set_caret_column(body_edit.get_line(body_edit.get_line_count() - 1).length())
 		_count())
 	host.get_parent().add_child(body_edit)
+	# 848 merge: OriginalScroll.hide_bars(body_edit) -- the multi-line
+	# CIFEdit's own scroll (style 0x40, 0x635070) is not built (OPEN), so
+	# Godot's bars go (lane T's OriginalScroll).
 
 func title_text() -> String:
 	var e := node(TITLE_EDIT) as LineEdit

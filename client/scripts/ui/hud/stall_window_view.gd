@@ -111,6 +111,10 @@ static func _add_chat(window: HudWindow, builder: UiBuilder, controller: StallCo
 	root.mouse_filter = Control.MOUSE_FILTER_PASS
 	host.add_child(root)
 	UiBuilder.settle_authored_rects(root)
+	# 848 merge: the stall chat list's scroll -- OriginalScroll.attach_cif(rt,
+	# builder, <the chat module's CIFVerticalScroll node, if its layout has
+	# one>) or OriginalScroll.hide_bars(rt) where it has none (lane T); the
+	# list's own class (GDR_CHAT_CHATMESSAGE) is not read (round 848, OPEN).
 	var msgs := root.get_node_or_null("GDR_CHAT_CHATMESSAGE") as Control
 	if msgs != null:
 		var rt := RichTextLabel.new()
