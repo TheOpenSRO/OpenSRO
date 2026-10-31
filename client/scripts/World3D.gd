@@ -10492,7 +10492,7 @@ func _on_object_status(st: StatusNet.ObjectStatus) -> void:
 	var labels := PackedStringArray()
 	for bit in StatusNet.drawn_bits(st.mask):
 		labels.append(StatusNet.label(bit))
-	print("World3D: %s abnormal mask 0x%x [%s]" % [key, st.mask, ", ".join(labels)])
+	print("World3D: %s abnormal mask 0x%x [%s] (frame %d)" % [key, st.mask, ", ".join(labels), Engine.get_frames_drawn()])
 	_auto_potion_status(st)
 	_apply_state_look(key, _fx_owner_body(st.owner_id, st.owner_kind), old_mask, st.mask)
 

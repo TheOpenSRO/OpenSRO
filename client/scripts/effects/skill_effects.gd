@@ -1153,6 +1153,7 @@ static func process(now_ms: int = -1) -> void:
 			_auras.erase(key)
 		elif int(a["expires"]) >= 0 and now >= int(a["expires"]):
 			print("EFFECTS aura %s: no end arrived %d ms after its time -- ending it" % [key, AURA_GRACE_MS])
+			_note_end(key, alive)
 			_release_all(alive)
 			_release_models(models)
 			_auras.erase(key)
@@ -1161,6 +1162,20 @@ static func process(now_ms: int = -1) -> void:
 			a["models"] = models
 
 ## Round 838: an aura's .bsr models (AuraModel) still drawing.
+## Round 847: when an aura ended, and when each of its effects stopped
+## drawing after (the log the lingering-state QA reads; frames are the
+## engine's, the time the wall clock's).
+static func _note_end(key: String, fxs: Array) -> void:
+	var at := Time.get_ticks_msec()
+	var live := 0
+	for fx in fxs:
+		if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion():
+			live += 1
+			(fx as Node).tree_exiting.connect(func() -> void:
+				print("EFFECTS aura %s: an effect gone %d ms after its end (frame %d)" % [key,
+					Time.get_ticks_msec() - at, Engine.get_frames_drawn()]), CONNECT_ONE_SHOT)
+	print("EFFECTS aura %s ended: %d effect(s) drawing (frame %d)" % [key, live, Engine.get_frames_drawn()])
+
 static func _alive_models(a: Dictionary) -> Array:
 	var out: Array = []
 	for m in a.get("models", []):
@@ -1294,6 +1309,7 @@ static func detach_aura(owner_key: String, token: int) -> int:
 	var key := _aura_key(owner_key, token)
 	var n := 0
 	if _auras.has(key):
+		_note_end(key, _auras[key]["fx"])
 		for fx in _auras[key]["fx"]:
 			if is_instance_valid(fx):
 				# Round 785 (READ, FUN_00a53120 -> FUN_00a4ffe0 -> FUN_00a4db00):

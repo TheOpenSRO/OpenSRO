@@ -848,6 +848,14 @@ func broadcastStatus(hub *world.Hub, zone string, msg *ObjectStatus) {
 	if hub == nil || msg == nil {
 		return
 	}
+	// Round 847: when a character's mask went out (the lingering-state QA
+	// lines it up against the clients' receipt).
+	statusFX.mu.Lock()
+	l := statusFX.logger
+	statusFX.mu.Unlock()
+	if l != nil && msg.OwnerKind == OwnerCharacter {
+		l.Info("status sent", "character", msg.OwnerID, "mask", fmt.Sprintf("%#x", msg.Mask))
+	}
 	if msg.OwnerKind == OwnerCharacter {
 		sendAboutOwner(zoneOf(hub, msg.OwnerID), msg.OwnerID, OpObjectStatus, msg.Encode())
 		return
