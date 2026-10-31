@@ -16,9 +16,13 @@ class_name GuildNoticeWrite
 ##   local error 0x4c22, an empty body 0x4c23 (category 0x10), else 0x70F9
 ##   {title, body} is sent (SendGuild_HandleNoticeUpdate 0x824360) and the
 ##   window closes; Cancel (13) closes it.
-## OURS: the body edit is a TextEdit (Godot's LineEdit is one line); the
-## window starts empty (whether the original pre-fills the current notice was
-## not read -- OPEN).
+## OURS: the body edit is a TextEdit (Godot's LineEdit is one line), given
+## CIFEdit's caret, colour and rules (round 848, CifEdit.style_text_edit: no
+## selection, menu, shortcuts or click placement); the window starts empty
+## (whether the original pre-fills the current notice was not read -- OPEN).
+## OPEN: the multi-line CIFEdit's line pitch and its own scroll bar (style
+## 0x40's 0x635070); Enter makes a new line, as that style's WM_CHAR does
+## (0x637290 case 0xd, READ).
 
 const LAYOUT := "resinfo\\ifguildnotifywrite.txt"
 const SIZE := Vector2(439, 307)
@@ -77,6 +81,8 @@ func _body_edit() -> void:
 	body_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	for style in ["normal", "focus", "read_only"]:
 		body_edit.add_theme_stylebox_override(style, StyleBoxEmpty.new())
+	# The record's FontColor (the hidden CIFEdit's), CIFEdit's caret and rules.
+	CifEdit.style_text_edit(body_edit, (host as CifEdit).colour() if host is CifEdit else Color.WHITE)
 	if _builder != null and _builder.font_at(0) != null:
 		body_edit.add_theme_font_override("font", _builder.font_at(0))
 	body_edit.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])

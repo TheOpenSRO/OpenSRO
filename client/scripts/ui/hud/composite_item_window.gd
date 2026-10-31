@@ -48,48 +48,64 @@ func show_entries(entries: Array) -> void:
 		if is_instance_valid(b):
 			b.queue_free()
 	_buttons.clear()
-	var tex: Texture2D = _builder.load_texture(BUTTON_DDJ) if _builder != null else null
 	for i in entries.size():
 		var e: Array = entries[i]
-		var btn := Button.new()
-		btn.name = "CompositeButton%d" % i
-		btn.text = "%s(%d)" % [String(e[1]), int(e[2])]
-		btn.position = BUTTON_ORIGIN + Vector2(0, BUTTON_STEP * i)
-		btn.size = BUTTON_SIZE
-		btn.custom_minimum_size = BUTTON_SIZE
-		btn.clip_text = true
-		if tex != null:
-			var sb := StyleBoxTexture.new()
-			sb.texture = tex
-			for st in ["normal", "hover", "pressed", "disabled", "focus"]:
-				btn.add_theme_stylebox_override(st, sb)
+		var btn := _make_button("CompositeButton%d" % i, "%s(%d)" % [String(e[1]), int(e[2])], i)
+		if btn == null:
+			continue
 		btn.disabled = int(e[2]) <= 0
 		var item_id := int(e[0])
 		btn.pressed.connect(func() -> void:
 			hide()
 			use_requested.emit(item_id))
-		add_child(btn)
-		_buttons.append(btn)
-	var cancel := Button.new()
-	cancel.name = "CompositeCancel"
 	var cancel_text := _builder.resolve_text("UIIT_CTL_CANCEL") if _builder != null else ""
-	cancel.text = cancel_text if cancel_text != "" and cancel_text != "UIIT_CTL_CANCEL" else "Cancel"
-	cancel.position = BUTTON_ORIGIN + Vector2(0, BUTTON_STEP * entries.size())
-	cancel.size = BUTTON_SIZE
-	cancel.custom_minimum_size = BUTTON_SIZE
-	if tex != null:
-		var csb := StyleBoxTexture.new()
-		csb.texture = tex
-		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
-			cancel.add_theme_stylebox_override(st, csb)
-	cancel.pressed.connect(func() -> void: hide())
-	add_child(cancel)
-	_buttons.append(cancel)
-	print("CompositeItemWindow: %d button(s): %s" % [entries.size(), ", ".join(_buttons.map(func(b): return (b as Button).text))])
+	var cancel := _make_button("CompositeCancel",
+		cancel_text if cancel_text != "" and cancel_text != "UIIT_CTL_CANCEL" else "UIIT_CTL_CANCEL", entries.size())
+	if cancel != null:
+		cancel.pressed.connect(func() -> void: hide())
+	print("CompositeItemWindow: %d button(s): %s" % [entries.size(), ", ".join(_buttons.map(func(b): return button_text(b)))])
+
+## Round 848: one of FUN_007af830's buttons as a CIFButton -- the client's own
+## art with its _focus / _press / _disable files (UiBuilder's rule 6), where
+## it was a Godot Button wearing sys_button.ddj in every state in Godot's own
+## font colours. 150 x 25 at the button's place (READ, above). The caption
+## centred both ways: the code sets no alignment, and a code-made control's
+## text board starts at HAlign 1 and VAlign 1 (the CTextBoard ctor,
+## 0x655c2f / 0x655c3b, READ). White: the default colour (INFERRED).
+func _make_button(node_name: String, caption: String, i: int) -> BaseButton:
+	if _builder == null:
+		return null
+	var def := UiLayoutParser.ControlDef.new()
+	def.name = node_name
+	def.type = "CIFButton"
+	def.ddj = BUTTON_DDJ
+	def.halign = 1
+	def.valign = 1
+	def.text = caption
+	def.rect = Rect2i(Vector2i(BUTTON_ORIGIN + Vector2(0, BUTTON_STEP * i)), Vector2i(BUTTON_SIZE))
+	var btn := _builder.build_control(def) as BaseButton
+	if btn == null:
+		return null
+	btn.name = node_name
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.position = Vector2(def.rect.position)
+	btn.size = BUTTON_SIZE
+	btn.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(def.rect))
+	add_child(btn)
+	UiBuilder.settle_authored_rects(btn)
+	_buttons.append(btn)
+	return btn
+
+## A button's caption ("" without one).
+static func button_text(b: Node) -> String:
+	if b is Button:
+		return (b as Button).text
+	var l := b.get_node_or_null("ButtonLabel") as Label if b != null else null
+	return l.text if l != null else ""
 
 ## A button's centre on screen, for a QA run to aim a real click.
 func button_screen_centre(i: int) -> Vector2:
 	if i < 0 or i >= _buttons.size():
 		return Vector2(-1, -1)
-	var b: Button = _buttons[i]
+	var b: Control = _buttons[i]
 	return b.global_position + b.size * 0.5

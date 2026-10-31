@@ -427,8 +427,8 @@ func _message_checks(builder: UiBuilder, mall: FakeMall, data: MallData) -> void
 	_check(box.size == Vector2(396, 252) and _title(box) == "Pre-select", "ID 1202: 396 x 252, 'Pre-select'")
 	_check(box.text_of(MallMessageBox.R_NAME) == mall.package_name(g0.package) and box.text_of(MallMessageBox.R_PRICE) == str(g0.package.silk_price()),
 		"name and price")
-	var pml := box.node(MallMessageBox.R_PML).get_node_or_null("PmlText") as RichTextLabel
-	_check(pml != null and pml.get_parsed_text().contains("Will you reserve this item?"), "the PML text")
+	var pml := box.node(MallMessageBox.R_PML).get_node_or_null("PmlText") as PmlText
+	_check(pml != null and "".join(pml.plain_lines()).contains("Will you reserve this item?"), "the PML text (round 848: PmlText)")
 	box.press_ok()
 	await process_frame
 	_check(mall.reserve == [g0] and _gone(box) and not mall.busy, "OK adds the good to the reserve list")

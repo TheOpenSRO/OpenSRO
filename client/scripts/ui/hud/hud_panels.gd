@@ -2045,100 +2045,41 @@ func _drop_talk_prompts(window: HudWindow) -> void:
 		if old != null:
 			old.free()
 
-## A prompt panel for the talk window (round 521), replacing any prompt
-## already up: a dark, gold-edged box of this project's own design, headed
-## with the talk line's own text. The panel's
-## first child is the VBoxContainer "VB" to fill; _show_talk_prompt adds it.
-func _talk_prompt(window: HudWindow, prompt_name: String, heading: String) -> PanelContainer:
-	_drop_talk_prompts(window)
-	var panel := PanelContainer.new()
-	panel.name = prompt_name
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.name = "VB"
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	box.add_child(_shop_label(heading, Color(0.95, 0.9, 0.72)))
-	return panel
-
-## A centred row of buttons for a talk prompt, one per [node name, text,
-## Callable]; the prompt's own design (round 521).
-func _talk_prompt_buttons(panel: PanelContainer, buttons: Array) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	panel.get_node("VB").add_child(row)
-	for spec in buttons:
-		var btn := Button.new()
-		btn.name = str(spec[0])
-		btn.text = str(spec[1])
-		btn.pressed.connect(spec[2] as Callable)
-		row.add_child(btn)
-
-## Puts a talk prompt on the window, gives `focus` the keyboard (null: none)
-## and centres the prompt once it has its size.
-func _show_talk_prompt(window: HudWindow, panel: PanelContainer, focus: Control) -> void:
-	window.add_child(panel)
-	panel.reset_size()
-	# Outside the scene tree (npc_service_reader_test.gd drives this on a
-	# bare window) there is no frame to wait for and nothing to focus.
-	if not panel.is_inside_tree():
-		return
-	if focus != null:
-		focus.grab_focus()
-	await panel.get_tree().process_frame
-	if is_instance_valid(panel):
-		panel.position = ((window.size - panel.size) * 0.5).round()
-		_qa_print_buttons(panel, str(panel.name))
-
-## The name prompt behind the guild NPC's create line (round 521): a line for
-## the name, then Create and Cancel. Create (or Enter) emits
-## guild_create_requested with the trimmed name and closes the prompt; the
-## server's reply goes to chat (World3D._on_guild_create_result). The prompt
-## is this project's own design (a dark, gold-edged panel), not the real
-## client's guild-creation window, which
-## was not read. The name line takes the keyboard, so World3D's movement
-## gate (is_typing) keeps the typed letters from walking the character.
+## The name box behind the guild NPC's create line: round 848 makes it the
+## original's MsgBoxInsertMsg purpose 2 (HudCosBox.build_guild_name_input has
+## the reading: CIF_NPCTalk 0x6f77c0(2), the talk box's child, centred on the
+## screen). OK (or Enter) emits guild_create_requested with the trimmed name
+## (an empty name sends nothing, as round 521's prompt did); the server's reply
+## goes to chat (World3D._on_guild_create_result). The edit takes the
+## keyboard, so World3D's movement gate (is_typing) keeps the typed letters
+## from walking the character. A new conversation drops it (TALK_PROMPTS).
 func open_guild_name_prompt(npc_name: String) -> void:
 	var window: HudWindow = _windows.get("npctalk")
-	if window == null:
+	if window == null or _builder == null:
 		return
-	print("GUILDPROMPT %s: name prompt opened" % npc_name)
-	# The heading is the create line's own text (the archive's
-	# UIIT_CTL_GUILD_CREATE), with the English fallback the talk line uses.
-	var panel := _talk_prompt(window, "GuildNamePrompt",
-		_resolve_ui(NpcServiceReader.GUILD_CREATE_STRID, "Create a new guild"))
-	var name_edit := LineEdit.new()
-	KeyInput.line_edit_as_42(name_edit)  # round 754
-	name_edit.name = "GuildName"
-	name_edit.placeholder_text = "guild name"
-	name_edit.max_length = GUILD_NAME_MAX
-	name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_edit.custom_minimum_size = Vector2(150, 0)
-	if _builder != null:
-		var font := _builder.font_at(0)
-		if font != null:
-			name_edit.add_theme_font_override("font", font)
-		name_edit.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-	panel.get_node("VB").add_child(name_edit)
-	var submit := func() -> void:
-		var guild_name := name_edit.text.strip_edges()
-		if guild_name.is_empty():
-			return
-		guild_create_requested.emit(guild_name)
-		panel.queue_free()
-	name_edit.text_submitted.connect(func(_text: String) -> void: submit.call())
-	_talk_prompt_buttons(panel, [
-		["Create", "Create", submit],
-		["Cancel", "Cancel", func() -> void: panel.queue_free()],
-	])
-	_show_talk_prompt(window, panel, name_edit)
+	_drop_talk_prompts(window)
+	var box := HudCosBox.new()
+	if not box.build_guild_name_input(_builder):
+		box.free()
+		return
+	print("GUILDPROMPT %s: name box opened" % npc_name)
+	box.accepted.connect(func(typed: String) -> void:
+		var guild_name := typed.strip_edges()
+		if not guild_name.is_empty():
+			guild_create_requested.emit(guild_name))
+	window.add_child(box)
+	_centre_on_screen(box)
+	_qa_print_buttons(box, str(box.name))
+
+## Puts a box made as a window's child at the screen's centre (0x798b70:
+## screen w / 2 - w / 2, h / 2 - h / 2, in whole pixels).
+func _centre_on_screen(box: Control) -> void:
+	var parent := box.get_parent() as Control
+	var view := get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768)
+	var at := Vector2(floorf(view.x / 2.0 - box.size.x / 2.0), floorf(view.y / 2.0 - box.size.y / 2.0))
+	if parent != null and parent.is_inside_tree():
+		at -= parent.get_global_rect().position
+	box.position = at
 
 ## The confirmation behind the guild NPC's leave line: round 822 makes it
 ## the original's box 0x14 (CIF_NPCTalk::FUN_007020c0 case 0x1c opens it
@@ -2204,38 +2145,32 @@ func close_guild_invitation() -> void:
 ## The box behind a town gate's "Designate as return/recall point" line (round
 ## 686). READ: retail's line opens message box kind 5 (CIF_NPCTalk::
 ## FUN_007020c0 case 9, 0x7027b5) over the talk box, which stays open (its
-## OK takes the target from it, FUN_00797d90 case 5); kind 5
-## (UI_SILKMALL::FUN_00644c90, entry 0x644f93) is titled UIIT_STT_AGREEMENT_BOX
-## and says UIIT_MSG_MSGBOX_SETREBIRTH_CURPOS with the current region's zone
-## name, then UIIT_MSG_MSGBOX_SETREBIRTH_ASKCERTIFY; OK sends the request,
-## anything else nothing. OURS: the box is the talk prompts' dark, gold-edged
-## panel, not the msgbox art, and its buttons read "OK" / "Cancel" (kind 5's
-## button controls were not read for their labels). `zone_name` is the
-## player's current zone's name (World3D._current_zone_name).
+## OK takes the target from it, FUN_00797d90 case 5). Round 848: the box is
+## the original's CMessageBoxManager MsgBoxINIF box (MsgBoxInif.Kind.
+## RETURN_POINT has the reading: UIIT_STT_AGREEMENT_BOX, the current position
+## line with the zone's name, the question, the layout's Yes / No), placed by
+## 0x6ec5d0 over the HUD; it was this project's own dark panel with "OK" /
+## "Cancel" on the talk box. `zone_name` is the player's current zone's name
+## (World3D._current_zone_name). OK emits recall_designate_requested.
 func open_recall_designate_prompt(npc_name: String, zone_name: String) -> void:
-	var window: HudWindow = _windows.get("npctalk")
-	if window == null:
+	if _builder == null:
+		return
+	if is_instance_valid(_recall_box):
+		_recall_box.close()
+	var box := MsgBoxInif.new()
+	if not box.build_kind(_builder, MsgBoxInif.Kind.RETURN_POINT, "RecallDesignatePrompt", zone_name):
+		box.free()
 		return
 	print("RECALLPROMPT %s: opened at '%s'" % [npc_name, zone_name])
-	var panel := _talk_prompt(window, "RecallDesignatePrompt",
-		_resolve_ui(RecallNet.TITLE_STRID, RecallNet.TITLE_FALLBACK))
-	var vb: VBoxContainer = panel.get_node("VB")
-	var curpos := _shop_label(RecallNet.current_position_line(
-		_resolve_ui(RecallNet.CURPOS_STRID, RecallNet.CURPOS_FALLBACK), zone_name), Color(0.86, 0.82, 0.7))
-	curpos.name = "CurrentPosition"
-	vb.add_child(curpos)
-	var ask := _shop_label(_resolve_ui(RecallNet.ASK_STRID, RecallNet.ASK_FALLBACK), Color(0.86, 0.82, 0.7))
-	ask.name = "Ask"
-	vb.add_child(ask)
-	var confirm := func() -> void:
+	box.accepted.connect(func(_t: String) -> void:
 		print("RECALLPROMPT %s: confirmed" % npc_name)
-		recall_designate_requested.emit()
-		panel.queue_free()
-	_talk_prompt_buttons(panel, [
-		["OK", "OK", confirm],
-		["Cancel", "Cancel", func() -> void: panel.queue_free()],
-	])
-	_show_talk_prompt(window, panel, null)
+		recall_designate_requested.emit())
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_recall_box = box
+	_qa_print_buttons(box, str(box.name))
+
+var _recall_box: MsgBoxInif
 
 # --- The Revive button (round 548) -------------------------------------------
 #
@@ -2260,12 +2195,13 @@ func open_recall_designate_prompt(npc_name: String, zone_name: String) -> void:
 # for other player's help.") and sends nothing (FUN_00797d90: 0x797e30 /
 # 0x797eec / 0x797efd). The wording is the player's own textuisystem.txt
 # through _resolve_ui; the English fallbacks are that table's English column.
-# OURS: the panel is the talk prompts' dark, gold-edged box, not the retail
-# msgbox art (interface\messagebox\msgbox_rebirth_button.ddj is not drawn);
-# our death line stays above retail's; and the help button is shown disabled
-# and the box stays up, where retail's click closes the box (INFERRED, the
-# result goes through FUN_00777dd0) -- no one can resurrect another player in
-# OpenSRO yet, so the return point must stay one click away.
+# Round 848: the box is the original's (ReviveBox: kind 3's art, rects and
+# lines, read at 0x645092..0x6456d3), not the talk prompts' dark panel, and
+# this client's own death line is no longer shown in it (the line still goes
+# to the chat). OURS, kept: the help button is shown disabled and the box
+# stays up, where retail's click closes the box (INFERRED, the result goes
+# through FUN_00777dd0) -- no one can resurrect another player in OpenSRO
+# yet, so the return point must stay one click away.
 
 ## The prompt's node name under this HUD; at most one is up at a time.
 const REVIVE_PROMPT := "RevivePrompt"
@@ -2301,73 +2237,30 @@ const REVIVE_BUTTON_POINT := "RevivePoint"
 const REVIVE_BUTTON_HERE := "ReviveHere"
 const REVIVE_BUTTON_HELP := "ReviveHelp"
 
-## Puts the dead window over the world: `line` (World3D's death line), retail's
-## "Choose a method" line and its two buttons for a character of max level
-## `level` (0: unknown, taken as 10 or under -- the server refuses the
-## present point above it anyway). Replaces a prompt already up. Sits on this
-## HUD, not on a window, so it stays while every window closes and is never
-## hidden with one.
+## Puts the dead window over the world: retail's box kind 3 (ReviveBox) for
+## a character of max level `level` (0: unknown, taken as 10 or under -- the
+## server refuses the present point above it anyway). `line` is World3D's
+## death line, which the original's box does not carry (kept for the log).
+## Replaces a box already up. Sits on this HUD, not on a window, so it stays
+## while every window closes and is never hidden with one. Placed by
+## 0x6ec5d0's rule (ReviveBox.place_on) once it is in the tree.
 func show_revive_prompt(line: String, level: int = 0) -> void:
 	hide_revive_prompt()
-	var panel := PanelContainer.new()
-	panel.name = REVIVE_PROMPT
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.name = "VB"
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	box.add_child(_shop_label(line, Color(0.95, 0.9, 0.72)))
-	box.add_child(_shop_label(_resolve_ui("UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2",
-		"Choose a method to resurrect yourself."), Color(0.95, 0.9, 0.72)))
-	var col := VBoxContainer.new()
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 4)
-	box.add_child(col)
-	var point := Button.new()
-	point.name = REVIVE_BUTTON_POINT
-	point.text = _resolve_ui("UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON", "Resurrect at the specified point.")
-	point.pressed.connect(func() -> void: revive_requested.emit(REVIVE_OPTION_RETURN_POINT))
-	col.add_child(point)
-	var second := Button.new()
-	if level <= REVIVE_PRESENT_POINT_MAX_LEVEL:
-		second.name = REVIVE_BUTTON_HERE
-		second.text = _resolve_ui("UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON", "Resurrect at the present point.")
-		second.pressed.connect(func() -> void: revive_requested.emit(REVIVE_OPTION_PRESENT_POINT))
-	else:
-		second.name = REVIVE_BUTTON_HELP
-		second.text = _resolve_ui("UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON", "Waiting for other player's help.")
-		second.disabled = true
-	col.add_child(second)
-	add_child(panel)
-	panel.reset_size()
+	if _builder == null:
+		print("HudPanels: no layouts -- the dead window is not built (%s)" % line)
+		return
+	var box := ReviveBox.new()
+	if not box.build_revive(_builder, level):
+		box.free()
+		return
+	box.chosen.connect(func(option: int) -> void: revive_requested.emit(option))
+	add_child(box)
 	# Outside the scene tree (the headless suite drives this on a bare HUD)
-	# there is no frame to wait for.
-	if not panel.is_inside_tree():
+	# there is no viewport to read.
+	if not box.is_inside_tree():
 		return
-	await panel.get_tree().process_frame
-	# Still a live node on a HUD in the tree? Both halves are needed. A
-	# prompt hidden in the frame it was shown -- a kill result and a revive
-	# result in one NetClient batch, or a second show, which hides first --
-	# is FREED by now: hide_revive_prompt's queue_free runs at the end of that
-	# frame and this resumes on the next one, so is_inside_tree on it is
-	# "Attempt to call function 'is_inside_tree' in base 'previously freed'",
-	# a script error (round 551; round 550 dropped the validity test). A valid
-	# node off the tree -- the HUD left it, or the prompt was removed but not
-	# yet freed -- has no viewport to read (round 550: is_instance_valid alone
-	# let get_viewport_rect run off the tree, an engine error).
-	if not is_instance_valid(panel) or not panel.is_inside_tree():
-		return
-	# Centred, a little below the middle, so the fallen body stays in view
-	# above it. A placement of this project's own.
-	var view := panel.get_viewport_rect().size
-	panel.position = Vector2((view.x - panel.size.x) * 0.5, view.y * 0.62).round()
-	_qa_print_buttons(panel, "REVIVE")
+	box.place_on(get_viewport_rect().size)
+	_qa_print_buttons(box, "REVIVE")
 
 ## Takes the Revive prompt down (the revive came through, or a new prompt
 ## replaces it). Removed from the tree at once, so a prompt shown in the
@@ -2429,10 +2322,16 @@ func _qa_print_buttons(panel: Control, tag: String) -> void:
 	await get_tree().process_frame
 	if not is_instance_valid(panel):
 		return
-	for node in panel.find_children("*", "Button", true, false):
-		var b := node as Button
+	# Round 848: the boxes' buttons are the layout's TextureButtons, captioned
+	# by a "ButtonLabel" (UiBuilder.set_button_text).
+	for node in panel.find_children("*", "BaseButton", true, false):
+		var b := node as BaseButton
+		if not b.is_visible_in_tree():
+			continue
 		var c := b.get_global_rect().get_center()
-		print("QA PROMPT %s BUTTON %s at %d,%d: %s" % [tag, b.name, int(c.x), int(c.y), b.text])
+		var cap := b.get_node_or_null("ButtonLabel") as Label
+		var t: String = (b as Button).text if b is Button else (cap.text if cap != null else "")
+		print("QA PROMPT %s BUTTON %s at %d,%d: %s" % [tag, b.name, int(c.x), int(c.y), t])
 
 ## OPENSRO_QA_TALK_LINES (round 642): each paragraph of the talk box as drawn,
 ## with the screen point at its middle, so a real X click can be aimed at a
@@ -5914,11 +5813,7 @@ func _use_on_target(target: int) -> void:
 ## Message box 0x1f, then the sender's checks (use_on_check) and the send.
 ## `worn`: the target is a worn slot (lane 2's 3/3/13/8 tools only).
 func _use_on_confirm(src: int, target: int, worn: bool = false) -> void:
-	var title := _builder.resolve_text("UIIT_STT_CONFIRM_BOX") if _builder != null else "Confirm"
-	var body := _builder.resolve_text("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE") if _builder != null else ""
-	if body == "" or body == "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE":
-		body = "Will you use the selected item?"
-	_open_simple_confirm(title, body, func() -> void:
+	_open_item_use_box(func() -> void:
 		var why := use_on_check(src, target, worn)
 		if why != "":
 			print("HudPanels: use-on refused locally: %s" % why)
@@ -5963,63 +5858,32 @@ func use_on_check(src: int, target: int, worn: bool = false) -> String:
 				return "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
 	return ""
 
-## A centred OK / Cancel box with a title and a line (the style of the
-## board's confirm), `on_ok` run at OK.
-func _open_simple_confirm(title_text: String, body_text: String, on_ok: Callable) -> void:
-	var panel := PanelContainer.new()
-	panel.name = "UseOnConfirm"
-	panel.custom_minimum_size = Vector2(308, 120)
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	var title := Label.new()
-	title.text = title_text
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var body := Label.new()
-	body.name = "Body"
-	body.text = body_text
-	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	# A wrapping label needs its width, or the box grows to its full height.
-	body.custom_minimum_size = Vector2(280, 0)
-	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(body)
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(row)
-	var ok := Button.new()
-	ok.name = "OK"
-	ok.text = "OK"
-	ok.custom_minimum_size = Vector2(96, 0)
-	ok.pressed.connect(func() -> void:
-		panel.queue_free()
-		on_ok.call())
-	row.add_child(ok)
-	var cancel := Button.new()
-	cancel.name = "Cancel"
-	cancel.text = "Cancel"
-	cancel.custom_minimum_size = Vector2(96, 0)
-	cancel.pressed.connect(func() -> void: panel.queue_free())
-	row.add_child(cancel)
-	add_child(panel)
-	var view := get_viewport_rect().size if is_inside_tree() else Vector2(800, 600)
-	panel.position = ((view - panel.custom_minimum_size) * 0.5).round()
-	_use_on_box = panel
+## Round 848: message box 0x1f is the original's CMessageBoxManager box
+## (MsgBoxInif.Kind.ITEM_USE: UIIT_STT_CONFIRM_BOX, the one line
+## UIIT_MSG_QUESTION_SILKMALL_ITEM_USE, the layout's Yes / No), placed by
+## 0x6ec5d0; it was this project's own dark panel. `on_ok` runs at Yes. Without
+## the layouts no box opens and nothing is used.
+func _open_item_use_box(on_ok: Callable) -> void:
+	if is_instance_valid(_use_on_box):
+		_use_on_box.close()
+	if _builder == null:
+		return
+	var box := MsgBoxInif.new()
+	if not box.build_kind(_builder, MsgBoxInif.Kind.ITEM_USE, "UseOnConfirm"):
+		box.free()
+		return
+	box.accepted.connect(func(_t: String) -> void: on_ok.call())
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	_use_on_box = box
 
 ## The box up, for QA (its OK's centre), or null.
-var _use_on_box: PanelContainer = null
+var _use_on_box: MsgBoxInif = null
 
 func use_on_box_ok_centre() -> Vector2:
 	if _use_on_box == null or not is_instance_valid(_use_on_box):
 		return Vector2(-1, -1)
-	var ok := _use_on_box.find_child("OK", true, false) as Control
+	var ok := _use_on_box.button("GDR_MBIN_BTN_OK")
 	return ok.get_global_rect().get_center() if ok != null else Vector2(-1, -1)
 
 # --- The reverse return scroll (round 778) -----------------------------------

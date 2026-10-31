@@ -32,8 +32,8 @@ func build(builder: UiBuilder, own_name: String, party_name: String) -> bool:
 	if not build_shell(builder, SIZE, "UIIT_PAG_PARTYMATCH_JOINPROGRESS", "Joining", LAYOUT):
 		return false
 	var line := text("UIIT_STT_PARTYMATCH_JOIN_PROGRESS", "<sml2><font color=\"255,239,218,164\">[%s]</font>You <font color=\"255,239,218,164\">[%s]</font> has requested to join this party. </sml2>")
-	var bb := _fill_two(sml2_to_bbcode(line).replace("%s", "\u0003"), own_name, party_name)
-	fill_pml("GDR_PARTY_JOIN_PROGRESS_DESC_PML", bb)
+	var sml := _fill_two(line.replace("%s", "\u0003"), own_name, party_name)
+	fill_pml("GDR_PARTY_JOIN_PROGRESS_DESC_PML", sml)
 	_gauge = node("GDR_PARTY_JOIN_PROGRESS_BAR") as TextureProgressBar
 	_set_gauge(0.0)
 	return true

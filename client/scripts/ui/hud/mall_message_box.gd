@@ -360,18 +360,11 @@ func _fill_zzim(builder: UiBuilder) -> void:
 	if kind == Kind.ADD:
 		var pml := node(R_PML) as Control
 		if pml != null:
-			var rt := RichTextLabel.new()
-			rt.name = "PmlText"
-			rt.bbcode_enabled = true
-			rt.scroll_active = false
-			rt.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			rt.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			if builder.font_at(0) != null:
-				rt.add_theme_font_override("normal_font", builder.font_at(0))
-			rt.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
-			# CIFPML's alignment is not read; centred as PartyMatchBox.fill_pml (INFERRED).
-			rt.text = "[center]%s[/center]" % PartyMatchBox.sml2_to_bbcode(_t("UIIT_MSG_SILKMALL_ZZIM_CONFIRM"))
-			pml.add_child(rt)
+			# Round 848: the client's PML (PmlText), where it was a Godot
+			# RichTextLabel: the record's HAlign 1 centres it (READ, 0x64b2c0);
+			# its VAlign 1 is not applied (how CIFPML takes a VAlign was not
+			# read -- OPEN).
+			PmlText.put_on(pml, builder, _t("UIIT_MSG_SILKMALL_ZZIM_CONFIRM"))
 	else:
 		var ok := node(R_OK) as Control
 		if ok != null:

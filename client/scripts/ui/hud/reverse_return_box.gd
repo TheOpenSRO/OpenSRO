@@ -226,13 +226,14 @@ func _add_button(section: UiLayoutParser.SectionDef, spec: Array) -> void:
 		(btn as BaseButton).pressed.connect(_on_pressed.bind(option))
 
 ## A control from a def: the builder's when there is one, else a plain
-## stand-in of the same kind (tests without an archive).
+## stand-in of the same kind (tests without an archive; round 848: an art-less
+## TextureButton with a caption, never a Godot Button).
 func _control(def: UiLayoutParser.ControlDef) -> Control:
 	var node: Control = null
 	if _builder != null:
 		node = _builder.build_control(def)
 	if node == null:
-		node = Button.new() if def.type == "CIFButton" else Label.new()
+		node = TextureButton.new() if def.type == "CIFButton" else Label.new()
 	node.name = def.name
 	node.position = Vector2(def.rect.position)
 	node.size = Vector2(def.rect.size)

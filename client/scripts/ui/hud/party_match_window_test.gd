@@ -32,9 +32,9 @@ func _fx(name: String) -> PackedByteArray:
 			out.append(tok.strip_edges().hex_to_int())
 	return out
 
-func _c(control_name: String, type: String, rect: String, id: int, text: String = "", ddj: String = "") -> String:
-	return "\t%s:%s\n\t{\n\t\tDDJ=STRING,\"%s\"\n\t\tFontIndex=INTEGER,\"0\"\n\t\tHAlign=INTEGER,\"0\"\n\t\tID=INTEGER,\"%d\"\n\t\tRect=RECT,\"%s\"\n\t\tStyle=INTEGER,\"0\"\n\t\tText=STRING,\"%s\"\n\t}\n" % [
-		control_name, type, ddj, id, rect, text]
+func _c(control_name: String, type: String, rect: String, id: int, text: String = "", ddj: String = "", halign: int = 0) -> String:
+	return "\t%s:%s\n\t{\n\t\tDDJ=STRING,\"%s\"\n\t\tFontIndex=INTEGER,\"0\"\n\t\tHAlign=INTEGER,\"%d\"\n\t\tID=INTEGER,\"%d\"\n\t\tRect=RECT,\"%s\"\n\t\tStyle=INTEGER,\"0\"\n\t\tText=STRING,\"%s\"\n\t}\n" % [
+		control_name, type, ddj, halign, id, rect, text]
 
 func _sec(section: String, body: String) -> String:
 	return "Section = %s,\"0,0,0,0\",\"0\"\n{\n%s}\n" % [section, body]
@@ -91,13 +91,14 @@ func _ifpartymatchreqjoin() -> String:
 	b += _c("GDR_PARTYMATCH_REQ_JOIN_POS", "CIFStatic", "98,191,231,11", 32)
 	b += _c("GDR_PARTYMATCH_REQ_JOIN_RACE", "CIFStatic", "270,152,58,11", 31)
 	b += _c("GDR_PARTYMATCH_REQ_JOIN_LEVEL", "CIFStatic", "269,124,58,11", 30)
-	b += _c("GDR_PARTYMATCH_REQ_JOIN_DESC_PML", "CIFPML", "20,59,322,35", 21)
+	# HAlign 1, as the archive's record (MEASURED, round 848).
+	b += _c("GDR_PARTYMATCH_REQ_JOIN_DESC_PML", "CIFPML", "20,59,322,35", 21, "", "", 1)
 	return "Interface Text\n\n" + _sec("Create", b)
 
 func _ifpartyjoinprogress() -> String:
 	var b := ""
 	b += _c("GDR_PARTY_JOIN_PROGRESS_BAR", "CIFGauge", "35,104,296,12", 11)
-	b += _c("GDR_PARTY_JOIN_PROGRESS_DESC_PML", "CIFPML", "16,50,335,29", 5)
+	b += _c("GDR_PARTY_JOIN_PROGRESS_DESC_PML", "CIFPML", "16,50,335,29", 5, "", "", 1)
 	return "Interface Text\n\n" + _sec("Create", b)
 
 ## Every key reads as itself in angle brackets, so a check can tell which key
@@ -220,9 +221,10 @@ func _test_join(builder: UiBuilder) -> void:
 	var prog := w.progress_box
 	_check(prog != null and is_instance_valid(prog), "the joining window opens")
 	if prog != null:
-		var rt := prog.node("GDR_PARTY_JOIN_PROGRESS_DESC_PML").get_node_or_null("PmlText") as RichTextLabel
-		_check(rt != null and rt.text.contains("Dasha") and rt.text.contains("Aria") and rt.text.find("Dasha") < rt.text.find("Aria"),
-			"its text names the player, then the party (got %s)" % (rt.text if rt != null else "none"))
+		var rt := prog.node("GDR_PARTY_JOIN_PROGRESS_DESC_PML").get_node_or_null("PmlText") as PmlText
+		var shown := "".join(rt.plain_lines()) if rt != null else ""
+		_check(rt != null and shown.contains("Dasha") and shown.contains("Aria") and shown.find("Dasha") < shown.find("Aria"),
+			"its text names the player, then the party (got %s)" % shown)
 		_check(prog.position == Vector2(floorf(640 - 182.5), floorf(360 - 74.5)), "centred on the screen (0x798b70) (got %s)" % prog.position)
 		_check(not w.enabled(PartyMatchWindow.BTN_JOIN) and not w.enabled(PartyMatchWindow.BTN_SEARCH),
 			"Join and Search are off while it is up (0x738890)")
@@ -487,8 +489,15 @@ func _test_req_join(builder: UiBuilder) -> void:
 	_check(_label_text(box.node("GDR_PARTYMATCH_REQ_JOIN_RACE")) == "<UIIT_CTL_PARTYMATCH_AUTOMATCH_RACE_EU>", "Race EUR from the model")
 	_check(_label_text(box.node("GDR_PARTYMATCH_REQ_JOIN_POS")) == "Jangan", "Position: region 25000's zone name")
 	_check(_label_text(box.node("GDR_PARTYMATCH_REQ_JOIN_GUILD")) == "Wolves", "Guild shown with job state 4")
-	var rt := box.node("GDR_PARTYMATCH_REQ_JOIN_DESC_PML").get_node_or_null("PmlText") as RichTextLabel
-	_check(rt != null and rt.text.contains("Bram") and rt.text.contains("[color=#efdaa4]"), "the PML names Bram in (239,218,164), ARGB (review B2)")
+	# Round 848: a PmlText (the CIFPML draw), not a RichTextLabel.
+	var rt := box.node("GDR_PARTYMATCH_REQ_JOIN_DESC_PML").get_node_or_null("PmlText") as PmlText
+	var bram_colour := Color.BLACK
+	if rt != null:
+		for item in PmlText.parse(rt.markup, rt.default_color):
+			if item.has("text") and str(item["text"]).contains("Bram"):
+				bram_colour = item["color"]
+	_check(rt != null and bram_colour.is_equal_approx(Color8(239, 218, 164)), "the PML names Bram in (239,218,164), ARGB (review B2) (got %s)" % bram_colour)
+	_check(rt != null and rt.base_align == PmlText.TAG_CENTER, "round 848: centred by the record's HAlign 1")
 	box.advance(9990)
 	_check(sent.is_empty(), "nothing sent before 10 s")
 	box.advance(20)

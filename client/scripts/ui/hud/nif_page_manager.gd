@@ -51,14 +51,17 @@ var _prev: TextureButton
 var _next: TextureButton
 var _open: Label
 var _close: Label
-var _buttons: Array[Button] = []
+var _buttons: Array[TextureButton] = []
 var _font: Font
 var _bold: Font
 
 func _init(builder = null) -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	_font = builder.font_at(0) if builder != null else null
-	if _font != null:
+	# The weight-600 face (0x4774f0(0, 2)): the system's bold file, else the
+	# simulation the chat's bold tab uses (round 848; was an embolden of 0.6).
+	_bold = HudNotice.bold_file(_font) if _font != null else null
+	if _bold == null and _font != null:
 		var fv := FontVariation.new()
 		fv.base_font = _font
 		fv.variation_embolden = 0.6
@@ -69,18 +72,25 @@ func _init(builder = null) -> void:
 	_next.pressed.connect(press_next)
 	_open = _bracket("[", "Open")
 	_close = _bracket("]", "Close")
+	# Round 848: a page button is an art-less button with a caption (the
+	# client's page buttons draw only their number), not a Godot Button with
+	# its styles emptied.
 	for i in GROUP:
-		var b := Button.new()
+		var b := TextureButton.new()
 		b.name = "Page%d" % i
-		b.flat = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.size = Vector2(BUTTON_W, BUTTON_H)
 		b.custom_minimum_size = b.size
-		for st in ["normal", "hover", "pressed", "disabled", "focus", "hover_pressed"]:
-			b.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+		var cap := Label.new()
+		cap.name = "ButtonLabel"
+		cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		cap.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		if _font != null:
-			b.add_theme_font_override("font", _font)
-		b.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+			cap.add_theme_font_override("font", _font)
+		cap.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		b.add_child(cap)
 		b.pressed.connect(press_index.bind(i))
 		b.visible = false
 		add_child(b)
@@ -164,15 +174,14 @@ func _layout() -> void:
 		if i >= n:
 			continue
 		var page := group_start + i
-		b.text = "%d" % (page + 1)
+		var cap := b.get_node("ButtonLabel") as Label
+		cap.text = "%d" % (page + 1)
 		b.position = Vector2(x0 + BUTTON_W * i, y)
-		var c := CURRENT_COLOUR if page == current else NORMAL_COLOUR
-		for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color"]:
-			b.add_theme_color_override(k, c)
+		cap.add_theme_color_override("font_color", CURRENT_COLOUR if page == current else NORMAL_COLOUR)
 		if page == current and _bold != null:
-			b.add_theme_font_override("font", _bold)
+			cap.add_theme_font_override("font", _bold)
 		elif _font != null:
-			b.add_theme_font_override("font", _font)
+			cap.add_theme_font_override("font", _font)
 	_open.visible = n > 0
 	_close.visible = n > 0
 	_open.position = Vector2(x0 - BRACKET_W, y)
@@ -188,9 +197,9 @@ func _notification(what: int) -> void:
 
 ## Tests and QA: the page button i's text ("" when hidden).
 func button_text(i: int) -> String:
-	return _buttons[i].text if i < _buttons.size() and _buttons[i].visible else ""
+	return (_buttons[i].get_node("ButtonLabel") as Label).text if i < _buttons.size() and _buttons[i].visible else ""
 
-func page_button(i: int) -> Button:
+func page_button(i: int) -> TextureButton:
 	return _buttons[i] if i < _buttons.size() else null
 
 func prev_button() -> TextureButton:

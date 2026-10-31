@@ -398,17 +398,26 @@ func _initialize() -> void:
 		_check(has_prompt, "HudPanels has open_guild_name_prompt and guild_create_requested")
 		var talk := HudWindow.new()
 		(panels.get("_windows") as Dictionary)["npctalk"] = talk
+		# Round 848: the original's name box (MsgBoxInsertMsg purpose 2) from
+		# MsgBoxFixture's synthetic message box layout.
+		panels.set("_builder", MsgBoxFixture.builder())
 		var requested: Array = []
 		if has_prompt:
 			panels.connect("guild_create_requested", func(n: String) -> void: requested.append(n))
 			panels.call("open_guild_name_prompt", "NPC_CH_GENARAL_SP")
-		var name_edit := talk.get_node_or_null("GuildNamePrompt/VB/GuildName") as LineEdit
-		_check(name_edit != null, "the prompt opens on the talk window with a name line")
+		var name_edit := talk.get_node_or_null("GuildNamePrompt/Create/GDR_MB_INSERT_MSG_EDIT") as LineEdit
+		if name_edit == null:
+			name_edit = talk.find_child("GDR_MB_INSERT_MSG_EDIT", true, false) as LineEdit
+		_check(name_edit != null, "the box opens on the talk window with a name line")
 		if name_edit != null:
 			_check(name_edit.max_length == 12, "the name line takes at most 12 (got %d)" % name_edit.max_length)
 			name_edit.text = "   "
 			name_edit.text_submitted.emit(name_edit.text)
 			_check(requested.is_empty(), "an empty name sends nothing (got %s)" % [requested])
+		if has_prompt:
+			panels.call("open_guild_name_prompt", "NPC_CH_GENARAL_SP")
+			name_edit = talk.find_child("GDR_MB_INSERT_MSG_EDIT", true, false) as LineEdit
+		if name_edit != null:
 			name_edit.text = "  Lions  "
 			name_edit.text_submitted.emit(name_edit.text)
 		_check(requested == ["Lions"], "Enter sends the trimmed name once (got %s)" % [requested])
@@ -467,9 +476,12 @@ func _initialize() -> void:
 		var typing := func() -> bool:
 			return has_gate and bool(world.call("_is_typing"))
 		_check(has_gate and not typing.call(), "with nothing focused World3D's gate reads no typing")
+		live.set("_builder", MsgBoxFixture.builder())
 		if live.has_method("open_guild_name_prompt"):
 			live.call("open_guild_name_prompt", "NPC_CH_GENARAL_SP")
-		var live_edit := live_talk.get_node_or_null("GuildNamePrompt/VB/GuildName") as LineEdit
+		# The box gives its edit the keyboard deferred (HudCosBox).
+		await process_frame
+		var live_edit := live_talk.find_child("GDR_MB_INSERT_MSG_EDIT", true, false) as LineEdit
 		# The probe first: the name line really holds the viewport's focus.
 		_check(live_edit != null and root.gui_get_focus_owner() == live_edit,
 			"the open name prompt's line has the keyboard (focus owner %s)" % [root.gui_get_focus_owner()])

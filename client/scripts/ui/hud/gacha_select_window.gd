@@ -17,11 +17,18 @@ class_name GachaSelectWindow
 ## - The combos list refgachatreeforclientuidata.txt (GachaTables.kinds):
 ##   the class (700, "Others") and its types (701..706, "Avatar Flag", ...).
 ##
-## OURS, labelled: the combo boxes are Godot OptionButtons on the authored
-## rects (CIFComboBox is not built); the Type box starts at "All", which
-## filters nothing, and the Degree box offers only "All" -- how the client
-## fills the degree box and what it compares the degree with were not read
-## (OPEN).
+## Round 848: the combo boxes are the client's CIFComboBox (they were Godot
+## OptionButtons in Godot's default look): CIFComboBox::vslot_010 (0x6327f0)
+## builds the pieces the Option page's combo has -- the com_blacksquare_
+## field on its 0xff000000 fill, com_qst_downarrow_button.ddj 20 wide, the
+## value in {5, 0, W-30, H} -- and its open list is ComboList
+## (OptionVideoPage.make_combo; party_gui.md, round 714). The value is
+## centred: the text static's CTextBoard ctor sets +0x4 and +0x8 to 1
+## (0x655c2f / 0x655c3b, READ) and this window's create was not seen to
+## change them (INFERRED).
+## OURS, labelled: the Type box starts at "All", which filters nothing, and
+## the Degree box offers only "All" -- how the client fills the degree box
+## and what it compares the degree with were not read (OPEN).
 
 signal start_requested(kind: GachaTables.Kind)
 
@@ -61,12 +68,12 @@ func _combo(holder_name: String) -> OptionButton:
 	var holder := node(holder_name) as Control
 	if holder == null:
 		return null
-	var box := OptionButton.new()
-	box.name = holder_name + "_Box"
-	box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	box.focus_mode = Control.FOCUS_NONE
-	box.add_theme_font_size_override("font_size", 11)
-	holder.add_child(box)
+	# The authored rect, not the node's size, which may not be settled yet.
+	var r: Rect2 = holder.get_meta(UiBuilder.AUTHORED_RECT_META, Rect2(holder.position, holder.size))
+	holder.size = r.size
+	var box := OptionVideoPage.make_combo(_builder, holder)
+	if box != null:
+		box.name = holder_name + "_Box"
 	return box
 
 func _t(key: String, fallback: String) -> String:

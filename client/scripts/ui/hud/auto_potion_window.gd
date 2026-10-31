@@ -405,21 +405,10 @@ func _fill_pml(host: Control, layout: UiLayoutParser.LayoutDef) -> void:
 	var raw := _text(key, "")
 	if raw == "":
 		return
-	var rt := RichTextLabel.new()
-	rt.name = "PmlText"
-	rt.bbcode_enabled = true
-	rt.scroll_active = false
-	rt.fit_content = false
-	rt.clip_contents = true
-	rt.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rt.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var font := _builder.font_at(0)
-	if font != null:
-		rt.add_theme_font_override("normal_font", font)
-	rt.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
+	# Round 848: the client's PML (PmlText: the record's FontColor and HAlign
+	# 0), where it was a Godot RichTextLabel fed BBCode.
 	host.clip_contents = true
-	host.add_child(rt)
-	rt.text = PartyMatchBox.sml2_to_bbcode(raw)
+	PmlText.put_on(host, _builder, raw)
 
 # --- Load / read / confirm -------------------------------------------------------
 

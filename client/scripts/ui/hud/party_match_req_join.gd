@@ -39,7 +39,7 @@ func build(builder: UiBuilder, q: PartyMatchNet.JoinRequest, race_of_model: Call
 		return false
 	var who := q.member.member_name if q.member != null else ""
 	var line := text("UIIT_STT_PARTYMATCH_JOIN_REQUEST", "<sml2><font color=\"255,239,218,164\">[%s]</font>has requested to join this party.<br> Confirm?</sml2>")
-	fill_pml("GDR_PARTYMATCH_REQ_JOIN_DESC_PML", sml2_to_bbcode(line).replace("%s", who))
+	fill_pml("GDR_PARTYMATCH_REQ_JOIN_DESC_PML", line.replace("%s", who))
 	set_static("GDR_PARTYMATCH_REQ_JOIN_LEVEL", "%d" % (q.member.level if q.member != null else 0))
 	var race: int = race_of_model.call(q.member.ref_obj_id) if race_of_model.is_valid() and q.member != null else -1
 	if race == 0 or race == 1:

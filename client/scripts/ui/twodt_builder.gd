@@ -289,14 +289,14 @@ func _gauge(texture: String) -> TextureProgressBar:
 	gauge.texture_progress = _ui.load_texture(texture)
 	return gauge
 
+## Round 848: a CifEdit (CIFEdit's caret, keys and mouse; its header).
 func _edit(r: TwoDtReader.Record) -> LineEdit:
-	var edit := LineEdit.new()
-	KeyInput.line_edit_as_42(edit)  # round 754: Godot 4.4+ editing state
+	var edit := CifEdit.new()
 	# The class draws no box of its own that is read here, so Godot's is
 	# removed rather than shown in its place.
 	for style in ["normal", "focus", "read_only"]:
 		edit.add_theme_stylebox_override(style, StyleBoxEmpty.new())
-	edit.add_theme_color_override("font_color", argb(r.color))
+	edit.set_colour(argb(r.color))
 	var font := _ui.font_at(r.font_index)
 	if font != null:
 		edit.add_theme_font_override("font", font)

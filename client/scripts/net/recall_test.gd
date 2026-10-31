@@ -49,6 +49,9 @@ func _initialize() -> void:
 	_check(compiled, "HudPanels compiles")
 	if compiled:
 		var live: Node = panels_script.new()
+		# Round 848: the box is the original's (MsgBoxInif kind 5), built from
+		# MsgBoxFixture's synthetic message box layout, over the HUD.
+		live.set("_builder", MsgBoxFixture.builder())
 		root.add_child(live)
 		var talk := HudWindow.new()
 		talk.name = "Window_npctalk"
@@ -60,23 +63,22 @@ func _initialize() -> void:
 		if has:
 			live.connect("recall_designate_requested", func() -> void: sent.append(1))
 			live.call("open_recall_designate_prompt", "STORE_WC_GATE", "Donwhang")
-		var box := talk.get_node_or_null("RecallDesignatePrompt")
-		_check(box != null, "the designate line opens a box on the talk window")
-		var curpos: Label = (box.find_child("CurrentPosition", true, false) as Label) if box != null else null
-		_check(curpos != null and curpos.text == "The current position : [Donwhang]",
-			"the box names the zone the player stands in (got '%s')" % [curpos.text if curpos != null else "<none>"])
-		var ask: Label = (box.find_child("Ask", true, false) as Label) if box != null else null
-		_check(ask != null and ask.text == "Will you designate the place to be returned /resurrected?", "the box asks retail's question")
+		var box := live.get_node_or_null("RecallDesignatePrompt") as MsgBoxInif
+		_check(box != null and talk.get_node_or_null("RecallDesignatePrompt") == null,
+			"the designate line opens the original's box over the HUD, the talk box staying open")
+		_check(box != null and box.line(0) == "The current position : [Donwhang]",
+			"the box names the zone the player stands in (got '%s')" % [box.line(0) if box != null else "<none>"])
+		_check(box != null and box.line(1) == "<UIIT_MSG_MSGBOX_SETREBIRTH_ASKCERTIFY>", "the box asks retail's question")
 		_check(sent.is_empty(), "opening the box sends nothing")
-		var cancel: Button = (box.find_child("Cancel", true, false) as Button) if box != null else null
+		var cancel: BaseButton = box.button("GDR_MBIN_BTN_CANCEL") if box != null else null
 		_check(cancel != null, "the box has Cancel")
 		if cancel != null:
 			cancel.pressed.emit()
 		_check(sent.is_empty(), "Cancel sends nothing (got %d)" % sent.size())
 		if has:
 			live.call("open_recall_designate_prompt", "STORE_WC_GATE", "Donwhang")
-		var again := talk.get_node_or_null("RecallDesignatePrompt")
-		var ok_btn: Button = (again.find_child("OK", true, false) as Button) if again != null else null
+		var again := live.get_node_or_null("RecallDesignatePrompt") as MsgBoxInif
+		var ok_btn: BaseButton = again.button("GDR_MBIN_BTN_OK") if again != null else null
 		_check(ok_btn != null, "the box has OK")
 		if ok_btn != null:
 			ok_btn.pressed.emit()
