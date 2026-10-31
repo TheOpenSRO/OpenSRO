@@ -266,6 +266,18 @@ func _cif_edit() -> void:
 	rp.global_position = rp.position
 	root.push_input(rp)
 	_check(e.text == "xyz", "a right press changes nothing")
+	# The limit counts the code page's bytes (0x6375e6, 0x4fc870).
+	_check(CifEdit.acp_bytes("abc", true) == 3 and CifEdit.acp_bytes("한글a", true) == 5 and CifEdit.acp_bytes("한글a", false) == 3,
+		"a double-byte code page counts a Korean character as 2")
+	e.text = ""
+	e.max_length = 4
+	e.caret_column = 0
+	for c in [0x61, 0x62, 0x63]:
+		root.push_input(_key(KEY_A, false, false, c))
+	_check(e.text == "abc", "three characters typed under a limit of 4 (got %s)" % e.text)
+	e.text = "abcde"
+	e.text_changed.emit(e.text)
+	_check(CifEdit.acp_bytes(e.text) <= 4, "a change past the limit is cut back (got %s)" % e.text)
 	e.free()
 	# The multi-line edit's rules (the guild notice body).
 	var te := TextEdit.new()

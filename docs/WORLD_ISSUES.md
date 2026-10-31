@@ -7509,13 +7509,46 @@ the flag starts clear (0x637b50) and flips on each tick of a CETime set to 5 a s
 0xba9aa0(5): 200 ms). CIFEInputChatBox (the chat line) shares the draw and handlers; its Create
 (0x65cf30) sets style 2 and a limit of 100 (0x634f80(100)).
 
+**The hidden EDIT, checked against the stock control (READ, the coordinator's question).** Create
+subclasses the EDIT (`SetWindowLongA(hwnd, GWL_WNDPROC, 0x637a30)`, the old procedure at `+0x384`);
+0x636cd0 calls the stock EDIT (`CallWindowProcA`) only on its fall-through and returns 0 for
+WM_PASTE 0x302, WM_UNDO 0x304, Ctrl + A / C / X / Z / V keydowns (V pastes, through its own
+clipboard read 0x636bd0, only with style 0x200: the console's) and Shift+Insert. Ctrl+Left,
+Shift+arrows, WM_CHAR 0x16 and EM_SETSEL do reach the stock EDIT -- an off-screen window
+((-100, -100)) that is never drawn and never read back: the draw 0x637b70 reads the client's own
+buffer, caret and mark, and the class (0x634300..0x638300) has no GetWindowText, WM_GETTEXT or
+EM_GETSEL. The visible caret moves one character for Left / Right with or without Ctrl or Shift
+(0x637290 cases 0x25 / 0x27, 0x635460: 1, or 2 for a surrogate pair); WM_CHAR 0x16 is below 0x20
+and is not inserted. So CifEdit's no-paste, no-range-selection and one-character rules stand as
+READ. Corrected: the limit (`+0x3fc`, 0x634f80) is compared with `+0x434`, the text's length in
+**bytes** of the ANSI code page (0x4fc870 WideCharToMultiByte(CP_ACP) at 0x636416; the check
+0x6375e6, the cut-back 0x63642a -> 0x6362d0), so CifEdit now holds `max_length` as bytes (the
+player's code page INFERRED from the OS locale: two bytes a CJK character for ko / zh / ja). OURS:
+Ctrl+Backspace deletes one character (the original's WM_CHAR 0x7f is inserted as U+007F). OPEN:
+the Apps key (falls through to the stock EDIT's DefWindowProc).
+
+**Three frame checks (MEASURED on the after frames).**
+- Composite captions: with VAlign 0 the first caption's rows were 297..307 in a 295..319 button
+  (2 below the top); with the code-made text board's VAlign 1 (CTextBoard ctor 0x655c3b, READ)
+  302..312 -- centred (25 - 11 = 14, 7 above and below). The coordinator's frame was the first
+  set; `after2` is the fix.
+- Box 0x20's second line spans 328 px against the 308-px box (x 478..805, box 486..793). READ:
+  0x6ec5d0 creates the box 0x134 x 0x94 and calls 0x644c90; case 0x20 (0x647d9a..0x647dfa, then
+  0x645065..0x64508d) only sets texts, no resize (no vslot 0x54 call), and 0x6ec5d0 has no fitting
+  after it (0x6ec77b..0x6ec79c); the line is a CIFStatic, one line, its text not clipped (UI_TODO,
+  Fonts). So the original overruns too; by how much depends on the face (Tahoma on the player's
+  Windows, Arial here). Left as read. The other INIF lines fit: 0x1f 165 px, 0x20's first 236,
+  box 5's 163 and 300 (Jangan).
+- The dead window's buttons: "Resurrect at the specified point." x 512..677 in the 508..683
+  button, "Resurrect at the present point." 696..853 in 688..863 -- both inside.
+
 **Census (before -> after).** Base `992993b4` file:line. "play" = a player reaches it.
 
 | # | Site | Native | What it is | Reach | The original | After |
 |---|---|---|---|---|---|---|
 | 1 | ui_builder.gd:967 `_build_edit` | LineEdit: Godot caret (1 px, (242,242,242), 0.65 s), mouse selection, context menu, Ctrl shortcuts, middle paste | every resinfo CIFEdit (party match, mall, message box inputs, guild notice title...) | play | CIFEdit, READ above | `CifEdit` (new): 2 px caret in FontColor, 200 ms blink, no selection / menu / shortcuts / paste, click focuses without moving the caret, Shift+Home/End mark in 0x3b457a, one-character moves and deletes; the read-only and placeholder text in FontColor (INFERRED) |
 | 2 | twodt_builder.gd:293 `_edit` | LineEdit, as 1 | `.2dt` CNIFEdits (guild notice view, letter edits) | play | CNIFEdit's own draw OPEN; CIFEdit's rules INFERRED | `CifEdit` |
-| 3 | hud_chat.gd:553 | LineEdit with Godot's focus box and caret, no limit | the chat line | play | CIFEInputChatBox: CIFEdit's draw, limit 100 (READ) | `CifEdit`, focus box removed, max 100 (characters: INFERRED unit) |
+| 3 | hud_chat.gd:553 | LineEdit with Godot's focus box and caret, no limit | the chat line | play | CIFEInputChatBox: CIFEdit's draw, limit 100 bytes of the code page (READ) | `CifEdit`, focus box removed, max 100 bytes |
 | 4 | hud_panels.gd:2054/2078/2117 guild name prompt | PanelContainer + StyleBoxFlat + LineEdit + Buttons "Create"/"Cancel", OURS | the guild founding's name | play | talk item 0x12 (jump tables 0x703c6c / 0x703d2c) -> CIF_NPCTalk 0x6f77c0(2): MsgBoxInsertMsg purpose 2, 280 x 144, the talk box's child, centred (0x798b70); UIIT_MSG_GUILD_NAME_INPUT at (0x1b, 0x2f) 0xe1 x 0xe, frame 11 (0xb, 0x44) 0x104 x 0x1c, tile 12 (0xf, 0x48) 0xfc x 0x14, edit (0x12, 0x46) 0xf3 x 0x14 max 12 style 2, OK (0x37, 0x68), Cancel (0x8f, 0x68) (asm 0x642443..0x642550, tail 0x6421a4) | `HudCosBox.build_guild_name_input` |
 | 5 | hud_panels.gd recall prompt (same helpers) | PanelContainer + Buttons "OK"/"Cancel", on the talk box | the gate's return point | play | purpose 5 (0x644f93): UIIT_STT_AGREEMENT_BOX, CURPOS with the zone, ASKCERTIFY, +0x808 hidden; 0x6ec5d0 places it | `MsgBoxInif` (new), over the HUD |
 | 6 | hud_panels.gd:2312 dead window | PanelContainer + StyleBoxFlat + 2 Buttons, our death line on top | the dead player's choice | play | purpose 3 (0x645092..0x6456d3, peace branch), 400 x 210: msgbox_rebirth.ddj at (0x80, 0x2b) 0x94 x 0x34; a CIFPML (class 0xee9634) at (0, 0x75) 400 x 16 with UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_1; two 176 x 24 buttons on msgbox_rebirth_button.ddj at (0x16 / 0xca, 0xa8); opened through 0x6ec5d0 (0x780f88, 0x9d6e39) | `ReviveBox` (new) |
@@ -7545,7 +7578,7 @@ the flag starts clear (0x637b50) and flips on each tick of a CETime set to 5 a s
 **Behaviour changes a player will notice (the original's, built as read).** No Ctrl+V paste, no
 mouse selection and no right-click menu in any game edit; a click does not move the caret; Ctrl+Left
 moves one character; the chat line takes 100 characters; the dead window no longer repeats our death
-line (it stays in the chat); the return-point box is over the screen's middle, not on the talk box.
+line (it stays in the chat); the chat line takes 100 bytes (50 Korean characters); the return-point box is over the screen's middle, not on the talk box.
 
 **Evidence** (render box, `client/tools/hud_boxes_shot.gd`, Forward+ through xwl_run, 1280 x 720,
 the same calls on the base tree and this branch; frames in `/var/tmp/r848h/shots/{before,after}`):
@@ -7582,7 +7615,7 @@ carry their real HAlign 1), mall837_boxes.
 - The give-up's WINDOW_2 needs RefQuest +0xb1 (column not mapped): WINDOW_1 is shown for every quest.
 - Whether the guild name box gives its edit the keyboard (this client does).
 - CIFGGMenu's own rows (the Help list uses the list-row bars, INFERRED).
-- The chat limit's unit (characters, INFERRED; the counter `+0x434` is not read).
+- The player's code page for the byte limits (INFERRED from the OS locale).
 - GP history's CNIFTextBox and the stall chat list (unchanged, above).
 
 **Gates.** `remote_godot.sh check` ALL LOAD (1081 scripts, 9 scenes); `tests` "ran 405 suite(s)": the

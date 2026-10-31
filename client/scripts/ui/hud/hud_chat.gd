@@ -547,7 +547,9 @@ func _install_scroll() -> void:
 ## `window_all.ddj` for its own background, which UiBuilder already draws.
 ## What it needs is somewhere to type.
 ## CIFEInputChatBox's limit (READ: 0x65cf46 push 0x64 -> 0x634f80, the edit's
-## +0x3fc, which CIFEdit's WM_CHAR compares before taking a character).
+## +0x3fc, which CIFEdit's WM_CHAR compares before taking a character): 100
+## BYTES in the player's code page (+0x434 is the text's CP_ACP length,
+## 0x4fc870 at 0x636416; CifEdit holds max_length as bytes).
 const INPUT_MAX := 100
 
 func _install_input() -> void:

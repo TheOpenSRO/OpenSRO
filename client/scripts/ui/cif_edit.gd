@@ -18,11 +18,47 @@ class_name CifEdit
 ## caret: a left press inside the edit only gives it the focus (0x637290
 ## case 0x201 -> 0xb9d9f0), outside it ends the input.
 ##
-## **Ctrl (READ, 0x636cd0).** With Ctrl down, A, C, X and Z are swallowed (the
-## proc returns 0). V pastes the clipboard at the caret only for an edit with
-## style bit 0x200, and the one edit in the client that sets it is the
-## developer console's (CIFConsole::vslot_023, `push 0x1302` at 0x54170b);
-## every other edit swallows Ctrl+V too. Shift+Insert is swallowed.
+## **The hidden EDIT does not decide what is shown (READ).** Create replaces
+## the EDIT's window procedure: `SetWindowLongA(hwnd, GWL_WNDPROC (-4),
+## 0x637a30)` with the old one kept at `+0x384` (0x637a60's body, decompile of
+## CIFEdit::vslot_010); 0x637a30 calls 0x636cd0, which hands a message to the
+## stock EDIT (`CallWindowProcA(+0x384, ...)`) only on its fall-through. It
+## returns 0 for WM_PASTE 0x302 and WM_UNDO 0x304 (never reaching the EDIT);
+## for WM_KEYDOWN / WM_KEYUP (0x100 / 0x101) with Ctrl down it eats A, C, X, Z
+## and V (V pastes only with style 0x200, through its own clipboard read
+## 0x636bd0: OpenClipboard / GetClipboardData(CF_UNICODETEXT) into the
+## client's buffer -- the developer console's edit alone sets 0x200, `push
+## 0x1302` at 0x54170b); with Shift down it eats Insert and makes Home / End
+## the whole-text mark; every other key goes to the game's input
+## (0xba6f10, which reaches 0x637290 below) and then to the stock EDIT. WM_CHAR
+## 0x102 goes to the game first too, then to the EDIT for a style-2 edit
+## except Enter and Tab. So Ctrl+Left, Shift+arrows, WM_CHAR 0x16 (the Ctrl+V
+## TranslateMessage makes) and EM_SETSEL do act on the stock EDIT -- whose
+## window sits off-screen at (-100, -100) and is never drawn: the draw
+## 0x637b70 reads only the client's buffer (`+0x5474`), caret (`+0x448`) and
+## mark (`+0x41a`), and nothing in the class (0x634300..0x638300) reads the
+## EDIT back -- no GetWindowText, WM_GETTEXT or EM_GETSEL (searched). What
+## the player sees is 0x637290's own handling: Left / Right one character
+## whether Ctrl or Shift is down (0x6376db cases 0x25 / 0x27 through
+## 0x635460: 1, or 2 for a surrogate pair), Delete one character (case 0x2e),
+## and WM_CHAR 0x16 below 0x20, so not inserted. No range selection is drawn.
+## The mouse never reaches the EDIT (it is off the window); a press inside the
+## edit is 0x637290's case 0x201, which only gives the focus (0xb9d9f0) -- no
+## caret placement. OPEN: the Apps key (VK_APPS falls through to the EDIT,
+## whose DefWindowProc would open its context menu at the hidden window);
+## not built. OURS: Ctrl+Backspace deletes one character -- the original's
+## WM_CHAR 0x7f is at or above 0x20 and so is inserted as U+007F.
+##
+## **The limit is in bytes (READ).** 0x634f80 stores the limit at `+0x3fc`
+## (the chat's 100, the boxes' 12 / 40 / 64 ...); WM_CHAR inserts a character
+## only while `+0x434` is below it (0x6375e6), and after every change 0x636330
+## re-measures `+0x434` as the text's length in the ANSI code page
+## (0x63641b, after 0x4fc870: WideCharToMultiByte(CP_ACP, ...) - 1) and cuts
+## the text back to the limit when it is over (0x63642a -> 0x6362d0). So a
+## limit counts bytes in the player's Windows code page: one a character in
+## a Western one, two a Korean / Chinese / Japanese character in theirs. This
+## edit takes LineEdit's `max_length` as that byte count; which code page the
+## player has is INFERRED from the OS locale (DBCS for ko / zh / ja).
 ##
 ## **The whole-text mark (READ).** Shift+Home or Shift+End sets the edit's
 ## mark (`+0x41a`, 0x635030(1)), which gives the text board the background
@@ -56,6 +92,7 @@ const MARK_COLOUR := Color8(0x3b, 0x45, 0x7a)
 var _colour := Color.WHITE
 
 func _init() -> void:
+	text_changed.connect(_hold_byte_limit)
 	KeyInput.line_edit_as_42(self)  # round 754: Godot 4.4+ editing state
 	context_menu_enabled = false
 	shortcut_keys_enabled = false
@@ -84,6 +121,36 @@ func set_colour(colour: Color) -> void:
 
 func colour() -> Color:
 	return _colour
+
+## Whether the player's Windows code page is a double-byte one (INFERRED from
+## the OS locale's language: Korean, Chinese, Japanese).
+static func dbcs_code_page() -> bool:
+	return OS.get_locale_language() in ["ko", "zh", "ja"]
+
+## `s`'s length in the ANSI code page, as 0x4fc870 measures it: a character
+## above 0x7f takes two bytes in a double-byte code page, one otherwise.
+static func acp_bytes(s: String, dbcs: bool = dbcs_code_page()) -> int:
+	var n := 0
+	for i in s.length():
+		n += 2 if dbcs and s.unicode_at(i) > 0x7f else 1
+	return n
+
+## The byte limit (READ, above): a typed character that takes the text past
+## `max_length` bytes is not taken (0x6375e6); any other change over it is cut
+## back from the end (0x6362d0).
+func _hold_byte_limit(t: String) -> void:
+	if max_length <= 0 or acp_bytes(t) <= max_length:
+		return
+	var at := caret_column
+	var without := t.substr(0, at - 1) + t.substr(at) if at > 0 else t
+	if at > 0 and acp_bytes(without) <= max_length:
+		text = without
+		caret_column = at - 1
+		return
+	while t != "" and acp_bytes(t) > max_length:
+		t = t.left(t.length() - 1)
+	text = t
+	caret_column = mini(at, t.length())
 
 ## An existing LineEdit given the same look (a line this file did not make).
 ## Its behaviour stays Godot's.
@@ -195,7 +262,8 @@ func _key(k: InputEventKey) -> bool:
 				_replace_all("")
 				return true
 			if ctrl:
-				# One character, not a word.
+				# One character, not a word: Ctrl+Delete as the original's
+				# case 0x2e (READ); Ctrl+Backspace OURS (the header).
 				var at := caret_column
 				if code == KEY_BACKSPACE and at > 0:
 					_replace_all(text.substr(0, at - 1) + text.substr(at), at - 1)
