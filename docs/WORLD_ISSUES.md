@@ -7939,6 +7939,126 @@ only: no world drawing changed, so no perf gate.
 backdrop; whether pstitle's edits carry a length (none seen; 512 used); the update prompt, Register
 and the PIN keypad are OURS and say so.
 
+## Eight-hundred-and-forty-eighth round, lane R: the front end's own text, read from the original
+
+The user: "Can you investigate all the cases where use the native gui and not the original gui?
+Please find and fix all instances of this and make sure you match original as close as possible."
+Lane R took the front-end text sites lane W found drawn "the native way" that nobody had read yet.
+Labels: READ (`c:` sro_client.exe, md5 2a5794b72c90908d945be8b3f3f2edd4; `r:` the archive's
+resinfo), MEASURED, INFERRED, OURS, OPEN. Base `64bd9907` (the staging merge of lanes F, H, T, W).
+
+**The census (MEASURED in the live tree).** `FrontEndUi.font_census` with `OPENSRO_QA_FONT_CENSUS=<s,...>`
+(QA, new) prints every visible text node of a screen with its size and where the size comes from
+(`own` an override, `theme` inherited). Base and after, at 1280x720: the title (5 s; an operator
+copyright set; a refused Connect for the message line), the image-code window (6 s) and character
+select (8 s; three fake characters, one hovered).
+
+| Site | Base (MEASURED) | The original | After (MEASURED) |
+|---|---|---|---|
+| `frontend_frame.gd` version line | 16 px **(theme)**, ff8080, left/top in its 80x20 rect; ink rows 698..709, cols 5..67 | READ below: a CIFStatic's text, font 0, 0xffff8080, centred both ways | 12 px (own); ink rows 700..708 (caps 9 rows), cols 21..67: centred (5 + (80 - 47) / 2) |
+| `frontend_frame.gd` operator copyright line (OURS) | 16 px **(theme)**, white; ink rows 700..714, 358 wide | none: retail's line is art in `blackbar_down_copyright.ddj` (MEASURED white 255,255,255, ink rows 701..710 at 720 lines) | OURS: font 0, 12 px -- the size of the title's own drawn text nearest it, the version line (READ) -- in white, the archive line's colour; ink rows 702..712, 268 wide |
+| `Login.gd` message line (500) | 12 px own, 255,103,29, black **outline 3** (no source) | READ below: a 1 px black shadow, no outline | `FrontEndUi.text_shadow`. On the band's black (0,0,0) the frame is pixel-identical (0 of 4,400 pixels differ); the change shows only over art |
+| `CharacterSelect.gd` name labels | **20 px** (font 4), white, black **outline 3**, no box, its bottom on the point (INFERRED); `QA_Bram` ink 85x19 at 333..417 x 228..246 | READ below: font 0, white, no outline, the 0x40000000 box, centred on the point | `CharSelectNameLabel`: 12 px, white, no outline; ink 350..400 x 242..252; the box MEASURED against a frame of the same run before the hover: luminance x 0.749 (= 1 - 64/255) over x 347..403, y 239..254 -- 16 rows from one above the item's top (240), 2 px either side of the text |
+| `captcha_window.gd` "Explain" (5) | a Label of ours: 12 px, Godot's default colour, Godot's word wrap, the PML cut to plain lines, centred by Godot's line height; lines at rows 316..326 / 333..343 | `r:ifconfirmbox.txt` GDR_STA_EXPLAIN: **CIFPML**, FontColor 255,255,255,255, FontIndex 0, HAlign 1, VAlign 1, 32,40 336x40; VAlign READ below | UiBuilder's CIFPML holder and `PmlText.put_on` (the record's colour and HAlign, the markup parsed as CIFPML's), moved down by CIFPML's VAlign rule; lines at rows 315..325 / 334..344 (CIFPML's pitch, tmHeight + 5) |
+| every other front-end text (ID / PW / Server, the buttons' captions, the edits, the image-code caption, the select screen's Create / Cancel) | own sizes from their records (FontIndex 0 or 2) | -- | unchanged |
+| `FrontEndUi.apply_client_font` (the Login, CharacterSelect, CharacterCreate and FrontMessageBox roots) | the face only, no size: anything without its own size drew at 16 | READ below: every window's text starts in font 0 | the theme's `default_font_size` = 12 (`FONT_SIZES[0]`) **and** the two frame lines given their own size: the root default is the original's default, the per-label size says which font each line is |
+| World3D NPC name plate (the optional item) | (1, 0.94, 0.72), OURS | READ below: white | `NPC_NAME_COLOUR` white |
+
+No-archive fallbacks (Login `_build_ui`, CharacterCreate `_build_bare`, the captcha's Label fallback,
+`FrontEndUi.set_cif_button_text` without a builder) are unchanged; `apply_client_font` is a no-op there.
+
+**The version line (READ).** CPSTitle makes it at `c:0x86bc18` through `gwnd::FUN_00ba20b0` with the
+class record 0xee9720 -- registered as "CIFStatic" (`0xd9e1cc`) by `0xd6afdb`, factory `0x64d8b0`,
+constructor `0x64d5f0` over CIFWnd's `0x654520` -- and no layout record. So its text keeps the
+constructors': font 0 (`0x65460e..0x65462e`, `FUN_00ba5460(ebx)` with ebx 0 from `0x654556`) and
+CTextBoard's HAlign 1 / VAlign 1 (`+0x88` / `+0x8c` = 1, `0x655c28..0x655c3b`), which CIFStatic's layout
+`0x64d9b0` centres (UiBuilder's reading). CIFStatic's OnCreate (vslot 10, `0x64d6b0`) only returns 1, and
+nothing sets the text's style. Then `0x8b2b70(0xffff8080)` and "Ver %d.%03d" (round 788). OpenSRO's
+words stay its own version (OURS).
+
+**The theme's default size (READ).** CIFWnd's constructor gives every window's text item font 0
+(above), as CTextBoard's does (`0x655be8..0x655c02`); only a record's FontIndex or a caller changes
+it. `FrontEndUi.apply_font` sets `default_font_size = FONT_SIZES[0]`, as UiBuilder.apply_ui_theme does
+for the HUD.
+
+**The title's message line (READ).** Each message is a CIFTextBox line: `0x8613b0` calls
+`0x64fa10(text, 0, colour, 1)` -> `0x64f9d0(text, 0, c, c, c, 0, 1)` -> `0x64f8a0`, whose line record
+keeps that last 1 at +0x24; the line's text item takes it as its style (`0x64e984..0x64e98c`,
+`FUN_008b4400(5, style)`): bit 0, every glyph drawn first in black at (+1, +1) (`0x8b48b0 -> 0x8b2290`).
+No style call exists in the front end's own code (`0x840000..0x870000`).
+
+**The select screen's names (READ).** Each character's `CPSCharacterSelect::SCharacterInfo` has a text
+item at +0x2dc, made by `FUN_008b4f30` (`0x85a4c0`): colour 0xffffffff, style 0 (`FUN_008b46d0`,
+`0x8b46d9..0x8b4704`, `0x8b472b`). `FUN_0085a580` sets font 4 (`0x85a596..0x85a5a6`) and then the name
+through `FUN_008b3bd0` (`0x85a5b4`), which for any non-empty text sets **font 0** again and the box
+colour 0x40000000 (`0x8b3bde..0x8b3bf8`) -- so the font 4 charselect.md recorded is overwritten, and the
+name draws in font 0 on the world plates' box. The item's only uses are `0x85a4b5`, `0x85a50a`,
+`0x85a598` and `0x85ab66` (no colour or style call). `vslot_013` (`0x85ab2b..0x85ab6c`) draws it with
+`FUN_008b4d90(point, alpha byte +0x2be)`, only while that byte is not 0: centred on the projected point
+(`0x8b4e6c..0x8b4e99`: x - w/2, y - h/2; h = line gap 5 + font 0's 9 = 14), the box 1 px round it in
+the texture factor -- its alpha stays 64 -- and the fade's alpha on the glyphs only
+(`0x8b4909..0x8b490e`). `CharSelectNameLabel` (new, `client/scripts/frontend/charselect_name_label.gd`):
+the box from NamePlates (16 rows, the world's MEASURED 2 px pad), the fade on `self_modulate` so the box
+keeps 64/255, the box shown while the alpha is not 0. charselect.md updated.
+
+**CIFPML's VAlign (READ).** CIFPML's layout `0x64b2c0` lays the text from y 0, then with VAlign
+(`+0x8c`, `0x64b3b1`) 1 moves the content down by (the rect's height - the layer's) >> 1 when it is
+shorter (`0x9a52e0` the layer's rect, `sar` at `0x64b3da`, `0x9a52c0` at `0x64b415` its new top); 2 by
+the whole difference. `CaptchaWindow.valign_pml` applies it around PmlText (which has no VAlign).
+
+**An NPC's name colour (READ).** The name item (ICharactor +0x12c, made at `0x9c23ae`) starts at the
+constructor's 0xffffffff. Its colour setters: `FUN_009c1920` (`add ecx, 0x12c`; the only such add in
+0x980000..0xa80000) for players, guards, the party and COS (`0x9c7930`, `0x9cfd50`, `0x9dcf00`), and
+four direct `0x8b2b70` calls on +0x12c: a COS's 0xffffff55 (`0x9c637f`), an item's (`0x9e212a`), and
+0xff9ed0ff at `0x9d164b` / `0x9d19ef` -- only for a CICNPC (IsKindOf 0xef1ac4, "CICNPC" at `0xde2a18`)
+whose spawn carries its own name string (+0x110, its length +0x124 not 0; flag bit 1 of the spawn byte
++0x4fc, read in `0x9d15a0`). An NPC named by its object's own text -- every NPC OpenSRO places -- is
+white: `World3D.NPC_NAME_COLOUR`. Lane W's OPEN is closed.
+
+**Evidence** (render box, 1280x720, Forward+). Base `/var/tmp/r848r-base` = `64bd9907` with only the
+three QA hooks added (`/var/tmp/r848r/patch_base.py`); after `/var/tmp/r848r-client`. Recipe
+`/var/tmp/r848r/shots.sh`, frames and logs in `/var/tmp/r848r/shots/{base,after}`, crops in
+`/var/tmp/r848r/evidence`, measurements by `/var/tmp/r848r/meas.py`. The select screen's sky differs
+between the two runs (they ran ten minutes apart and the harbour's light follows the clock); each label
+is measured against its own run.
+- Title: `login/f00000599.png` (`OPENSRO_CUSTOM_DIR` with a copyright line; a refused Connect);
+  `both_login_bottom.png` stacks base over after.
+- Image-code window: `OPENSRO_QA_SHOW_CAPTCHA=4` (new QA hook, a striped picture),
+  `captcha/f00000479.png`; `{base,after}_captcha_x2.png`.
+- Select: `OPENSRO_QA_SELECT_HOVER=0@3` (new QA hook), `select/f00000899.png`;
+  `{base,after}_select_name_x4.png`; the box measured against `f00000300.png` of the same run.
+
+**Tests.** New `client/scripts/frontend/frontend_text848_test.gd` (30 checks): the theme's default
+size (a bare Label 16 -> 12), the frame's version and copyright lines, the message line's shadow, the
+name label (size, colour, box, fade, placement against the READ rule), the captcha's CIFPML and the
+VAlign rule, the NPC colour. `frontend_native_test` ALL PASS; `login_flow_test` ALL PASS;
+`native_gui848_test` fails only on the allowlist lines the merge is updating (other lanes' files; lane
+R's census helper names no native class, so it adds none).
+**Gates.** `remote_godot.sh check` ALL LOAD (1092 scripts); `tests` "ran 409 suite(s), 1 failing" --
+`native_gui848_test`'s allowlist line alone (the entries the merge updates; no lane R file in it).
+The NPC colour is a world-drawing constant, so the perf gate ran (`--base 64bd9907 --head 3fb154b2
+--sites jangan --frames 24000`, median of 3; a first attempt at the default frame count ended the
+base run after one FPS sample and printed no numbers):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.90 | 0.90 | SAME |
+| entry ms | 8786 | 8752 | SAME |
+| freeze ms | 2760 | 2788 | SAME |
+| hitches | 5 | 5 | SAME |
+
+**OPEN.**
+- Character create's explanation box (ids 61 / 62): some of its lines are CIFTextBox lines in style 1
+  (a shadow) and white (`0x84ddab`, `0x851986`); OpenSRO's `_tip_text` is a plain Label in the record's
+  colour. Which of its texts go through that call and which through SetText (vslot 0xb4) was not traced.
+- The select screen's message line (500): CPSCharacterSelect adds no line through `0x64fa10`; how its
+  messages are styled is not read (drawn plain, as before).
+- The version's words: OpenSRO prints its own version ("Ver 0.1.612"), not retail's "Ver %d.%03d".
+- The name box keeps the world's MEASURED 2 px pad. READ is 1 px round the item, whose width (+0x4c,
+  `0x8b3910`) sums two fields per glyph; whether that equals the text's advance plus 1 each side is
+  not settled (the world's plates carry the same since round 673).
+- A CICNPC with a spawn-carried name would draw 0xff9ed0ff; OpenSRO's server sends none.
+
 ## Eight-hundred-and-forty-seventh round, lane B: a status effect's look ends with the status
 
 The user: "sometimes the status effects cast on the players (maybe more?) lingers even after it's
