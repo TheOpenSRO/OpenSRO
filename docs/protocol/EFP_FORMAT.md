@@ -681,6 +681,13 @@ Every retail view and render command has space 0 (MEASURED).
 
 ### Ending a kept effect (READ, the IEasyFxEffect vtable at `0x00e0f594`)
 
+**A decoration's end fades first (READ, round 847).** When a skill decoration ends (a buff's or a
+state's end, `FUN_00a53120` -> `IDecoSkill::FUN_00a4ffe0` -> `FUN_00a4db00`), each effect gets an
+alpha fade over its skill effect row's Fade first value (`FUN_00a48690` -> `FUN_00a48190`, ms) as
+well as the cleared keep flag, and `CIDecoSkill::vslot_014` frees it through slot 2 when the fade
+reaches 0. Only a row with no Fade is left to play out as below. `docs/protocol/status_effects.md`,
+"How a state's look ends", has the addresses and the measurements.
+
 **Keeping** (READ, round 623; this corrects round 620's "restarts a finished effect"). Each update,
 `CEFEffect::vslot_000` (`0x00caf550`) calls `FUN_00ca9ee0`, which advances the effect's age, runs
 the root node's update and returns 0 once every root emitter is done and has no particle. Then:

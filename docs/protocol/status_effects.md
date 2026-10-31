@@ -161,6 +161,74 @@ electric shock, burn, poison, zombie, dark and stun lerp the body colour over 10
 `vtable +0x48`), the buff bar's own abnormal icons (`UI_STATE::0x7836d0`), and the tooltip's
 description line.
 
+### How a state's look ends (round 847)
+
+The user: "sometimes the status effects cast on the players ... linger even after it's been removed
+naturally or through pills. It eventually goes away but it takes awhile."
+
+**Every end is one message (READ / MEASURED).** The server ends a state in four places --
+the status pass at its time (`Holder.Step`, `AbnormalState_UpdateOwnerClear` `0x4a4390`), a cure
+pill or cure skill (`statusFX.cureCharacter`, `FUN_004a56c0` then the mask rebuild and send
+`0x4a5c60`), a death (`finishKill` -> `endCharacter`) and a logout or a pass that finds the
+character gone -- and each sends the owner's new mask as 0x3057 to the owner and to every player
+holding its body (`broadcastStatus` -> `sendAboutOwner`). A state landed again before its end
+replaces its slot's record (`Holder.Put`, READ: one record a slot), so it ends once, at the
+renewal's time. `server/internal/session/status847_test.go` holds each of them, owner and observer.
+MEASURED on a prod-like lane server (no `-trust-client-positions`, the navmesh): the send is in the
+same 100 ms pass as the end, and both clients took it at once.
+
+**What the client does with a bit that went off (READ, `sro_client.exe`).** The mask setter
+`FUN_009cd5e0` calls `GlobalDataManager::FUN_009cd2b0(effect id)` for it, which walks the object's
+decoration list (`+0x288`) and ends each `CIDecoSkill` whose id (`+0x5c`) is the state's
+`PARAM_<label>` with `FUN_00a53120` -- the same end a buff's 0xB072 runs. Its tail,
+`IDecoSkill::FUN_00a4ffe0(1)`, runs `FUN_00a4db00` and `FUN_00a488f0` for every effect entry:
+`FUN_00a4db00` first calls `FUN_00a48690`, which hands the row's **Fade first value** (row `+0xa`)
+to `FUN_00a48190` on the entry and on each of its copies -- with a non-zero value it starts an
+alpha fade 255 -> 0 over `value / 1000.0` s (the double at `0xd83268` is 1000.0) -- and always
+returns 0 (`0xa486f5 xor eax,eax`), so the effect's keep flag is then cleared (slot 4 with 0);
+`FUN_00a488f0` frees the entry's extra copies at once (slot 2). The decoration's update
+`CIDecoSkill::vslot_014` (`0x00a503f0`) then steps the fade each frame (`FUN_00a47d20`, linear),
+hands the alpha to the effect (slot `0x24`), and frees the effect (slot 2) when the fade is done at
+alpha 0 -- or sooner, when the effect's own update says it has finished. The pulse ends in the same
+call (`vtable +0x4c`), and the clip speed and the freeze flag go back at once.
+
+Every `PARAM_` row has **Fade 300,300** (MEASURED, skilleffect.txt): a state's aura is gone 300 ms
+after its end, fading all the way. Of the 146 ACT_L AT_LOOP rows, 59 have a Fade (10, 100, 300,
+500 or 800 ms) and 87 none (MEASURED).
+
+**The cause (MEASURED).** OpenSRO ended the aura with `EfpEffect.release` alone (round 785's reading
+of `FUN_00a4db00` without `FUN_00a48690`): the keep flag cleared, the particles left to play out.
+`client/tools/state_aura_release_probe.gd` stepped each `status_bad_*.efp` kept for 6 s, released
+it, and counted: stun 0.5 s, electric shock 0.6, poison and zombie 1.5, root and slow 2.0, dark 2.0,
+sleep, fear and hide 2.4, myopia 2.7, panic 3.5, burn, frostbite, bleeding and disease **4.0 s**,
+and confusion's `status_bad_temptation.efp` **never** (still 69 particles after 60 s; its root
+re-arms every wrap) -- so it drew until `EfpEffect.ONESHOT_MAX_LIFE`, 30 s after the end. Live,
+on the base (`f2a20b92` + the timing lines), an observer (real time) drew poison 1.04 s, burn
+2.47 s, darkness 1.54 s, bleeding at a death 1.50 s and **confusion 29.97 s** past the message;
+the owner's frames (60 a second of scene time) 40, 181, 90 and 289 frames, and confusion more
+than 1,042 (the run ended first). That is "it eventually goes away but it takes awhile". The
+server, the message and its receipt were on time on every path; the icons and the pulse ended with
+the message.
+
+**Now (`SkillEffects._end_kept`).** A kept effect remembers its row's Fade
+(`EfpEffect.end_fade_ms`, `SkillEffects.end_fade_ms_of`); its end releases it and, with a Fade,
+fades it 255 -> 0 over that many ms and frees it (the arrival fade's own stepper, `_step_lingers`).
+That is every state aura (`_apply_state_look`, `_drop_state_look`, the zone change's undo) and every
+buff aura (0xB072, the grace end); a row without a Fade is let go as before. MEASURED after, the
+same live schedule: every aura on every path was gone 18 frames (300 ms) after the message on the
+owner's and the observer's rendered frames, and 297-332 ms on the headless clients' wall clock --
+confusion's included. (One headless 1.5 s, the dying owner's own bleeding in the observer run:
+INFERRED, its respawn's reload stalled that client's frames over the fade -- the fade counts scene
+time, and the same death drawn by the rendered owner was 18 frames.) A cast's kept loops
+(`SkillEffects.stop_all`) take the same path in the original (`FUN_00a534d0` / `FUN_00a50a00` ->
+`FUN_00a4ffe0`) and are still only let go here: OPEN, not part of this report.
+
+**Timers that are the original's (READ).** The target window's buff viewer and the party window's
+buff row rebuild from the object every 1000 ms (`0x69a215` / `0xb93320(1, 0x3e8)`), so a state's
+icon there can stay up to a second after its end, in the original as here. OURS: while a group of
+players is being spawned, another player's 0x3057 waits behind the group
+(`NetClient._passes_group`); this player's own never does.
+
 ## How a skill applies one -- `Combat_ApplyStatusEffects` (`0x590680`), round 249
 
 The applier is one block per status the skill row can carry, in this order of skill
