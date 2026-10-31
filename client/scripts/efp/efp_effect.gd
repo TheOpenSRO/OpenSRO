@@ -95,6 +95,10 @@ var max_life := 0.0
 ## files); `mad_general_at03` never ends (its NormalTimeLoop node re-arms
 ## its children every wrap).
 const ONESHOT_MAX_LIFE := 30.0
+## Round 847: the ms this effect fades out over when its owner ends it (the
+## skill effect row's Fade first value; SkillEffects._end_kept, READ
+## IDecoSkill::FUN_00a4db00 -> FUN_00a48190). 0: no fade, it is let go.
+var end_fade_ms := 0
 ## The local player's own effect: may use EfpSim's reserved particle share.
 var reserved := false:
 	set(v):

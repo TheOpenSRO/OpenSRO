@@ -15,7 +15,10 @@ class_name StateLook
 ##   STUN, DN, SLEEP, CHAOS, FEAR, MYOPIA, CURSE_HP, TIME_BOMB, FZ, ROOT,
 ##   STONE, SLOW; a DEACT row for FZ and STONE);
 ## - a bit that went off ends it (GlobalDataManager::FUN_009cd2b0), which
-##   plays the DEACT rows;
+##   plays the DEACT rows; round 847 (READ): that end (FUN_00a53120 ->
+##   FUN_00a4db00) fades the aura out over its row's Fade, 300 ms on every
+##   PARAM_ row, and frees it (SkillEffects._end_kept) -- it no longer plays
+##   its particles out (up to 4 s; confusion's never ended, 30 s);
 ## - and, for some bits, the body (unless it is the player riding, +0x2c2 1,
 ##   or an object of kind 2, +0x448):
 ##     0x1 FZ        the motion state 9 (FUN_009c8810(9)) and +0xbd = 1; off:

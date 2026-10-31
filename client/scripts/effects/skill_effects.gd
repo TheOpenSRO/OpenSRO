@@ -72,7 +72,18 @@ class_name SkillEffects
 ##   the aura go as retail's decoration does (EfpEffect.release: the keep flag
 ##   cleared, its last cycle plays out; FUN_00a53120 -> FUN_00a4ffe0 ->
 ##   FUN_00a4db00), and so does a cast's end or cancel; a world teardown
-##   frees them at once (EfpEffect.stop). With the buff's remaining
+##   frees them at once (EfpEffect.stop). Round 847 (READ, the same
+##   FUN_00a4db00): before it clears the keep flag it starts the copy's alpha
+##   fade over the row's Fade first value (FUN_00a48690 -> FUN_00a48190,
+##   ms / 1000.0), and the decoration's update (CIDecoSkill::vslot_014,
+##   0x00a503f0) steps that fade each frame, hands the alpha to the effect
+##   (slot 0x24) and frees the effect (slot 2) once the fade is done at
+##   alpha 0. So an aura whose row has a Fade (every PARAM_ state row: 300)
+##   is gone that many ms after its end -- `_end_kept`; round 785's release
+##   alone let it play out for 0.5-4 s, and a state whose loop never dies by
+##   itself (confusion's status_bad_temptation) for ONESHOT_MAX_LIFE, 30 s
+##   (MEASURED, tools/state_aura_release_probe.gd). A row with no Fade is let
+##   go as before. With the buff's remaining
 ##   time it also ends by itself AURA_GRACE_MS after that time runs out, in
 ##   case the end never arrives (OURS).
 ## - A cast's AT_LOOP rows of ANY phase (READY, WAIT, SHOT -- 260 SHOT and 12
@@ -1137,6 +1148,37 @@ static func _stop_all(fxs: Array) -> void:
 		if is_instance_valid(fx):
 			(fx as EfpEffect).stop()
 
+## Round 847: the ms a row's effect fades out over when its decoration ends
+## -- the Fade column's first value (READ: FUN_00a48690 hands the row's +0xa
+## word to FUN_00a48190, which starts no fade for 0).
+static func end_fade_ms_of(r: Dictionary) -> int:
+	var fade: Array = r.get("fade", [0, 0])
+	return maxi(int(fade[0]), 0) if fade.size() >= 1 else 0
+
+## Round 847: ends kept effects as the original's decoration end does (READ,
+## IDecoSkill::FUN_00a4db00, for every effect of the decoration): the keep
+## flag cleared (EfpEffect.release) and, when the effect's row has a Fade
+## (end_fade_ms > 0), its alpha 255 -> 0 over that many ms and the effect
+## freed when it reaches 0 (CIDecoSkill::vslot_014's fade step and slot 2;
+## the fade is FUN_00a47d20's linear t, as an arrival's, `_step_lingers`).
+## One without a Fade plays out (round 785).
+static func _end_kept(fxs: Array, now_ms: int = -1) -> void:
+	var by_ms := {}
+	for fx in fxs:
+		if not is_instance_valid(fx) or (fx as Node).is_queued_for_deletion():
+			continue
+		var e := fx as EfpEffect
+		e.release()
+		if e.is_queued_for_deletion() or e.end_fade_ms <= 0:
+			continue
+		if not by_ms.has(e.end_fade_ms):
+			by_ms[e.end_fade_ms] = []
+		(by_ms[e.end_fade_ms] as Array).append(e)
+	var now := now_ms if now_ms >= 0 else _now()
+	for ms in by_ms:
+		_lingers.append({"fx": by_ms[ms], "carrier": null, "fade_from": now, "fade_ms": int(ms),
+			"until": now + LINGER_MAX_MS})
+
 ## Ends expired auras and forgets freed bodies. World3D calls it every frame
 ## (through tick).
 static func process(now_ms: int = -1) -> void:
@@ -1154,7 +1196,7 @@ static func process(now_ms: int = -1) -> void:
 		elif int(a["expires"]) >= 0 and now >= int(a["expires"]):
 			print("EFFECTS aura %s: no end arrived %d ms after its time -- ending it" % [key, AURA_GRACE_MS])
 			_note_end(key, alive)
-			_release_all(alive)
+			_end_kept(alive, now)
 			_release_models(models)
 			_auras.erase(key)
 		else:
@@ -1223,6 +1265,7 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		fx.loop = kept_act(int(r["act"]))
 		fx.static_host = int(r["act"]) == AT_STOP
 		fx.reserved = own_body != null and host == own_body
+		fx.end_fade_ms = end_fade_ms_of(r)
 		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
 	if not started.is_empty() or not models.is_empty():
@@ -1265,6 +1308,7 @@ static func play_named(effect_id: String, ani_type: int, host: Node3D, owner_key
 		fx.loop = kept_act(int(r["act"]))
 		fx.static_host = int(r["act"]) == AT_STOP
 		fx.reserved = own_body != null and host == own_body
+		fx.end_fade_ms = end_fade_ms_of(r)
 		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
 		if fx.loop:
@@ -1312,10 +1356,11 @@ static func detach_aura(owner_key: String, token: int) -> int:
 		_note_end(key, _auras[key]["fx"])
 		for fx in _auras[key]["fx"]:
 			if is_instance_valid(fx):
-				# Round 785 (READ, FUN_00a53120 -> FUN_00a4ffe0 -> FUN_00a4db00):
-				# the buff's end lets its aura go; it fades over its last cycle.
-				(fx as EfpEffect).release()
 				n += 1
+		# Round 785 / 847 (READ, FUN_00a53120 -> FUN_00a4ffe0 ->
+		# FUN_00a4db00): the buff's or the state's end lets its aura go and
+		# fades it out over its row's Fade (_end_kept).
+		_end_kept(_auras[key]["fx"])
 		# Round 838: its models go with it (AuraModel).
 		var models := _alive_models(_auras[key])
 		_release_models(models)

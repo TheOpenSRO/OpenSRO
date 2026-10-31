@@ -32,9 +32,9 @@ func _skill_row(id: int, code: String, group: String, original: int) -> String:
 
 ## A skilleffectset-shaped row in the file's own column order.
 func _row(id: String, ani: String, ev: int, act: String, dir: String, obj: String, bone: String,
-		offset: String, dmg: bool = false, mov: String = "MOV_NONE,0,0,0") -> String:
+		offset: String, dmg: bool = false, mov: String = "MOV_NONE,0,0,0", fade: String = "0,0") -> String:
 	var cols: Array = ["label", id, ani, str(ev), "TRUE" if dmg else "FALSE", "none", "none", "0", "0", "0", "0", "1",
-		"0,0", act, mov, "0,0,0", "false,0,0,0,0,false", dir, obj, bone, offset,
+		fade, act, mov, "0,0,0", "false,0,0,0,0,false", dir, obj, bone, offset,
 		"none", "0,0,0", "none", "0", "none", "none", "none"]
 	return "\t".join(PackedStringArray(cols)) + "\r\n"
 
@@ -82,6 +82,7 @@ func _run() -> void:
 	sd += _skill_row(4, "TEST_BOLT_A_01", "TEST_BOLT_A", 0)
 	sd += _skill_row(5, "TEST_STUN_A_01", "TEST_STUN_A", 0)
 	sd += _skill_row(91, "TEST_WINGS_A_01", "TEST_WINGS_A", 0)
+	sd += _skill_row(92, "TEST_HALO_A_01", "TEST_HALO_A", 0)
 	skills = SkillAudio.parse_skills(_utf16(sd))
 	var header := "//SkillName11\tSkillEffectID\tAniType\tStartEvent\tDMG Event\tDamageType\tScale\tID\tAttach\tTrade\tKill\tCreateCnt\tFade\tActType\tMovTypeSpeed\tParam\tAct Option\tObj Path\tObjName\tStartBone\tStartOffset\tTargetBone\tTargetOffset\tObjName2\tRotate\tScript\tSndBegin\tSndEnd\r\n"
 	var text := "#section characterInfo\r\n" + _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "x\\", "wrong.efp", "none", "0,0,0")
@@ -99,6 +100,8 @@ func _run() -> void:
 	# '#' bone (the archive's horn scrolls' shape, synthetic here).
 	text += _row("TEST_WINGS_A", "ACT_L", 0, "AT_LOOP", "res\\item\\", "wings.bsr", "Bip01 R Finger2", "0,0,0")
 	text += _row("TEST_WINGS_A", "ACT_L", 0, "AT_LOOP", "system\\", "tip.efp", "#Bip01 R Finger2", "0,0,1")
+	# Round 847: a buff aura whose row has a Fade (500 ms, synthetic).
+	text += _row("TEST_HALO_A", "ACT_L", 0, "AT_LOOP", "skill\\china\\", "halo.efp", "Bip01", "0,0,0", false, "MOV_NONE,0,0,0", "500,500")
 	rows = se.parse_rows(_utf16(text))
 	_check(rows.has("TEST_IMBUE_A") and (rows["TEST_IMBUE_A"] as Array).size() == 4,
 		"only skilleffectset rows that name an .efp are kept (4 for the imbue)")
@@ -242,6 +245,27 @@ func _run() -> void:
 	_check(not (timed[0] as Node).is_queued_for_deletion(), "an aura outlives its time by up to the grace period")
 	se.process(1000 + se.AURA_GRACE_MS)
 	_check(_let_go(timed[0]), "... and then is let go even if no buff end arrived")
+	# Round 847 (READ, IDecoSkill::FUN_00a4db00 -> FUN_00a48190,
+	# CIDecoSkill::vslot_014): an aura whose row has a Fade fades out over it
+	# at its end and is freed at alpha 0 -- by the buff's end and by the
+	# fallback end alike; without a Fade it is let go as above.
+	var halo: Array = se.attach_aura("character:20", 9, 92, caster)
+	var h0: int = se._now()
+	se.detach_aura("character:20", 9)
+	_check(halo.size() == 1 and not (halo[0] as Node).is_queued_for_deletion() and not (halo[0] as EfpEffect).loop
+		and (halo[0] as EfpEffect).end_fade_ms == 500, "a Fade 500 aura's end: let go and fading")
+	se.process(h0 + 250)
+	_check(halo.size() == 1 and is_instance_valid(halo[0]) and abs((halo[0] as EfpEffect).alpha - 128) <= 2,
+		"... half way through its Fade, alpha %d" % ((halo[0] as EfpEffect).alpha if halo.size() == 1 and is_instance_valid(halo[0]) else -1))
+	se.process(h0 + 500)
+	_check(halo.size() == 1 and (not is_instance_valid(halo[0]) or (halo[0] as Node).is_queued_for_deletion()),
+		"... and freed when the Fade is done, its particles never stepped")
+	var late: Array = se.attach_aura("character:21", 9, 92, caster, 1000, 0)
+	se.process(1000 + se.AURA_GRACE_MS)
+	_check(late.size() == 1 and not (late[0] as EfpEffect).loop, "the fallback end lets a Fade aura go too")
+	se.process(1000 + se.AURA_GRACE_MS + 500)
+	_check(late.size() == 1 and (not is_instance_valid(late[0]) or (late[0] as Node).is_queued_for_deletion()),
+		"... and fades it out over its Fade")
 	# Freed bodies are forgotten.
 	var gone := Node3D.new()
 	get_root().add_child(gone)
