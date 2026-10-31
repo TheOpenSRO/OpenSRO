@@ -121,6 +121,11 @@ static func _add_chat(window: HudWindow, builder: UiBuilder, controller: StallCo
 		rt.mouse_filter = Control.MOUSE_FILTER_PASS
 		_font(rt, builder, "normal_font")
 		msgs.add_child(rt)
+		# Round 848: the layout's own CIFVerticalScroll (GDR_CHAT_VSCROLL,
+		# 284,20,16,29; its length the rect's 29, READ CIFVerticalScroll::
+		# Create -- CIFChatModule::Create 0x65b510 sets none) in place of
+		# the RichTextLabel's native bar.
+		OriginalScroll.attach_cif(rt, builder, root.get_node_or_null("GDR_CHAT_VSCROLL") as Control)
 	var users := root.get_node_or_null("GDR_CHAT_OTHERUSER") as Control
 	if users != null:
 		var l := Label.new()

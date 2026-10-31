@@ -46,8 +46,8 @@ class_name HudWorldmap
 ##   frame 26 and the side tab 13 given +0x1c0 = 1 (the flag CNIFWnd's mouse
 ##   handler 0x46c8e0 returns as "handled", so they eat clicks -- the meaning
 ##   is inferred), and the world button 6 given UIIT_PAG_WORLDMAP as its hover
-##   text (style 0x80, 0x46d880 / 0x46d7d0; that it is a tooltip is inferred,
-##   as for the guild window).
+##   text (style 0x80, 0x46d880 / 0x46d7d0; shown in the help bubble on
+##   hover, READ round 848 -- 0x46cee0 -> 0x46cdf0, HelpTips).
 ## - At game entry 0x786f30 calls 0x616b80(1) on it (0x78780b): auto-move on,
 ##   and 0x616870 gives button 20 `wmap_button_automatic.ddj` and the hover
 ##   text UIIT_STT_WORLDMAP_AUTO_MOVE. 0x786f30 is reached from CPSMission's
@@ -2359,8 +2359,11 @@ static func dof_room_key(dof: DofReader.Dof, block: int) -> String:
 # - The draw: the area pictures over the map tiles (0x61e700, mode 0 on the
 #   map of their id, mode 2 on their floor), then the place signs (0x61c360),
 #   then the quest and monster icons (0x61e890), each only on its own map.
-# OURS: an icon's text is a Godot tooltip (the client's hover box for these
-# signs was not read).
+# An icon's text is its tooltip_text, which HelpTips shows in the help bubble
+# (round 848). The map's own hovers go to that bubble too (READ: 0x613260 and
+# 0x614950 fill GInterface +0x730's CIFHelperBubbleWindow and place it with
+# 0x776c00); which rect those pass for a sign is not read (OPEN), so the
+# sign's own rect is the anchor.
 
 const QUEST_ICON_DDJ := "interface\\worldmap\\wmap_quest_icon.ddj"
 const MONSTER_ICON_DDJ := "interface\\worldmap\\wmap_monster_icon.ddj"

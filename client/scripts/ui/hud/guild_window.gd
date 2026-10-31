@@ -56,9 +56,10 @@ const CAPTION_COMMUNITY := "UIIT_STT_COMMUNITY"
 
 ## Hover strings the OnCreates attach with style bit 0x80 (0x46d840 /
 ## 0x46d880, then 0x46d7d0), as [path from the guild window, text key]. The
-## string is read; that the client shows it on hover is **inferred**
-## (0x46d7d0 stores it and calls vslot 0xb0 only when bit 7 is set), so it
-## becomes the control's tooltip.
+## string is read, and so is the hover (round 848): CNIFWnd's message slot
+## 0x46cee0 answers the hover-enter 0x4009 on a bit-0x80 control with vslot
+## 0xb0 (0x46cdf0), which shows the string in the help bubble -- HelpTips
+## draws the control's tooltip there.
 const GUILD_TOOLTIPS := [
 	[[164, 87], "UIIT_STT_GUILD_RESPECT_ALLY"],
 	[[164, 88], "UIIT_STT_GUILD_RESPECT_WAR"],

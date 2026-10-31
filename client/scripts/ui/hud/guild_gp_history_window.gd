@@ -12,7 +12,8 @@ class_name GuildGPHistoryWindow
 ##   followed by an empty line; the scroll back at the top;
 ## - Confirm 954 (UIIS_CTL_CONFIRM) hides it; the scroll 953 moves the text.
 ## The caption is UIIT_STT_GUILD_GP_HISTORY ("GP Usage History").
-## OURS: the text box is a RichTextLabel with its own scroll in place of 953.
+## OURS: the text box is a RichTextLabel; its scrolling is driven by 953
+## (OriginalScroll, round 848), its native bar hidden.
 
 const TwoDtBuilder = preload("res://scripts/ui/twodt_builder.gd")
 const FILE := "res_ui\\guild_gp.2dt"
@@ -54,9 +55,14 @@ func build_history(builder: UiBuilder) -> bool:
 			text_box.add_theme_font_override("normal_font", builder.font_at(0))
 		text_box.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
 		host.add_child(text_box)
+	# Round 848: the window's own CNIFVerticalScroll (953) drives the text,
+	# in place of the RichTextLabel's native bar.
 	var bar := TwoDtBuilder.child(root, ID_SCROLL)
 	if bar != null:
-		bar.visible = false
+		if text_box != null:
+			OriginalScroll.attach_2dt(text_box, builder, bar)
+		else:
+			bar.visible = false
 	var ok := TwoDtBuilder.child(root, ID_OK) as BaseButton
 	if ok != null:
 		_twodt.set_text(ok, builder.resolve_text("UIIS_CTL_CONFIRM"))

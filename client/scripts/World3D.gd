@@ -26773,16 +26773,20 @@ func _console_set_camera(mode: String) -> bool:
 	return false
 
 ## The chat-line tooltip: the client commands, plus (for a GM) the GM line.
+## OURS (the original's chat input has no help); shown in the original's
+## bubble by HelpTips (round 848).
 func _command_tooltip() -> String:
 	var base := "Slash commands: type /help for the list.\n%s" % (_console.help_line() if _console != null else "/help /where /copy /fps /entities")
 	return base
 
+## Round 848: on the input line only. The whole chat window carried it too,
+## which under the original's at-once bubble would cover the screen beside
+## the chat whenever the cursor crossed its log.
 func _refresh_command_tooltip() -> void:
 	if _hud_chat != null:
 		var input := _hud_chat.find_child("*Input*", true, false)
 		if input is Control:
 			(input as Control).tooltip_text = _command_tooltip()
-		_hud_chat.tooltip_text = _command_tooltip()
 
 ## Feeds OPENSRO_QA_COMMANDS through the console -- the same parser the chat
 ## uses -- printing a "QA COMMAND:" marker per line so the log pairs each with

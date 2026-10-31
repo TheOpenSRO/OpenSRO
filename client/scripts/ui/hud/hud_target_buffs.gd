@@ -76,8 +76,8 @@ class_name HudTargetBuffs
 ## text, which OpenSRO does not generate). No remaining-time line: the
 ## entry's +0x28 stays 0 (0x7fb0f0) for a skill buff. A type-3 entry adds
 ## "%s : %s" (UIIT_STT_TARGETTING, its name); none are sent.
-## OURS: the trailing blank lines are trimmed, so Godot's tooltip does not
-## draw empty rows under the text.
+## OURS: the trailing blank lines are trimmed, so the help bubble (HelpTips,
+## round 848, which shows this _get_tooltip) draws no empty rows under it.
 ##
 ## NO RIGHT-CLICK, NO LEFT-CLICK (READ): CIFBuffViewer's vtable (0xdcf59c,
 ## 49 slots) overrides only slots 0, 1, 2 and 10; its mouse slots are

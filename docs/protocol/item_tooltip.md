@@ -209,3 +209,23 @@ Lane A first. Lane B can run in parallel; A consumes B's fields when they land.
 - The requirement lines' mastery names (`UIIT_STT_MASTERY_*`, `0x67eec0`) keep the text manager's
   first row in a joined `textuisystem.txt` (READ `0x8ca120`): 273 is "Cold", not the stock table's
   "Sorcery" (`skill_tooltip.md` §1).
+
+## Round 848: the generic help, the hover and the placement (READ)
+
+- **One bubble for every help.** `CIFWnd` vslot 48 (`0x6528c0`) shows a control's help string (+0x210,
+  set by `0x653dc0`) in GInterface +0x730's `CIFHelperBubbleWindow` (Create `0x776ea0`: style 0x80,
+  text box ID 10, signs 11-13, `com_tooltip_corner.ddj` / `com_tooltip_edge.ddj`, borders (8, 8)); the
+  CNIF windows do the same in a lazily made `CNIFHelperBubbleWindow` (`0x46cdf0`, global
+  `0x111a030`). The text box is resized to 200 wide (`0x54(200, 1)`), the text written in 0xffffffff
+  with font argument 1 and the signs hidden (`0x7769a0` / `0x4972b0`), the window sized by `0x777020`
+  (lines 14 px alone, 18 px for more). The world map's hovers (`0x613260`, `0x614950`) use it too.
+- **The hover.** `CGFXMainFrame::vslot_011` (`0xba5600`) takes the window under the cursor every
+  frame; `0xb9dbb0` sends 0x400a / 0x4009 on a change, at once. `0x652fb0` / `0x46cee0` show the help
+  on 0x4009 when style bit 0x80 is set, and hide the bubble on 0x400a. No delay.
+- **The placement** (`0x776c00`, identical `0x497350`), from the control's own rect (x, y, w): the
+  window (frame outside) at x + w + 8, or x - width - 8 when x + w + width + 0x14 > screen width; at
+  y + 8, or screen height - height - 0xf when y + 8 + height >= screen height - 0xf; no clamp on the
+  left or top. Style word +0x204 == 1 puts it at (x, y - 40) instead.
+- **Hiding.** The leave message, and (CIF) the bubble's own render: `vslot_013` (`0x776bb0`) hides
+  it while the cursor is inside its rect.
+- OpenSRO: `HelpTips` (`client/scripts/ui/help_tips.gd`) and `ItemTooltipBubble.place`.

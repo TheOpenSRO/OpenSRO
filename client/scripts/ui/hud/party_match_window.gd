@@ -45,8 +45,8 @@ class_name PartyMatchWindow
 ## - the scroll bar is a CIFVerticalScroll with ifverticalscroll.txt's parts
 ##   (HudChat.ChatScroll); its range is the records less 12, registration
 ##   pinned or not (0x73b5b0 / 0x73b780: `count - 0xc`); its length is the
-##   record's 232 (INFERRED: CIFPartyMatch::Create sets none, and the down
-##   arrow then ends at the list's bottom);
+##   record's 232 (READ round 848: CIFVerticalScroll::Create 0x65a9c0 gives
+##   the rect's height, and CIFPartyMatch::Create sets none);
 ## - Create sets control 0x2b's text to "~" (0x73af56 / 0x73af69, 0xd884b0)
 ##   and the combo's text alignment to 2, right (0x73b062..0x73b073).
 ##
