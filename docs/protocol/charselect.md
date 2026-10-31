@@ -175,7 +175,8 @@ There is no other "selected" motion.
 
 - Each frame the cursor is ray-picked against the current page's models.
 - Hovering fades in that character's **name label** over 0.5 s; leaving fades it out.
-  - The label is the name only, font 4.
+  - The label is the name only, in font 0 on the 0x40000000 box (round 848: `FUN_0085a580` sets font 4,
+    then `FUN_008b3bd0` sets font 0 for any non-empty name; see below).
   - It floats at the model's height factor x 20 above it (x 19 when the model flag is set).
 - A left click selects. **There is no ring and no glow.**
 
@@ -435,8 +436,12 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
   OURS (round 793, the user's call): our box leaves out the weapon and shield, so a spear held across
   the body does not take the next character's clicks. OPEN: retail's part walk may include them.
 - **The name label** fades at 0.5 s per whole fade (`FUN_00855400`'s duration is 0.5 x the bytes left
-  / 255), in font 4 (`FUN_00ba5460(4)` in `FUN_0085a580`). Its colour and alignment were not read
-  (INFERRED: white, centred).
+  / 255). Round 848 (lane R), READ: `FUN_0085a580` sets font 4 (`FUN_00ba5460(4)`, 0x85a596) and then
+  the name through `FUN_008b3bd0` (0x85a5b4), which for any non-empty text sets font 0 again and the box
+  colour 0x40000000 -- so it draws in font 0 (12 px) on the world plates' box. Colour 0xffffffff and
+  style 0 from the item's constructor (`FUN_008b46d0`; no other call on +0x2dc). Drawn by
+  `FUN_008b4d90(point, alpha)` centred on the projected point (x - w/2, y - h/2, h 14); the box keeps
+  its 64 alpha while the glyphs fade, and nothing is drawn at alpha 0. `CharSelectNameLabel`.
 - **The idol panels** (vslot_012 case 7): top-left = the projection of the idol's bounding-box
   centre, turned by its yaw and moved to its position, less half the panel's width; x held at 5 or
   more. The lizard switches to clip 1 there (`(1, 0, 200, 0, 1.0, 1.0)`).

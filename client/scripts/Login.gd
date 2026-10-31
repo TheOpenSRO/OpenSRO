@@ -251,6 +251,21 @@ func _finish_ready() -> void:
 		password_edit.text = qa_legacy.substr(qa_legacy.find(":") + 1)
 		print("QA LEGACY: Connect to '%s' as %s" % [_selected.name, username_edit.text])
 		_on_login_pressed()
+	# OPENSRO_QA_SHOW_CAPTCHA=<s> (round 848 lane R, OURS, QA only): the
+	# image-code window shown that many seconds in, with a striped 200 x 64
+	# picture, as a legacy gateway's 0x2322 would -- for a frame of it
+	# without a legacy server.
+	var qa_captcha := OS.get_environment("OPENSRO_QA_SHOW_CAPTCHA")
+	if qa_captcha != "":
+		get_tree().create_timer(qa_captcha.to_float()).timeout.connect(func() -> void:
+			if not is_inside_tree():
+				return
+			var px := PackedByteArray()
+			px.resize(200 * 64)
+			for i in range(px.size()):
+				px[i] = 1 if ((i % 200) / 8) % 2 == 0 else 0
+			print("QA CAPTCHA: shown at frame %d" % Engine.get_frames_drawn())
+			_show_captcha(RetailCaptcha.encode(200, 64, px)))
 
 func _remembered_address() -> String:
 	var remembered := ClientSettings.server_address()
@@ -517,8 +532,13 @@ func _build_title_ui(custom_dir: String) -> void:
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status_label.add_theme_font_size_override("font_size", _font_size(msg_def.font_index if msg_def != null else 0))
 	status_label.add_theme_color_override("font_color", msg_def.font_color if msg_def != null else MESSAGE_COLOR)
-	status_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	status_label.add_theme_constant_override("outline_size", 3)
+	# Round 848 (lane R), READ: each message is a CIFTextBox line added by
+	# 0x8613b0 through 0x64fa10(text, 0, colour, 1) -> 0x64f9d0 -> 0x64f8a0,
+	# whose record keeps that 1 at +0x24; the line's text item takes it as
+	# its style (0x64e984..0x64e98c, FUN_008b4400(5, style)): bit 0, each
+	# glyph drawn first in black at (+1, +1) (0x8b48b0 -> 0x8b2290). A
+	# one-pixel shadow, no outline. Before: a black outline 3 (no source).
+	FrontEndUi.text_shadow(status_label)
 	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(status_label)
 	_show_cursor_hint()
