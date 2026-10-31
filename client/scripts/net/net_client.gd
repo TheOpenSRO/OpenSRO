@@ -136,7 +136,7 @@ signal durability_changed(slot: int, durability: int, was: int)
 ## bits of the character id (WorldNet.EntitySnapshot.character_id & 0xffffffff);
 ## `slot` the equip slot (EquipmentNet.SLOT_*); `plus` the effective plus
 ## (OptLevel + advanced elixir). World3D redresses the body from it
-## (_on_other_equipment_changed) and keeps the plus in _other_pluses.
+## (_on_other_equipment_changed) and keeps the plus in its look (_other_looks).
 ## `own_ref` (round 843, OURS): the item's own RefItemID when `ref_id` is the
 ## row a model switcher has it drawn as, else 0 (Broadcast.own_ref).
 signal other_player_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, own_ref: int)

@@ -239,7 +239,7 @@ static func encode_result(r: Result) -> PackedByteArray:
 ## when some listed item has an "own" -- u16 count, then per entry u8
 ## character index, u8 item index, u32 own RefItemID (server/internal/session
 ## lobby.go appendOwnTrailer). A retail client reads the records and stops
-## (READ, the list handler around 0x85f9c0).
+## (READ, the list handler FUN_0085f840).
 static func _encode_own_trailer(out: PackedByteArray, characters: Array) -> void:
 	var entries: Array = []
 	for ci in characters.size():

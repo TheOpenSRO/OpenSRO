@@ -675,10 +675,10 @@ func _leave_all(east_half: bool = false) -> void:
 		if east_half and (node as Node3D).position.x <= cut:
 			continue
 		var gait: Dictionary = world._other_gaits.get(id, {})
-		var args: Dictionary = world._other_build_args.get(id, {})
+		var look: CharacterLook = world._other_look(id)
 		_leave_kits.append([id, String((node as Node).get_meta("character_name", "")), (node as Node3D).position,
-			(world._other_equipped.get(id, args.get("equipped", {})) as Dictionary).duplicate(), String((node as Node).get_meta("body", "")),
-			int(gait.get("scale", args.get("scale", CharacterAppearance.DEFAULT_SCALE))), (world._other_pluses.get(id, {}) as Dictionary).duplicate(),
+			look.worn.duplicate(), String((node as Node).get_meta("body", "")),
+			int(gait.get("scale", look.scale)), look.pluses.duplicate(),
 			(node as Node3D).rotation.y])
 	var t0 := Time.get_ticks_usec()
 	# OPENSRO_QA_LINEUP_STEP_MS: handed over a frame's share at a time, as
@@ -1092,9 +1092,10 @@ func _rezone(off: bool) -> void:
 			if node == null or not is_instance_valid(node):
 				continue
 			var gait: Dictionary = world._other_gaits.get(id, {})
+			var look: CharacterLook = world._other_look(id)
 			_rezone_kits.append([id, String((node as Node).get_meta("character_name", "")), (node as Node3D).position,
-				(world._other_equipped.get(id, {}) as Dictionary).duplicate(), String((node as Node).get_meta("body", "")),
-				int(gait.get("scale", CharacterAppearance.DEFAULT_SCALE)), (world._other_pluses.get(id, {}) as Dictionary).duplicate()])
+				look.worn.duplicate(), String((node as Node).get_meta("body", "")),
+				int(gait.get("scale", CharacterAppearance.DEFAULT_SCALE)), look.pluses.duplicate()])
 		world._replace_others_for_arrival([], [])
 		var away := OS.get_environment("OPENSRO_QA_REZONE")
 		world._reload_zone_assets(away if away != "" else "hotan")
@@ -1129,8 +1130,9 @@ func _event_step(kind: String, delta: float, rate: float) -> void:
 		events += 1
 		match kind:
 			"churn":
-				var equipped: Dictionary = (world._other_equipped.get(id, {}) as Dictionary).duplicate()
-				var pluses: Dictionary = (world._other_pluses.get(id, {}) as Dictionary).duplicate()
+				var look: CharacterLook = world._other_look(id)
+				var equipped: Dictionary = look.worn.duplicate()
+				var pluses: Dictionary = look.pluses.duplicate()
 				var gait: Dictionary = world._other_gaits.get(id, {})
 				var body_code := String((node as Node).get_meta("body", ""))
 				var who := String((node as Node).get_meta("character_name", ""))
@@ -1145,10 +1147,10 @@ func _event_step(kind: String, delta: float, rate: float) -> void:
 				world._forget_other_kind(id)
 				world._redress_other(id)
 			"reglow":
-				var pl: Dictionary = (world._other_pluses.get(id, {}) as Dictionary).duplicate()
+				var pl: Dictionary = (world._other_look(id) as CharacterLook).pluses.duplicate()
 				for slot in pl.keys():
 					pl[slot] = 12 if int(pl[slot]) == 13 else 13
-				world._other_pluses[id] = pl
+				(world._other_look(id) as CharacterLook).pluses = pl
 				world._reglow_other(id, pl)
 
 func _switch(step: String, off: bool) -> void:

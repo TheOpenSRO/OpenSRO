@@ -90,13 +90,14 @@ func set_zone_light(diffuse_channel: Color, ambient_channel: Color) -> void:
 	_zone_light = [diffuse_channel, ambient_channel]
 	_lighter.set_zone_light(diffuse_channel, ambient_channel)
 
-## Shows the character for these choices. `restart` plays the stand clip from
-## its start (a model or weapon change); otherwise the clip runs on.
-func show_character(model_id: int, scale: int, items: Array, restart: bool) -> bool:
+## Shows the character for these choices (round 847: its look, the create
+## kit's CharCreateModel.preview_look). `restart` plays the stand clip from its
+## start (a model or weapon change); otherwise the clip runs on.
+func show_character(look: CharacterLook, restart: bool) -> bool:
 	if appearance == null:
 		return false
 	var t0 := Time.get_ticks_usec()
-	var next := appearance.build(model_id, scale, items)
+	var next := appearance.build_look(look)
 	var t1 := Time.get_ticks_usec()
 	if next == null:
 		return false

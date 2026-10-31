@@ -1,14 +1,14 @@
 extends RefCounted
 class_name CharacterAppearance
 
-## Builds a player character's body as the lobby list describes it: a model id
-## (any of the 52 Figures, China or Europe, man or woman), the scale byte
-## (Height and Volume), and the worn items with their plus. The character
-## select screen, the customize preview and later the world's bodies all use
-## it, so it knows nothing of World3D, Login or the screens.
+## Builds a player character's body from what it looks like (CharacterLook,
+## round 847): a model id (any of the 52 Figures, China or Europe, man or
+## woman), the scale byte (Height and Volume), and the worn items with their
+## plus. The character select screen, the customize preview and the world's
+## bodies all use it, so it knows nothing of World3D, Login or the screens.
 ##
 ##   var appearance := CharacterAppearance.from_archives(data_pk2, media_pk2)
-##   var body := appearance.build(1907, 0x22, [{"id": 3643, "plus": 0}, ...])
+##   var body := appearance.build_look(CharacterLook.from_lobby(record))
 ##   add_child(body)                                   # a Node3D
 ##   var idle := appearance.animation_for(body, BsrReader.AnimationEntry.TYPE_STAND)
 ##   body.pose(idle, seconds)                          # each frame, if wanted
@@ -625,8 +625,31 @@ static func item_models(model_path: String, type_ids: PackedInt32Array, woman: b
 
 # --- building -------------------------------------------------------------------
 
-## Builds the character. `items` is the lobby record's equipped items and
-## avatars, each {"id": RefItemID, "plus": u8} (a bare int is read as plus 0).
+## Round 847: builds `look` (CharacterLook), the one input every site that
+## draws a character hands this builder -- the select screen, the create
+## preview, the world's own body and the others', the doll, the portraits, the
+## previews. `ref` (>= 0) draws it on that body instead of the look's own (the
+## world resolves its body keys, with their fallback, itself); `drawable`
+## (an id -> bool Callable) leaves out the worn ids it refuses, with a log line
+## when `log_misses` (CharacterLook.items).
+func build_look(look: CharacterLook, ref: int = -1, drawable: Callable = Callable(), log_misses: bool = false) -> Body:
+	return build(ref if ref >= 0 else look.ref_obj_id, look.scale, look.items(drawable, log_misses))
+
+## The far recipe of `look` (far_recipe; round 756's crowd ghosts), on `ref`
+## when >= 0, without `drawable`'s refusals.
+func far_recipe_look(look: CharacterLook, ref: int = -1, drawable: Callable = Callable()) -> FarRecipe:
+	return far_recipe(ref if ref >= 0 else look.ref_obj_id, look.scale, look.items(drawable))
+
+## kind_ready for `look` (round 762: the crowd's template readiness, kept
+## under `kind`, CharacterLook.kind).
+func kind_ready_look(kind: String, look: CharacterLook, ref: int = -1, drawable: Callable = Callable()) -> bool:
+	return kind_ready(kind, ref if ref >= 0 else look.ref_obj_id, look.items(drawable))
+
+## Builds the character from its raw build list: `items`, each {"id":
+## RefItemID, "plus": u8, ["fx": the item's own RefItemID for a model
+## switcher's row]} (a bare int is read as plus 0). The sites that draw a
+## character call build_look (round 847: CharacterLook.items is the one place
+## the list is made); this stays for the probes and tests that feed a list.
 ## Returns null when the body cannot be assembled (no archive, an unknown id).
 func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Body:
 	var t0 := Time.get_ticks_usec()

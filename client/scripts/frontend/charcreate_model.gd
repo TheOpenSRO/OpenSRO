@@ -346,20 +346,25 @@ func request() -> Dictionary:
 ## beside a weapon whose refitem +0x250 is 0 (READ 0x80b440 case 4, which
 ## installs the shield into slot 7 then; INFERRED +0x250 is the TwoHanded
 ## column 93, which CharCatalog reads -- MEASURED 0 on the one-handed
-## weapons and 1 on the rest, bows and crossbows included).
-func preview_items() -> Array:
-	var out: Array = []
+## weapons and 1 on the rest, bows and crossbows included). Round 847: as a
+## look on the chosen body and scale (CharacterLook.from_ids), each at +0.
+func preview_look() -> CharacterLook:
+	var ids: Array = []
 	for id in armour_ids():
 		if id != 0:
-			out.append({"id": id, "plus": 0})
+			ids.append(id)
 	var w := weapon_entry()
 	if w != null:
-		out.append({"id": w.id, "plus": 0})
+		ids.append(w.id)
 		if not w.two_handed and catalog != null:
 			var sh := catalog.shield(race)
 			if sh != null:
-				out.append({"id": sh.id, "plus": 0})
-	return out
+				ids.append(sh.id)
+	return CharacterLook.from_ids(model_id(), scale_byte(), ids)
+
+## The preview's build list (preview_look's items).
+func preview_items() -> Array:
+	return preview_look().items()
 
 func is_woman() -> bool:
 	return sex == SEX_WOMAN

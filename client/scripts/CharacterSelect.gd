@@ -1584,10 +1584,7 @@ func _qa_body_luma(img: Image) -> void:
 		add_child(pv)
 		if zl is Array and (zl as Array).size() == 2:
 			pv.set_zone_light(zl[0], zl[1])
-		var items: Array = []
-		items.append_array(dd.record.items)
-		items.append_array(dd.record.avatars)
-		pv.show_character(dd.record.ref_obj_id, dd.record.scale, items, true)
+		pv.show_character(CharacterLook.from_lobby(dd.record), true)
 		pv.set_yaw(0.0)
 		pv.set_pose(CharCreateView.pose_for(false, pv.height_factor(), pv.body != null and pv.body.is_woman))
 		await _qa_frames(3)

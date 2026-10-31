@@ -645,7 +645,7 @@ func _measure() -> void:
 		# The server's other players (spec "none").
 		for id in world._other_gaits:
 			var gait: Dictionary = world._other_gaits[id]
-			var eq: Dictionary = world._other_equipped.get(id, {})
+			var eq: Dictionary = world._other_worn(int(id))
 			rows.append(["other:%s" % String(gait["body"]), int(id), int(gait.get("scale", 0)), int(eq.get(EquipmentNet.SLOT_WEAPON, 0)),
 				String(gait["group"]), gait["skeleton"], world._other_bodies.get(id)])
 	if world._player_skeleton != null:

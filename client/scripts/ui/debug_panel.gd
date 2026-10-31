@@ -307,7 +307,7 @@ func diagnostics() -> String:
 		var body: Node3D = _world._other_bodies[id]
 		var plate := body.get_node_or_null("Name") as Label3D
 		var gait: Dictionary = _world._other_gaits.get(id, {})
-		var worn: Dictionary = _world._other_equipped.get(id, {})
+		var worn: Dictionary = _world._other_worn(int(id))
 		lines.append("%s (id %d) %.0f away | %s, %s | worn %s" % [
 			plate.text if plate != null else "?", id, body.global_position.distance_to(p),
 			str(gait.get("gender", "?")), str(gait.get("group", "?")), str(worn)])

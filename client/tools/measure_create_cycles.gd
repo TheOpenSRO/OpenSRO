@@ -59,14 +59,14 @@ func _swaps(data: Pk2Reader, media: Pk2Reader, race: int) -> void:
 			for f in range(1, m.slider_range(C.FIGURE).y + 1):
 				m.set_value(C.FIGURE, f)
 				var t0 := Time.get_ticks_usec()
-				p.show_character(m.model_id(), m.scale_byte(), m.preview_items(), true)
+				p.show_character(m.preview_look(), true)
 				figure_us.append(Time.get_ticks_usec() - t0)
 			for w in range(1, m.slider_range(C.WEAPON).y + 1):
 				m.set_value(C.WEAPON, w)
 				for pr in range(m.slider_range(C.PROTECTOR).x, m.slider_range(C.PROTECTOR).y + 1):
 					m.set_value(C.PROTECTOR, pr)
 					var t0 := Time.get_ticks_usec()
-					p.show_character(m.model_id(), m.scale_byte(), m.preview_items(), false)
+					p.show_character(m.preview_look(), false)
 					item_us.append(Time.get_ticks_usec() - t0)
 			for h in range(5):
 				var t0 := Time.get_ticks_usec()
@@ -158,7 +158,7 @@ func _run() -> void:
 				p.appearance = a
 				p.size = Vector2i(320, 240)
 				root.add_child(p)
-				p.show_character(m.model_id(), m.scale_byte(), m.preview_items(), true)
+				p.show_character(m.preview_look(), true)
 				await _wait(30)
 				p.release()
 				p.queue_free()
