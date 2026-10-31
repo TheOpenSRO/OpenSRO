@@ -167,10 +167,15 @@ func set_characters(records: Array, plan: Array) -> void:
 		d.holder.position = p["pos"]
 		d.holder.rotation.y = NavGraph.godot_yaw(float(p["yaw"]))
 		root.add_child(d.holder)
-		var items: Array = []
-		items.append_array(r.items)
-		items.append_array(r.avatars)
-		d.body = appearance.build(r.ref_obj_id, r.scale, items)
+		# Round 847: the record's look (CharacterLook.from_lobby): its worn
+		# items as the world draws them -- a model switcher's row with the
+		# item's own glow and seal (the list's own-id trailer) -- and its
+		# avatars, each slot with its plus (READ FUN_0085a580 ->
+		# InstallEquipVisual(slot, id, plus, 0), whose resource callback
+		# FUN_00a60a90 draws the glow and the seal, FUN_00a5f3e0).
+		var look := CharacterLook.from_lobby(r)
+		d.body = appearance.build_look(look)
+		print("CharSelectStage: %s -- %s" % [r.char_name, look.describe()])
 		if d.body != null:
 			d.holder.add_child(d.body)
 			_dress(d.body)

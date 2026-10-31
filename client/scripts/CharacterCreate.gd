@@ -635,7 +635,7 @@ func _apply_sex_art() -> void:
 
 func _rebuild(restart: bool) -> void:
 	var t0 := Time.get_ticks_usec()
-	var ok := _preview.show_character(_model.model_id(), _model.scale_byte(), _model.preview_items(), restart)
+	var ok := _preview.show_character(_model.preview_look(), restart)
 	var total := Time.get_ticks_usec() - t0
 	print("CREATE SWAP: %s in %d us (build %d us, materials %d us)%s" % [
 		_describe(), total, _preview.last_build_usec, _preview.last_material_usec, "" if ok else " -- NOT BUILT"])

@@ -425,7 +425,8 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	builds.pump(Engine.get_process_frames() + 1000, Vector3.ZERO, world.get("_other_bodies"), func(id: int) -> void: first.append(id), Callable(), world.get("_ghost_ids"))
 	builds.budget_usec = OtherCrowd.BUILD_BUDGET_USEC
 	_check(first == [603], "... and is the next dressed (%s)" % str(first))
-	(world.get("_other_build_args") as Dictionary)[603] = {"equipped": kit, "scale": CharacterAppearance.DEFAULT_SCALE}
+	(world.get("_other_build_args") as Dictionary)[603] = {}
+	(world.call("_other_look", 603) as CharacterLook).worn = kit
 	builds.queue(603)
 	world.call("_dress_ghost_now", 603)
 	var g603: Dictionary = gaits.get(603, {})
@@ -479,7 +480,7 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	_check(b605.mats == mats_before and groups_after == groups_before and is_equal_approx(b605.objc, want_objc)
 		and is_equal_approx(crowd._body_data[b605.slot * CrowdGpu.FLOATS_PER_BODY + 16], want_objc),
 		"its light is its texel (%.4f), its materials and groups unchanged" % b605.objc)
-	(world.get("_other_equipped") as Dictionary)[605] = {EquipmentNet.SLOT_WEAPON: 5004}
+	(world.call("_other_look", 605) as CharacterLook).worn = {EquipmentNet.SLOT_WEAPON: 5004}
 	world.call("_redress_other", 605)
 	world.call("_ghost_other", 605)
 	var b605b: CrowdGpu.Body = crowd.body_of(n605)

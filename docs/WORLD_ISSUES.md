@@ -7549,6 +7549,124 @@ perf (`--base f2a20b92 --head d915f9a5 --sites jangan --frames 24000`, median of
 (Two earlier gate attempts returned an empty run line: their long ssh calls lost the shared
 control master. The gate was rerun with ssh unmultiplexed.)
 
+## Eight-hundred-and-forty-seventh round, lane A: the select screen draws a model switcher's model, and one CharacterLook for every body
+
+The user: "another bug to fix: the character selection doesn't reflect model changers. Make sure it
+shows what it's supposed to show from now on. Shouldn't there be a class or something that is
+basically the visual rep of the character and things can call it so we're not changing it in 30
+places?" Labels: READ (`sro_client.exe`, `/var/tmp/decomp_client`), MEASURED, INFERRED, OURS, OPEN.
+The reading, the model and the census of sites are `docs/protocol/character_look.md`; the switcher's
+side is `docs/protocol/item_switchers.md` 3b.
+
+**What retail's select screen draws (READ).**
+- The 0xB007 list handler (`FUN_0085f840`) reads a count and the records (`FUN_0085e620`) and dresses
+  each model (`PSCharacterSelect::FUN_0085a580`); nothing is read after the last record.
+- Per worn item the record carries a u32 RefItemID and a u8 plus (at most 9: equip slots 0..8, the job
+  suit's slot 8 among them); per avatar a u32 RefItemID and a byte the client discards (at most 5).
+- Each item is installed with `InstallEquipVisual(vslot, id, plus, 0)` (0xa61010), which keeps the plus
+  beside the slot; when the item's resource has loaded, `FUN_00a60a90` calls `FUN_00a5f3e0` with both:
+  the glow row and the seal's and +8 sparkle's particles, the world's path. **So the select screen draws
+  the glow and the seal** (`charselect.md` had it INFERRED). The job suit is installed into vslot 8 like
+  any item (no job-state test). Only 3/1/13 avatars are attached (`FUN_00a60ef0`, no plus); a devil's
+  spirit is not. The scale byte goes through `FUN_00a5b960`, as in the world.
+
+**The cause (MEASURED).** OpenSRO's list builder (`lobbyhandler.go` `record`) named each worn item's own
+row, so a switched item was drawn as its original model, where the world, the doll and the previews
+drew the model (rounds 838 and 843). The record has no room for the own id.
+
+**The fix (OURS).**
+- The record names the drawn row (`displayRef`), as the spawn record and 0x3038 do.
+- The list carries the own ids in a trailer after the last record, only when some item is switched:
+  u16 count, then per entry u8 character index, u8 item index, u32 own RefItemID
+  (`LobbyResult.appendOwnTrailer`, `LobbyNet._decode_own_trailer`) -- round 843's 0x3038 `Own` for the
+  list. A retail client stops after the records.
+- The select screen builds the record's look (`CharacterLook.from_lobby`): the twin's mesh, the plain
+  twin's glow type, the unlocked item's own seal and sparkle.
+
+**One CharacterLook for every body (OURS).** `client/scripts/ui/character_look.gd`: a plain value with
+the body (ref, gender, race, body key), the scale byte, and per key the drawn RefItemID, the plus and a
+model switcher's own id; the avatars under their keys; the job suit in slot 8. One builder per source
+(`from_lobby`, `from_spawn` / `spawned`, `from_equipment`, `apply_broadcast`, `from_ids`, `bare`) and the
+one place the build list (`items`) and the crowd kind (`kind`) are made. CharacterAppearance consumes it
+(`build_look`, `far_recipe_look`, `kind_ready_look`). Every site of the census goes through it: the
+select screen, the create preview, the own body, the doll, the HUD portrait, the mall and skin
+previews, the exchange and party portraits, other players near and in the crowd, their spawns and
+0x3038 / 0x3039, NPC thieves, the QA probes. Gone from World3D: `_wear_item`, `_display_equipped`,
+`_player_fx`, `_player_pluses`, `_with_player_avatars`, `_equipment_models`, `_other_build_spec`,
+`avatar_broadcast_into` and the maps `_other_equipped`, `_other_pluses`, `_other_fx`,
+`_player_pluses_last`. MEASURED by the census: a mount and a weapon swap are no input of the body's
+build (a rider is seated without a rebuild; a swap is slots 6 and 7 changing).
+
+**Behaviour kept, but for two changes.** (1) The select screen (the fix). (2) The exchange window's
+partner portrait, for a partner not dressed yet (a crowd ghost or still queued), is dressed from its
+look with its pluses and switched items' own ids, as its body will be; before, from the spawn's items
+alone, without glow (OURS consistency).
+
+**Live and offline QA (render box, lane server 17120 in memory, real input through OPENSRO_QA_INPUT;
+scripts and evidence in `/var/tmp/r847a/keep`).** Both builds ran the same script (`run847*.sh`): base
+`f2a20b92` in `/opt/opensro-client-r847a-base`, head in `/opt/opensro-client-r847a`, the game clock
+pinned at noon and the title hour at 1 (`OPENSRO_QA_CLOCK`, `OPENSRO_QA_TITLE_HOUR`) so the light is the
+same. The actor got the +12 unlocked Seal of Nova sword 62605 and shield 62610, used model switchers 05 and
+13 on them with real clicks (right-click the tool, click the item, the box's OK), wore both, opened the
+inventory (doll), the item mall (preview, the wedding dress tried on, Original), the skin change scroll's
+window, and relogged through Login to the select screen (held 8 s); a watcher saw the actor; a bot
+exchanged with it.
+
+- **The select screen (the fix, MEASURED).** Base: the record names 62605 / 62610, the screen draws the
+  original Nova sword and shield with their glow. Head: `CharSelectStage: QaA847 -- body 1909 scale 0x22
+  worn { ..., 3: 62081, 4: 62207 } pluses { 3: 12, 4: 12 } own { 3: 62605, 4: 62610 }`, the degree-5 sword
+  and the degree-13 shield, glowing, with the Nova seal's effects -- what the world, the doll and the mall
+  preview draw. Frames `select_before_after_f500.png`, `select_zoom_before_after_f750.png`.
+- **Every other site draws what it drew.** Each pair is compared against the base's own run-to-run
+  spread (a second base run, `base5`), as mean absolute difference / share of pixels off by more than 8:
+
+  | Site | base vs head | base vs base |
+  |---|---|---|
+  | Select screen, 5 fake records at +12 (offline), whole frame | 0.03-0.04 / 0.000 (max 3) | 0.01-0.05 / 0.000 (max 3) |
+  | Create preview, 3 states, the character | 5.0, 5.5, 12.2 / 0.10, 0.17, 0.29 | 5.8, 5.4, 11.6 / 0.11, 0.16, 0.28 |
+  | World lineup (own body, 60 others near and as crowd ghosts), whole frame | 0.82-1.31 / 0.028-0.045 | 0.85-1.08 / 0.030-0.040 |
+  | Equipment doll in the lineup run | 3.0-7.8 / 0.11-0.24 | 3.4-7.1 / 0.13-0.24 |
+  | HUD player portrait (lineup run) | 0.000 (identical) | -- |
+  | HUD portrait, doll, mall preview, skin preview (live) | portrait 0.07; doll 4.6-5.5; mall 6.9; skin 9.1 | (particles, see below) |
+  | Exchange portraits (live, the bot's ask accepted 100 ticks apart, frames aligned on it) | partner 0.06-0.10 / 0.002-0.004; own 0.64-0.67 / 0.011 (the sword tip's glow) | |
+  | The switched actor seen by a watcher (live; a crowd ghost at the frame's edge, 0x3038 own ids heard alike), whole frame / the actor | 0.15-0.60 / 0.006-0.014; actor 1.4-1.9 / 0.025-0.055 | |
+
+  The differences left are the seal's and the sparkle's particles (seeded at random per effect,
+  `EfpSim._init`) and the idle clip's phase; the diff images show them on the effects only.
+- **The bodies built are the same, to the byte.** Every `_build_assembled_character` line (`wears d/n
+  item(s) ... glow: <code> with <glow code>'s glow type and <fx code>'s effects +p`), the create preview's
+  `CREATE SWAP` lines and the lineup's lines, counted per run: identical between base and head in the
+  lineup, select, create, own and relog runs.
+- **A finding on the way (MEASURED).** The first head runs drew the select screen's +12 sparkles a few
+  frames out of phase, and loading World3D.gd took 83.1 MB of static memory against the base's 70.8 MB:
+  CharacterLook named CharacterAppearance's constants while CharacterAppearance names CharacterLook, and
+  the reference cycle made every script naming both cost more to load. The constants now live in the look
+  (the builder's are aliases); 70.8 MB again, and the select screen pixel-identical to the base.
+
+**Gates.** `cd server && go test ./...`: pass (`lobby847_test.go`: the switched sword listed as its model
+with its own id in the trailer, NEGATIVE before; a list without a switch has no trailer; the golden
+vectors). `remote_godot.sh check`: ALL LOAD (1073 scripts). `remote_godot.sh tests`: "ran 403 suite(s),
+0 failing" (`character_look847_test.gd` new: a look from each source, the build list and crowd kind as
+the old code made them, the select screen with a switched item and its NEGATIVE, the guard).
+The perf gate, `perf_gate.sh --base f2a20b92 --head c924f503 --sites jangan --frames 24000` (the
+crowd's per-frame path is untouched: a look is made at a spawn, a broadcast or a dress, never a frame):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.86 | 0.87 | SAME |
+| entry ms | 10211 | 10111 | SAME |
+| freeze ms | 2775.5 | 2762 | SAME |
+| hitches | 5 | 5 | SAME |
+
+**A process note.** Twice this lane stopped its own box runs with `pgrep -f "[r]un847.sh"`, a pattern
+lane B's `/var/tmp/r847b/run847.sh` matched too: it killed lane B's run script mid-run. Kills are by PID
+after checking the process's working directory (`/var/tmp/r847a`) from then on.
+
+**OPEN.**
+- Whether retail's ShardManager writes the avatar's OptLevel into the record's discarded byte (no
+  effect on the drawing).
+- The Nova seal's scale on another model (round 843).
+
 ## Eight-hundred-and-forty-sixth round, lane M: every step another player takes, walked
 
 The user: "if I take small steps it doesn't register on another client. It only registers when I take

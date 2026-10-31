@@ -129,6 +129,12 @@ func DecodeLobbyRequest(data []byte) (*LobbyRequest, error) {
 type LobbyItem struct {
 	RefItemID uint32
 	Plus      uint8
+	// Own is the worn item's own RefItemID when RefItemID is the row a model
+	// switcher has it drawn as (round 847, OURS: displayRef, switchedOwn --
+	// 0x3038's Own of round 843), else 0. It rides the list's own-id
+	// trailer (LobbyResult.Encode), never the record: the record is
+	// retail's bytes.
+	Own uint32
 }
 
 // LobbyCharacter is one record of the list (READ: the server's builder and
@@ -272,8 +278,68 @@ func (r *LobbyResult) Encode() []byte {
 		for i := range r.Characters {
 			out = r.Characters[i].encode(out)
 		}
+		out = r.appendOwnTrailer(out)
 	}
 	return out
+}
+
+// appendOwnTrailer writes the list's own-id trailer (round 847, OURS): after
+// the last record, written only when some listed item has an Own -- a u16
+// count, then per entry a u8 character index (the list's order), a u8 item
+// index (that record's item list) and the u32 own RefItemID. The record names
+// the model's row, as the spawn record and 0x3038 do (displayRef); the
+// trailer is what 0x3038's Own is to an observer, the item's own id, whose
+// glow and seal the model keeps (docs/protocol/item_switchers.md 3a). A
+// retail client reads the count and that many records and stops (READ, the
+// list handler FUN_0085f840: FUN_0085e620 then FUN_0085a580 per record,
+// nothing after), so it never sees the trailer.
+func (r *LobbyResult) appendOwnTrailer(out []byte) []byte {
+	type entry struct {
+		char, item uint8
+		own        uint32
+	}
+	var entries []entry
+	for ci := range r.Characters {
+		items := r.Characters[ci].Items
+		for ii := range items {
+			if ii >= LobbyMaxItems {
+				break
+			}
+			if items[ii].Own != 0 && items[ii].Own != items[ii].RefItemID {
+				entries = append(entries, entry{uint8(ci), uint8(ii), items[ii].Own})
+			}
+		}
+	}
+	if len(entries) == 0 {
+		return out
+	}
+	out = binary.LittleEndian.AppendUint16(out, uint16(len(entries)))
+	for _, e := range entries {
+		out = append(out, e.char, e.item)
+		out = binary.LittleEndian.AppendUint32(out, e.own)
+	}
+	return out
+}
+
+// readOwnTrailer reads appendOwnTrailer's block when bytes follow the list
+// (none: a retail server's list, or one without a switched item). An entry
+// naming no listed item is an error.
+func (r *LobbyResult) readOwnTrailer(rd *lobbyReader) {
+	if rd.err != nil || len(rd.b) == 0 {
+		return
+	}
+	n := int(rd.u16())
+	for i := 0; i < n && rd.err == nil; i++ {
+		ci, ii, own := int(rd.u8()), int(rd.u8()), rd.u32()
+		if rd.err != nil {
+			break
+		}
+		if ci >= len(r.Characters) || ii >= len(r.Characters[ci].Items) {
+			rd.err = fmt.Errorf("own-id trailer entry %d names character %d item %d, not listed", i, ci, ii)
+			break
+		}
+		r.Characters[ci].Items[ii].Own = own
+	}
 }
 
 // DecodeLobbyResult reads a 0xB007 payload.
@@ -288,6 +354,7 @@ func DecodeLobbyResult(data []byte) (*LobbyResult, error) {
 			for i := 0; i < n && rd.err == nil; i++ {
 				r.Characters = append(r.Characters, decodeLobbyCharacter(&rd))
 			}
+			r.readOwnTrailer(&rd)
 		}
 	case lobbyResultFail:
 		r.Code = rd.u16()

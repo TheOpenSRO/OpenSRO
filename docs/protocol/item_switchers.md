@@ -200,15 +200,44 @@ the 0x3038 name the model's row (round 838); OpenSRO's server adds, OURS:
   item (`look.switched`, `switchedWornFrames`, among the spawn's state frames), since the
   retail record has no room for it.
 
-The client keeps them per player and slot (`World3D._other_fx`), clears a slot on a 0x3039 or a
-plain 0x3038, and redraws the body when one changes; the crowd's far recipes and kinds carry it
-too (the item dict's `"fx"`). Tests: `switcher843_test.go`, `item_switch_glow843_test.gd`.
+The client keeps them per player and slot (`World3D._other_fx`; from round 847 the player's
+`CharacterLook.own`), clears a slot on a 0x3039 or a plain 0x3038, and redraws the body when one
+changes; the crowd's far recipes and kinds carry it too (the item dict's `"fx"`). Tests:
+`switcher843_test.go`, `item_switch_glow843_test.gd`.
+
+### 3b. The select screen (round 847)
+
+The user: "the character selection doesn't reflect model changers. Make sure it shows what it's
+supposed to show from now on."
+
+**What the original's select screen draws (READ, `character_look.md` section 1).** The 0xB007
+record carries per worn item a u32 RefItemID and a u8 plus (at most 9, the job suit's slot 8
+among them), and `FUN_0085a580` installs each with `InstallEquipVisual(vslot, id, plus, 0)`,
+whose loaded resource gets the glow and the seal's effects from that id and plus
+(`FUN_00a60a90` -> `FUN_00a5f3e0`), as in the world; avatars (3/1/13) are attached on top.
+So the select screen shows whatever row the record names, glowing as that row glows. The record
+has no room for an item's own id.
+
+**The cause (MEASURED in code).** OpenSRO's list builder (`lobbyhandler.go` `record`) named each
+worn item's own row (`w.ItemID`): a switched item was drawn as its original model, where the
+world, the doll and the previews drew the model (rounds 838 and 843).
+
+**The fix (OURS).**
+- The record names the drawn row (`displayRef`), as the spawn record and 0x3038 do.
+- The list carries the own ids in a **trailer after the last record**, written only when some
+  item is switched: u16 count, then per entry u8 character index, u8 item index, u32 own
+  RefItemID (`LobbyResult.appendOwnTrailer`, `LobbyNet._decode_own_trailer`; golden vectors on
+  both sides). It is the 0x3038 `Own` of 3a for the list. A retail client reads the records and
+  stops (READ, `FUN_0085f840`).
+- The select screen builds the record's look (`CharacterLook.from_lobby`, `character_look.md`):
+  the twin's mesh, the plain twin's glow type, the unlocked item's own seal and sparkle at its
+  plus, as the world draws it.
 
 ## 4. Not done here
 
 - The other private-server 3/3/13/8 rows (not sold): `ITEM_MODELSWITCHER_*`, `*_UNLOCK`,
   `ITEM_UPGRADESTONE_*`, the shield type switchers -- refused as before.
 - The exchange and stall show an item's own description, not its model's.
-- The character select screen (0xB007's item list, retail's) draws the item's own row, not its
-  model (round 843, OPEN).
+- ~~The character select screen draws the item's own row, not its model~~ (round 843's OPEN):
+  closed in round 847 (3b).
 - The Nova seal's scale on another model (3a): the archive has no Nova row for the twins (OPEN).

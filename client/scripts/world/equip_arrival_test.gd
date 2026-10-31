@@ -30,7 +30,7 @@ func _test_arrival_list() -> void:
 	world.set("_arrival_pending", true)
 	world.call("_on_other_equipment_changed", 5, 6, 3727, 13)
 	_check(snap.equipped.size() == 3 and int(snap.pluses.get(6, 0)) == 13, "arrival: the weapon at +13, the other slots kept (%s %s)" % [str(snap.equipped), str(snap.pluses)])
-	_check(not (world.get("_other_equipped") as Dictionary).has(5), "arrival: _other_equipped untouched")
+	_check(not (world.get("_other_looks") as Dictionary).has(5) or (world.call("_other_worn", 5) as Dictionary).is_empty(), "arrival: the drawn look untouched")
 	world.call("_on_other_equipment_changed", 5, 7, 3850, -1)
 	_check(not snap.equipped.has(7) and snap.equipped.has(1) and snap.equipped.has(6), "arrival: a 0x3039 takes only its slot")
 	# A uid nobody holds yet, during the load: kept, then replayed.
@@ -64,21 +64,22 @@ func _test_plus_only() -> void:
 	# As _spawn_or_update_other registers a body's uid (round 739, B7).
 	world.get("_other_uids").add(5)
 	(world.get("_other_gaits") as Dictionary)[5] = {"skeleton": skel, "body": "", "scale": CharacterAppearance.DEFAULT_SCALE}
-	(world.get("_other_equipped") as Dictionary)[5] = {1: 4842, 6: 3727}
-	(world.get("_other_pluses") as Dictionary)[5] = {6: 7}
+	var look: CharacterLook = world.call("_other_look", 5)
+	look.worn = {1: 4842, 6: 3727}
+	look.pluses = {6: 7}
 	world.call("_on_other_equipment_changed", 5, 6, 3727, 13)
 	var gait: Dictionary = (world.get("_other_gaits") as Dictionary)[5]
 	_check(gait.get("skeleton") == skel and is_instance_valid(skel) and not skel.is_queued_for_deletion(), "plus only: the body is kept, not rebuilt")
 	_check(int((wears[0] as Dictionary)["plus"]) == 13 and (skel.get_meta("glow_pluses") as Dictionary) == {6: 13},
 		"plus only: the glow is redrawn at +13 (reglow) and the body marked with it")
-	_check(int(((world.get("_other_pluses") as Dictionary)[5] as Dictionary).get(6, 0)) == 13, "plus only: _other_pluses at +13")
+	_check(int(look.pluses.get(6, 0)) == 13, "plus only: the look's plus at +13")
 	# Another item in the slot: the body is rebuilt (_redress_other; with no
 	# archives it builds nothing, so the old body stays with its mark).
 	world.call("_on_other_equipment_changed", 5, 6, 3728, 13)
-	_check(int((wears[0] as Dictionary)["plus"]) == 13 and int(((world.get("_other_equipped") as Dictionary)[5] as Dictionary)[6]) == 3728,
+	_check(int((wears[0] as Dictionary)["plus"]) == 13 and look.item_at(6) == 3728,
 		"another item: no reglow, the slot's item changed for the rebuild")
 	world.call("_on_other_equipment_changed", 5, 6, 3728, 0)
-	_check(int((wears[0] as Dictionary)["plus"]) == 0 and not ((world.get("_other_pluses") as Dictionary)[5] as Dictionary).has(6),
+	_check(int((wears[0] as Dictionary)["plus"]) == 0 and not look.pluses.has(6),
 		"plus only, to +0: the glow taken off on the standing body")
 	node.free()
 	world.free()

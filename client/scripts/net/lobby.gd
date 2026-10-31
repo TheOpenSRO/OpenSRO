@@ -84,7 +84,11 @@ class Character:
 	var guild_rename: bool = false
 	var guild_name: String = ""
 	var academy_class: int = 0
-	var items: Array = []    # of {"id": int, "plus": int}
+	## Of {"id": int, "plus": int}, and "own": int when a model switcher has
+	## the item drawn as the row "id" names (round 847, OURS: the list's
+	## own-id trailer, decode_result; the item's own RefItemID, whose glow
+	## and seal the model keeps -- 0x3038's Own of round 843).
+	var items: Array = []
 	var avatars: Array = []  # of {"id": int, "plus": int}
 
 	## The HP and MP gauges' maxima as the retail select screen draws them:
@@ -228,7 +232,47 @@ static func encode_result(r: Result) -> PackedByteArray:
 		_u8(out, r.characters.size())
 		for c in r.characters:
 			_encode_character(out, c)
+		_encode_own_trailer(out, r.characters)
 	return out
+
+## Round 847 (OURS): the list's own-id trailer, after the last record and only
+## when some listed item has an "own" -- u16 count, then per entry u8
+## character index, u8 item index, u32 own RefItemID (server/internal/session
+## lobby.go appendOwnTrailer). A retail client reads the records and stops
+## (READ, the list handler FUN_0085f840).
+static func _encode_own_trailer(out: PackedByteArray, characters: Array) -> void:
+	var entries: Array = []
+	for ci in characters.size():
+		var c: Character = characters[ci]
+		var items: Array = c.items.slice(0, MAX_ITEMS)
+		for ii in items.size():
+			var own := int((items[ii] as Dictionary).get("own", 0))
+			if own != 0 and own != int(items[ii]["id"]):
+				entries.append([ci, ii, own])
+	if entries.is_empty():
+		return
+	_u16(out, entries.size())
+	for e in entries:
+		_u8(out, int(e[0]))
+		_u8(out, int(e[1]))
+		_u32(out, int(e[2]))
+
+## Reads _encode_own_trailer's block when bytes follow the list; an entry
+## naming no listed item is an error.
+static func _decode_own_trailer(rd: Reader, characters: Array) -> void:
+	if rd.error != "" or rd.pos >= rd.data.size():
+		return
+	var n := rd.u16()
+	for i in range(n):
+		var ci := rd.u8()
+		var ii := rd.u8()
+		var own := rd.u32()
+		if rd.error != "":
+			return
+		if ci >= characters.size() or ii >= (characters[ci] as Character).items.size():
+			rd.error = "own-id trailer entry %d names character %d item %d, not listed" % [i, ci, ii]
+			return
+		(characters[ci] as Character).items[ii]["own"] = own
 
 static func _encode_character(out: PackedByteArray, c: Character) -> void:
 	_u32(out, c.ref_obj_id)
@@ -397,6 +441,7 @@ static func decode_result(data: PackedByteArray) -> Result:
 				if rd.error != "":
 					break
 				r.characters.append(_decode_character(rd))
+			_decode_own_trailer(rd, r.characters)
 	elif res == RESULT_FAIL:
 		r.code = rd.u16()
 	elif rd.error == "":

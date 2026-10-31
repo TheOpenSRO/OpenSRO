@@ -299,7 +299,14 @@ So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guar
   are drawn from the model path's `_l.bsr` and `_r.bsr` (the plain `axe_01.bsr` does not exist,
   MEASURED); TypeID4 14 (harp) on a body whose vslot 0x34 is set from `_f.bsr`. The create screen's
   loader (0x80b980) preloads the `_r.bsr` of the same two weapons.
-- INFERRED: plus drives the weapon glow, as in the world.
+- **The glow and the seal effects are drawn (READ, round 847):** `InstallEquipVisual` stores the
+  plus beside the slot's RefItemID (`this + (vslot * 3 + 0xf) * 4`), and when the item's resource
+  has loaded `FUN_00a60a90` calls `FUN_00a5f3e0` with both for the weapon and shield attachments:
+  the glow row and the seal's and +8 sparkle's particles, the world's path
+  (`character_look.md` section 1). Was INFERRED.
+- Round 847 (OURS): a model switcher's item is listed as its model's row with the item's own id
+  in the list's trailer (`item_switchers.md` 3b); the screen builds each record's
+  `CharacterLook`.
 
 ### Start (READ, 0x858770)
 

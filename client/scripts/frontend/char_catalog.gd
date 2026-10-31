@@ -402,23 +402,23 @@ func defaults(race: int, sex: int = SEX_MAN, protector_required: bool = false) -
 ## A creatable kit for previews and lineups (OURS: the first weapon and the
 ## first armour set it allows, plus the race's shield beside a one-handed
 ## weapon as the server adds it, READ section 5). Items as
-## CharacterAppearance.build takes them.
+## CharacterAppearance.build takes them (round 847: CharacterLook.from_ids's).
 func sample_kit(race: int, sex: int, weapon_index: int = 0, set_index: int = 0) -> Array:
 	var ws := weapons(race, sex)
 	if ws.is_empty():
 		return []
 	var weapon: Entry = ws[clampi(weapon_index, 0, ws.size() - 1)]
 	var sets := armour_sets(race, sex, weapon.id)
-	var kit: Array = []
+	var ids: Array = []
 	if not sets.is_empty():
 		for id in sets[clampi(set_index, 0, sets.size() - 1)].ids():
 			if id != 0:
-				kit.append({"id": id, "plus": 0})
-	kit.append({"id": weapon.id, "plus": 0})
+				ids.append(id)
+	ids.append(weapon.id)
 	var sh := shield(race)
 	if sh != null and not weapon.two_handed and weapon.type_id(4) != 6 and weapon.type_id(4) != 12:
-		kit.append({"id": sh.id, "plus": 0})
-	return kit
+		ids.append(sh.id)
+	return CharacterLook.from_ids(0, CharacterAppearance.DEFAULT_SCALE, ids).items()
 
 static func _first_id(s: ArmourSet) -> int:
 	for e in [s.chest, s.legs, s.feet]:

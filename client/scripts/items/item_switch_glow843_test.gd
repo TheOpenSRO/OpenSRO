@@ -142,10 +142,16 @@ func _test_glow_on_the_model() -> void:
 	node.free()
 
 func _test_wear_item() -> void:
-	var world_script := load("res://scripts/World3D.gd") as GDScript
-	var item: Dictionary = world_script.call("_wear_item", ID_TWIN, 6, {6: 12}, {6: ID_UNLOCKED})
-	_check(item == {"id": ID_TWIN, "plus": 12, "fx": ID_UNLOCKED}, "World3D._wear_item: the own id rides as fx (%s)" % str(item))
-	var plain: Dictionary = world_script.call("_wear_item", ID_UNLOCKED, 6, {6: 12}, {})
+	# Round 847: the item dict is CharacterLook.items' (was World3D._wear_item).
+	var look := CharacterLook.new()
+	look.worn = {6: ID_TWIN}
+	look.pluses = {6: 12}
+	look.own = {6: ID_UNLOCKED}
+	var item: Dictionary = look.items()[0]
+	_check(item == {"id": ID_TWIN, "plus": 12, "fx": ID_UNLOCKED}, "CharacterLook.items: the own id rides as fx (%s)" % str(item))
+	look.worn = {6: ID_UNLOCKED}
+	look.own = {}
+	var plain: Dictionary = look.items()[0]
 	_check(plain == {"id": ID_UNLOCKED, "plus": 12}, "no model: the item dict is what it was (%s)" % str(plain))
 
 func _test_broadcast_trailer() -> void:
@@ -171,17 +177,18 @@ func _test_observer_fx() -> void:
 	(world.get("_other_bodies") as Dictionary)[5] = node
 	world.get("_other_uids").add(5)
 	(world.get("_other_gaits") as Dictionary)[5] = {"skeleton": skel, "body": "", "scale": CharacterAppearance.DEFAULT_SCALE}
-	(world.get("_other_equipped") as Dictionary)[5] = {6: ID_TWIN}
-	(world.get("_other_pluses") as Dictionary)[5] = {6: 12}
+	var look: CharacterLook = world.call("_other_look", 5)
+	look.worn = {6: ID_TWIN}
+	look.pluses = {6: 12}
 	# The spawn's after frame: the same row and plus, the own id after them.
 	world.call("_on_other_equipment_changed", 5, 6, ID_TWIN, 12, ID_UNLOCKED)
-	_check(((world.get("_other_fx") as Dictionary).get(5, {}) as Dictionary) == {6: ID_UNLOCKED}, "the own id is kept for the slot")
+	_check(look.own == {6: ID_UNLOCKED}, "the own id is kept for the slot")
 	# A plain 0x3038 for the slot (another item, or the Default switcher and a
 	# re-equip): the own id goes.
 	world.call("_on_other_equipment_changed", 5, 6, ID_UNLOCKED, 12, 0)
-	_check(not (world.get("_other_fx") as Dictionary).has(5), "a plain 0x3038 clears it")
+	_check(look.own.is_empty(), "a plain 0x3038 clears it")
 	world.call("_on_other_equipment_changed", 5, 6, ID_TWIN, 12, ID_UNLOCKED)
 	world.call("_on_other_equipment_changed", 5, 6, ID_TWIN, -1, 0)
-	_check(not (world.get("_other_fx") as Dictionary).has(5), "a 0x3039 clears it")
+	_check(look.own.is_empty(), "a 0x3039 clears it")
 	node.free()
 	world.free()

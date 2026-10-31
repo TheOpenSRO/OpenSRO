@@ -163,30 +163,19 @@ func build_body(avatars: Array) -> Dictionary:
 		return {}
 	var body := String(world.get("_player_body"))
 	# Round 843: the worn items as the world and the equipment window draw
-	# them -- a model switcher's choice as its row (World3D._display_equipped),
-	# with the item's own glow and seal where that row has none (_player_fx).
-	var equipped: Dictionary = (world.call("_display_equipped", (world.get("_player_equipped_last") as Dictionary).duplicate()) as Dictionary).duplicate()
-	for key in equipped.keys():
-		if CharacterAppearance.is_avatar_key(int(key)):
-			equipped.erase(key)
-	var pluses := {}
-	var world_pluses = world.get("_player_pluses_last")
-	if world_pluses is Dictionary:
-		for key in world_pluses:
-			if not CharacterAppearance.is_avatar_key(int(key)):
-				pluses[key] = world_pluses[key]
-	var dressed := equipped.duplicate()
-	var k := 0
-	for ref in avatars:
-		if int(ref) != 0:
-			# OURS keys: build() reads an avatar from its type, never its key.
-			dressed[CharacterAppearance.AVATAR_KEY_BASE + k] = int(ref)
-			k += 1
-	var skel = world.call("_build_assembled_character", dressed, body, int(world.get("_player_scale")), pluses, world.call("_player_fx"))
+	# them -- a model switcher's choice as its row, with the item's own glow
+	# and seal where that row has none. Round 847: the world's own look
+	# (World3D._player_look_last) with the try-on's avatars in place of its own
+	# (CharacterLook.with_avatars).
+	var own_look = world.get("_player_look_last")
+	if not (own_look is CharacterLook):
+		return {}
+	var look: CharacterLook = (own_look as CharacterLook).with_avatars(avatars)
+	var skel = world.call("_build_assembled_character", look, body)
 	if skel == null:
 		return {}
 	var b := String((skel as Node).get_meta("body", body))
-	var group := String(world.call("_weapon_group_for", equipped, b))
+	var group := String(world.call("_weapon_group_for", look.equipment(), b))
 	var stand = world.call("_body_animation_for", b, BsrReader.AnimationEntry.TYPE_STAND, group)
 	return {"node": skel, "stand": stand}
 

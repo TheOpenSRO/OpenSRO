@@ -46,7 +46,11 @@ func _request_from(f: Dictionary) -> LobbyNet.Request:
 func _items_from(a: Array) -> Array:
 	var out: Array = []
 	for it in a:
-		out.append({"id": int(it["id"]), "plus": int(it["plus"])})
+		var d := {"id": int(it["id"]), "plus": int(it["plus"])}
+		# Round 847: the own-id trailer's (OURS), only on a switched item.
+		if int(it.get("own", 0)) != 0:
+			d["own"] = int(it["own"])
+		out.append(d)
 	return out
 
 func _result_from(f: Dictionary) -> LobbyNet.Result:
