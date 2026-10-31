@@ -726,8 +726,9 @@ func _process(_delta: float) -> void:
 		_qa_log(cam)
 	_step_masters(_delta)
 	# The driver outlives the world (it hangs off the viewport): a player
-	# freed by a relog to the select screen is no player.
-	if prefer_root != null and not is_instance_valid(prefer_root):
+	# freed by a relog to the select screen is no player. A freed object
+	# compares equal to null, so only is_instance_valid tells.
+	if not is_instance_valid(prefer_root):
 		prefer_root = null
 	if _batch != null:
 		_batch.set_ghosts_hidden(ghosts_hidden)

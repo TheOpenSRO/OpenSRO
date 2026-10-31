@@ -368,5 +368,6 @@ func _test_prefer_root_freed() -> void:
 	d._process(1.0 / 60.0)
 	player.free()
 	d._process(1.0 / 60.0)
-	_check(d.prefer_root == null, "a freed player is dropped from prefer_root on the next step")
+	# typeof, not == null: a freed object compares equal to null.
+	_check(typeof(d.prefer_root) == TYPE_NIL, "a freed player is dropped from prefer_root on the next step")
 	vp.free()
