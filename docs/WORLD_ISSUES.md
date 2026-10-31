@@ -7483,6 +7483,108 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-eighth round, lane F: the front end draws with the original's GUI
+
+The user: "Can you investigate all the cases where use the native gui and not the original gui?
+Please find and fix all instances of this and make sure you match original as close as possible."
+Lane F's area is everything before the world: Boot, the title (login, server list, image code,
+NETOFF box), character select (with the PIN and rename boxes), character create and the loading
+screen. Labels: READ (`c:` sro_client.exe, `r:` the archive's resinfo), MEASURED, INFERRED, OURS,
+OPEN.
+
+**The census.** File:line at the base (`992993b4`); "player" = reachable in normal play, "no
+archive" = reachable only by a run without Media.pk2 (none of the original's art exists there to
+build from, so those stay plain controls, dev-only by construction).
+
+| Site | Native control, what for | Reach | The original | Before -> after |
+|---|---|---|---|---|
+| Boot.gd:96 | ConfirmationDialog, the update prompt | player (a newer release) | none: retail's patcher is a separate program. Built from CIFMessageBox's parts (READ): `r:ifmessagebox.txt` MsgBoxINIF (lines 1/2, YES 200 / NO 201 on `com_button.ddj`), "Create"'s `com_bg_tile_b`, the `msgbox2_window_` frame, 308x148 at (W/2-150, H/2-72), the title UIIT_STT_CONFIRM_BOX (`c:0x862450`, `0x644c90`) | Godot's grey dialog with OK/Cancel/x on Godot's grey clear colour -> `FrontMessageBox` (OURS prompt, original parts), black under it (OURS), Escape = No (OURS) |
+| Login.gd:646 `_art_button` | Button + StyleBoxTexture: Connect, Exit, LIST | player | CIFButton, `r:pstitle.txt` GDR_BTN_OK 11 / CANCEL 12 / SERVER 44, `outer\button.ddj` + `_focus` / `_press` / `_disable`, FontIndex 2 | a Godot Button: Godot's font colours on hover/press, Godot's grey disabled box, its own centring -> UiBuilder's CIFButton (`FrontEndUi.cif_button`) |
+| Login.gd:501 | flat Button, the Register link | player | none (OURS feature) | gold Godot link -> a CIFButton from Connect's own def ("Register", 91x41), centred 6 below Connect/Exit (OURS place) |
+| Login.gd:579 (`style_login_edit`) | LineEdit: ID, password, typed server | player | CIFEdit (`r:pstitle.txt` 41/42/43), see "The edit" below | Godot's 1 px non-blinking caret, mouse selection, Ctrl+A/C/V/X/Z, a right-click menu on ID and PW, Down moving the focus -> `CifEditStyle` |
+| Login.gd:226, 618, 625 | `tooltip_text` on the Server field | player | -- | lane T's (tooltips); listed, untouched |
+| Login.gd:720-880 `_build_ui` | Button, LineEdit, PanelContainer, StyleBoxFlat | no archive | -- | unchanged, documented as the no-archive screen |
+| server_list_window.gd:385 | Button + StyleBoxTexture: Select, Cancel | player (config lists servers) | CIFButton, `r:pstitle.txt` 56 / 55, `button.ddj` | -> CIFButton |
+| server_list_window.gd:302 | PanelContainer plate | no archive | -- | unchanged |
+| CharacterSelect.gd:511 `_button` | Button + StyleBoxTexture: Start, Create, Delete, Restore, the three Cancels, the page arrows, the delete confirm's two | player | CIFButton, `r:pscharacterselect.txt` 12-17, 25, 45, 46, Warning 42 / 43 | Godot's grey disabled box whenever a button was disabled (CharacterSelect disables each as it starts fading out, and Start while it waits for the server), Godot's font colours; the arrows stretched to 92x41 with a "<" / ">" of ours over `bigarrow_left/right.ddj` -> CIFButton; the arrows at their art's size (UI_TODO rule 4), no caption (their Text is empty) |
+| CharacterSelect.gd:423 `_art` | Panel when a window's art is missing | player (an archive without the art) | -- | Godot's grey panel -> an empty holder |
+| CharacterSelect.gd:465 `_pml` | RichTextLabel, the deletion countdown's CIFPML | player | CIFPML | no chrome drawn (no scroll, no focus, no selection), the client's face: a text renderer; unchanged |
+| charselect_lock.gd:82 | Button, the Pin Code fallback | never (the screen always passes its maker) | -- | -> CIFButton |
+| character_lock_window.gd:167 | Button, the keypad (OURS; 9-sliced `com_blu_button` / `com_red_button`) | player | none | Godot's grey half-transparent caption while locked, no focus/hover_pressed styles -> every state's style and colour set |
+| CharacterCreate.gd:380 | LineEdit, the name | player | CIFEdit (`r:pscharactercreate*.txt`) | -> `CifEditStyle` (the name's own limit kept) |
+| CharacterCreate.gd:265 | Button in `_build_bare` | no archive | -- | unchanged |
+| captcha_window.gd:93, 175, 177 | LineEdit / Button fallbacks; the CIFEdit UiBuilder builds | legacy servers | CIFEdit `r:ifconfirmbox.txt` 6 | fallbacks unchanged (no archive); the edit -> `CifEditStyle` |
+| charselect_rename.gd (HudCosBox's edit) | LineEdit | player (a waiting rename) | CIFEdit `r:ifmessagebox.txt` MsgBoxInsertMsg | -> `CifEditStyle`, applied here (HudCosBox is lane H's file) |
+| netoff_box.gd:156 | Button fallback | no archive | -- | unchanged |
+| loading_screen.gd:145-152 | gold Label "NOW LOADING...", Panel + StyleBoxFlat trough, a flat gold fill, a vignette | player (every entry and teleport) | READ below | -> the client's three parts and backdrop placement |
+
+**The edit (READ, round 848's research: `c:CIFEdit`, vtable 0xd9ae3c).** OnCreate `0x637a60` makes an
+off-screen Win32 EDIT (-100, -100) for focus and IME; the client keeps and draws the text itself.
+The caret (draw, slot 13 `0x637b70`): a quad 2.0 wide (the double at `0xe1b898`), the font's height
++ 2.0 tall, in the current text colour (+0xa0 = the text object's +0x10, the layout's FontColor),
+its left edge at the end of the previous glyph's advance; it blinks 200 ms on / 200 ms off (OnCreate
+`FUN_00ba9aa0(5)` on the CETime at +0x388; slot 12 `0x635530` flips +0x3ec per tick) and shows only
+with the focus (`0x634ea0`) and flag 0x20 clear. A left click (slot 17 `0x637290`, `0x6378a5`) only
+focuses -- it never places the caret or selects; Left/Right move one character with or without
+Shift; Up/Down do nothing. The only "selection" is the whole text (+0x41a, `0x635030`, background
+0xff3b457a), which dialogs set from code. The exe imports no SetClipboardData (nothing copies);
+the WndProc (`0x636cd0`) swallows Ctrl+A/C/X/Z (table `0x63723c`) and Shift+Insert, and pastes on
+Ctrl+V only with flag 0x200 -- the console's edit alone (`0x541718`); the login ID (0x2), password
+(0xa) and chat refuse it. A right click (`0x637935`) only unfocuses when outside; no context menu.
+The limit +0x400 defaults to 0x200 (CPSTitle sets none on its two edits). The password mask is
+the window style bit 2 (`0x6363c8`, '*'). `CifEditStyle` (new, OURS mapping) turns these into Godot
+terms: no context menu, no shortcut keys, no middle-click paste, no emoji picker, no selecting, a
+click that focuses and nothing else (the caret stays), Up/Down kept, caret 2 px in the font colour
+blinking every 0.2 s, 512 characters by default. **Not reproduced:** the caret's height is Godot's
+line height, not the font's + 2, and Godot re-shows the caret on a key where the client keeps its
+phase.
+
+**The button (READ, `c:CIFButton`, vtable 0xd9e9ac).** Pressing (`0x656160`) and hovering
+(`0x656430`) change the image only; the caption never moves or changes colour. SetEnable(false)
+(`0x655ec0`) takes the `_disable` image (+0x390) and text state 3, whose colour CIFButton's slot 40
+(`0x655ea0`, called by the loader at `0x8b5974`) sets to **0xffe6e6e6** (other controls 0xffb4b4b4,
+`0x8b5759`). `FrontEndUi.cif_button` builds UiBuilder's CIFButton and greys the caption so on a
+disabled button. Found for lane H: UiBuilder's own buttons keep their caption colour when disabled.
+
+**The loading screen (READ, `c:UI_ALCHEMYBOX::FUN_0084b6e0`).** Three windows made by
+`gwnd::FUN_00ba20b0` in this order, rects in the 1600x1200 design space and scaled by
+`FUN_00849c70(w, 0)` (x and width by W/1600, y and height by H/1200, each `trunc(v * k + 0.5)`):
+0x65 CIFStatic (0xee9720) 241,973 1121x64 `loading_form.ddj`; 0x64 CIFGauge (0xee9560) 268,985
+1064x20 `gauge_loading.ddj`, both values zeroed, set each update to the load's thousandths / 1000
+(`FUN_0084c060`) and drawn with width and U scaled together (`CIFGauge::vslot_013` 0x6387d0 ->
+`0x653140`): cut at the fill's edge, never squashed; 0x66 CIFStatic 268,1025 252x35
+`nowloading.ddj`. The backdrop is `r:psmission.txt` "First"'s GDR_BACK (id 1, 0,0 1600x1200),
+placed by `FUN_00849c70(w, 1)` (`0x84b7ac`): width = height x 4 / 3, centred, in integers
+(`0x849cee..0x849d17`). OPEN: what fills beside it on a wide screen (GDR_MASK, id 2, Style 1, has
+no art); black here. `set_caption` stays callable and draws nothing.
+
+**Evidence.** Before (`992993b4`) and after on the box, 1280x720, Forward+, lane copies
+`/var/tmp/r848f-base` and `/var/tmp/r848f-client`; the frames below kept in
+`/var/tmp/r848f/evidence` (the rest deleted), the runs' logs in `/var/tmp/r848f/shots`.
+
+| Screen | Before | After (MEASURED) |
+|---|---|---|
+| Update prompt (`--scene Boot.tscn`, a local releases endpoint answering v9.9.9) | Godot's ConfirmationDialog ("Update available", OK / Cancel / x) on Godot's grey | the msgbox2 frame over x 491..796, y 289..434 (threshold 30; the box is 308x148 at (490, 288), its outer ring darker), "Confirmation window", two lines, Yes / No on `com_button`, black around |
+| Login | 1 px caret, never blinking (120 of 120 frames lit, frames 300-419); a gold "Register a new account" link | 2 px caret (56 frames lit, 64 dark: runs of 13 frames at the movie's 60 fps, 0.2 s plus the timer's last frame), 14 rows tall in both; Register an outer button under Connect / Exit; Connect and Exit's white-pixel share identical (0.057 / 0.031) -- the same caption pixels |
+| Server list (`OPENSRO_QA_SERVER_LIST=2`, new QA hook) | (the hook is new; the list's buttons were the same Godot Button as Connect's) | Select / Cancel as CIFButtons on `button.ddj` |
+| Character select (`--reconnect-via-login`) | Pin Code, Create, Cancel | the band x 860..1270, y 640..690 **pixel-identical** to before (`frame_ab.py`: dmean 0.00, dmax 0): enabled buttons draw exactly as before, the change is in the states Godot drew itself (disabled) |
+| Loading screen (`OPENSRO_QA_FORCE_LOADING=1`) | backdrop covering the screen with a vignette, gold "NOW LOADING...", a gold-edged rounded trough and a flat gold fill | columns 0..159 and 1120..1279 all black (max 0) and the backdrop from x 160: 960 = 720 x 4 / 3 (READ); the form's top edge at row 584 (= 973 x 0.6, row mean 46 -> 123); the gauge's art cut at its fill; the `nowloading.ddj` caption |
+
+Not rendered: the PIN keypad (the in-memory server's QA account lists no characters after the
+reconnect, so Start never asks), character create's name edit, the image-code window and the
+rename box -- the same `CifEditStyle` / CIFButton code as the rendered screens, checked by the
+suites; and a button's disabled state (`frontend_native_test` checks the caption's 0xffe6e6e6; the
+base drew Godot's default disabled StyleBoxFlat because no "disabled" style was set -- read from
+the base code, not rendered).
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1078 scripts); `tests` "ran 405 suite(s), 0 failing"
+(new: `frontend_native_test.gd`, 35 checks; `loading_screen_test.gd` gains the READ layout). UI
+only: no world drawing changed, so no perf gate.
+
+**OPEN.** The caret's height and blink phase (above); the side fill of the loading screen's 4:3
+backdrop; whether pstitle's edits carry a length (none seen; 512 used); the update prompt, Register
+and the PIN keypad are OURS and say so.
+
 ## Eight-hundred-and-forty-seventh round, lane B: a status effect's look ends with the status
 
 The user: "sometimes the status effects cast on the players (maybe more?) lingers even after it's
