@@ -7667,6 +7667,20 @@ after checking the process's working directory (`/var/tmp/r847a`) from then on.
   effect on the drawing).
 - The Nova seal's scale on another model (round 843).
 
+
+**The merge (lanes A + B on dev).** The merged live QA caught 488 `SCRIPT ERROR`s in a relog to the
+select screen, one a frame: `EquipFxBatch.step`'s typed `own: Node` given a freed node. The driver
+(`EquipFx.driver_for(viewport)`) hangs off the viewport and outlives the world, and its `prefer_root`
+went on naming the freed player body. Neither lane's own relog run showed it (MEASURED: 0 in lane A's
+`head7_relog`); the merged build did (MEASURED). `_process` now drops a `prefer_root` that is not
+`is_instance_valid` -- not `!= null`: a freed object compares equal to null, which hid the first
+attempt and its first test. `equip_fx_test.gd`'s `_test_prefer_root_freed` checks
+`typeof(prefer_root) == TYPE_NIL`; it fails on the `!= null` guard and passes on this one. After it:
+0 script errors in the merged own and relog runs, and the select screen logs and draws the switched
+sword and shield (worn 62081/62207, own 62605/62610, +12). The merged status run: every ended aura
+gone 18 frames (300 ms) after its 0x3057 on poison expiry, burn by universal pill, darkness by
+purification pill, confusion expiry and bleeding death; 0 errors.
+
 ## Eight-hundred-and-forty-sixth round, lane M: every step another player takes, walked
 
 The user: "if I take small steps it doesn't register on another client. It only registers when I take
