@@ -173,7 +173,9 @@ func set_characters(records: Array, plan: Array) -> void:
 		# avatars, each slot with its plus (READ FUN_0085a580 ->
 		# InstallEquipVisual(slot, id, plus, 0), whose resource callback
 		# FUN_00a60a90 draws the glow and the seal, FUN_00a5f3e0).
-		d.body = appearance.build_look(CharacterLook.from_lobby(r))
+		var look := CharacterLook.from_lobby(r)
+		d.body = appearance.build_look(look)
+		print("CharSelectStage: %s -- %s" % [r.char_name, look.describe()])
 		if d.body != null:
 			d.holder.add_child(d.body)
 			_dress(d.body)
