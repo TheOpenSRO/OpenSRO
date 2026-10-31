@@ -19,10 +19,12 @@ extends SceneTree
 ## Reasons: "dev-only ..." (never in a player's build or never shown to a
 ## player), "references only ..." (type checks or casts on controls built
 ## elsewhere; creates none), "styled with the original's art: ..." (the
-## widget is Godot's but draws the original's art, font and colours), and
-## "LANE F/H/T pending: ..." -- round 848's other lanes are replacing or
-## auditing those (F the front end, H the HUD and builders, T tooltips,
-## scroll bars and context menus): trim them at merge.
+## widget is Godot's but draws the original's art, font and colours),
+## "no-archive / no-layout fallback ..." (only without the player's Media.pk2
+## art, where there is no original control to draw), and round 848's shared
+## helpers (CifEdit, HelpTips, OriginalScroll), which handle native classes
+## to take Godot's behaviour away. Round 848's "LANE F/H/T pending" entries
+## were settled at its merge.
 ##
 ##   godot4 --headless --path client --script res://scripts/ui/native_gui848_test.gd
 
@@ -34,14 +36,14 @@ const TOOLTIP := "tooltip_text"
 const DEV_PANEL := "dev-only debug panel (DebugPanel: built only where DevTools.enabled -- never in a release build; Shift+F3)"
 const CENSUS := "references only: NativeGuiCensus's own class list (the QA measurement of what is shown); creates none"
 const DEV_TOOL := "dev-only: a client/tools measurement script, never part of the game"
-const LT := "LANE T pending: Godot's native tooltip popup for "
+const LT := "shown in the original's help bubble (HelpTips, round 848 lane T; Godot's popup is off): "
 
 ## [file under res://, token, count at round 848's base, reason]
 const ALLOWED := [
 	# --- lane W's own (World3D, the debug panel, the census) -------------------
 	["scripts/World3D.gd", "LineEdit", 4, "references only: the typing test (focus is LineEdit or TextEdit) and QA reads of original-built edits (job alias box, the QA focus report); creates none"],
 	["scripts/World3D.gd", "TextEdit", 1, "references only: the typing test (focus is LineEdit or TextEdit); creates none"],
-	["scripts/World3D.gd", "tooltip_text", 3, LT + "the chat line, the chat window and the underbar MENU button (the command hint)"],
+	["scripts/World3D.gd", "tooltip_text", 2, LT + "the chat line, the chat window and the underbar MENU button (the command hint)"],
 	["scripts/ui/debug_panel.gd", "Button", 2, DEV_PANEL],
 	["scripts/ui/debug_panel.gd", "CheckButton", 2, DEV_PANEL],
 	["scripts/ui/debug_panel.gd", "HSlider", 4, DEV_PANEL],
@@ -72,59 +74,48 @@ const ALLOWED := [
 	["tools/measure_text_crispness.gd", "LineEdit", 2, DEV_TOOL],
 
 	# --- lane F: the front end ---------------------------------------------------
-	["scripts/Boot.gd", "ConfirmationDialog", 1, "LANE F pending: the 'Update available' box is Godot's ConfirmationDialog (player-reachable on every launch with an update)"],
-	["scripts/CharacterCreate.gd", "Button", 1, "LANE F pending: the no-archive fallback's Cancel button (default theme)"],
-	["scripts/CharacterCreate.gd", "LineEdit", 2, "LANE F pending: the name edit"],
-	["scripts/CharacterSelect.gd", "Button", 15, "LANE F pending: the select screen's buttons (Button over the layout's art) and their casts"],
-	["scripts/CharacterSelect.gd", "Panel", 1, "LANE F pending: a no-art fallback Panel"],
-	["scripts/Login.gd", "Button", 9, "LANE F pending: the login screen's buttons (art Buttons, the Register and text buttons)"],
-	["scripts/Login.gd", "LineEdit", 10, "LANE F pending: the login screen's edit lines"],
-	["scripts/Login.gd", "PanelContainer", 1, "LANE F pending: the register plate (StyleBoxFlat, ours)"],
+	["scripts/CharacterCreate.gd", "Button", 1, "no-archive fallback (_build_bare, only without Media.pk2's create layout: no original art to draw it with)"],
+	["scripts/CharacterCreate.gd", "LineEdit", 1, "references only: the name edit's variable (a CifEdit since round 848)"],
+	["scripts/Login.gd", "Button", 2, "no-archive fallback (_build_ui / _text_button, only without the title layout: no original art to draw it with)"],
+	["scripts/Login.gd", "LineEdit", 9, "the login's edits are CifEdits (_login_edit); the rest are their variables, style helpers and the no-archive fallback's _slot_field"],
+	["scripts/Login.gd", "PanelContainer", 1, "no-archive fallback (_build_ui's plate, only without the title layout)"],
 	["scripts/Login.gd", "tooltip_text", 3, LT + "the server address field"],
-	["scripts/frontend/captcha_window.gd", "Button", 3, "LANE F pending: the captcha window's buttons"],
-	["scripts/frontend/captcha_window.gd", "LineEdit", 4, "LANE F pending: the captcha edit"],
-	["scripts/frontend/charselect_lock.gd", "Button", 2, "LANE F pending: the PIN button's no-builder fallback"],
+	["scripts/frontend/captcha_window.gd", "Button", 3, "no-layout fallback in _control (the builder makes CIFButtons when the layout is there) and a reference"],
+	["scripts/frontend/captcha_window.gd", "LineEdit", 3, "references to the layout's CifEdit, and the no-layout fallback in _control"],
 	["scripts/frontend/charselect_qa.gd", "Button", 3, "references only (QA): reads the select screen's buttons; creates none"],
-	["scripts/frontend/netoff_box.gd", "Button", 3, "LANE F pending: the disconnect box's CIFButton as a Button"],
-	["scripts/frontend/server_list_window.gd", "Button", 4, "LANE F pending: the server list's buttons"],
-	["scripts/ui/character_lock_window.gd", "Button", 4, "LANE F pending: the PIN pad's tiles (Buttons skinned with the pad's ddj by _skin)"],
-	["scripts/ui/frontend_ui.gd", "Button", 2, "LANE F pending: FrontEndUi.button, a StyleBoxFlat plate (ours)"],
-	["scripts/ui/frontend_ui.gd", "PanelContainer", 2, "LANE F pending: FrontEndUi.plate, a StyleBoxFlat plate (ours)"],
-	["scripts/ui/loading_screen.gd", "Panel", 1, "LANE F pending: the loading bar's trough (StyleBoxFlat plate, ours)"],
+	["scripts/frontend/netoff_box.gd", "Button", 3, "no-layout fallback in _control (the builder makes CIFButtons when the layout is there) and references"],
+	["scripts/ui/character_lock_window.gd", "Button", 4, "styled with the original's art: OURS PIN pad (no original) whose tiles draw the pad's own ddj in every state (_skin, round 848 lane F)"],
+	["scripts/ui/frontend_ui.gd", "Button", 4, "references only: def names and cif_button_text's test; creates none"],
+	["scripts/ui/frontend_ui.gd", "PanelContainer", 2, "no-art fallback: FrontEndUi.plate, used only where a window's original frame art is missing"],
 
 	# --- lane H: the HUD and the builders -----------------------------------------
-	["scripts/ui/help_window.gd", "Button", 1, "LANE H pending: the help window's close Button"],
-	["scripts/ui/help_window.gd", "ItemList", 2, "LANE H pending: the help window's document list (default-theme ItemList, MEASURED shown on H)"],
 	["scripts/ui/ui_builder.gd", "Button", 5, "references only: the text-node test and the Button font guard; creates none"],
 	["scripts/ui/ui_builder.gd", "CheckBox", 2, "references only: a node name and the text-node test; creates none"],
 	["scripts/ui/ui_builder.gd", "CheckButton", 1, "references only: the text-node test; creates none"],
 	["scripts/ui/ui_builder.gd", "ItemList", 1, "references only: the text-node test; creates none"],
-	["scripts/ui/ui_builder.gd", "LineEdit", 3, "styled with the original's art: CIFEdit (_build_edit: the layout's ddj slice or no box on normal/focus/read_only, the archive face at FontIndex)"],
+	["scripts/ui/ui_builder.gd", "LineEdit", 2, "styled with the original's art: CIFEdit (_build_edit: the layout's ddj slice or no box on normal/focus/read_only, the archive face at FontIndex)"],
 	["scripts/ui/ui_builder.gd", "OptionButton", 1, "references only: the text-node test; creates none"],
 	["scripts/ui/twodt_builder.gd", "Button", 1, "references only: the .2dt short type name \"Button\" (a string); creates none"],
-	["scripts/ui/twodt_builder.gd", "LineEdit", 6, "styled with the original's art: a .2dt edit (_edit: no box of Godot's, the record's colour and FontIndex)"],
+	["scripts/ui/twodt_builder.gd", "LineEdit", 5, "styled with the original's art: a .2dt edit (_edit: no box of Godot's, the record's colour and FontIndex)"],
 	["scripts/ui/hud/alchemy_window.gd", "tooltip_text", 3, LT + "the alchemy window's mode and slot hints"],
-	["scripts/ui/hud/auto_potion_window.gd", "OptionButton", 11, "LANE H pending: the auto potion combos (OptionButton with ComboList)"],
-	["scripts/ui/hud/combo_list.gd", "OptionButton", 2, "LANE H pending: ComboList, the original's combo list over an OptionButton"],
-	["scripts/ui/hud/composite_item_window.gd", "Button", 4, "LANE H pending: the composite item window's buttons"],
-	["scripts/ui/hud/gacha_select_window.gd", "OptionButton", 5, "LANE H pending: the Magic POP select combos"],
+	["scripts/ui/hud/auto_potion_window.gd", "OptionButton", 11, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],
+	["scripts/ui/hud/combo_list.gd", "OptionButton", 2, "references only: ComboList, the original's combo list, attached to make_combo's combos; creates none"],
+	["scripts/ui/hud/composite_item_window.gd", "Button", 2, "references only: a caption read; the buttons are layout CIFButtons (round 848)"],
+	["scripts/ui/hud/gacha_select_window.gd", "OptionButton", 4, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],
 	["scripts/ui/hud/guild_donate_window.gd", "LineEdit", 2, "references only: the original-built edit (builder); creates none"],
-	["scripts/ui/hud/guild_notice_write.gd", "LineEdit", 7, "LANE H pending: the notice title edit and its host"],
-	["scripts/ui/hud/guild_notice_write.gd", "TextEdit", 3, "LANE H pending: the notice body (a Godot TextEdit)"],
+	["scripts/ui/hud/guild_notice_write.gd", "LineEdit", 7, "references only: the layout's title CifEdit and the hidden host edit"],
+	["scripts/ui/hud/guild_notice_write.gd", "TextEdit", 3, "styled with the original's rules: the multi-line CIFEdit as a TextEdit with CifEdit's caret, colour and keys (CifEdit.style_text_edit), no box, its bars hidden (OriginalScroll; the original's own bar OPEN)"],
 	["scripts/ui/hud/guild_war_request_box.gd", "LineEdit", 1, "references only: the original-built edit; creates none"],
-	["scripts/ui/hud/guild_war_request_box.gd", "OptionButton", 5, "LANE H pending: the war request's combos"],
+	["scripts/ui/hud/guild_war_request_box.gd", "OptionButton", 5, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],
 	["scripts/ui/hud/guild_window.gd", "LineEdit", 3, "references only: original-built edits; creates none"],
 	["scripts/ui/hud/guild_window.gd", "tooltip_text", 2, LT + "the guild window's hints"],
 	["scripts/ui/hud/hud_action_pane.gd", "tooltip_text", 3, LT + "the action window's slots"],
-	["scripts/ui/hud/hud_buff_board.gd", "Button", 2, "LANE H pending: the buff board's OK / Cancel prompt buttons"],
-	["scripts/ui/hud/hud_buff_board.gd", "PanelContainer", 1, "LANE H pending: the buff board's prompt panel"],
-	["scripts/ui/hud/hud_chat.gd", "LineEdit", 2, "LANE H pending: the chat line's own LineEdit (flat, but Godot's focus box and caret show: MEASURED round 848, frame 1175)"],
+	["scripts/ui/hud/hud_chat.gd", "LineEdit", 1, "references only: the chat line is a CifEdit (round 848)"],
 	["scripts/ui/hud/hud_chat.gd", "tooltip_text", 1, LT + "the chat window's buttons"],
-	["scripts/ui/hud/hud_cos_boxes.gd", "LineEdit", 5, "references only: the original-built edit (GDR_MB_INSERT_MSG_EDIT); creates none"],
+	["scripts/ui/hud/hud_cos_boxes.gd", "LineEdit", 6, "references only: the original-built edit (GDR_MB_INSERT_MSG_EDIT); creates none"],
 	["scripts/ui/hud/hud_cos_command.gd", "tooltip_text", 2, LT + "the pet command buttons (a helper named tooltip_text)"],
-	["scripts/ui/hud/hud_panels.gd", "Button", 10, "LANE H pending: the talk prompts' and the use-on box's buttons"],
-	["scripts/ui/hud/hud_panels.gd", "LineEdit", 5, "LANE H pending: the talk prompt's name edit; the rest references"],
-	["scripts/ui/hud/hud_panels.gd", "PanelContainer", 7, "LANE H pending: the talk prompts and the use-on box"],
+	["scripts/ui/hud/hud_panels.gd", "Button", 5, "references only: caption reads and QA prints; the prompts are the original's boxes (round 848)"],
+	["scripts/ui/hud/hud_panels.gd", "LineEdit", 4, "references only: the typing test and a QA read; creates none"],
 	["scripts/ui/hud/hud_panels.gd", "TextEdit", 2, "references only: the typing tests; creates none"],
 	["scripts/ui/hud/hud_panels.gd", "tooltip_text", 3, LT + "the HUD's buttons and icons"],
 	["scripts/ui/hud/hud_player_info.gd", "tooltip_text", 1, LT + "the player block's buttons"],
@@ -147,25 +138,34 @@ const ALLOWED := [
 	["scripts/ui/hud/mall_confirm_buy.gd", "LineEdit", 4, "references only: original-built edits; creates none"],
 	["scripts/ui/hud/mall_message_box.gd", "LineEdit", 4, "references only: original-built edits; creates none"],
 	["scripts/ui/hud/mall_use_point.gd", "LineEdit", 3, "references only: original-built edits; creates none"],
-	["scripts/ui/hud/nif_page_manager.gd", "Button", 3, "LANE H pending: the page manager's page buttons"],
-	["scripts/ui/hud/option_video_page.gd", "OptionButton", 11, "LANE H pending: the Video tab's combos (OptionButton with ComboList)"],
+	["scripts/ui/hud/option_video_page.gd", "OptionButton", 11, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens) -- make_combo itself"],
 	["scripts/ui/hud/option_video_page.gd", "tooltip_text", 5, LT + "the Video tab's combos"],
 	["scripts/ui/hud/party_match_box.gd", "LineEdit", 2, "references only: original-built edits; creates none"],
 	["scripts/ui/hud/party_match_qa.gd", "LineEdit", 4, "references only (QA): original-built edits; creates none"],
 	["scripts/ui/hud/party_match_register.gd", "LineEdit", 7, "references only: original-built edits; creates none"],
 	["scripts/ui/hud/party_match_window.gd", "LineEdit", 7, "references only: original-built edits; creates none"],
-	["scripts/ui/hud/party_match_window.gd", "OptionButton", 1, "LANE H pending: the party matching combo"],
-	["scripts/ui/hud/quest_hud.gd", "ConfirmationDialog", 1, "LANE H pending: a quest confirmation is Godot's ConfirmationDialog"],
-	["scripts/ui/hud/reverse_return_box.gd", "Button", 7, "LANE H pending: the reverse return box's CIFButton as a Button"],
-	["scripts/ui/hud/silk_history_window.gd", "OptionButton", 1, "LANE H pending: the silk history combo"],
+	["scripts/ui/hud/party_match_window.gd", "OptionButton", 1, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],
+	["scripts/ui/hud/reverse_return_box.gd", "Button", 6, "references only: caption reads/writes on layout buttons; creates none"],
+	["scripts/ui/hud/silk_history_window.gd", "OptionButton", 1, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],
 	["scripts/ui/hud/skill_board.gd", "Button", 1, "references only: a node name; creates none"],
 	["scripts/ui/hud/skill_board.gd", "tooltip_text", 1, LT + "the skill board (cleared)"],
 	["scripts/ui/hud/skill_practice_box.gd", "LineEdit", 2, "references only: an original-built edit; creates none"],
-	["scripts/ui/hud/stall_network_window.gd", "OptionButton", 4, "LANE H pending: the stall network's combos"],
+	["scripts/ui/hud/stall_network_window.gd", "OptionButton", 4, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],
 	["scripts/ui/hud/stall_network_window.gd", "tooltip_text", 1, LT + "the stall network's scan button"],
 	["scripts/ui/hud/stall_window_view.gd", "LineEdit", 2, "references only: the original-built chat input; creates none"],
 	["scripts/ui/hud/stall_window_view.gd", "tooltip_text", 1, LT + "the stall's modify button"],
 	["scripts/ui/hud/store_message_box.gd", "LineEdit", 15, "references only: original-built edits; creates none"],
+	["scripts/CharacterSelect.gd", "Button", 1, "references only: a node name string (\"Button%d\"); the select screen's buttons are CIFButtons (round 848)"],
+	# --- round 848's shared helpers (the merge) ----------------------------------
+	["scripts/ui/cif_edit.gd", "LineEdit", 2, "CifEdit itself: the original's CIFEdit (round 848) built on LineEdit, and style() for a line made elsewhere"],
+	["scripts/ui/cif_edit.gd", "TextEdit", 1, "CifEdit.style_text_edit: the multi-line CIFEdit's rules on a TextEdit"],
+	["scripts/ui/help_tips.gd", "LineEdit", 2, "HelpTips (round 848 lane T): turns off Godot's context menu and middle-button paste on every edit; creates none"],
+	["scripts/ui/help_tips.gd", "TextEdit", 2, "HelpTips (round 848 lane T): turns off Godot's context menu and middle-button paste on every edit; creates none"],
+	["scripts/ui/help_tips.gd", "tooltip_text", 1, "HelpTips (round 848 lane T): reads every tooltip_text into the original's help bubble (CIFHelperBubbleWindow); creates none"],
+	["scripts/ui/original_scroll.gd", "ItemList", 6, "OriginalScroll (round 848 lane T): hides a native bar and drives the original's; creates none"],
+	["scripts/ui/original_scroll.gd", "ScrollContainer", 11, "OriginalScroll (round 848 lane T): hides a native bar and drives the original's; creates none"],
+	["scripts/ui/original_scroll.gd", "TextEdit", 6, "OriginalScroll (round 848 lane T): hides a native bar and drives the original's; creates none"],
+	["tools/hud_boxes_shot.gd", "LineEdit", 2, DEV_TOOL],
 ]
 
 var _failures := 0
