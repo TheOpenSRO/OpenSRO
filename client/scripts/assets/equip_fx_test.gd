@@ -33,6 +33,7 @@ func _initialize() -> void:
 	_test_world_commands()
 	_test_own_nearest()
 	_test_own_prefer_keep_free()
+	_test_prefer_root_freed()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
 	quit(1 if _failures > 0 else 0)
 
@@ -352,4 +353,20 @@ func _test_own_prefer_keep_free() -> void:
 	_check(h.own_fx == null, "and freed after %d cycles parked" % EquipFx.OWN_FREE_CYCLES)
 	EquipFx.OWN_BUDGET = budget
 	EquipFx.own_factory = Callable()
+	vp.free()
+
+## Round 847: the driver hangs off the viewport and outlives the world; a
+## player freed by a relog to the select screen must not reach the batch's
+## typed `own: Node` (a "previously freed" SCRIPT ERROR every frame).
+func _test_prefer_root_freed() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	var player := Node3D.new()
+	vp.add_child(player)
+	_host(player, d, Vector3(0, 0, 20))
+	d.prefer_root = player
+	d._process(1.0 / 60.0)
+	player.free()
+	d._process(1.0 / 60.0)
+	_check(d.prefer_root == null, "a freed player is dropped from prefer_root on the next step")
 	vp.free()

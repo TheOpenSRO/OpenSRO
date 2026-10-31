@@ -725,6 +725,10 @@ func _process(_delta: float) -> void:
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)
 	_step_masters(_delta)
+	# The driver outlives the world (it hangs off the viewport): a player
+	# freed by a relog to the select screen is no player.
+	if prefer_root != null and not is_instance_valid(prefer_root):
+		prefer_root = null
 	if _batch != null:
 		_batch.set_ghosts_hidden(ghosts_hidden)
 		_batch.step(ghost_gpu.call() if ghost_gpu.is_valid() else null, _kinds, cam, prefer_root, _stepped_keys)
