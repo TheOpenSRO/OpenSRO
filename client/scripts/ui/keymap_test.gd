@@ -270,12 +270,25 @@ func _check_outside_keys() -> void:
 	_check(_runs.size() == before, "PrintScreen does nothing on its press")
 	_up(KEY_PRINT)
 	_check(_runs.slice(before) == [["screenshot", 0]], "PrintScreen saves a screenshot on its release (ran %s)" % [_runs.slice(before)])
-	for pair in [[KEY_F1, "dev_tools"], [KEY_F2, "debug_tabs"], [KEY_F3, "debug_panel"]]:
-		var got := _what_mod(pair[0], ["shift"])
-		_check(got[0] == [[pair[1], 0]], "Shift+%s toggles %s (ran %s)" % [_name(pair[0]), pair[1], got[0]])
+	# Round 848: Shift+F3 is the debug panel in a developer build only
+	# (DevTools); Shift+F1 and Shift+F2 (the retired zone box / Log Out and
+	# debug tabs) are retail's pages, which read no modifier.
+	DevTools.override = 1
+	var sf3 := _what_mod(KEY_F3, ["shift"])
+	_check(sf3[0] == [["debug_panel", 0]], "Shift+F3 toggles the debug panel in a developer build (ran %s)" % [sf3[0]])
+	DevTools.override = 0
+	var sf3_release := _what_mod(KEY_F3, ["shift"])
+	_check(sf3_release[0] == [["page", 3]], "a release build's Shift+F3 is F3, page 3, as retail (ran %s)" % [sf3_release[0]])
+	DevTools.override = 1
+	for code in [KEY_F1, KEY_F2]:
+		var sf := _what_mod(code, ["shift"])
+		# NEGATIVE (fails before round 848: dev_tools / debug_tabs).
+		_check(sf[0] == [["page", code - KEY_F1 + 1]], "Shift+%s selects its page, as retail (ran %s)" % [_name(code), sf[0]])
+	DevTools.override = -1
+	for code in [KEY_F1, KEY_F2, KEY_F3]:
 		# Round 699: Ctrl+F1-F3 are retail's pages again (macOS keeps Ctrl+F1-F3).
-		var page := _what_mod(pair[0], ["ctrl"])
-		_check(page[0] == [["page", pair[0] - KEY_F1 + 1]], "Ctrl+%s selects its page, as retail (ran %s)" % [_name(pair[0]), page[0]])
+		var page := _what_mod(code, ["ctrl"])
+		_check(page[0] == [["page", code - KEY_F1 + 1]], "Ctrl+%s selects its page, as retail (ran %s)" % [_name(code), page[0]])
 	_check_modifiers()
 
 ## A modified press: mods is any of "ctrl", "shift", "alt", "meta".
@@ -329,7 +342,7 @@ func _check_modifiers() -> void:
 	_check(after_alt_space[0] == [["quickslot_key", 1]],
 		"Alt+Space starts no Space chord: 1 is the page's slot (ran %s)" % [after_alt_space[0]])
 	var shift_f4 := _what_mod(KEY_F4, ["shift"])
-	_check(shift_f4[0] == [["page", 4]], "Shift+F4 selects page 4 (only Shift+F1-F3 are ours; ran %s)" % [shift_f4[0]])
+	_check(shift_f4[0] == [["page", 4]], "Shift+F4 selects page 4 (only Shift+F3 is ours, in a developer build; ran %s)" % [shift_f4[0]])
 	var meta := _what_mod(KEY_G, ["meta"])
 	var meta_s := _what_mod(KEY_S, ["meta"])
 	_check(meta[0].is_empty() and meta_s[1].is_empty(), "Meta+G and Meta+S do nothing (ran %s, toggled %s)" % [meta[0], meta_s[1]])
@@ -394,17 +407,18 @@ func _check_typing() -> void:
 		var got := _what(code)
 		if got[0] != [still[code]]:
 			dead.append("%s ran %s" % [_name(code), got[0]])
-	for pair in [[KEY_F1, "dev_tools"], [KEY_F2, "debug_tabs"], [KEY_F3, "debug_panel"]]:
-		var got := _what_mod(pair[0], ["shift"])
-		if got[0] != [[pair[1], 0]]:
-			dead.append("Shift+%s ran %s" % [_name(pair[0]), got[0]])
+	DevTools.override = 1
+	var shift_f3 := _what_mod(KEY_F3, ["shift"])
+	DevTools.override = -1
+	if shift_f3[0] != [["debug_panel", 0]]:
+		dead.append("Shift+F3 ran %s" % [shift_f3[0]])
 	var before := _runs.size()
 	_down(KEY_PRINT)
 	_up(KEY_PRINT)
 	if _runs.slice(before) != [["screenshot", 0]]:
 		dead.append("PrintScreen ran %s" % [_runs.slice(before)])
 	_check(dead.is_empty() and get_root().gui_get_focus_owner() == _typing_line,
-		"with a text line focused F1-F4, F9, F10, Shift+F1-F3 and PrintScreen still run, and the line keeps the focus (%s)" % [dead])
+		"with a text line focused F1-F4, F9, F10, Shift+F3 and PrintScreen still run, and the line keeps the focus (%s)" % [dead])
 	_down(KEY_V)
 	var held := _key_input != null and bool(_key_input.call("is_held", "hide_objects"))
 	_up(KEY_V)

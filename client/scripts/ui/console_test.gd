@@ -40,6 +40,9 @@ func _host() -> Dictionary:
 		"whisper": func(n: String, m: String) -> void: _calls["whisper"] = [n, m],
 		"unstuck": func() -> void: _calls["unstuck"] = true,
 		"forward_gm": func(line: String) -> void: _calls["gm"] = line,
+		"duel": func(verb: String, arg: String) -> void: _calls["duel"] = [verb, arg],
+		"set_ui_scale": func(v: float) -> float: _calls["ui_scale"] = v; return clampf(v, 0.5, 3.0),
+		"set_name_range": func(v: float) -> float: _calls["names"] = v; return clampf(v, 0.0, 400.0),
 	}
 
 func _test_non_slash_is_not_handled() -> void:
@@ -149,6 +152,35 @@ func _test_gm_forwarding_and_unknown() -> void:
 	_check(_joined().contains("Unknown command /frobnicate"), "an unknown command gets the help line")
 	_check(_joined().contains("/where"), "the unknown-command reply carries the help")
 
+## Round 848: the commands that replaced the native Duel tab and the debug
+## panel's two player settings.
+func _test_round848_commands() -> void:
+	_reset()
+	var c := Console.new(_host())
+	c.submit("/duel Aria Lee")
+	_check(_calls.get("duel") == ["challenge", "Aria Lee"], "/duel <name> challenges that name (got %s)" % [_calls.get("duel")])
+	for verb in ["accept", "decline", "hit"]:
+		_reset()
+		c.submit("/duel " + verb.to_upper())
+		_check(_calls.get("duel") == [verb, ""], "/duel %s answers or strikes (got %s)" % [verb, _calls.get("duel")])
+	_reset()
+	c.submit("/duel")
+	_check(not _calls.has("duel") and _joined().contains("Usage: /duel"), "/duel alone prints its usage and sends nothing")
+	_reset()
+	c.submit("/uiscale 1.5")
+	_check(_calls.get("ui_scale") == 1.5 and _joined().contains("UI scale 1.50."), "/uiscale 1.5 sets the scale and says so (%s)" % _joined())
+	_reset()
+	c.submit("/uiscale big")
+	_check(not _calls.has("ui_scale") and _joined().contains("Usage: /uiscale"), "/uiscale with no number prints its usage")
+	_reset()
+	c.submit("/names 150")
+	_check(_calls.get("names") == 150.0 and _joined().contains("Names shown within 150."), "/names 150 sets the name range (%s)" % _joined())
+	_reset()
+	c.submit("/names")
+	_check(not _calls.has("names") and _joined().contains("Usage: /names"), "/names alone prints its usage")
+	_check(c.help_line().contains("/uiscale") and c.help_line().contains("/names") and c.help_line().contains("/duel"),
+		"the help line lists /uiscale, /names and /duel")
+
 func _test_partial_host_is_safe() -> void:
 	# A host missing most callables must not crash: a missing entry is a no-op.
 	var c := Console.new({"log": func(t: String) -> void: _logged.append(t)})
@@ -166,6 +198,7 @@ func _init() -> void:
 	_test_wire_and_cam_validate()
 	_test_whisper_and_unstuck()
 	_test_gm_forwarding_and_unknown()
+	_test_round848_commands()
 	_test_partial_host_is_safe()
 
 	if _failures == 0:

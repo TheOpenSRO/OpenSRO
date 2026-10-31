@@ -148,8 +148,6 @@ func _initialize() -> void:
 	_check(world_ok, "World3D compiles in _initialize")
 	if world_ok:
 		var world: Node = world_script.new()
-		var chat := RichTextLabel.new()
-		world.set("chat_log", chat)
 		world.set("_ui_text_table", _table(PackedStringArray([
 			_row("UIIT_CTL_TELEPORT_RESULT", "Fixture to [%s] for [%d] coins."),
 			_row("UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY", "Fixture no gold"),
@@ -159,18 +157,18 @@ func _initialize() -> void:
 		if has_handler:
 			var short := TeleportNet.decode_result(_result_bytes(false, 0x1c07, 0, 0, "", "not enough gold"))
 			world.call("_on_teleport_result", short)
-			_check(chat.get_parsed_text().find("Fixture no gold") >= 0, "a 0x1c07 refusal is a chat line in the table's words (chat: %s)" % chat.get_parsed_text().strip_edges())
+			var said := String(world.call("log_text"))
+			_check(said.find("Fixture no gold") >= 0, "a 0x1c07 refusal is a chat line in the table's words (chat: %s)" % said.strip_edges())
 			_check(world.get("_teleport_arrival_pending") == false, "a refusal marks no arrival")
 			var ok := TeleportNet.decode_result(_result_bytes(true, 0, TeleportNet.WAIVER_NONE, 5000, "SN_ZONE_22002", ""))
 			world.call("_on_teleport_result", ok)
 			_check(world.get("_teleport_arrival_pending") == true, "an accepted teleport marks the next OpChangeZoneResult as its arrival")
 			# No archive here, so no textdata_object: the place has no name and
 			# the line is our own wording -- never the SN_ token.
-			var text := chat.get_parsed_text()
+			var text := String(world.call("log_text"))
 			_check(text.find("Teleporting for 5000 gold.") >= 0 and text.find("SN_ZONE") < 0,
 				"the receipt names the gold and never the token (chat: %s)" % text.strip_edges())
 		world.free()
-		chat.free()
 
 	if _failures == 0:
 		print("ALL PASS")

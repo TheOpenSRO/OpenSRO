@@ -1289,14 +1289,13 @@ the authored `GDR_GAMEGUIDE` frame, but retail's second step (focusing the syste
 when it hides the guide) is not built; **R**'s retail line is built from `L"$"` and the name by
 `0x5412c0`, whose join was not read, so ours opens the chat line with `/w <name> `.
 
-### Retire the debug UI now the real HUD is in — **nearly done**
-Gone: the ten-tab `ActionTabs`, the corner labels, and (hundred-and-sixteenth round) the chat
-panel, which `HudChat` replaces with `ifchatviewer.txt`'s own window. Thirteen authored panels
-are built and reachable from the underbar's MENU and from hotkeys.
-
-**What is left**: the Change Zone box and the Log Out button. The zone box has to stay until
-there is another way to travel — it is the only one — so this finishes with a real travel
-mechanism rather than with a deletion.
+### Retire the debug UI now the real HUD is in — **done (round 848, lane W)**
+World3D.tscn's prototype UI is deleted, not hidden: the corner labels, the developer chat panel,
+the zone box, Log Out, Hide UI and the ten-tab `ActionTabs` (they were still in the scene and
+reachable with Shift+F1 / Shift+F2 until round 848). Travel is the teleport gates (and GM `/tp`);
+log out is the system menu's Restart; Hide UI is Shift+F10. The debug panel (Shift+F3) is built
+only in a developer build (`DevTools`), and the zone box lives there. Left: the prototype duel
+(DuelNet) is reachable only through `/duel` -- retail has no such duel; decide whether it stays.
 
 ### Tester tools: the chat console, GM commands, the Help window — **done, with these left**
 `docs/DEBUG_TOOLS.md` and `docs/rounds/debug.md`. Left out of that lane: (1) the original's help

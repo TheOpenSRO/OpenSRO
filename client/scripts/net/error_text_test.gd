@@ -176,24 +176,20 @@ func _initialize() -> void:
 		var line: String = world.call("_pick_up_refusal_line", 0x1812)
 		_check(line == "Fixture not yours", "World3D's 0x1812 refusal line is the table's text (got %s)" % line)
 
-		# A level-up refused 0x4c32 (round 528) goes on the Guild tab, in the
-		# table's words.
+		# A level-up refused 0x4c32 (round 528) goes to the system window in
+		# the table's words (round 848: the Guild tab that showed it too is
+		# gone).
 		world.set("_ui_text_table", _table(PackedStringArray([
 			_row("UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT", "Fixture guild points short"),
 		])))
-		var status := Label.new()
-		var chat := RichTextLabel.new()
-		world.set("guild_status_label", status)
-		world.set("chat_log", chat)
 		var refused := GuildNet.LevelResult.new()
 		refused.error = "not enough guild points to level up the guild"
 		refused.code = 0x4c32
 		world.call("_on_guild_level_result", refused)
-		_check(status.text == "Guild level: Fixture guild points short",
-			"World3D shows a 0x4c32 level-up refusal in the table's words (got '%s')" % status.text)
+		var said := String(world.call("log_text"))
+		_check(said.contains("Could not level up the guild: Fixture guild points short"),
+			"World3D shows a 0x4c32 level-up refusal in the table's words (got '%s')" % said)
 		world.free()
-		status.free()
-		chat.free()
 
 	# HudPanels._on_repair_result (round 829): a refusal's code goes to the
 	# system window (0xB03E -> 0x778190(0xd, code), READ) through

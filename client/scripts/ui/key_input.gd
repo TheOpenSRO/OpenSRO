@@ -17,7 +17,7 @@ class_name KeyInput
 ## only tracked here, not consumed.) An action taken marks the event handled.
 ##
 ## **While a text line has the keyboard** (`is_typing`, the rule of rounds
-## 521, 605 and 606) only the keys a line never takes run: F1-F12, Shift+F1-F3
+## 521, 605 and 606) only the keys a line never takes run: F1-F12, Shift+F3 (a developer build)
 ## and PrintScreen (KeyMap.runs_while_typing), so after a line of chat --
 ## which keeps the focus -- Shift+F3, F10, the pages, F9 and PrintScreen still
 ## work. Everything else goes into the line. Ours: retail's CGInterface +0x3ce

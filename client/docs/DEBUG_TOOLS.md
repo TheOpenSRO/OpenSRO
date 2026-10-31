@@ -22,14 +22,17 @@ command always answers with the help line — it never stays silent.
 | `/help` | Opens the Help window and prints the one-line command list in chat. |
 | `/where` | Zone, region y/x, your local and world coordinates, and the walkable height under you. |
 | `/log` | Prints the log file's path; on desktop, opens the folder holding it. |
-| `/copy` | Copies the full debug report (the Shift+F3 panel's payload, plus the last log lines and script errors) to the clipboard, ready to paste into a report. |
+| `/copy` | Copies the full debug report (build, server, position, equipment, entities, archives, loading, performance, the last log lines and script errors) to the clipboard, ready to paste into a report. Works in every build; the developer panel's Copy is the same report. |
+| `/uiscale <n>` | Scales the interface, 0.5 to 3 (1 is the original's size); remembered. |
+| `/names <n>` | How near (0 to 400) a name plate shows; remembered. |
+| `/duel <name>`, `/duel accept`, `/duel decline`, `/duel hit` | This server's own duel (not the original's): challenge a player, answer a challenge, strike. Its answers show in the system window. |
 | `/fps` | The current frame rate. |
 | `/entities` | Counts of the monsters, NPCs, other players and ground items currently in view. |
 | `/wire on` / `/wire off` | Starts or stops logging every network packet's opcode and size to the log — for chasing a desync or a crash. |
 | `/cam free` / `/cam orbit` | Switches the camera between free-look and orbit. |
 | `/errors` | The last 20 script errors this session (also in `/copy` and the log). |
 | `/unstuck` | Returns you to the zone's entry point if you wedge into geometry. |
-| `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The Shift+F3 panel's **Ground probe** button does the same. |
+| `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The developer panel's (Shift+F3, developer builds) **Ground probe** button does the same. |
 | `/w <name> <message>` | Whispers another player. |
 | `/grantname <name>` | Sets your own grant name in your guild, the second part of the `[Guild * Grant]` line over your name (round 814; at most 12 letters and the name filter applies; any guild level since round 815). `/grantname` alone clears it. The guild window's grant-name button does the same. |
 | `/layer <path>` | Which layer of the game's archives serves an archive path (round 789): the loose `custom/` folder, an asset pack (`.pk3`, by its file name) or a base archive (`base Data.pk2`, `base Media.pk3`, ...), and which layers under it hold the same path, e.g. `/layer prim\mtrl\foo.ddj` -> `z_assets.pk3 (...); also in assets.pk3, base Data.pk2`. Paths are matched case-insensitively, `/` and `\` alike, empty segments ignored. |
@@ -40,7 +43,7 @@ The client reads its archives as layers: `custom/`, then the asset packs (`*.pk3
 `*.pk2`, a later name winning), then the retail base archives (deploy/README.md, "Asset packs").
 Three ways to ask which one serves a path, all OURS:
 
-- **In the game:** `/layer <path>` in chat (above). The Shift+F3 panel's "archives" lines list the
+- **In the game:** `/layer <path>` in chat (above). The `/copy` report's "archives" lines list the
   source mode, the base archives and the packs, highest first.
 - **In a QA run:** `OPENSRO_QA_WHICH="path;path;..."` logs one `QA WHICH <path> -> <layer>
   (<file>); also in ...` line a path when the archive set opens (any run: the world, a front-end
@@ -54,7 +57,7 @@ pk3|mixed` and `OPENSRO_PACK_DIR=<folder>` set the source mode and the pack fold
 
 **Server packs** (round 789, lane U; docs/protocol/asset_packs.md "Server packs"). While a server
 that names its packs is connected, `QA WHICH` and `/layer` name its packs (`z_akatsuki.pk3
-(<pack folder>/servers/<host>_<port>/z_akatsuki.pk3)`), and the Shift+F3 panel says `packs of
+(<pack folder>/servers/<host>_<port>/z_akatsuki.pk3)`), and the `/copy` report says `packs of
 server <host>_<port>`. `OPENSRO_QA_WHICH` answers once per archive set, so a run that reopens the
 set for a server prints the lines twice: before (the player's own set) and after. Every step of
 the fetch is a `PACKS:` line in the client log -- the question and the answer (`PACKS:
@@ -70,7 +73,7 @@ them; `OPENSRO_PACK_DIR=<empty folder>` gives a run a clean pack folder.
 
 ## Sending a report
 
-1. If it is a visual problem, press **Shift+F3**, then **Copy** (or type `/copy`).
+1. Type `/copy` in chat (in a developer build, Shift+F3 then **Copy** does the same).
 2. Paste that into your report. It carries the build, your position, what is
    loaded, the entities around you, and the last log lines and script errors.
 3. Attach the log file if you can — `/log` prints where it is

@@ -459,12 +459,12 @@ func _test_others_cast(world: Node) -> void:
 	_skill_cast(999, HEAL, 43, 0, 0, 0)
 	_check(_made.is_empty(), "a caster not in view draws nothing")
 
-## How much the world's chat log holds (World3D._log_system writes every
-## system line there), to tell whether a step said anything.
+## How much the world's log tail holds (World3D._log_system keeps every
+## system line there, World3D.log_text; round 848 -- the developer chat log
+## before), to tell whether a step said anything.
 func _chat_count(world: Node) -> int:
-	var cl = world.get("chat_log")
-	if cl != null and cl is RichTextLabel:
-		return (cl as RichTextLabel).get_parsed_text().length()
+	if world.has_method("log_text"):
+		return String(world.call("log_text")).length()
 	return -1
 
 # --- round 622's review ------------------------------------------------------------
