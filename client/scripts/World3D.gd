@@ -10102,7 +10102,8 @@ var _monster_plate_basis := Vector3.ZERO
 
 ## A player's name colour: white (READ, c:0x9cfd50 FUN_009c1920(0xffffffff)
 ## for a player in no PK state; the hostile, PK, party and GM colours are
-## its other branches). Round 811; the pale NAME_PLATE_COLOUR was ours.
+## its other branches). Round 811; the pale NAME_PLATE_COLOUR was ours (an NPC's
+## is NPC_NAME_COLOUR from round 848).
 const PLAYER_NAME_COLOUR := Color(1.0, 1.0, 1.0)
 
 func _monster_name_look(label: Label3D) -> void:
@@ -10300,6 +10301,19 @@ func _set_plate_bold(label: Label3D, on: bool) -> void:
 const NAME_PLATE_CLEARANCE_FRACTION := 0.12
 const NAME_PLATE_PIXEL_SIZE := 0.0004
 const NAME_PLATE_COLOUR := Color(1.0, 0.94, 0.72)
+## Round 848 (lane R), READ: an NPC's name is white. The name's text item
+## (ICharactor +0x12c, made by FUN_008b4f30 at 0x9c23ae) starts at the
+## constructor's 0xffffffff (FUN_008b46d0); the setters of its colour are
+## FUN_009c1920 (add ecx, 0x12c -> 0x8b2b70), called for players, guards,
+## the party and COS (0x9c7930, 0x9cfd50, 0x9dcf00), and four direct calls
+## of 0x8b2b70 on +0x12c: a COS's 0xffffff55 (CICCos::vslot_025, 0x9c637f),
+## an item's (CIItem::vslot_025, 0x9e212a), and 0xff9ed0ff in 0x9d164b /
+## 0x9d19ef -- only for a CICNPC (IsKindOf 0xef1ac4, "CICNPC" at 0xde2a18)
+## whose spawn carries its own name string (+0x110, its length +0x124 not 0;
+## flag bit 1 of the spawn byte +0x4fc, 0x9d15a0). An NPC named by its
+## object's own text -- every NPC OpenSRO places -- is white. Before round
+## 848 the NPC name was drawn in NAME_PLATE_COLOUR (OURS).
+const NPC_NAME_COLOUR := Color(1.0, 1.0, 1.0)
 const NAME_PLATE_OUTLINE := 8
 const NAME_PLATE_OUTLINE_COLOUR := Color(0.0, 0.0, 0.0, 0.85)
 ## How near an entity has to be TO THE PLAYER before its name shows, in world
@@ -11159,8 +11173,9 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	if npc_name != "":
 		var npc_plate := _name_plate(npc_name, bounds.y)
 		# Round 811: the original's plate (every CICharactor's name setter
-		# gives it the box); the colour stays ours (NAME_PLATE_COLOUR).
-		_retail_plate_look(npc_plate, NAME_PLATE_COLOUR)
+		# gives it the box); round 848 (lane R): in the NPC's colour, READ
+		# (NPC_NAME_COLOUR).
+		_retail_plate_look(npc_plate, NPC_NAME_COLOUR)
 		holder.add_child(npc_plate)
 	group.add_child(holder)
 	_light_character(holder)

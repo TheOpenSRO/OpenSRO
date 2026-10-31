@@ -316,16 +316,11 @@ func _build_ui() -> void:
 	_message.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	add_child(_message)
 
-	# Name labels, one per slot of a page (READ: font 4, the name only).
+	# Name labels, one per slot of a page: the name only, as the world's
+	# plates draw it (CharSelectNameLabel, READ).
 	for i in range(CharSelectMath.PER_PAGE):
-		var l := Label.new()
+		var l := CharSelectNameLabel.make()
 		l.name = "NameLabel%d" % i
-		l.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[4])
-		l.add_theme_color_override("font_outline_color", Color.BLACK)
-		l.add_theme_constant_override("outline_size", 3)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		l.modulate.a = 0.0
 		add_child(l)
 		_labels.append(l)
 		_label_alpha.append({})
@@ -813,6 +808,17 @@ func _qa_hold_tick(delta: float) -> void:
 		print("QA SELECT HOLD: starting at frame %d" % Engine.get_frames_drawn())
 		_qa_start(QaSignIn.character_name())
 
+## OPENSRO_QA_SELECT_HOVER=<k>[@<s>] (round 848 lane R, OURS, QA only):
+## character k is the hovered one from <s> seconds into the list (2 by
+## default) -- its name fades in as under the cursor -- for a frame of the
+## name label; -2 (unset) leaves it to the mouse, and before <s> nothing is.
+func _qa_hover() -> int:
+	var v := OS.get_environment("OPENSRO_QA_SELECT_HOVER")
+	if v == "":
+		return -2
+	var at := v.get_slice("@", 1).to_float() if v.contains("@") else 2.0
+	return v.get_slice("@", 0).to_int() if _qa_list_s >= at else -1
+
 ## OPENSRO_QA_RECONNECT_VIA_LOGIN: start `who` the way Start does.
 func _qa_start(who: String) -> void:
 	var k := _slot_of(who)
@@ -878,7 +884,7 @@ func _process(delta: float) -> void:
 			_set_state(S.LIST)
 			_qa_print_anchors()
 		S.LIST:
-			_hover(_pick_mouse())
+			_hover(_qa_hover() if _qa_hover() >= -1 else _pick_mouse())
 			_qa_list_tick(delta)
 			_qa_reload_tick()
 		S.ZOOM:
@@ -961,7 +967,7 @@ func _fade_label(k: int, to: int) -> void:
 		return
 	var l: Label = _labels[i]
 	l.text = _slots[k].char_name if k < _slots.size() else ""
-	var from := int(roundf(l.modulate.a * 255.0))
+	var from := int(roundf(l.self_modulate.a * 255.0))
 	_label_alpha[k % CharSelectMath.PER_PAGE] = {"from": float(from), "to": float(to), "t": 0.0,
 		"dur": CharSelectMath.label_fade_s(from, to)}
 
@@ -973,21 +979,20 @@ func _tick_labels(delta: float) -> void:
 		if not f.is_empty():
 			f["t"] = float(f["t"]) + delta
 			var u := 1.0 if float(f["dur"]) <= 0.0 else clampf(float(f["t"]) / float(f["dur"]), 0.0, 1.0)
-			l.modulate.a = lerpf(float(f["from"]), float(f["to"]), u) / 255.0
+			CharSelectNameLabel.set_alpha(l, lerpf(float(f["from"]), float(f["to"]), u) / 255.0)
 			if u >= 1.0:
 				_label_alpha[i] = {}
 		if stage == null:
 			_fallback_label(l, i, k)
 			continue
-		if l.modulate.a <= 0.0 or k >= _slots.size():
+		if l.self_modulate.a <= 0.0 or k >= _slots.size():
 			continue
 		var at = stage.label_anchor(k)
 		if at == null:
 			l.visible = false
 			continue
-		l.size = Vector2(200, 24)
-		# INFERRED: the text is centred on the projected point, its bottom there.
-		l.position = (at as Vector2) - Vector2(100, 24)
+		# READ: the text item centred on the projected point (CharSelectNameLabel).
+		CharSelectNameLabel.place(l, at as Vector2)
 		if f.is_empty() and not l.has_meta("qa_shown"):
 			l.set_meta("qa_shown", true)
 			print("QA SELECT: label %d '%s' at (%d, %d)" % [k, l.text, int(l.position.x), int(l.position.y)])
@@ -1000,7 +1005,7 @@ func _fallback_label(l: Label, i: int, k: int) -> void:
 	if not l.visible:
 		return
 	l.text = _slots[k].char_name
-	l.modulate.a = 1.0
+	l.self_modulate.a = 1.0
 	l.size = Vector2(200, 24)
 	l.position = Vector2(size.x * float(i + 1) / 5.0 - 100.0, size.y * 0.55)
 
@@ -1101,7 +1106,7 @@ func _change_page(step: int) -> void:
 		return
 	_page = clampi(_page + step, 0, pages - 1)
 	for l in _labels:
-		(l as Label).modulate.a = 0.0
+		CharSelectNameLabel.set_alpha(l as Label, 0.0)
 	hovered = -1
 	if stage != null:
 		stage.show_page(_page)

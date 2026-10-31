@@ -67,10 +67,31 @@ const PLAIN_BOTTOM_DDJ := "interface\\outer\\blackbar_down.ddj"
 ## READ: the version window (gwnd::FUN_00ba20b0 at 0x86bc1d): x 5,
 ## y = screen height - 0x19, 0x50 x 0x14, text colour 0xffff8080
 ## (FUN_008b2b70, 0x86bc49), text "Ver %d.%03d" (0xdd8dc0).
+## Round 848 (lane R), READ: the window is a CIFStatic (class record
+## 0xee9720, named "CIFStatic" at 0xd9e1cc by its registration 0xd6afdb; its
+## constructor 0x64d5f0 over CIFWnd's 0x654520), made with no layout record,
+## so its text keeps what the constructors give it: font 0 (0x65460e..
+## 0x65462e, FUN_00ba5460(0)) -- 12 px, UiBuilder.FONT_SIZES[0] -- and
+## CTextBoard's HAlign 1 and VAlign 1 (+0x88 / +0x8c = 1, 0x655c28..
+## 0x655c3b): centred both ways in the 80 x 20 rect, by CIFStatic's layout
+## 0x64d9b0 (UiBuilder._map_halign's reading). Its OnCreate (vslot 10,
+## 0x64d6b0) only returns 1, and nothing sets the text's flags: no shadow, no
+## outline. Before, a Label with no size of its own drew Godot's 16 px,
+## left and top in the rect (MEASURED: ink rows 698..709, columns 5..67 at
+## 1280 x 720). The words are OpenSRO's version (OURS: "Ver 0.1.612" for
+## retail's "Ver %d.%03d" of its own number).
 const VERSION_POS_X := 5.0
 const VERSION_FROM_BOTTOM := 0x19
 const VERSION_SIZE := Vector2(0x50, 0x14)
 const VERSION_COLOR := Color(1.0, 0x80 / 255.0, 0x80 / 255.0, 1.0)
+const VERSION_FONT_INDEX := 0
+## The operator's copyright line (OURS, FrontEndTheme) in font 0 (12 px), the
+## size of the title's own drawn text nearest it -- the version line above,
+## READ -- in white, the colour of the archive's own copyright line it
+## replaces (MEASURED: blackbar_down_copyright.ddj's line drawn at 1280 x 720,
+## ink rows 701..710, its core pixels 255,255,255). Before: Godot's 16 px.
+const COPYRIGHT_COLOR := Color(1.0, 1.0, 1.0, 1.0)
+const COPYRIGHT_FONT_INDEX := 0
 ## The clearance kept between the logo and the login window when retail's
 ## own placement would overlap them (logo_rect). INFERRED: retail's own
 ## clearance at the reference's 1024x768, 0x78 - round(172 * 768 / 1200) =
@@ -155,21 +176,33 @@ func build(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, version_t
 	# title and logos over them.
 	for n in [band_top, band_bottom, cover_top, cover_bottom, title_art, big_logo, logo]:
 		add_child(n)
-	version_label = Label.new()
-	version_label.text = version_text
-	version_label.add_theme_color_override("font_color", VERSION_COLOR)
-	version_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	version_label = text_line(version_text, VERSION_COLOR, VERSION_FONT_INDEX)
+	version_label.name = "Version"
 	add_child(version_label)
-	copyright_label = Label.new()
-	copyright_label.text = theme.copyright if theme != null else ""
+	copyright_label = text_line(theme.copyright if theme != null else "", COPYRIGHT_COLOR, COPYRIGHT_FONT_INDEX)
+	copyright_label.name = "Copyright"
 	copyright_label.visible = copyright_label.text != ""
-	copyright_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	copyright_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	copyright_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(copyright_label)
 	resized.connect(relayout)
 	relayout()
 	return true
+
+## A line of the frame's own text, as a CIFStatic made without a layout
+## record draws it (VERSION_* above, READ): `font_index`'s size, `colour`,
+## centred both ways in its rect, no outline or shadow, crisp. The face is
+## the screen's (FrontEndUi.apply_client_font on the screen's root).
+static func text_line(text: String, colour: Color, font_index: int) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[clampi(font_index, 0, UiBuilder.FONT_SIZES.size() - 1)])
+	l.add_theme_color_override("font_color", colour)
+	l.add_theme_constant_override("outline_size", 0)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.clip_text = false
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UiBuilder.crisp_text(l)
+	return l
 
 func def(id: int) -> UiLayoutParser.ControlDef:
 	return by_id(_title_section, id)

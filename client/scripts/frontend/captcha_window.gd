@@ -23,7 +23,7 @@ class_name CaptchaWindow
 ##   message goes to the title's message line (Login.gd).
 ##
 ## OURS: centred on the screen (where retail places window 0x2f was not
-## read); the explanation's PML markup is reduced to plain lines; the edit
+## read); the edit
 ## takes up to 0x200 characters (CIFEdit's default, INFERRED to apply).
 
 const LAYOUT := "resinfo\\ifconfirmbox.txt"
@@ -43,6 +43,9 @@ var _builder: UiBuilder = null
 var picture: TextureRect = null
 var edit: LineEdit = null
 var accept: BaseButton = null
+## The explanation's node (_build_explain): a CIFPML's holder with its
+## PmlText, or the no-archive Label.
+var explain: Control = null
 var _latch := false
 var _taking := true
 
@@ -67,17 +70,11 @@ func build(builder: UiBuilder) -> void:
 		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cap := _control(_def(main, ID_CAPTION, "CIFStatic", Rect2i(85, 18, 229, 15)))
 	_set_text(cap, _text("UIIT_PAG_GLOBAL_AUTHENTICATION", LoginMessages.text(null, LoginMessages.KEY_CAPTCHA_TITLE)))
-	var ex_def := _def(main, ID_EXPLAIN, "CIFStatic", Rect2i(32, 40, 336, 40))
-	var ex := Label.new()
-	ex.name = "Explain"
-	ex.position = Vector2(ex_def.rect.position)
-	ex.size = Vector2(ex_def.rect.size)
-	ex.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	ex.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	ex.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ex.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-	ex.text = plain_pml(_text("UIIT_STT_GLOBAL_AUTHENTICATION_NOTICE", "Type the characters in the picture."))
-	add_child(ex)
+	var ex_def := _def(main, ID_EXPLAIN, "CIFPML", Rect2i(32, 40, 336, 40))
+	if FrontEndFrame.by_id(main, ID_EXPLAIN) == null:
+		ex_def.valign = 1 # the file's (MEASURED); the record is not there to say so
+	explain = _build_explain(ex_def,
+		_text("UIIT_STT_GLOBAL_AUTHENTICATION_NOTICE", "Type the characters in the picture."))
 	var img_def := _def(main, ID_IMAGE, "CIFStatic", Rect2i(33, 80, 200, 64))
 	picture = TextureRect.new()
 	picture.name = "ImageCode"
@@ -109,8 +106,56 @@ func build(builder: UiBuilder) -> void:
 		UiBuilder.settle_authored_rects(self)
 	visible = false
 
-## The PML explanation as plain lines (OURS): <br> a line break, other tags
-## dropped.
+## The explanation (id 5, GDR_STA_EXPLAIN): a CIFPML (MEASURED in
+## ifconfirmbox.txt: FontColor 255,255,255,255, FontIndex 0, HAlign 1,
+## VAlign 1, 32,40 336x40), built by UiBuilder from its record and drawn by
+## PmlText in the record's colour and HAlign (PmlText.put_on), its markup
+## parsed as CIFPML parses it. Round 848 (lane R), READ, VAlign: CIFPML's
+## layout 0x64b2c0 lays the text from the top, then with VAlign (+0x8c) 1
+## moves the content down by (the rect's height - the content's) >> 1 when
+## it is shorter (0x64b3b1..0x64b415, 0x9a52e0 the layer's rect, 0x9a52c0
+## its new top), 2 by the whole difference. Before, a Label of our own: the
+## size and alignment set by hand, Godot's own colour, Godot's word wrap,
+## the markup cut to plain lines (plain_pml), centred by Godot's line height.
+## Without the archive (no builder) the plain Label stays.
+func _build_explain(def: UiLayoutParser.ControlDef, markup_text: String) -> Control:
+	if _builder == null:
+		var ex := Label.new()
+		ex.name = "Explain"
+		ex.position = Vector2(def.rect.position)
+		ex.size = Vector2(def.rect.size)
+		ex.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ex.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		ex.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		ex.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		ex.text = plain_pml(markup_text)
+		add_child(ex)
+		return ex
+	var host := _control(def)
+	host.name = "Explain"
+	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var p := PmlText.put_on(host, _builder, markup_text)
+	if p != null:
+		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		valign_pml(p, def.valign, def.rect.size.y)
+	return host
+
+## CIFPML's VAlign (READ, _build_explain): the content moved down inside the
+## control's rect -- by half the room left (an integer shift) for 1, all of
+## it for 2, not at all for 0 or when the content is as tall as the rect.
+static func valign_pml(p: PmlText, valign: int, rect_h: int) -> void:
+	var room := rect_h - p.content_height
+	var shift := 0
+	if room > 0:
+		if valign == 1:
+			shift = room >> 1
+		elif valign == 2:
+			shift = room
+	p.position.y = float(shift)
+	p.size.y = float(rect_h - shift)
+
+## The PML explanation as plain lines (OURS, the no-archive fallback): <br> a
+## line break, other tags dropped.
 static func plain_pml(s: String) -> String:
 	var out := s.replace("<br>", "\n").replace("<BR>", "\n")
 	var re := RegEx.create_from_string("<[^>]*>")

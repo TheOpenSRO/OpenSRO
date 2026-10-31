@@ -74,18 +74,105 @@ static func vignette() -> TextureRect:
 ## the front-end reads in the game's own type rather than Godot's default. Sets
 ## it through a Theme on the root, which every child inherits unless it overrides
 ## its own font. No-ops without an archive/font -- Godot's default stays then.
+##
+## Round 848 (lane R): and font 0's size, 12 px (UiBuilder.FONT_SIZES[0]), as
+## the theme's default size. READ: every window's text starts in font 0 --
+## CIFWnd's constructor (0x654520) gives its text item FUN_00ba5460(0)
+## (0x65460e..0x65462e; ebx is 0 from 0x654556), as CTextBoard's does
+## (0x655be8..0x655c02) -- and only a layout record's FontIndex or a caller
+## changes it. Before, the root set the face and no size, so a front-end text
+## without its own size drew at Godot's 16 px: the title's version line and
+## the operator's copyright line (MEASURED, frontend_font_test.gd and the
+## round's frames). The same as UiBuilder.apply_ui_theme does for the HUD.
 static func apply_client_font(root: Control, media: Pk2Reader) -> void:
 	if root == null or media == null:
 		return
 	var font := UiBuilder.new(media, null).font_at(0)
 	if font == null:
 		return
+	apply_font(root, font)
+	qa_font_census(root)
+
+## A text style's bit 0 (READ, FUN_008b48b0 -> FUN_008b2290): every glyph
+## drawn first in black one pixel right and down, then in its colour -- a
+## hard one-pixel shadow, no outline.
+static func text_shadow(l: Label) -> void:
+	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 1))
+	l.add_theme_constant_override("shadow_offset_x", 1)
+	l.add_theme_constant_override("shadow_offset_y", 1)
+	l.add_theme_constant_override("shadow_outline_size", 0)
+	l.add_theme_constant_override("outline_size", 0)
+
+## The face and font 0's size on `root`'s theme (apply_client_font), apart
+## from the archive so a suite can give any face.
+static func apply_font(root: Control, font: Font) -> void:
 	var theme := root.theme if root.theme != null else Theme.new()
 	theme.default_font = font
+	theme.default_font_size = UiBuilder.FONT_SIZES[0]
 	root.theme = theme
 	# Drawn unfiltered, as the in-game text is (UiBuilder.apply_ui_theme,
-	# round 672). The front-end's own sizes are left as they are.
+	# round 672).
 	UiBuilder.watch_text(root)
+
+## Every text node a player can see under `root`: one line each with its
+## class, its text, the size it draws at and where that size comes from
+## ("own" an override on the node, "theme" a default it inherits), its
+## colour and rect. MEASURED from the live tree (QA, OPENSRO_QA_FONT_CENSUS).
+static func font_census(root: Node) -> PackedStringArray:
+	var out := PackedStringArray()
+	if root == null:
+		return out
+	for node in root.find_children("*", "Control", true, false):
+		var c := node as Control
+		# A Label, a RichTextLabel, a captioned button or an edit: anything
+		# with a "text" of its own.
+		if not c.is_visible_in_tree():
+			continue
+		var text := ""
+		if c is RichTextLabel:
+			text = (c as RichTextLabel).get_parsed_text()
+		elif c.get("text") is String:
+			text = str(c.get("text"))
+		if text.strip_edges() == "":
+			continue
+		var key := &"normal_font_size" if c is RichTextLabel else &"font_size"
+		var colour_key := &"default_color" if c is RichTextLabel else &"font_color"
+		out.append("%s<%s> '%s' size %d (%s) colour %s alpha %.2f rect %s" % [root.get_path_to(c), c.get_class(),
+			text.replace("\n", " / ").left(40), c.get_theme_font_size(key),
+			"own" if c.has_theme_font_size_override(key) else "theme", c.get_theme_color(colour_key).to_html(),
+			_shown_alpha(c), c.get_global_rect()])
+	return out
+
+## The alpha a canvas item draws at: its own and every ancestor's modulate.
+static func _shown_alpha(ci: CanvasItem) -> float:
+	var a := ci.self_modulate.a
+	var n: Node = ci
+	while n is CanvasItem:
+		a *= (n as CanvasItem).modulate.a
+		n = n.get_parent()
+	return a
+
+## OPENSRO_QA_FONT_CENSUS=<s>[,<s>...] (QA only, OURS): `font_census(root)`
+## printed as `QA FONT <root> <t>s: ...` lines that many seconds after the
+## screen took the client's font.
+static func qa_font_census(root: Control) -> void:
+	var spec := OS.get_environment("OPENSRO_QA_FONT_CENSUS")
+	if spec == "" or root == null:
+		return
+	var run := func() -> void:
+		for s in spec.split(","):
+			var t := s.to_float()
+			root.get_tree().create_timer(t).timeout.connect(func() -> void:
+				if not is_instance_valid(root) or not root.is_inside_tree():
+					return
+				var lines := font_census(root)
+				print("QA FONT %s %.1fs: %d text node(s)" % [root.name, t, lines.size()])
+				for l in lines:
+					print("QA FONT %s %.1fs: %s" % [root.name, t, l]))
+	if root.is_inside_tree():
+		run.call()
+	else:
+		root.tree_entered.connect(run, CONNECT_ONE_SHOT)
 
 ## The outer screens' button art (pstitle.txt / pscharacterselect.txt's
 ## CIFButtons), for a button whose layout control is missing.
