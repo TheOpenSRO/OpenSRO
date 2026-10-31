@@ -629,6 +629,9 @@ func (d *LobbyDeps) list(ctx context.Context, sess *gateway.Session, accountID i
 //     mana tracker's value, which is its maximum when it has none (OURS).
 //   - Items: the worn items in slots 0..8, the nine the record holds (INFERRED:
 //     the nine non-accessory slots, which is OpenSRO's WearableSlots), each
+//     named by the row it is drawn as (round 847: a model switcher's row,
+//     displayRef, as the spawn record and 0x3038 name it; its own id in the
+//     list's trailer, LobbyItem.Own), each
 //     with its effective plus, OptLevel + the advanced elixir in a byte
 //     (round 735; equipment.Equipped.EffectivePlus). The byte's place, after
 //     each u32 RefItemID, is READ (the client's SCharacterInfo reader
@@ -663,7 +666,11 @@ func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time
 			for slot := equipment.Slot(0); slot < equipment.Slot(LobbyMaxItems); slot++ {
 				for _, w := range worn {
 					if w.Slot == slot {
-						rec.Items = append(rec.Items, LobbyItem{RefItemID: uint32(w.ItemID), Plus: w.EffectivePlus()})
+						// Round 847: the model a switcher gave the item is
+						// drawn here as in the world (displayRef), and the
+						// item's own id rides the list's trailer (Own).
+						rec.Items = append(rec.Items, LobbyItem{RefItemID: uint32(displayRef(w.ItemID, w.Model)), Plus: w.EffectivePlus(),
+							Own: switchedOwn(w.ItemID, w.Model)})
 					}
 				}
 			}

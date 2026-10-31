@@ -20,6 +20,7 @@ func lobbyGoldenPath() string {
 type goldenItem struct {
 	ID   uint32 `json:"id"`
 	Plus uint8  `json:"plus"`
+	Own  uint32 `json:"own"` // round 847: the list's own-id trailer (OURS)
 }
 
 type goldenCharacter struct {
@@ -96,7 +97,7 @@ func goldenBytes(t *testing.T, s string) []byte {
 func items(in []goldenItem) []LobbyItem {
 	var out []LobbyItem
 	for _, it := range in {
-		out = append(out, LobbyItem{RefItemID: it.ID, Plus: it.Plus})
+		out = append(out, LobbyItem{RefItemID: it.ID, Plus: it.Plus, Own: it.Own})
 	}
 	return out
 }

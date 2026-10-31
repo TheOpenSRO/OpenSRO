@@ -30,6 +30,11 @@
       "avatars": [{"id": 23300, "plus": 0}]}
    ]},
    "hex": "02 01 | 02 | 83070000 | 0400 41726961 | 22 | 0a | 87d6120000000000 | 1e00 | 1900 | 0500 | 2c010000 | fa000000 | 00 | 00 | 00 | 00 | 05 | 440e0000 00 | 450e0000 00 | 460e0000 00 | 300e0000 03 | 862a0000 00 | 00 | 75070000 | 0400 4272616d | 40 | 01 | 0000000000000000 | 1400 | 1400 | 0000 | c8000000 | c8000000 | 01 5f270000 | 02 | 01 0500 4775696c64 | 01 | 00 | 01 | 045b0000 00"},
+  {"name": "list, a model-switched sword: the record names the model's row, its own id in the trailer (round 847, OURS)", "kind": "lobby_result",
+   "fields": {"action": 2, "ok": true, "characters": [
+     {"ref_obj_id": 1907, "name": "Seal", "scale": 34, "level": 110, "exp": 0, "str": 20, "int": 20, "stat_points": 0, "hp": 200, "mp": 200, "deleting": false, "minutes_left": 0, "guild_class": 0, "guild_rename": false, "guild_name": "", "academy_class": 0,
+      "items": [{"id": 3652, "plus": 0}, {"id": 62081, "plus": 12, "own": 62605}], "avatars": []}]},
+   "hex": "02 01 | 01 | 73070000 | 0400 5365616c | 22 | 6e | 0000000000000000 | 1400 | 1400 | 0000 | c8000000 | c8000000 | 00 | 00 | 00 | 00 | 02 | 440e0000 00 | 81f20000 0c | 00 | 0100 | 00 01 8df40000"},
   {"name": "list refused: not logged in", "kind": "lobby_result", "fields": {"action": 2, "ok": false, "code": 1031}, "hex": "02 02 | 0704"},
   {"name": "delete OK", "kind": "lobby_result", "fields": {"action": 3, "ok": true}, "hex": "03 01"},
   {"name": "delete refused: guild member", "kind": "lobby_result", "fields": {"action": 3, "ok": false, "code": 1026}, "hex": "03 02 | 0204"},
@@ -48,6 +53,8 @@
   {"name": "a refusal without its code", "kind": "lobby_result", "error": true, "hex": "01 02 | 05"},
   {"name": "a result byte that is neither 1 nor 2", "kind": "lobby_result", "error": true, "hex": "01 03"},
   {"name": "a list record with ten items", "kind": "lobby_result", "error": true, "hex": "02 01 | 01 | 83070000 | 0000 | 22 | 0a | 0000000000000000 | 0000 | 0000 | 0000 | 00000000 | 00000000 | 00 | 00 | 00 | 00 | 0a"},
+  {"name": "an own-id trailer naming an item the list does not hold", "kind": "lobby_result", "error": true, "hex": "02 01 | 01 | 73070000 | 0400 5365616c | 22 | 6e | 0000000000000000 | 1400 | 1400 | 0000 | c8000000 | c8000000 | 00 | 00 | 00 | 00 | 01 | 81f20000 0c | 00 | 0100 | 00 01 8df40000"},
+  {"name": "an own-id trailer cut inside its entry", "kind": "lobby_result", "error": true, "hex": "02 01 | 01 | 73070000 | 0400 5365616c | 22 | 6e | 0000000000000000 | 1400 | 1400 | 0000 | c8000000 | c8000000 | 00 | 00 | 00 | 00 | 01 | 81f20000 0c | 00 | 0100 | 00 00 8df4"},
   {"name": "a create cut before its weapon", "kind": "lobby_request", "error": true, "hex": "01 | 0400 41726961 | 75070000 | 22 | 3b0e0000 | 3c0e0000 | 3d0e0000"},
   {"name": "a start result with no code", "kind": "start_result", "error": true, "hex": "02"}
  ]
