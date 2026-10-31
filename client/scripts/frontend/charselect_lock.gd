@@ -46,7 +46,7 @@ var net: Node = null
 ## The last status the server sent (a reply to anything), or null.
 var status: CharacterLockNet.Reply = null
 var window: CharacterLockWindow = null
-var button: Button = null
+var button: BaseButton = null
 var _dim: ColorRect = null
 var _awaiting := false
 var _waited_s := 0.0
@@ -79,8 +79,9 @@ func setup(host_control: Control, builder: UiBuilder, net_client: Node, start_bu
 	if make_button.is_valid():
 		button = make_button.call(start_button_def, "", BUTTON_TEXT)
 	else:
-		button = Button.new()
-		button.text = BUTTON_TEXT
+		# Round 848: the archive's outer button with the caption, as the
+		# screen's own (FrontEndUi.cif_button), never a Godot Button.
+		button = FrontEndUi.cif_button(builder, start_button_def, BUTTON_TEXT)
 	button.name = "PinCodeButton"
 	button.visible = false
 	button.pressed.connect(manage)

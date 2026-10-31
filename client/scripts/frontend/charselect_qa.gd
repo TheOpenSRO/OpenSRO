@@ -230,8 +230,15 @@ static func button_report(root: Node, hidden_too: bool = false) -> Array[Diction
 static func button_text(b: BaseButton) -> String:
 	if b is Button:
 		return (b as Button).text
-	var l := b.get_node_or_null("Text") as Label
+	var l := _caption(b)
 	return l.text if l != null else ""
+
+## A TextureButton's caption label: "Text" (CharacterCreate's) or
+## "ButtonLabel" (UiBuilder's CIFButton, every other front-end button from
+## round 848).
+static func _caption(b: BaseButton) -> Label:
+	var l := b.get_node_or_null("Text") as Label
+	return l if l != null else b.get_node_or_null("ButtonLabel") as Label
 
 ## Where a button's words are drawn (global canvas units), or an empty rect.
 static func text_rect(b: BaseButton) -> Rect2:
@@ -242,7 +249,7 @@ static func text_rect(b: BaseButton) -> Rect2:
 	var halign := HORIZONTAL_ALIGNMENT_CENTER
 	var valign := VERTICAL_ALIGNMENT_CENTER
 	if not (b is Button):
-		var l := b.get_node("Text") as Label
+		var l := _caption(b)
 		holder = l
 		halign = l.horizontal_alignment
 		valign = l.vertical_alignment

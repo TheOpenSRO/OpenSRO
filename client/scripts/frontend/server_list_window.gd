@@ -95,8 +95,8 @@ var _media: Pk2Reader = null
 
 var window: Control = null
 var list: Control = null
-var select_button: Button = null
-var cancel_button: Button = null
+var select_button: BaseButton = null
+var cancel_button: BaseButton = null
 var _rows: Array = [] # of {art: TextureRect, name: Label, status: Label}
 var _select_tex: Texture2D = null
 var _rollover_tex: Texture2D = null
@@ -381,29 +381,21 @@ func _art_control(d: UiLayoutParser.ControlDef, fallback_ddj: String, fallback_r
 	t.mouse_filter = Control.MOUSE_FILTER_STOP
 	return t
 
-func _button(d: UiLayoutParser.ControlDef, key: String, fallback: String) -> Button:
-	var b := Button.new()
+## Select / Cancel as the client builds a CIFButton (round 848,
+## FrontEndUi.cif_button): button.ddj's states, the caption in the client's
+## face at the layout's font. Godot Buttons with StyleBoxTextures before.
+func _button(d: UiLayoutParser.ControlDef, key: String, fallback: String) -> TextureButton:
 	var t := fallback
 	if _text != null and _text.has(key):
 		t = _text.get_text(key, fallback)
-	b.text = t
-	b.size = Vector2(d.rect.size) if d != null else Vector2(91, 40)
-	b.custom_minimum_size = b.size
-	b.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[clampi(d.font_index if d != null else 2, 0, UiBuilder.FONT_SIZES.size() - 1)])
-	b.add_theme_color_override("font_color", d.font_color if d != null else Color.WHITE)
-	var base := d.ddj if d != null and d.ddj != "" else "interface\\outer\\button.ddj"
-	var styles := ["normal", "hover", "pressed"]
-	var suffixes := ["", "_focus", "_press"]
-	for i in range(3):
-		var tex := _tex(base.get_basename() + suffixes[i] + ".ddj")
-		if tex == null:
-			continue
-		var sb := StyleBoxTexture.new()
-		sb.texture = tex
-		b.add_theme_stylebox_override(styles[i], sb)
-		if i == 1:
-			b.add_theme_stylebox_override("focus", sb)
+	if _builder == null:
+		_builder = UiBuilder.new(_media, _text)
+	var b := FrontEndUi.cif_button(_builder, d, t, FrontEndUi.OUTER_BUTTON_DDJ, Vector2(91, 40))
+	# The window places them (_layout); the def's own position is 0, 0.
+	b.position = Vector2.ZERO
 	return b
+
+var _builder: UiBuilder = null
 
 ## READ placement (FUN_00866760): around the centre line between the bands.
 func _layout() -> void:

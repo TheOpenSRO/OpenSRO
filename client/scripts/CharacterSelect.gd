@@ -28,7 +28,6 @@ signal race_chosen(race: int)
 
 const STILL_DDJ := "interface\\loading\\loading_constantinople.ddj"
 const TEXT_TABLE_PATH := "server_dep\\silkroad\\textdata\\textuisystem.txt"
-const BUTTON_STATES := ["", "_focus", "_press"]
 const WORLD_SCENE := "res://scenes/World3D.tscn"
 const LOGIN_SCENE := "res://scenes/Login.tscn"
 
@@ -289,22 +288,24 @@ func _build_ui() -> void:
 		b.name = "Button%d" % spec[0]
 		add_child(b)
 		_windows[spec[0]] = b
-	(_windows[ID_START] as Button).pressed.connect(_on_start_pressed)
-	(_windows[ID_CREATE] as Button).pressed.connect(_on_create_pressed)
-	(_windows[ID_DELETE] as Button).pressed.connect(_on_delete_pressed)
-	(_windows[ID_RESTORE] as Button).pressed.connect(_on_delete_pressed)
-	(_windows[ID_BACK] as Button).pressed.connect(_on_back_pressed)
-	(_windows[ID_DESELECT] as Button).pressed.connect(_on_deselect_pressed)
-	(_windows[ID_RACE_CANCEL] as Button).pressed.connect(_on_race_cancel_pressed)
+	(_windows[ID_START] as BaseButton).pressed.connect(_on_start_pressed)
+	(_windows[ID_CREATE] as BaseButton).pressed.connect(_on_create_pressed)
+	(_windows[ID_DELETE] as BaseButton).pressed.connect(_on_delete_pressed)
+	(_windows[ID_RESTORE] as BaseButton).pressed.connect(_on_delete_pressed)
+	(_windows[ID_BACK] as BaseButton).pressed.connect(_on_back_pressed)
+	(_windows[ID_DESELECT] as BaseButton).pressed.connect(_on_deselect_pressed)
+	(_windows[ID_RACE_CANCEL] as BaseButton).pressed.connect(_on_race_cancel_pressed)
 	for id in [ID_PREV, ID_NEXT]:
 		var d := _def("Select", id)
-		var b := _button(d, "", "<" if id == ID_PREV else ">")
+		# Round 848: no caption -- the arrow is the art (GDR_BTN_PREV/NEXT's
+		# Text is empty); a "<" / ">" of ours was drawn over it before.
+		var b := _button(d, "", "")
 		if b.size == Vector2.ZERO or b.size.x < 8:
 			b.size = Vector2(32, 64)
 		add_child(b)
 		_windows[id] = b
-	(_windows[ID_PREV] as Button).pressed.connect(func() -> void: _change_page(-1))
-	(_windows[ID_NEXT] as Button).pressed.connect(func() -> void: _change_page(1))
+	(_windows[ID_PREV] as BaseButton).pressed.connect(func() -> void: _change_page(-1))
+	(_windows[ID_NEXT] as BaseButton).pressed.connect(func() -> void: _change_page(1))
 	var page_label := _static(_def("Select", ID_PAGE), "")
 	add_child(page_label)
 	_windows[ID_PAGE] = page_label
@@ -355,9 +356,9 @@ func _build_ui() -> void:
 		_refit(n, cd)
 		_popup_parts[cd.id] = n
 	if _popup_parts.has(42):
-		(_popup_parts[42] as Button).pressed.connect(_on_confirm_accept)
+		(_popup_parts[42] as BaseButton).pressed.connect(_on_confirm_accept)
 	if _popup_parts.has(43):
-		(_popup_parts[43] as Button).pressed.connect(_on_confirm_cancel)
+		(_popup_parts[43] as BaseButton).pressed.connect(_on_confirm_cancel)
 
 	# Window 21, the black fade: opaque while the region builds (OURS), then
 	# 0x80 -> 0 over 0.5 s (READ, OnCreate).
@@ -420,7 +421,9 @@ func _art(d: UiLayoutParser.ControlDef, fallback_size: Vector2 = Vector2.ZERO) -
 		tr.stretch_mode = TextureRect.STRETCH_SCALE
 		n = tr
 	else:
-		n = Panel.new() if fallback_size != Vector2.ZERO else Control.new()
+		# Round 848: an empty holder, never Godot's grey Panel box -- a window
+		# whose art the archive lacks draws nothing (no art, nothing to draw).
+		n = Control.new()
 	n.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	n.size = Vector2(d.rect.size) if d != null and d.rect.size != Vector2i.ZERO else fallback_size
 	if d != null and d.rect.position != Vector2i.ZERO:
@@ -505,26 +508,18 @@ func _static(d: UiLayoutParser.ControlDef, text: String) -> Label:
 		l.vertical_alignment = [VERTICAL_ALIGNMENT_TOP, VERTICAL_ALIGNMENT_CENTER, VERTICAL_ALIGNMENT_BOTTOM][clampi(d.valign, 0, 2)]
 	return l
 
-## A button from the layout: its DDJ's three state images (as Login's), its
-## text key's words.
-func _button(d: UiLayoutParser.ControlDef, text_key: String, fallback: String) -> Button:
-	var b := Button.new()
-	b.text = _t(text_key, fallback)
-	b.size = Vector2(d.rect.size) if d != null and d.rect.size != Vector2i.ZERO else Vector2(92, 41)
-	b.custom_minimum_size = b.size
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[clampi(d.font_index if d != null else 0, 0, UiBuilder.FONT_SIZES.size() - 1)])
-	b.add_theme_color_override("font_color", d.font_color if d != null else Color.WHITE)
-	var base: String = d.ddj if d != null and d.ddj != "" else "interface\\outer\\button.ddj"
-	var styles := ["normal", "hover", "pressed"]
-	for i in range(BUTTON_STATES.size()):
-		var tex := FrontEndUi.load_ddj(_media, base.get_basename() + str(BUTTON_STATES[i]) + ".ddj")
-		if tex == null:
-			continue
-		var sb := StyleBoxTexture.new()
-		sb.texture = tex
-		b.add_theme_stylebox_override(styles[i], sb)
-	return b
+## A button from the layout, built as the client builds a CIFButton (round
+## 848, FrontEndUi.cif_button): its DDJ's states, its text key's words in the
+## client's face. A zero-size rect takes the art's own size (the page arrows,
+## bigarrow_left/right.ddj; until round 848 they were stretched to 92x41).
+func _button(d: UiLayoutParser.ControlDef, text_key: String, fallback: String) -> TextureButton:
+	return FrontEndUi.cif_button(_ui_builder(), d, _t(text_key, fallback), FrontEndUi.OUTER_BUTTON_DDJ, Vector2(92, 41))
+
+var _builder_cache: UiBuilder = null
+func _ui_builder() -> UiBuilder:
+	if _builder_cache == null:
+		_builder_cache = UiBuilder.new(_media, _text)
+	return _builder_cache
 
 func _t(key: String, fallback: String) -> String:
 	if _text != null and key != "" and _text.has(key):
@@ -1206,8 +1201,8 @@ func _open_confirm(delete: bool) -> void:
 		(_popup_parts[44] as Label).text = _t("UIO_STT_CHAR_DEL_CONFIRM" if delete else "UIO_STT_CHAR_RECOVERY_CONFIRM",
 			"Delete this character?" if delete else "Restore this character?")
 	if _popup_parts.has(42):
-		(_popup_parts[42] as Button).text = _t("UIO_SELCHAR_CTL_DELETE" if delete else "UIO_STT_CHAR_RECOVERY",
-			"Delete" if delete else "Restore")
+		FrontEndUi.set_cif_button_text(_ui_builder(), _popup_parts[42] as BaseButton,
+			_t("UIO_SELCHAR_CTL_DELETE" if delete else "UIO_STT_CHAR_RECOVERY", "Delete" if delete else "Restore"))
 	_show(ID_POPUP, true)
 	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	if _frame != null:

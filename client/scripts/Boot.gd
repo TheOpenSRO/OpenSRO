@@ -93,15 +93,33 @@ func _on_update_available(tag: String, download_url: String) -> void:
 		print("OpenSRO: downloading update %s (accepted by OPENSRO_QA_UPDATE_ACCEPT)..." % tag)
 		_updater.begin_download(download_url)
 		return
-	var dialog := ConfirmationDialog.new()
-	dialog.title = "Update available"
-	dialog.dialog_text = "A new version (%s) is available. Download and restart now?" % tag
-	add_child(dialog)
-	dialog.confirmed.connect(func():
+	# Round 848: the question in the client's own message box (FrontMessageBox,
+	# MsgBoxINIF's art and YES / NO), not Godot's ConfirmationDialog. OURS:
+	# the retail client has no update prompt.
+	var layer := CanvasLayer.new()
+	layer.name = "UpdatePrompt"
+	add_child(layer)
+	# OURS: black under the box (Godot's grey clear colour showed before).
+	layer.add_child(FrontEndUi.ground(Color.BLACK))
+	var media := AssetArchives.media()
+	var box := FrontMessageBox.new()
+	layer.add_child(box)
+	box.build(media, FrontMessageBox.load_text_table(media),
+		UPDATE_LINE_1 % tag, UPDATE_LINE_2)
+	UiSounds.play("snd_window_open", "update prompt")
+	print("OpenSRO: update %s offered (FrontMessageBox)" % tag)
+	box.accepted.connect(func():
 		print("OpenSRO: downloading update %s..." % tag)
+		layer.queue_free()
 		_updater.begin_download(download_url))
-	dialog.canceled.connect(_proceed_to_login)
-	dialog.popup_centered()
+	box.declined.connect(func():
+		print("OpenSRO: update %s declined" % tag)
+		layer.queue_free()
+		_proceed_to_login())
+
+## The update prompt's two lines (OURS).
+const UPDATE_LINE_1 := "A new version (%s) is available."
+const UPDATE_LINE_2 := "Download and restart now?"
 
 func _proceed_to_login() -> void:
 	# QA hook (round 668): stop here instead of opening Login, so an
