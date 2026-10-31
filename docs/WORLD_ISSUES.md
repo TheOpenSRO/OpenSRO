@@ -7483,6 +7483,117 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-eighth round, lane T: native tooltips, scroll bars and context menus
+
+The user: "Can you investigate all the cases where use the native gui and not the original gui?
+Please find and fix all instances of this and make sure you match original as close as possible."
+Lane T's part: Godot's tooltip popup, its scroll bars and its right-click menus, across the whole
+client. Labels: READ (`c:` sro_client.exe, the decomp dump `/var/tmp/decomp_client` and
+`/var/tmp/sro_client.asm` on the box), MEASURED, INFERRED, OURS, OPEN.
+
+**What the original's tooltip is (READ).** Not a Windows tooltip: every CIFWnd / CNIFWnd keeps a
+help string (`0x653dc0` / `0x46d7d0`) and style bit 0x80, and the interface has ONE help window,
+`CIFHelperBubbleWindow` (GInterface +0x730; Create `0x776ea0`: `com_tooltip_corner.ddj` /
+`com_tooltip_edge.ddj`, both borders 8 -- the same window the item and skill tooltips use, round
+731's `CNIFHelperBubbleWindow` being its CNIF twin, `0x46cdf0`). Each frame `0xba5600` takes the
+window under the cursor and `0xb9dbb0` sends 0x400a / 0x4009 on a change; `0x652fb0` / `0x46cee0`
+answer 0x4009 on a bit-0x80 control with the show slot (`0x6528c0` / `0x46cdf0`) and 0x400a by
+hiding the bubble. **No delay** (Godot's is 0.5 s). The show slot resizes the text box to 200
+(`0x54(200, 1)`, INFERRED a wrap width), writes the text white (0xffffffff, font argument 1,
+`0x7769a0`), sizes the window (14 px for one line, 18 a line for more, `0x777020`) and places it
+from **the control's own rect**, not the cursor (`0x776c00` = `0x497350`): right of it with the
+frame touching its edge, top aligned; flipped left when the box's right edge would come within 4 px
+of the screen's (`x + w + width + 0x14 > screen`); a low box 7 px above the bottom
+(`>= screen - 0xf`); no clamp on the left or the top. The CIF bubble hides itself while the cursor is
+inside it (`0x776bb0`). Full record: `docs/protocol/item_tooltip.md`, "Round 848".
+
+**The fix.** `HelpTips` (`client/scripts/ui/help_tips.gd`, autoload `NativeGuiGuard`): every frame
+it takes Godot's hovered control, walks to the tooltip's owner the way Godot's own
+`_gui_get_tooltip` does (so every `tooltip_text` and `_get_tooltip` site keeps its owner), and shows
+the text in an `ItemTooltipBubble` on its own top layer (121) at once, white rows, wrapped at 200;
+new text on the hovered control shows at once (`0x653dc0`); it hides on leave and while the cursor is
+inside it. Godot's own popup is held off (`gui/timers/tooltip_delay_sec=1e+06`). Controls with
+HudPanels' own item / skill bubble (metas `item_tip`, `bubble_tip`) are left to it.
+`HelpTips.set_tip(control, rows | Callable | String)` gives a control coloured rows. One shared
+placement: `ItemTooltipBubble.place` is now the READ `0x776c00` for items, skills and help alike
+(round 731 had it OURS: flipped at the edge exactly, kept on screen at the bottom and left).
+
+**Text inputs (READ).** The original's edit boxes are Win32 EDIT windows made at (-100, -100),
+200 x 14 (`CIFEdit::Create 0x637a60`, `CNIFEdit::Create 0x47ae00`), subclassed (`0x637a30` ->
+`0x636cd0`, which handles Ctrl+A/C/V/X/Z and the paste); the box a player sees is drawn by the
+client, so a right click on it reaches the game window: **no context menu**. HelpTips turns off
+Godot's context menu on every LineEdit and TextEdit as it enters the tree, and the middle-button
+paste (X11 primary; the original's middle button is quick slot 0, `0x77c4cc`).
+
+**Scroll bars (READ).** `CIFVerticalScroll::Create` (`0x65a9c0`) builds ifverticalscroll.txt's parts
+over `com_scroll_bar.ddj` and gives the bar **the control's own rect height** as its length
+(`0xb8f420` then `0x65a390(height, 0, 100, 1)`) unless the window's Create sets another -- which
+makes `party_match_window.gd`'s "length is the record's 232 (INFERRED)" READ. `OriginalScroll`
+(`client/scripts/ui/original_scroll.gd`) hides a native bar (zero width, nothing drawn, no clicks;
+it still scrolls) and drives it from `HudChat.ChatScroll` (CIF) or `VScroll2dt` (CNIF), a line a step.
+
+**Census** (player-reachable unless marked):
+
+| Site | Native thing, for what | Original | After |
+|---|---|---|---|
+| `stall_network_window.gd:170` | tooltip, Search | CNIF help, UIIT_MSG_WARENETWORK_SCAN_TOOLTIP (READ, round 840) | bubble |
+| `guild_window.gd:948, 1555` | tooltips, guild/community controls, union header | CNIF help, 0x46d7d0 / 0x5ab0f0 (READ; the hover now READ too) | bubble |
+| `alchemy_window.gd:244, 385, 531` | tooltips, action button, tabs, slots | CNIF help (READ) | bubble |
+| `hud_worldmap.gd:502, 533` | tooltips, world / auto-move buttons | CNIF help (READ) | bubble |
+| `hud_worldmap.gd:2519` | tooltip, quest signs | the map's hovers use the CIF bubble (READ 0x613260 / 0x614950); the rect it passes OPEN | bubble, the sign's rect |
+| `hud_chat.gd:364` | tooltips, lock / whisper list / size buttons | CIF help, 0x7ac157.. (READ) | bubble |
+| `hud_underbar.gd:456` | tooltips, character / inventory / skill / mall buttons | CNIF help (READ) | bubble |
+| `hud_action_pane.gd:107, 122, 156` | tooltips, action slots | CIFSlotWithHelp help (READ) | bubble |
+| `hud_quick_party.gd:316, 599` | tooltips, lock, mastery icons | CIF help, flag 0x80 (READ) | bubble |
+| `hud_player_info.gd:704` | tooltip, stat button | UIIT_STT_CHARACTER_ABILITY_VIEW_OFF (READ) | bubble |
+| `hud_panels.gd:9084` | tooltips, avatar / equipment switch | CIF help (the site's keys) | bubble |
+| `stall_window_view.gd:91` | tooltip, price modify | UIIT_STT_TOGGLE_STORE_PRICE_CHANGE | bubble |
+| `option_video_page.gd:142, 144, 667, 679, 692` | tooltips, video rows | TTDESC rows (READ 0x5fef70); the full-screen line OURS | bubble |
+| `hud_target_buffs.gd:138`, `hud_buff_board.gd:225` | `_get_tooltip`, buff icons | generic help (READ 0x806640, 0x800a10) | bubble |
+| `item_chest_icon.gd:68`, `item_chest_window.gd:496` | tooltips, chest icon, row dates | none: OURS feature | bubble, OURS |
+| `Login.gd:226, 618, 625` | tooltip, server field's address | none: OURS (round 678) | bubble, OURS |
+| `World3D.gd:26695, 26887` | tooltip, slash-command hint on the menu button and chat input | none: OURS | bubble, OURS |
+| `World3D.gd:26888` | tooltip, the whole chat window | none | **removed** (an at-once bubble beside the chat whenever the cursor crossed its log); the input keeps it |
+| item, skill, COS, skill-board tips (`HudPanels.set_bubble_tip`, `_set_item_tip`) | already the bubble | (round 731/786) | unchanged; placement now READ |
+| every LineEdit / TextEdit | right-click menu, middle paste | none (READ) | off |
+| `stall_window_view.gd:116` chat module lines (RichTextLabel) | native VScrollBar | GDR_CHAT_VSCROLL, CIFVerticalScroll, length 29 (READ: rect height; `CIFChatModule::Create 0x65b510` sets none) | ChatScroll on it |
+| `guild_gp_history_window.gd:48` (RichTextLabel) | native VScrollBar; 953 hidden | CNIFVerticalScroll 953 | VScroll2dt on 953 |
+| `guild_notice_write.gd:73` (TextEdit) | native bars | no scroll control in ifguildnotifywrite.txt (MEASURED) | hidden |
+| `help_window.gd:133, 152` (ItemList, RichTextLabel) | native bars | lane H's window | **needs OriginalScroll at merge** |
+| `World3D.tscn` ChatLog, 7 ItemLists, 2 OptionButtons | native bars, popups | legacy debug UI, lane W | lane W |
+| `gacha_select_window.gd:64` (3 OptionButtons) | native PopupMenu | CIFComboBox list (ComboList) | lane H (not wired to ComboList) |
+| `Boot.gd:96`, `quest_hud.gd:300` | ConfirmationDialog | message boxes | lanes F / H |
+| `debug_panel.gd` ScrollContainer, RichTextLabel, OptionButtons | native | dev only (F3) | unchanged |
+| RichTextLabels with `scroll_active = false` (talk box, party match, mall box, job box, auto potion, silk history, select screen) | none shown | -- | unchanged |
+
+**Evidence** (`/var/tmp/r848t/keep` on the box; 1280 x 720, base `992993b4` against this lane).
+The stat button hovered at tick 100: base draws Godot's grey box under the cursor at **frame 130**
+(its 0.5 s), after draws the help bubble right of the button at **frame 100**, the hover's own
+frame (MEASURED: the mean of the box's crop changes at those frames, `sheet_cinfo.png`). The
+bubble's black frame column is at x 65, the button's right edge (45 + 20, ifplayerminiinfo.txt's
+rect at the window's 4, 7): the relation round 731 measured on the original (black column right
+after the slot). The underbar's Inventory and Character buttons the same (`sheet_ub.png`). The
+stall chat module (`scroll_probe.png`: ifchatmodule.txt built twice through UiBuilder with the real
+art, 20 lines scrolled to 60 px; a windowed probe, since a QA `--panels stall` does not wire the
+stall window): before, Godot's grey bar inside the message box; after, the original's arrows,
+track and thumb on GDR_CHAT_VSCROLL (up arrow 16 above its top, down arrow below its 29), the
+thumb at the scrolled line and the text the box's full width.
+
+**Tests.** `client/scripts/ui/help_tips_test.gd` (new): the delay setting, an at-once show, white
+rows, the layer, the placement, 14/18 px lines, a text change while hovered, `_get_tooltip`, the
+parent walk (PASS / STOP), the HudPanels metas, `set_tip` rows / Callable / clear, the 200-px wrap,
+the flip at the edge, the cursor-inside hide, context menu and middle paste off, and OriginalScroll
+(width 0, length = rect height, one line a step, the end). `item_tooltip_lines_test.gd`: the READ
+placement (the 4-px flip boundary, the 7-px bottom, no left clamp). A headless root has no mouse to
+hover with, so the test supplies the hovered control (`HelpTips.hover_probe`); the hover itself is
+the render above. `check` ALL LOAD; `tests` 405 suites, 0 failing. UI only: no perf gate.
+
+**OPEN.** The style word +0x204 (the "above" placement) -- no setter read; the world map passes its
+own rect for a sign's help (not read); the CIF bubble's hit rect margins (+0x50..+0x5c in
+`0xb8f3d0`) -- the window's own rect is used; whether `CIFTextBox` wraps at the 200 it is given
+(INFERRED, as round 786). Both runs abort at exit with "finalize can only be called from the render
+thread" (base too: not this lane).
+
 ## Eight-hundred-and-forty-seventh round, lane B: a status effect's look ends with the status
 
 The user: "sometimes the status effects cast on the players (maybe more?) lingers even after it's
