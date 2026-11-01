@@ -39153,7 +39153,7 @@ func _qa_cos_step() -> void:
 				for e in _animated:
 					if (e as Array)[0] == asm.skeleton and (e as Array)[1] != null:
 						clip = ((e as Array)[1] as BanReader.ParsedAnimation).animation_name
-			parts.append("%d@(%.0f,%.1f,%.0f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f clip %s" % [int(uid), b.global_position.x, b.global_position.y,
+			parts.append("%d@(%.2f,%.1f,%.2f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f clip %s" % [int(uid), b.global_position.x, b.global_position.y,
 				b.global_position.z, meshes, shown, str(box), fwd, _cos_ground(b.global_position),
 				lbl.text if lbl != null else "-", olbl.text if olbl != null else "-", olbl.offset.y if olbl != null else 0.0, clip])
 		var held := ""
