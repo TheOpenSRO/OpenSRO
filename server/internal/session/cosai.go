@@ -268,6 +268,9 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 			}
 		}
 		if a.moveTo != nil {
+			a.moveTo = cosLegEnd(o, pos, *a.moveTo)
+		}
+		if a.moveTo != nil {
 			o.from, o.to, o.legStart, o.legSpeed, o.moving = pos, *a.moveTo, now, o.row.RunSpeed, true
 			o.pos = pos
 			o.heading = world.HeadingToward(o.heading, a.moveTo.X-pos.X, a.moveTo.Z-pos.Z)

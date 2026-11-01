@@ -38813,11 +38813,15 @@ func _cos_step(delta: float) -> void:
 		var st: Dictionary = _cos_motion[uid]
 		if not bool(st["moving"]):
 			continue
-		var pos := MonsterMotion.step(st["pos"], st["dest"], float(st["speed"]), delta)
-		st["pos"] = pos
+		# Round 851: the step walks the navigation graph and a wall ends the
+		# leg there (CosWalk; READ c:0x9e0fca, every mover's step).
+		var pair := _nav_graph_for(body.position)
+		var walled := CosWalk.advance(st, null if pair.is_empty() else pair[0],
+			Transform3D.IDENTITY if pair.is_empty() else (pair[1] as Node3D).global_transform, body.position.y, delta)
+		var pos: Vector2 = st["pos"]
 		var y := _cos_ground(Vector3(pos.x, body.position.y, pos.y))
 		body.position = Vector3(pos.x, body.position.y if is_nan(y) else y, pos.y)
-		if pos == st["dest"]:
+		if walled or pos == st["dest"]:
 			st["moving"] = false
 			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
 
