@@ -7483,6 +7483,120 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fiftieth round, lane E: the weapon and shield go away for the emotes and the stall
+
+The user: "when doing action emoticons the weapon is supposed to disappear for most if not all, check
+the original code to verify" and "stalls open with weapons too when they shouldn't".
+
+**The switch (READ, sro_client.exe).** One function hides a character's held items:
+`CCompChar` vtable slot 22 (`0x00c29bd0`, the render model `[[character+0x9c]+4]`, called through
+`+0x58` with `(hide, which)`). For every part whose resource is an item (type 5) it reads the part's
+attachable kind -- `CResAttachable` slot 3 (`0x00be60e0`) returns `+0x314`, and `+4` from it is the
+word at `+0x318`, the trailing block's second word (`BsrReader.Attachable.kind`, meaning OPEN since
+round 687) -- and for `which` 0 sets the part's draw flag `+0x98` to `!hide` when the kind is 6, 7, 14
+or 15 (1: 7 and 15; 2: 6 and 14; no caller below passes them). The part's attached effects follow
+(`FUN_00c44f40` -> `FUN_00c7b3a0` per effect of that part); a hide clears the afterimage (slot 35,
+`0x00c275a0`). No fade: the flag is set in the call.
+
+**MEASURED, what those kinds are** (`client/tools/census_attach_kind.gd`, every item model the item
+table names, plain, `_l`, `_r`, `_f`, on the box's Data.pk2): kind 7 = every right-hand weapon
+(swords, blades, spears, glaives, one- and two-handed swords, staves, rods, crossbows, a dual axe's or
+dagger's `_r`; 3/1/6/2..16), kind 6 = every bow, harp, shield (3/1/4/1-2) and a dual axe's or dagger's
+`_l`; kind 15 = two crossbow files; no item model carries 14. Armour, accessories, job suits and
+avatars carry 0-5, 8, 16 or -1, never 6/7/14/15. So "the weapon" is exactly the weapon and the shield
+models, both hands, and nothing worn (wings, dresses, hats stay).
+
+**Who throws it (READ: all 15 calls of the dispatcher `FUN_009c92a0`).**
+- **op 3, a body state's enter/leave** (`FUN_009c8900(phase, mask, byte)`):
+  - **State 13, the emote** (mask 0x2000; enter `0xa59bc0` plays type 0x32+byte and calls it with
+    phase 1, leave `0xa59c40` stops the clip with a 200 fade and calls phase 2): enter hides, leave
+    shows -- **except Rush** (byte 2, action 4004): `0x9c897d` applies byte 2 only under the dev
+    console's `Camera` toggle (`[0x110f80c]+0x3ce`, command string "Camera" registered at `0x5598f5`
+    -> `0x542300`) or when a skill visual change keeps the weapon hidden (below). So Hi, Smile,
+    Greeting, Yes, Joy and No take the weapon and shield away; Rush keeps them. Every player's emote is
+    state 13 (`FUN_008a7950`: IsKindOf CICUser `0xef1bc0`, whose runtime class `CICUser::vslot_000`
+    `0x9dc100` returns), so this client's own and another's alike.
+  - **State 15, the vendor pose** (mask 0x8000; enter `0xa5a330` plays ANI_VENDOR01, type 80, leave
+    `0xa59c90`): hide on enter, show on leave, for a CICUser only (`0x9c8957`) -- every stalling player,
+    never a jinn pet in the same pose.
+  - CICharactor slot 54 (`0x9db180`) runs the same leave for a state ended from outside.
+  - When the state ends: its clip's end (`0xa59c30`, `push 0xd; call 0x9c8810`, a callback, INFERRED
+    to be the clip-end one from its shape), or a new state whose clear mask (the record's last word,
+    table `0xec5fb8`, MEASURED in .data) holds bit 13: states 1 (0xffcf), 9 (0x21a0), 12 (0x2004), 15
+    (0xfffe). Which state a move is was not read (OPEN).
+- **op 0** (`0x9c9630` / `0x9c9650`, from `CharacterVisualChange::Condition_SkillCodeName` /
+  `Condition_Skill` slots 4/5, `0x4e92f0` / `0x4e8e20`, when the condition's `+0x10` is set): bit 0 of
+  `+0x768`, "the weapon stays hidden" -- a state's leave then keeps it hidden, and Rush shows it.
+  OpenSRO has no skill visual changes (OPEN).
+- **op 1**, six skill decorations (`0xa4d660`, `0xa534d0`, `0xa53610`, `0xa53dd0`, `0xa54f00`,
+  `0xa557f0`) by a byte of their skill data (`+0x60`, `+2`): not modelled (OPEN).
+- **op 2**, `CCObjCharacter` slot 7 (`0xa5bcd0`), called from the clip starts `0xa5a930` / `0xa5b550`
+  with (animation group, action type): shows the weapon, hides it for the groups `avatar_nasrun1..3`
+  (the std::string globals `0xec6408/24/40`, initialised at `0xd77898..0xd778e8`), and leaves it alone
+  for ANI_DAMAGE1 (3), ANI_DAMAGE2 (9) and ANI_PICK (38) -- the clips that can play inside an emote or a
+  stall. Not modelled (OPEN: no nasrun avatar group in OpenSRO's look).
+- **Not covered** (no call from their states): sitting, the pick-up (state 10), the fidgets, death,
+  the job and transport states. The ride hides the same items by another rule (round 796,
+  `CObjItem::vslot_003`).
+
+**Built.**
+- `HeldItems` (`client/scripts/world/held_items.gd`): the READ rule as pure functions
+  (`state_effect`, `emote_hides`, `kind_hidden`), and `set_shown` / `state_of` on a body skeleton (by
+  the node's attachable kind, `CharacterAppearance.ATTACH_KIND_META`, new; by its visual slot for a
+  node without one).
+- World3D: per character a set of reasons (`ride`, `emote`, `stall`; OURS) -- the held items are drawn
+  when none holds. The emote's comes with 0x3091 (own and others', all but Rush) and goes when its clip
+  is over or no longer on the body (the clip clock, not the wall's); Rush clears it (its enter is the
+  previous emote's leave). The stall's follows `StallWorld.stalling` in `_stall_refresh`. Round 796's
+  ride is now the third reason (`_set_held_items_shown` delegates). A re-dress -- a weapon swap or any
+  equip -- applies the reasons to the new body from its first frame (`_held_rebuilt` where the
+  skeleton is installed, `_step_held` as a backstop), so the new weapon never shows early and is
+  there when the reason ends (OURS: the original's op 2 would show a swapped weapon at once, INFERRED;
+  the coordinator's rule). A far body's GPU instances re-read (`_crowd_light_changed`).
+- Effects: the + glow and a seal's stars hang under the item node (and the native batch skips an
+  invisible host), so they go with it; `EquipFx.hurry_in` (new) re-selects at once when the items come
+  back, so the effect returns the same frame (it waited for the next 10-frame cycle; READ: the original
+  shows the part's effects in the same call).
+- partybot `-emotes "5s=0;12s=6"` (0x3091 at set times).
+
+**Live QA** (render box, lane server 17190 in memory, real input through `OPENSRO_QA_INPUT` -- the
+action window's right click (`actionslot`), the bag and the equipment window -- partybots as the other
+players; `OPENSRO_QA_HELD_LOG=1` prints every body's held items as drawn: each node's visibility, its
+meshes visible in the tree, its effects shown; `/var/tmp/r850e/run*.client.log`):
+
+| Check | Result (MEASURED, node visibility in the scene) | Evidence |
+|---|---|---|
+| Own emotes through the action window: Hi, Smile, Greeting, Yes, Joy, No hide the sword (kind 7) and shield (kind 6), meshes 0/1 in the tree, the +8 glow 0/1; back at each clip's end (Hi 2.33 s, tick 481 -> 622; Joy 1.50 s, 1681 -> 1773; No 3.33 s, 1921 -> 2122) | PASS | run1/run7 `QA HELD` lines; `self_hi_hidden_f560.png` |
+| Own Rush (4004): sword and shield stay drawn the whole clip | PASS | run1 tick 720-960, run3 tick 360-540; `self_rush_shown_f700.png` |
+| Equip a blade from the bag onto the weapon slot during Hi (real clicks, bag then worn slot): the new body's blade comes hidden (tick 651), shown at the clip's end (702) | PASS | run3.client.log |
+| A walk click during No: the clip plays on over the run (this client, round 808) and the items stay hidden until it ends | as built (the original's move state is OPEN) | run3 tick 860 -> 1022 |
+| Own stall (action 1009, title, item, open, close with the X): hidden from the stall's creation (tick 1191) to its close (1801) | PASS | run3.client.log |
+| Another player's emotes (partybot `-emotes`): Hi hides, Rush shows (and ends the Hi), Smile hides until its 3.67 s clip ends, the + glow with the sword | PASS | run4/run7; `other_hi_hidden_stall_hidden_f150.png`, `other_rush_shown_f180.png`, `others_smile_and_stall_hidden_self_shown_f300.png` |
+| Another player's stall: hidden from the first frame it is drawn (a spawn already stalling), shown at 0x70B2's close; the + glow back the next frame (`hurry_in`; run 2 without it: 11 frames) | PASS | run4 tick 17 -> 459/460; run7 361/362; `stall_closed_weapon_back_smile_hidden_f400.png` |
+
+Box: `/var/tmp/r850e/keep` (frames and logs); scripts `/var/tmp/r850e/qa850.sh`, `srv850.sh`.
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1095 scripts); `tests` "ran 410 suite(s), 0 failing"
+(`held_items_test.gd` new: the kinds, every op-3 case incl. Rush, Camera and the kept-hidden bit, the
+seven emotes, the nodes and their particles); `go test ./...` ok (partybot only touched).
+Perf gate (`--base 201bddc5 --head ad98c2a4 --sites jangan --frames 20000`, median of 3; the default
+frame count gave the base only 5 fps samples at ~950 fps and no number):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.90 | 0.90 | SAME |
+| entry ms | 8763 | 8707 | SAME |
+| freeze ms | 2773 | 2761 | SAME |
+| hitches | 4 | 4 | SAME |
+
+**OPEN.** The skill visual changes that keep the weapon hidden (op 0) and the skill decorations that
+hide it (op 1); the nasrun avatar groups (op 2); which body state a move is, and so whether a move ends
+an emote in the original (this client plays the emote clip on over the run, and the items come back
+with the clip); whether the original's freshly attached part starts drawn when a weapon is swapped
+during an emote (OpenSRO keeps it hidden until the emote ends); emoting while stalling (the stall's
+reason holds here; the original's emote leave would show the weapon if the server lets an emote
+through).
+
 ## Eight-hundred-and-forty-ninth round: Shift+F3's debug panel back in every build
 
 The user: "these are all really dev builds for now, please add shift+f3 back for now." Round 848

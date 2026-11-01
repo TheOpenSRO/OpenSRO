@@ -13042,6 +13042,8 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	player.add_child(skeleton)
 	player_mesh.visible = false
 	_player_skeleton = skeleton
+	# Round 850: a weapon re-dressed during an emote or a stall stays away.
+	_held_rebuilt(_own_id())
 	# Round 794: the own player's LOD factor is 0 (GlobalDataManager::
 	# FUN_009c4aa0, crowd_scale.md), so its cloth runs at any distance.
 	if skeleton != null:
@@ -22788,6 +22790,8 @@ func _process(_delta: float) -> void:
 			FrameSplit.add("w_selfpose", t1 - t)
 			t = t1
 	var t0 := Time.get_ticks_usec() if _qa_split != null else 0
+	# Round 850: the held items' reasons (an emote's end, a re-dress).
+	_step_held()
 	var others_delta := _other_step_gate.take()
 	if others_delta >= 0.0:
 		_step_other_bodies(others_delta, _other_step_gate.steps)
@@ -24876,6 +24880,7 @@ func _dress_other(character_id: int) -> void:
 		# body drawn at once (round 607).
 		var seated := _other_seated.has(character_id)
 		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false}
+		_held_rebuilt(character_id)
 		if seated:
 			_other_gaits[character_id]["sitting"] = true
 		# Their sounds come from where their body is; the cell under them is
@@ -25280,6 +25285,7 @@ func _redress_other(character_id: int) -> void:
 		# loop in the new group from its first frame over the old (100 ms for
 		# the run, 200 for the rest: animation_mixer.md).
 		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": moving, "sitting": sitting}
+		_held_rebuilt(character_id)
 		if regrouped:
 			# Its loop in the new group; the clip already playing is restarted
 			# from its first frame (the mixer's replay, 0xc55360), any other
@@ -25298,6 +25304,7 @@ func _redress_other(character_id: int) -> void:
 	else:
 		# No entry to carry (a body not posed yet): its loop from the start.
 		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false, "sitting": sitting}
+		_held_rebuilt(character_id)
 		var action := BsrReader.AnimationEntry.TYPE_SITTING if sitting else BsrReader.AnimationEntry.TYPE_STAND
 		var loop := _body_animation_for(body, action, group)
 		var frames := _frame_count(loop)
@@ -34066,6 +34073,9 @@ func _stall_refresh(uid: int) -> void:
 	if node == null or not is_instance_valid(node):
 		return
 	var stalling := _stall_world.stalling(uid)
+	# Round 850: the vendor pose (state 15) hides a player's weapon and shield
+	# from the stall's open to its close (HeldItems, READ 0xa5a330 / 0xa59c90).
+	_held_set(_own_id() if own else uid, HeldItems.REASON_STALL, stalling)
 	if not stalling and node.get_node_or_null(StallWorld.BOOTH_NODE) == null \
 			and node.get_node_or_null(StallWorld.TITLE_NODE) == null:
 		return
@@ -34248,6 +34258,8 @@ func _on_emote_received(object_id: int, emote: int) -> void:
 		var played := _play_player_once(anim, ClipMixer.SHOT_IN_MS, ClipMixer.SHOT_OUT_MS) if anim != null else 0.0
 		print("EMOTE: this player plays emote %d -- action type %d, %s (%.2f s)" % [emote, action_type,
 			_body_animation_path(_player_body, action_type, _player_weapon_group), played])
+		# Round 850: the weapon goes for the emote (HeldItems, READ 0xa59bc0).
+		_held_emote(own, emote, anim if played > 0.0 else null, played)
 		return
 	if not _other_bodies.has(object_id):
 		print("EMOTE: emote %d for unknown id %d ignored" % [emote, object_id])
@@ -34259,6 +34271,8 @@ func _on_emote_received(object_id: int, emote: int) -> void:
 	var once := _body_animation_for(gait["body"], action_type, gait["group"])
 	var t := _play_once(gait["skeleton"], once) if once != null else 0.0
 	print("EMOTE: player %d plays emote %d -- action type %d (%.2f s)" % [object_id, emote, action_type, t])
+	# Round 850: another player's emote is state 13 too (FUN_008a7950).
+	_held_emote(object_id, emote, once if t > 0.0 else null, t)
 
 ## An action's icon was put down on the quick slot bar (CIFUnderBar::vslot_028
 ## takes kind 0x4a, READ): the slot holds the action from now on.
@@ -38342,29 +38356,183 @@ func _cos_gait(uid: int, gait: int) -> void:
 		_end_body_fidget(assembled.skeleton)
 		MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
 
-## rider -> the skeleton whose weapon and shield are off (round 796).
-var _rider_held_hidden := {}
-
 ## Round 796: a rider's weapon and shield are not drawn (READ,
 ## CharacterVisualChange::CObjItem::vslot_003 0x4e8830: an item in equip
 ## visual slot 6 or 7 -- the weapon at +0x80 and the shield at +0x8c,
 ## EQUIP_SLOTS.md -- answers 0, not shown, while CObjCharacter::FUN_00a5be70
-## says the body has a mount). Their nodes carry CharacterAppearance's
-## VISUAL_SLOT_META; their own ambient particles on the body skeleton
-## (WornItemFx.MARKER_META naming the node) go with them. Their glow is under
-## the node.
-static func _set_held_items_shown(skel: Skeleton3D, shown: bool) -> int:
-	var ids := {}
-	for c in skel.get_children():
-		var slot := int((c as Node).get_meta(CharacterAppearance.VISUAL_SLOT_META, -1))
-		if slot == CharacterAppearance.SLOT_WEAPON or slot == CharacterAppearance.SLOT_SHIELD:
-			(c as Node3D).visible = shown
-			ids[c.get_instance_id()] = true
-	if not ids.is_empty():
+## says the body has a mount). Round 850: the emote and the stall hide the
+## same items (HeldItems has the rule, READ CCompChar slot 22 0xc29bd0), so
+## the three are reasons on one switch: a character's held items are drawn
+## when none holds (HeldItems.set_shown). Their own ambient particles on the
+## body skeleton (WornItemFx.MARKER_META naming the node) go with them; their
+## glow and EquipFx's holders hang under the node.
+##
+## Character id -> {"reasons": {HeldItems.REASON_*: true}, "skel": the
+## skeleton id it was last applied to, "emote_clip": the emote's clip,
+## "emote_until": the clip clock (_idle_anim_time) its clip ends at}. Only
+## characters with a reason are here.
+var _held := {}
+
+## Turns a reason to hide `uid`'s weapon and shield on or off, and draws the
+## result at once (a far body's instances re-read).
+func _held_set(uid: int, reason: StringName, on: bool) -> void:
+	var e: Dictionary = _held.get(uid, {})
+	if e.is_empty():
+		if not on:
+			return
+		e = {"reasons": {}, "skel": 0}
+		_held[uid] = e
+	var reasons: Dictionary = e["reasons"]
+	if on == reasons.has(reason):
+		return
+	if on:
+		reasons[reason] = true
+	else:
+		reasons.erase(reason)
+	var n := _held_apply(uid, e)
+	print("HELD: %d %s %s -> %s (%d item(s), reasons %s)" % [uid, reason, "on" if on else "off",
+		"hidden" if not reasons.is_empty() else "shown", n, str(reasons.keys())])
+	if reasons.is_empty():
+		_held.erase(uid)
+
+## Draws `uid`'s held items as its reasons say, on the skeleton it has now.
+func _held_apply(uid: int, e: Dictionary) -> int:
+	var skel := _rider_skeleton(uid)
+	if skel == null or not is_instance_valid(skel):
+		e["skel"] = 0
+		return 0
+	e["skel"] = skel.get_instance_id()
+	var shown := (e["reasons"] as Dictionary).is_empty()
+	var n := HeldItems.set_shown(skel, shown)
+	if shown and n > 0:
+		# Their effects (the + glow, a seal's stars) back with them this frame.
+		EquipFx.hurry_in(get_viewport())
+	var root := _rider_root(uid)
+	if root != null and is_instance_valid(root):
+		_crowd_light_changed(root)
+	return n
+
+## Each frame: a re-dress (a weapon swap, an equip) builds a new skeleton, so
+## a reason that still holds is applied to it (the new weapon never shows,
+## OURS -- see HeldItems on the original's op 2); an emote whose clip is over
+## or cut lets go (state 13's leave, 0xa59c40); a character that has gone is
+## forgotten.
+func _step_held() -> void:
+	if _qa_held_log:
+		_qa_held_report()
+	if _held.is_empty():
+		return
+	var own := _own_id()
+	for uid in _held.keys():
+		var e: Dictionary = _held[uid]
+		var reasons: Dictionary = e["reasons"]
+		if reasons.has(HeldItems.REASON_EMOTE):
+			var over := false
+			if own >= 0 and int(uid) == own:
+				over = _player_one_shot == null or _player_one_shot != e.get("emote_clip")
+			else:
+				# The clip clock (not the wall's: a movie-mode run's game time
+				# runs at its own pace), or the clip no longer on the body (a
+				# move's loop, a hit, a re-dress swapped it), checked every
+				# HELD_SCAN_FRAMES frames.
+				over = _idle_anim_time >= float(e.get("emote_until", 0.0))
+				if not over and Engine.get_process_frames() % HELD_SCAN_FRAMES == 0:
+					over = not _held_clip_on(_rider_skeleton(int(uid)), e.get("emote_clip"))
+			if over:
+				_held_set(int(uid), HeldItems.REASON_EMOTE, false)
+				if not _held.has(uid):
+					continue
+		var root := _rider_root(int(uid))
+		if root == null or not is_instance_valid(root):
+			_held.erase(uid)
+			continue
+		var skel := _rider_skeleton(int(uid))
+		var sid := skel.get_instance_id() if skel != null and is_instance_valid(skel) else 0
+		if sid != int(e["skel"]):
+			var n := _held_apply(int(uid), e)
+			if sid != 0:
+				print("HELD: %d's new body -- %d item(s) kept hidden (reasons %s)" % [int(uid), n, str(reasons.keys())])
+
+## An emote began on `uid`'s body (0x3091): state 13's enter hides the weapon
+## for every emote but Rush (HeldItems.emote_hides); Rush leaves it drawn, and
+## so ends a hiding emote it replaces (its leave shows it, 0xa59c40).
+func _held_emote(uid: int, emote: int, clip: BanReader.ParsedAnimation, seconds: float) -> void:
+	if clip == null or seconds <= 0.0 or not HeldItems.emote_hides(emote):
+		_held_set(uid, HeldItems.REASON_EMOTE, false)
+		return
+	_held_set(uid, HeldItems.REASON_EMOTE, true)
+	var e: Dictionary = _held.get(uid, {})
+	e["emote_clip"] = clip
+	e["emote_until"] = _idle_anim_time + seconds
+
+## How often another body's emote is looked for on its skeleton (frames).
+const HELD_SCAN_FRAMES := 6
+
+## Whether `skel` still plays `clip` as its one-shot (its _animated entry).
+func _held_clip_on(skel: Skeleton3D, clip) -> bool:
+	if skel == null or not is_instance_valid(skel) or clip == null:
+		return false
+	for entry in _animated:
+		if entry[0] == skel:
+			return entry[1] == clip
+	return false
+
+## A body was (re)built for `uid`: a reason that holds is drawn on it from
+## its first frame (not a frame later, from _step_held).
+func _held_rebuilt(uid: int) -> void:
+	var e: Dictionary = _held.get(uid, {})
+	if not e.is_empty():
+		_held_apply(uid, e)
+
+## QA: "shown", "hidden", "mixed" or "none" for `uid`'s held items.
+func _held_state(uid: int) -> String:
+	return HeldItems.state_of(_rider_skeleton(uid))
+
+## OPENSRO_QA_HELD_LOG=1 (round 850): every 60 ticks, and on every change, a
+## "QA HELD" line with each character's held items as drawn -- the node's own
+## visibility, each item's mesh count shown in the tree, its EquipFx holders
+## and own effects shown -- and its reasons. Measured from the scene.
+var _qa_held_log := OS.get_environment("OPENSRO_QA_HELD_LOG") == "1"
+var _qa_held_last := ""
+var _qa_held_tick := -1
+
+func _qa_held_report() -> void:
+	var parts: PackedStringArray = []
+	var ids: Array = [_own_id()]
+	ids.append_array(_other_gaits.keys())
+	for uid in ids:
+		var skel := _rider_skeleton(int(uid))
+		if skel == null or not is_instance_valid(skel):
+			continue
+		var items: PackedStringArray = []
 		for c in skel.get_children():
-			if c is Node3D and c.has_meta(WornItemFx.MARKER_META) and ids.has(int(c.get_meta(WornItemFx.MARKER_META))):
-				(c as Node3D).visible = shown
-	return ids.size()
+			if not (c is Node3D) or not HeldItems.is_held_node(c):
+				continue
+			var meshes := 0
+			var drawn := 0
+			for mi in (c as Node).find_children("*", "MeshInstance3D", true, false):
+				meshes += 1
+				if (mi as MeshInstance3D).is_visible_in_tree():
+					drawn += 1
+			var fx := 0
+			var fx_on := 0
+			for f in (c as Node).find_children("*", "Node3D", true, false):
+				if f is EfpEffect or String(f.name).begins_with("EquipFx"):
+					fx += 1
+					if (f as Node3D).is_visible_in_tree():
+						fx_on += 1
+			items.append("%s kind %d %s meshes %d/%d fx %d/%d" % [c.name, int(c.get_meta(HeldItems.ATTACH_KIND_META, -1)),
+				"visible" if (c as Node3D).visible else "HIDDEN", drawn, meshes, fx_on, fx])
+		var e: Dictionary = _held.get(uid, {})
+		var root := _rider_root(int(uid))
+		var at := root.global_position if root != null and is_instance_valid(root) else Vector3.ZERO
+		parts.append("%d%s at (%.0f,%.1f,%.0f) [%s] reasons %s" % [int(uid), " (self)" if int(uid) == _own_id() else "",
+			at.x, at.y, at.z, "; ".join(items), str((e.get("reasons", {}) as Dictionary).keys())])
+	var line := " | ".join(parts)
+	if line != _qa_held_last or (_qa_tick % 60 == 0 and _qa_tick != _qa_held_tick):
+		print("QA HELD tick %d ms %d: %s" % [_qa_tick, Time.get_ticks_msec(), line])
+		_qa_held_tick = _qa_tick
+	_qa_held_last = line
 
 ## The mount's seat: its `saddle` bone at rest over the mount's root (x its
 ## scale), 0 for a mount without one. The rest pose (not the live saddle) is
@@ -38654,9 +38822,9 @@ func _cos_place_riders(delta: float = 0.0) -> void:
 		# shield off -- re-applied to a skeleton a re-dress rebuilt.
 		_raise_rider_plate(int(rider), mount, true)
 		EfpEffect.mounts[root.get_instance_id()] = mount
-		if int(_rider_held_hidden.get(rider, 0)) != rskel.get_instance_id():
-			_rider_held_hidden[rider] = rskel.get_instance_id()
-			_set_held_items_shown(rskel, false)
+		# Round 850: one of HeldItems' reasons; _step_held re-applies it to a
+		# skeleton a re-dress rebuilt.
+		_held_set(int(rider), HeldItems.REASON_RIDE, true)
 		if assembled == null or not is_instance_valid(assembled.skeleton):
 			continue
 		var bone := assembled.skeleton.find_bone("saddle")
@@ -38787,9 +38955,8 @@ func _cos_unseat(rider: int) -> void:
 	var unseat_root := _rider_root(rider)
 	if unseat_root != null:
 		EfpEffect.mounts.erase(unseat_root.get_instance_id())
-	_rider_held_hidden.erase(rider)
-	if rskel != null and is_instance_valid(rskel):
-		_set_held_items_shown(rskel, true)
+	# Round 850: back unless an emote or a stall still holds them.
+	_held_set(rider, HeldItems.REASON_RIDE, false)
 	var plate_mount: Node3D = _cos_bodies.get(uid)
 	if plate_mount != null and is_instance_valid(plate_mount):
 		_raise_rider_plate(rider, plate_mount, false)

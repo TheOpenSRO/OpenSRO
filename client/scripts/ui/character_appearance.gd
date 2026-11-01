@@ -160,9 +160,13 @@ const SLOT_WEAPON := 6
 const SLOT_SHIELD := 7
 ## Round 796: meta on each worn item's node naming its equip visual slot
 ## (visual_slot), so a rider's weapon and shield can be hidden
-## (World3D._set_held_items_shown, READ CharacterVisualChange::CObjItem::
-## vslot_003).
+## (HeldItems.set_shown, READ CharacterVisualChange::CObjItem::vslot_003;
+## round 850: also for the emotes and the stall).
 const VISUAL_SLOT_META := &"opensro_visual_slot"
+## Round 850: meta on each worn item's node naming its model's attachable kind
+## (BsrReader.Attachable.kind), the word the original hides a weapon and
+## shield by (HeldItems, READ CCompChar slot 22 0xc29bd0).
+const ATTACH_KIND_META := &"opensro_attach_kind"
 const SLOT_SUIT := 8
 const SLOT_EARRING := 9
 const SLOT_NECKLACE := 10
@@ -685,9 +689,12 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 				node = _item_instance(bsr_path, tmpl, skel, path)
 			if node != null:
 				node.set_meta(VISUAL_SLOT_META, int(wear["slot"]))
+				var block = _item_attachables.get(path.to_lower())
+				if block != null:
+					node.set_meta(ATTACH_KIND_META, int(block.kind))
 				(wear["nodes"] as Array).append(node)
 				drawn.append(path)
-				blocks.append(_item_attachables.get(path.to_lower()))
+				blocks.append(block)
 		var hair := hair_block_for(wear)
 		if hair != null and not drawn.is_empty():
 			blocks.append(hair)
