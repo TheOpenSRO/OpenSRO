@@ -7483,6 +7483,78 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-first round, lane C: collision per kind of mover; a following transport stops at the trunk
+
+The user: "Please match the exact behavior of pets following you. Especially trade transports. Trade
+transports aren't supposed to be able to go through walls and can [get] stuck so it requires careful
+movement sometimes to make sure you don't get on walls or even trees. Reference the movement/collision
+info though for kind of mount and match it exactly". Lane C owns what blocks a mover; lane F the
+follow rules. The reading is in `docs/protocol/opcodes/movement.md`, "Collision per kind of mover".
+
+- **READ: one collision for every kind.** The server's step (`CGObjMobile::Update` s:0x48b8c0 ->
+  slot 305 -> slot 231 -> s:0x485740) asks `CRegionManagerBody::vslot_012` (s:0x98b300) with two
+  inputs from the mover: IsPC || IsCOS (IGObj slots 7 and 11) and its `+0x38`, which
+  `CGObj::vslot_000` sets to 1 (s:0x48492a). MEASURED: no other store to `+0x38` on a game object
+  (953 dword and 1,322 byte/word register stores scanned and mapped to their functions). `+0x38`
+  makes object walls block (s:0x9b51e9, s:0x9b55ac); the flag only gates three re-checks of the
+  cell's objects in the terrain walk (s:0x9a0a43, 0x9a0bd2, 0x9a0eb8) and never reaches the object
+  walk (s:0x9b5a80). A blocking edge is flags & 3 (s:0x9a7810). No radius, no BCRadius, no
+  characterdata column, no model collision. A ridden horse or transport is the mover (s:0x4d2b20
+  steps the COS and seats its rider; a riding PC does not step, s:0x4ef300). So a horse, a trade
+  transport and a pet stop where a player on foot stops. The client's step does the same
+  (c:0x9e0fca; flag 1 for the own player and own COS, 0 for others), so it predicts the stop.
+- **Why a transport sticks (INFERRED from the READ rules):** a following COS walks a straight leg
+  to its owner's side and stops at the first trunk or wall on it; nothing walks it round. The
+  transport's model is 32 units long (MEASURED, the donkey's box) and its collision is its origin,
+  so its head and tail overlap a wall it stands against -- in the original too (no radius, READ).
+- **MEASURED, the data:** `server/cmd/navcensus` over 97/168, 98/168, 96/168: 214 placements, all
+  with a mesh in the export; 18 tree kinds, 91 placements, 89 of the 17 kinds whose outlines block
+  from outside; probe walks 1,378 of 1,712 blocked (trees 550 of 728). Jangan's `tre_smalltree01`
+  at local (297.4, 948.4) (world -662.6, 11.6): every probe blocked.
+- **OpenSRO before (base f378ab7e):** the server walked a player's 0x7021 leg (round 812), but a
+  COS's leg in `cosai.go` was straight, and the client drew it straight (`MonsterMotion.step`):
+  a following transport walked through trees and buildings on both.
+- **Built:** `session.MoverKind`, `Collider` (the two READ inputs), `navWalkKind`, `moverLeg`;
+  `cosLegEnd`, one call where `cosRuntime.tick` starts a leg (the hook in lane F's file): the leg
+  ends at the first wall; a wall within 0.5 leaves the COS standing; a re-aim whose wall stop is
+  within `cosReaim` of the one it walks to makes no new leg (OURS: MEASURED 11 legs in 1.2 s
+  before). Client `CosWalk` (`World3D._cos_step`): a COS's drawn leg walks the navigation graph
+  and stops at the wall (READ c:0x9e0fca).
+- **Live (render box, lane server on 17220: in memory, `-navmesh-dir`, no
+  `-trust-client-positions`; the real client driven through its own click, COS and job paths;
+  `/var/tmp/r851c/run1.sh`..`run4.sh`):**
+  - Ridden horse (COS_C_HORSE1) clicked from (-630, 11.6) to (-700, 11.6) through the small tree:
+    server leg ends (-659.3330, 11.7676), client stands at (-659.333, 11.768), no correction. On
+    foot: server (-659.4707, 11.8753), client (-659.471, 11.875) (its 0xB023 arrived 0.31 before the
+    face and moved it on to it, never back). Ridden trade transport (COS_T_DONKEY, trader suit):
+    server (-659.3330, 11.7676), client (-659.333, 11.768). Same stop for every kind, as READ.
+  - Following transport, dismounted at (-620, 12), owner walked north to (-620, 30) and west to
+    (-700, 30): new -- the server's legs end at the trunk, the transport stands stuck at
+    (-659.60, 12.00) (server) / (-659.63, 12.00) (drawn) while the owner waits beyond the tree; the
+    owner walks to (-640, 120), the line clears and it follows to (-628, 109). Base -- it walks
+    through the trunk to (-687, 6) (drawn on the trunk's top surface, y 9.6) and on.
+  - A longer run west to (-780, 30): new stuck at (-658.84, 11.38) (server) / (-659.00, 12.00)
+    (drawn: the 0xB021's i16 destination, 0.64 off; OPEN below); base through to (-764, 7).
+  - Frames (box): `/var/tmp/r851c/keep/f2_sheet.png` (top new, bottom base, overhead),
+    `f2_new_full_100.png`, `f2_base_full_100.png`.
+- **Tests:** `navkind851_test.go` (the profile per kind; the trunk stops all four kinds at the same
+  point, ContactPush short; beside it clear; at its face stuck; no mesh straight; the follow hook:
+  stop, no re-leg to the same trunk, stuck, a clear side). NEGATIVE: against the base, `cosLegEnd`
+  does not exist and the transport walks through (the live base run). `world/cos_walk_test.gd`
+  (stops at the face, beside it reaches its end, no step into it, no graph straight; NEGATIVE: the
+  straight step alone passes the trunk). `go test ./...` ok; `remote_godot.sh check` / `tests`:
+  ALL LOAD (1,098 scripts), 412 suites, 0 failing.
+- **Perf gate** (`--base f378ab7e --head ac7da1aa --sites jangan --frames 60000`, 1280x720, median of
+  3; the first try at the default frames lost its base run's numbers and was rerun): frame 0.89 ->
+  0.90 SAME, entry 8706 -> 8830 SAME, freeze 2785 -> 2775 SAME, hitches 5 -> 5 SAME.
+- **OPEN:** the flag's three re-checks for monsters and NPCs are not modelled (every kind walks
+  `navWalk`; INFERRED to differ only where a terrain wall and an object wall fall within one step);
+  a COS's walled leg names its stop in the 0xB021 (i16) and sends no 0xB023 -- retail names the
+  destination and sends 0xB023 at the wall, which would put the drawn body on the server's f32
+  point (lane F's leg); other players' bodies still walk straight (`OtherWalk`, round 846), so an
+  observer sees a rider press into a wall until its 0xB023; the heading run is still not walked by
+  the server (round 812's list); `tre_gagi01`'s blocked probes not traced.
+
 ## Eight-hundred-and-fiftieth round, lane E: the weapon and shield go away for the emotes and the stall
 
 The user: "when doing action emoticons the weapon is supposed to disappear for most if not all, check
