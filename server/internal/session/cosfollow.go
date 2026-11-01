@@ -149,8 +149,9 @@ func ftolIndex(v float64, top int) int {
 // cosSidePoint is a ride's or transport's FOLLOW point (s:0x549bc9..
 // 0x549d64): the owner's side vector -- its facing crossed with up, (-fz, 0,
 // fx) in the region's frame -- times a sign (-1 when (d.x f.z - d.z f.x) of
-// the COS->owner vector d and the COS's own facing f is under 0.0078125,
-// s:0xade894), then snapped by FUN_0053dad0: the angle between the NEGATED
+// the COS->owner vector d and the COS's own facing f is under 0.0 (the FLOAT
+// at s:0xade894, fcomp DWORD at 0x549c2a; round 796 read the double 0.0078125
+// there), then snapped by FUN_0053dad0: the angle between the NEGATED
 // side vector and (1, 0, 0), in degrees over 10 (s:0xb45c60), truncated, picks
 // the 36-table entry, at selfBC + ownerBC + rand()%10+1 (r) from the owner.
 // The snap reads only the angle's size, so the direction always lies on the
@@ -167,7 +168,7 @@ func cosSideDir(owner world.Position, ownerHeading float64, cosPos world.Positio
 	dx, dz := localDir(owner.X-cosPos.X, owner.Z-cosPos.Z)
 	sfx, sfz := headingLocal(cosHeading)
 	sign := 1.0
-	if dx*sfz-dz*sfx < 0.0078125 {
+	if dx*sfz-dz*sfx < 0 {
 		sign = -1
 	}
 	fx, fz := headingLocal(ownerHeading)

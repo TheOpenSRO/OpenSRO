@@ -520,9 +520,99 @@ transform (ICharactor::FUN_009d05d0), plays the rider's "cart" group (0 `cart_st
   point to run to.
 - An owner's arrival (a teleport, a zone change) spawns its pets again with the summon's 20.0 hatch
   spread (s:0x4fbae0, INFERRED that the argument is a spread); round 795 put them on the owner.
+- **Corrected in round 851:** `FUN_00549ac0` is the FOLLOW of rides and transports only; growth and
+  ability pets run a different one (below), and that one does warp.
+
+### Round 851: how every COS follows (READ, SR_GameServer.exe)
+
+**Which FOLLOW.** Every COS's AI is one `AI::CTactics` (no subclasses). The summon's spawn
+(`s:0x4fbae0`, at 0x4fbc70) calls the COS's slot 401: `0x4d2050` for CGObjCOS, CGObjCOS_Cart,
+CGObjCOS_Pet, _GoldPet and _SilkPet (MEASURED: the address in those five vtables, 0xaf0c1c, 0xaf127c,
+0xaf1a4c, 0xaf20ac, 0xaf270c; `0x4d95d0` mode 2 for _Summoned / _Mercenary / _Assaulter, mode 3 for
+_Captured and _Follower). It posts AI command 0xb {u8 1, u32 owner}; `CAIState::DispatchCommand`
+(0x558bb0) sends 0xb to the state's slot 14, `0x5591b0`, which stores the leader at tactics +0x14c and
+for mode 1 calls CTactics slot 18 (`0x5471b0`): if the object `IsPet` (slot 14, `0x4838c0` ->
+`0x44b460`: TypeID4 3 or 4) the behaviour table's IDLE becomes `0x5488b0`, FOLLOW `0x549f80`, the speed
+handler `0x548a30` and +0x114 `0x549040`; otherwise (TypeID4 1 rides, 2 transports) the table keeps
+`InstallBehaviourTable`'s (0x53fc00): IDLE `0x5485b0`, FOLLOW `0x549ac0`, speed `AITactics_Handler_110`
+(0x5489b0). The FOLLOW state (`CAIState_FOLLOW`, id 9) arms timer 0 at 100 ms on entry (0x55a930) and
+runs the handler each time it is due (0x55a960), back to IDLE (message 0x24) when it returns non-zero;
+both IDLEs check timer 7 (30 ms, armed in Init 0x53f6fb). Both run only while the leader's life state
+(`CGObj::GetLifeState` 0x485ee0) is 1.
+
+**Rides and transports.**
+- IDLE `0x5485b0`: the 3-D distance to the owner (`GObj_DistanceBetween` 0x53d7a0) 65.0 or more
+  (0xb46298) -> FOLLOW. A COS standing (slot 0x4c0 = 0) within its own BC of the owner steps out to a
+  random one of the 36 directions at BC + ownerBC + rand()%5+1 -- unless its owner rides it.
+- FOLLOW `0x549ac0`: nearer than BC + 50.0 (2-D, 0xb46288) -> IDLE. Otherwise the side point (round
+  796's sign, then `FUN_0053dad0`: the angle between the NEGATED side vector and (1, 0, 0), x 57.29578,
+  / 10.0 (0xb45c60), **truncated** (`_ftol`, cvttsd2si) and clamped 0..35) picks entry i of the table
+  0xce2030, filled by 0x54ab10 as (cos a, 0, -sin a) at a = 5 + 10 i (sin/cos: 0x4894b0 -> 0x9fd640,
+  0x489490 -> 0x9fd810, the cos one indexing its table a quarter turn on). acos gives 0..180, so i is
+  0..18 and the direction always has z <= 0 in the region frame (but a = 185) and x of the negated side's
+  sign: the point is not on the side the side vector names half the time. r = BC + ownerBC +
+  rand()%10+1 from the owner. The side's sign is -1 when (d.x f.z - d.z f.x) of the COS->owner vector
+  and the COS's own facing (+0x24, `SetAngle` slot 230 0x48ba10: (cos a, 0, sin a)) is under **0.0**: the
+  compare at 0x549c2a is `fcomp DWORD` on 0xade894, whose float is 0.0 (round 796 read the double there,
+  0.0078125). Taken with the snap, a COS heading a little right of its owner picks the left point and the
+  other way round, so one closing in from behind changes target every 100 ms pass when the two points
+  lie 5 degrees or more apart as it sees them (about 2r / L >= 0.087: nearer than ~460 for a donkey) --
+  it weaves toward its owner (INFERRED from the READ rules, MEASURED in our server's legs, round 851).
+- Speed: `AITactics_Handler_110` answers run in FOLLOW (state 9) when the run speed (+0x170) is above
+  1e-6, and `0x541820` posts 0x704F {3} (run) when the flag (+0x155) differs: the row's run speed.
+- No warp, no leash on the COS (the 1000.0 leash, round 801, is on the OWNER of a transport).
+
+**Growth and ability pets.**
+- IDLE `0x5488b0`: past 66.0 (the float at 0xb46158, 3-D) -> FOLLOW, unless the AI is in BATTLE.
+- FOLLOW `0x549f80` (timer 3 as well):
+  - the owner is `self+0x1cd8`. If its region and the pet's are not within one of each other on both
+    axes (`FUN_00430ce0`; a dungeon: always), the slot is freed and `0x541110` posts **0x7022 with the
+    owner's own position** to the pet (a warp: its only other caller's log reads "Trying to warp to
+    dungeon!!!"), -> IDLE;
+  - within 60.0 (2-D, 0xb45e80) -> IDLE, slot freed;
+  - the speed handler `0x548a30` (via 0x541820, with that distance): run; outside BATTLE the run
+    percentage (ParamKeeper param 24 against the row's run speed, refobjchar +0xe6; +0xe4 is the walk)
+    is set so the run speed is the owner's run speed (+0x170) x 1.25 (0xb46290) if the owner runs
+    (+0x155), or x 1 if it walks, at 80.0 (0xb46148) or more; nearer, the owner's current speed (+0x174,
+    which `0x48b810` sets to +0x16c walk or +0x170 run by the run flag); the recompute (slot 0x4e8)
+    broadcasts 0x30D0 {uid, walk, run} (0x4aa4ce);
+  - the slot: `0x555460` frees the pet's slot and `0x555340` takes one of the owner's eight (+0x1cec):
+    `0x55e3b0`'s preferred slot is the angle between the negated offset and (1, 0, 0) / 180.0
+    (0xb45e60), truncated -- 0 for every offset not exactly along x -- then p+1, p-1, p+2, ... (0x5554d0);
+  - the point (`0x55e090`): the owner's position + table entry (9 + slot) of the AI manager's +0x3c
+    table (`0x54a990`: (cos a, 0, -sin a) at a = 22 + 45 i) x (CTactics slot 25 `0x5400c0`: BC x 3.0
+    outside BATTLE) x 0.8 (0xb45bf0); while `CRegionManagerBody::vslot_011` (0x98b1d0, the cell under
+    a point) finds none or it is farther than that radius, moved 0.7 (0xb45ef8) toward the owner, at
+    most 50 times; then snapped to whole units; a point outside the 3 x 3 regions -> IDLE;
+  - the length L is the 2-D distance to the point, plus the owner's distance to its own destination
+    when the owner walks to one (+0x154 == 1, +0x156..) and that is smaller than L.
+- Every slot table is in the region frame: in OpenSRO's world (x, z) a direction (cos a, sin a).
+
+**The leg, both FOLLOWs.** With dir the unit way to the point and f the COS's own facing (+0x24), the
+angle between them (0x545450 x 57.29578): straight at the point when (a pet only) L <= 30.0 (0xb45e58),
+or the angle is 5.0 (0xb45b28) or more, or |f L - dir L| > 100.0 (0xb45af0); otherwise a COS walking a
+leg (slot 0x4c0) with more than 30.0 left keeps it; otherwise it walks L along its own facing.
+`AITactics_MoveAlongDirection` (0x540f70) posts a 0x7021 to the COS: position + dir x L, the same message
+a player's click sends (movement.md), so the server's mover steps it and stops it at the first blocking
+edge, no slide. Nothing path-finds, retries or gives up: a COS whose line is blocked stands at the wall,
+re-sent every 100 ms in nearly the same direction, until its owner moves enough to change the line by 5
+degrees and the new line is clear.
+
+**The client** (sro_client.exe) decides nothing about following: `CICCos::vslot_009` (0x9c59c0) only
+takes a pet's (TypeID4 3, 4) walk speed as its run x +0x6f4, picks walk (2) or run (3) at 20.0
+(0xd88108), and scales the clip's rate by speed / 50.0 (0xd8f0b0; x 0.5 under flag +0x2c4 bit 1; at
+most 1.5, 0xd819ec) when its animation allows; the COS moves only by the server's 0xB021 / 0xB023 and
+0x30D0.
+
+**OpenSRO (round 851).** `server/internal/session/cosfollow.go` builds both, every leg through
+`cosLeg` (the navigation mesh's no-slide walk). OURS: the 100 ms tick (retail's IDLE checks every
+30 ms); a leg a wall stops within 0.5 is not sent -- the COS stands, turned (a 0xB023) -- where retail
+posts it and its mover refuses the step; the formation point's closing snap to whole units is not
+modelled; every COS leg is clipped at the wall before its 0xB021 (as round 812 clips a monster's), where
+retail's B021 names the full destination and the observers' movers stop at the wall themselves. Round 795's 400-unit leash is gone.
 
 ### OPEN
 
-The FOLLOW side's exact sign and its 36-direction snap (round 796); the code names 0x1869, 0x1896, 0x1897; slot 219's exact effect (hunger 0, rent end); where a pet's
+The code names 0x1869, 0x1896, 0x1897; slot 219's exact effect (hunger 0, rent end); where a pet's
 corpse is cleared; the pet-bag extension's slot count; monster aggro on pets; the guild soldier; the
 transport's trade goods and Sell All.

@@ -39252,6 +39252,14 @@ func _qa_cos_step() -> void:
 			"walk":
 				_qa_walk = "" if arg == "off" else arg
 				print("QA COS: tick %d walk %s" % [_qa_tick, arg])
+			"snap":
+				# Round 851: a frame of a real-time run (QA_SHOT_REALTIME writes
+				# none) into OPENSRO_QA_SNAP_DIR as <arg>.png.
+				var sdir := OS.get_environment("OPENSRO_QA_SNAP_DIR")
+				var simg := get_viewport().get_texture().get_image()
+				if sdir != "" and simg != null:
+					simg.save_png(sdir.path_join("%s.png" % arg))
+				print("QA COS: tick %d snap %s" % [_qa_tick, arg])
 			"walkrun":
 				# Round 798: the Walk/Run toggle (0x704F), as the action button.
 				print("QA COS: tick %d walkrun %s" % [_qa_tick, _request_walk_run()])
