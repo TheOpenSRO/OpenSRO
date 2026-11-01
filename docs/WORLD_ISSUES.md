@@ -7483,6 +7483,138 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-second round: a pet's run plays at its speed; other bodies stop at walls on an observer's screen
+
+The user: "Fix those last two open items" -- round 851's two: a pet's run animation did not scale with
+its speed, and on another player's screen a rider (and any other player's body) pressed into a wall
+before snapping to the stop. Labels: READ (`c:` sro_client.exe: the decomp dump and objdump on the
+render box), MEASURED, INFERRED, OURS, OPEN.
+
+**1. A pet's gait and clip rate (READ, `CICCos::vslot_009` c:0x9c59c0; docs/protocol/pets.md "Round 852").**
+- It is the COS's per-frame tick: it calls the characters' tick `FUN_009d1d60` (CICharactor slot 9),
+  which steps the mover (`FUN_009e0e60`) and advances the body's clip by ROUND(+0xc0 x the frame's
+  ms) (`FUN_009c4180`, c:0x9c41c1 -> `FUN_00a5acb0`). So **+0xc0 is the clip rate** (round 785 had it
+  INFERRED from frostbite's 0.5) and the rule below runs **every frame**.
+- **Which kinds:** only an object whose type word is TypeID 1/2/3 with TypeID4 3 or 4
+  (c:0x9c59d0..0x9c5a07): growth and ability pets. Horses and transports (their walk or run is the
+  rider's, round 798), soldiers, players, monsters and NPCs never take it -- their clips play at 1.0
+  but for the abnormal states.
+- **The speed:** s = run speed (+0x670, which 0x30D0 sets) x the mover's speed factor (+0x6f4 = the
+  mover's +0x8c, round 846's catch-up factor from `FUN_009e0550`); stored as the walk speed (+0x66c)
+  too (c:0x9c5a09..0x9c5a1d).
+- **The gait:** against 20.0 (float 0xd88108): s <= 20 -> `FUN_009ca430(2)`, walk (+0x678 0; a moving
+  state 9 is restarted, so the clip changes mid-leg); s > 20 -> `FUN_009ca430(3)`, run.
+- **The rate:** 1.0; s / 50.0 (double 0xd8f0b0) when s > 20 and the moving state is on (+0x65c bit
+  9); x 0.5 (double 0xe1b7d0) under frostbite (+0x2c4 bit 1); at most 1.5 (float 0xd819ec), no lower
+  bound. Walking, 1.0 whatever s is. Written every frame, so on a pet it overrides the abnormal-state
+  setter's own +0xc0 (`FUN_009cd5e0`: slowness 0.75 is lost on a pet -- built as read).
+- **Built:** `PetGait` (`client/scripts/world/pet_gait.gd`) and `World3D._cos_pet_tick`, every frame
+  a pet moves and once as it stops, through the clip-speed book the abnormal states use
+  (`_set_skeleton_clip_speed`; `_step_clip_speeds` now finds each body's entry from where it was last
+  frame, OURS, instead of scanning every body's clip every frame while a pet runs). A COS's leg is now
+  an `OtherWalk` leg with round 846's 50-unit resync and catch-up factor (READ: the 0xB021 handler is
+  every object's; before, the monsters' 32 and no factor), so s is run x factor as the original's is.
+  Before (base 5f7f420b): the gait was chosen once at a leg's start by its speed, a 0x30D0 mid-leg
+  changed nothing, and every clip played at 1.0.
+
+**2. Other bodies at walls (READ; movement.md "Round 852: every body an observer draws").** The mover
+tick `FUN_009e0e60` runs for every character that does not ride and asks the collision query at
+c:0x9e0fca, flag 1 only for the own player (CICPlayer 0xef1b44) and an own COS (CICCos 0xeef6f0 owned
+by DAT_00eef5ec), 0 for everyone else. The client's `CRegionManagerBody::vslot_012` (c:0x412660)
+passes both arguments to the navmesh walk (c:0x41290a..0x41291c); the terrain walk
+`CRTNavMeshTerrain::vslot_002` (c:0x4047a0) tests the flag's bit 0 at three places only -- c:0x404ab9,
+c:0x404c30, c:0x404f20, the cell-object re-checks, the same three as the server's (round 851) -- and
+hands it down unread elsewhere; the object walk takes the second argument, always 1 (round 644). So an
+observer's client stops another player on foot, its ridden horse or transport (the rider's body walks
+the mount's legs), a following COS and a monster at the same trunks and railings as the server, and
+draws them there; a bit-0 stop ends the movement (`FUN_009e0e60`: `param_1[0x21] = 0`).
+- **Built:** `BodyWalk` (`client/scripts/world/body_walk.gd`; round 851's `CosWalk` made general and
+  renamed), one walker for `_step_other_legs` (players and riders), `_cos_step` (COS) and
+  `_step_monster_bodies`. Each leg is walked once when it starts (`BodyWalk.plan`,
+  `World3D._plan_body_leg`): clear -> the straight step as before; walled -> its end becomes the wall's
+  stop; a heading run, a leg with no graph yet or leaving its region, and a terrain wall's send-back
+  are walked through the graph a frame at a time (`BodyWalk.step`).
+- **OURS, and why (MEASURED, `tools/walk_probe.gd --bench-legs=3000` on Jangan 97/168, new):** a
+  frame-by-frame walk costs 97 us a body a frame in GDScript (p99 411) -- every walker in a crowd would
+  cost tens of ms a frame -- while one plan costs 140 us at the median (p99 625, max 973), once a leg.
+  The one walk gives the frame-by-frame walk's stop: of 400 walled legs the plan could answer, 397 end
+  within 0.01 of it, the worst 0.052 (54 more were left to the frame-by-frame walk). A frame spends at
+  most 1.5 ms on plans (`BODY_PLAN_BUDGET_USEC`); a leg over it walks straight and is planned from where
+  it is drawn on a later frame. The flag's three re-checks are not modelled (INFERRED to matter only
+  where a terrain wall and an object wall fall in one step, as round 851 found for the server).
+
+**QA (render box, real clients, lane server 127.0.0.1:17230: in memory, `-navmesh-dir`, no
+`-trust-client-positions`; an actor -- a headless second client driven through its own click, COS and
+job paths -- and a rendered observer in real time; `/var/tmp/r852/qa852.sh`, from round 851's
+`/var/tmp/r851f/qa851.sh` and `/var/tmp/r851c/qa851.sh`; analysers `ana852.py`, `pets852.py`).**
+- **Item 2, the observer's drawn track of the actor against the server's stop** (`ana852.py`: per leg,
+  how far past the stop along the move the body was ever drawn, the largest step back, where it
+  settled):
+
+  | leg (server stop) | base 5f7f420b: past / back | head: past / back | head settled |
+  |---|---|---|---|
+  | tree, on foot (-659.471, 11.875) | 5.433 / 2.933 (both runs) | 0.000 / 0.000 | on the stop, 76 ms before its 0xB023 |
+  | tree, ridden horse (-659.333, 11.768) | 0.000 / 0.000 | 0.000 / 0.000 | on the stop |
+  | tree, ridden trade transport (-659.333, 11.768) | 1.266 / 1.267; 0.066 / 0.067 | 0.000 / 0.001 | 0.001 off |
+  | railings, on foot (740, 729.621) | 1.212 / 1.212 | 0.000 / 0.000 | on the stop |
+  | railings, ridden horse | 0.879 / 0.879 | 0.000 / 0.000 | on the stop |
+  | railings, ridden transport | 1.179 / 1.179 | 0.000 / 0.000 | on the stop |
+
+  Every base press-in came back in one frame (the snap). Head: each leg planned at its 0xB021 ("MOVE
+  plan ... a wall at" the server's own stop, to 0.001), walked straight to it and stood; its 0xB023
+  then named the point it stood on. Round 846 kept: every leg ended 0.000-0.001 from the server's
+  point, the largest frame step 1.2-3.0 (the horse's x3 catch-up), no step back, no put-there.
+- **Item 1, the pets' clip per tick** (`OPENSRO_QA_COS_GAIT=1`: the clip the clip list plays and its
+  clock's advance over the clip tick's clock -- the rate it really plays at -- against the 0x30D0
+  speed, on the owner's client and the observer's):
+  - walking with the owner (0x30D0 16): the wolf cub's walk clip at 1.00 (226 ticks observer, 170
+    owner); running (50): its run at 1.00;
+  - far behind while running (pets3: the wolf stuck at the railings' north face while Tess ran 80+
+    away, 0x30D0 62.5 = 50 x 1.25, then freed): run at 1.25 (and 1.26 at 63.1, the client's own
+    catch-up factor x1.01), the rabbit the same;
+  - /speed 2 (0x30D0 100): run at 1.50 (rule 2.0, capped) on both pets, both clients;
+  - pets3: 0 ticks off the rule in the owner's wolf, 1-2 in the others -- the tick a speed changed
+    on (the analyser takes the previous tick's ask). pets: the rabbit walking at 16 plays its run clip
+    at 1.00 (255 ticks observer, 192 owner) -- its model has no walk clip (OPEN below). Base has no
+    clip rate at all (every clip 1.0) and chose a pet's gait once per leg (`_cos_start_leg`), so it
+    could not be measured with this hook.
+  - The stuck wolf (pets2: 2,286 legs at (707.06, 762.20), wall every time) never moved while its line
+    stayed blocked -- round 851's rule, unchanged.
+- Frames for a human (illustrative only: the tree's canopy hides the body and only its plate shows;
+  the numbers above are the measurement; the railing runs' camera did not frame the actor):
+  `/var/tmp/r852/keep/tree_foot_sheet.png` (top: base before, at and after its deepest press-in, ms
+  74900 / 75033 / 75300; bottom: head before, at and after the stop), the full frames beside it; logs
+  in `/var/tmp/r852/<run>/` (godot.log = observer, second.log = actor) with each run's server log.
+
+**Tests.** `world/body_walk_test.gd` (the plan: a leg through the trunk meets it, beside it not, no
+graph / beyond the region / a heading run frame by frame; a player's, a rider's and a caught-up leg
+stop at the face; **the plan's stop is the frame-by-frame walk's**; a stop named inside the trunk
+leaves the body at its face; a monster's leg stops there; NEGATIVE: the straight step passes it) and
+`world/pet_gait_test.gd` (the gait at 20, the rates 1.0 / 1.25 / 0.72, walking 1.0, the 1.5 cap,
+frostbite before the cap; NEGATIVE: a walk does not play at speed / 50). `remote_godot.sh check` ALL
+LOAD (1,100 scripts), `tests` "ran 413 suite(s), 0 failing". Server untouched.
+
+**Perf gate** (`perf_gate.sh --base 5f7f420b --head 0154d60f --sites jangan`, 1280x720, median of 3,
+`--frames 60000`; the default frames lost a base run's numbers, as in round 851, and was rerun): all SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.89 -> 0.89 | 8647 -> 8738 | 2791 -> 2775 | 5 -> 5 |
+
+  The gate's view has no walking bodies, so it says the standing world costs what it did; what a
+  walking body adds is the plan's cost above, once a leg, within the 1.5 ms a frame budget.
+
+**OPEN:**
+- The rabbit (`p_rabbit.bsr`, MEASURED: stand01, run, pick, attractive -- no walk clip) walking with
+  its owner at 16: what the original's moving state plays for a type the model lacks was not read;
+  OpenSRO keeps its run clip, at 1.0 (the rule's walking rate).
+- The flag's three re-checks (c:0x404ab9, c:0x404c30, c:0x404f20) for other bodies, on both sides.
+- Frostbite on a pet: read from the COS's abnormal mask, but the server sends none for a COS today.
+- The monsters' own 0xB021 resync is still round 637's 32 with no catch-up (the handler is every
+  object's, READ round 846); COS and players now use 50 and the factor.
+- A frame's plan budget (1.5 ms) is OURS; in a crowd of thousands some legs walk straight for a few
+  frames before they are planned.
+
 ## Eight-hundred-and-fifty-first round, lane F: how every COS follows its owner
 
 The user: "Please match the exact behavior of pets following you. Especially trade transports. Trade
