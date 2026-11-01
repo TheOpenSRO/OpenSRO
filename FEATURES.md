@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.615** plus what is merged on `dev`; updated 2026-11-01.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.616** plus what is merged on `dev`; updated 2026-11-01.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
