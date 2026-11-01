@@ -306,18 +306,11 @@ func iabs(v int) int {
 //
 // Round 851: lane C's per-kind collision belongs here and nowhere else.
 func cosLeg(o *cosObj, from, to world.Position) (end world.Position, wall bool) {
-	r, ok := navWalk(o.zone, from.X, from.Y, from.Z, to.X, to.Z)
-	if !ok || !r.Blocked {
-		if ok && r.Checked && !math.IsNaN(r.Y) {
-			to.Y = r.Y
-		}
-		return to, false
-	}
-	y := r.Y
-	if math.IsNaN(y) {
-		y = to.Y
-	}
-	return world.Position{X: r.X, Y: y, Z: r.Z}, true
+	// Round 851 merge: lane C's per-kind walk (navkind.go) -- every mover
+	// kind collides alike in the original (s:0x485740 -> vslot_012), so
+	// MoverCOS walks the same mesh a player does.
+	leg := moverLeg(MoverCOS, o.zone, from, to)
+	return leg.End, leg.Wall
 }
 
 // cosOnMesh is cosFormationPoint's probe on the server's navigation mesh: a

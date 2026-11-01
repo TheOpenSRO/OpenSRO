@@ -696,6 +696,95 @@ READ this round from both decompiles on the box (`/var/tmp/decomp_server`, `/var
 
 So: `u32 uid | u16 region | f32 x | f32 y | f32 z | u16 angle`, 20 bytes, region-local.
 
+## Collision per kind of mover (round 851)
+
+The user: "match the exact behavior of pets following you. Especially trade transports. Trade
+transports aren't supposed to be able to go through walls and can [get] stuck ... on walls or even
+trees. Reference the movement/collision info though for kind of mount and match it exactly".
+Labels: READ (`s:` SR_GameServer.exe, `c:` sro_client.exe, objdump of the PE and the decomp dumps
+on the render box), MEASURED, INFERRED, OURS, OPEN.
+
+**The server's step (READ).** Every mobile object steps through one path:
+
+- `CGObjMobile::Update` (`s:0x48b8c0`) asks its mover for the step (`CGObjMoverByDest::vslot_003`
+  `s:0x48c4e0`, or `CGObjMoverByCmd` for a heading) and passes it to vtable slot 305 (`+0x4c4`).
+- Slot 305 is `s:0x48b920` for a monster, an NPC and every CGObjChar kind; a PC's is `s:0x4ef300`,
+  which steps only while the PC does not ride (slot `+0x540`, `s:0x4ddca0`: `+0x1d18` names a COS
+  whose `+0x30` byte `+0xe` is 1); a COS's is `s:0x4d2b20`, which steps the COS and then puts its
+  rider on it (`+0x1cd8`, the rider's slot `+0x620`). **So a ridden horse or transport is the
+  mover, walked as a COS.**
+- `s:0x48b920` -> slot 231 (`s:0x48b660`) -> `s:0x485740`, which asks the collision query
+  `CRegionManagerBody::vslot_012` (`[0xcc387c]` slot 12, `s:0x98b300`) with the mover's position
+  record (`+0x7c`), the proposed record and **two inputs taken from the mover**:
+  - a flag: 1 when IGObj slot 7 (`CGObj::IsPC`, `s:0x482560`) or slot 11 (`CGObj::IsCOS`,
+    `s:0x4827b0`) is true, else 0 (`s:0x48580c..0x485872`);
+  - the object's `+0x38` (`s:0x485862`). `CGObj::vslot_000` sets it to 1 (`s:0x48492a`). A scan of
+    every store to `+0x38` through a register in the binary (953 dword, 1,322 byte/word sites, mapped
+    to their functions) found no other writer on a game object (MEASURED). Every other caller of
+    slot 12 (the monster AI's probes, the skills' moves) passes 1 there itself.
+- A refused step (`0x10000000`) leaves the mover where it was; bit 0 ends the movement after the
+  step (above, "The stop at a wall"). A blocking edge is its flag byte `& 3` (edge slot 4,
+  `s:0x9a7810`) whatever moves.
+
+**What the two inputs change (READ).**
+
+- `+0x38` reaches the object walk (`CRTNavMeshObj::vslot_002`, `s:0x9b5a80`) as its second
+  argument: an outline edge with bit 0 stops a mover entering from outside only when it is exactly
+  1 (`s:0x9b51e9`), and one with `0x02`/`0x10` stops a mover leaving only when it is not 0
+  (`s:0x9b55ac`, the client's `param_6`, round 644). It is 1 on every object, so **object walls --
+  buildings, town walls, lamps, tree trunks -- block every mover alike.**
+- The flag never reaches the object walk (`s:0x9b5a80` does not read its first argument). In the
+  terrain walk (`CRTNavMeshTerrain::vslot_002`, `s:0x9a0710`) it gates three re-checks of the cell's
+  objects (`FUN_009a05a0`, which runs the object entry test `s:0x9a0030` with `+0x38` = 1): after an
+  object stopped the step (`s:0x9a0a43`; without the flag the object's stop is taken as it is, with
+  it the terrain is walked up to it and a hit refuses the step), at a cell crossing (`s:0x9a0bd2`)
+  and at a region crossing (`s:0x9a0eb8`). The terrain wall's own stop re-checks for every mover
+  (`s:0x9a0c7e..0x9a0cf8`, round 653).
+- **Nothing else of the mover reaches the walk**: no radius, no BCRadius, no characterdata column,
+  no model's collision mesh, no object-type test that lets one kind pass where another cannot.
+
+**So (READ):** a player on foot, a horse, a trade transport and a pet -- ridden or following -- are
+stopped by exactly the same edges at exactly the same points, with no slide. Monsters and NPCs
+differ only in the flag's three re-checks; INFERRED to change a stop only where a terrain wall and
+an object wall fall within one step of each other (OPEN against the original running; OpenSRO walks
+every kind with the same walk).
+
+**Why a transport sticks (INFERRED from the READ rules).** Not its collision: a following COS walks
+a straight leg toward its owner's side (`cosai.go`'s FOLLOW, READ round 796) and its mover stops at
+the first trunk or wall on that line; nothing walks it round. The rider, and a player on foot, stop
+at the same trunk when they walk into it, and steer round it.
+
+**The client (READ).** The mover's tick runs the same query on every step it draws (`c:0x9e0fca`):
+the flag is 1 for the own player (IsKindOf CICPlayer `0xef1b44`, `c:0x9e0f45`) and for a CICCos
+(`0xeef6f0`) whose owner (`+0x2b0` -> `FUN_00517250`) is the player (`c:0x9e0fb6..0x9e0fc3`), 0 for
+everything else; the second argument is always 1 (round 644). So riding a transport into a wall the
+own client stops at the wall itself, as the server does (its 0xB023 lands on the same point), and an
+observer's client walks the transport into the wall and stops it there too.
+
+**MEASURED, the data (`server/cmd/navcensus`, the user's archives on the render box, 97/168, 98/168
+and 96/168):** every one of the 214 objects the three regions' `.nvm` lists has a navigation mesh in
+the export (the `.nvm` lists only collision objects). 18 tree kinds, 91 placements; 89 of them are of
+the 17 kinds whose outline edges block from outside (flag 3), e.g. `tre_smalltree01` (5 edges,
+outline radius 4.5), `tre_pine03` (6, 5.6), `tre_tree01` (5, 4.8); `tre_gagi01`'s 50 outline edges
+are all open (2 placements: a tree a mover walks onto). Probe walks fired through each placement's
+origin from 8 directions: 1,378 of 1,712 blocked (trees: 550 of 728), every probe through
+`tre_smalltree01`, `tre_pine03`, `tre_tree01`, every lamp and building (a probe that passes a big
+tree misses a trunk off its origin; `tre_gagi01`'s walks, 14 of 16 blocked although none of its
+outline edges blocks from outside, were not traced to the edge that stops them, OPEN). The server's walk meets them (round 812 parity, 395 of 400
+of the client's own walks within 0.05).
+
+**OpenSRO (round 851).**
+
+- `session.MoverKind` / `Collider` (the two READ inputs) and `navWalkKind` / `moverLeg`: every kind
+  walks the no-slide `navWalk`. A COS's leg ends at the first wall or tree (`cosLegEnd`, called where
+  `cosRuntime.tick` starts a leg): the COS walks there and stands; a wall within 0.5 ahead leaves it
+  standing (OURS, `navMinLeg`, as a monster's leg).
+- OURS: the leg's 0xB021 names the stop (as a monster's leg does since round 812), not the
+  destination and a later 0xB023 as retail's server sends.
+- The client walks a COS's drawn leg on its navigation graph and stops it at a wall (`CosWalk`,
+  `World3D._cos_step`; READ `c:0x9e0fca`), as it walks its own player. Other players' bodies still
+  walk straight (`OtherWalk`, OURS, round 846): a wall reaches an observer as the mover's 0xB023.
+
 ## Not read
 
 - ~~What the `+0x14` byte in the heading form is~~: the movement command (round 653, "The heading

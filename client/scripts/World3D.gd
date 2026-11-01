@@ -38817,11 +38817,15 @@ func _cos_step(delta: float) -> void:
 		var st: Dictionary = _cos_motion[uid]
 		if not bool(st["moving"]):
 			continue
-		var pos := MonsterMotion.step(st["pos"], st["dest"], float(st["speed"]), delta)
-		st["pos"] = pos
+		# Round 851: the step walks the navigation graph and a wall ends the
+		# leg there (CosWalk; READ c:0x9e0fca, every mover's step).
+		var pair := _nav_graph_for(body.position)
+		var walled := CosWalk.advance(st, null if pair.is_empty() else pair[0],
+			Transform3D.IDENTITY if pair.is_empty() else (pair[1] as Node3D).global_transform, body.position.y, delta)
+		var pos: Vector2 = st["pos"]
 		var y := _cos_ground(Vector3(pos.x, body.position.y, pos.y))
 		body.position = Vector3(pos.x, body.position.y if is_nan(y) else y, pos.y)
-		if pos == st["dest"]:
+		if walled or pos == st["dest"]:
 			st["moving"] = false
 			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
 
@@ -39176,7 +39180,7 @@ func _qa_cos_step() -> void:
 				for e in _animated:
 					if (e as Array)[0] == asm.skeleton and (e as Array)[1] != null:
 						clip = ((e as Array)[1] as BanReader.ParsedAnimation).animation_name
-			parts.append("%d@(%.0f,%.1f,%.0f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f clip %s" % [int(uid), b.global_position.x, b.global_position.y,
+			parts.append("%d@(%.2f,%.1f,%.2f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f clip %s" % [int(uid), b.global_position.x, b.global_position.y,
 				b.global_position.z, meshes, shown, str(box), fwd, _cos_ground(b.global_position),
 				lbl.text if lbl != null else "-", olbl.text if olbl != null else "-", olbl.offset.y if olbl != null else 0.0, clip])
 		var held := ""
