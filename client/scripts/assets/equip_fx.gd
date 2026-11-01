@@ -251,6 +251,17 @@ static func attach(skel: Skeleton3D, rows: Array, archive: Pk2Reader) -> int:
 	skel.add_child(m)
 	return list.size()
 
+## Round 850: a weapon shown again (HeldItems: an emote or a stall over) has
+## its effects back at the next frame, not at the next reselect cycle: the
+## original's switch shows the part's effects in the same call (READ,
+## CCompChar FUN_00c44f40 -> FUN_00c7b3a0). Only on `vp`'s existing driver.
+static func hurry_in(vp: Viewport) -> void:
+	if vp == null or not vp.has_meta(DRIVER_META):
+		return
+	var d = vp.get_meta(DRIVER_META)
+	if is_instance_valid(d):
+		(d as EquipFx)._hurry = true
+
 ## The driver of `vp`, made on first use.
 static func driver_for(vp: Viewport) -> EquipFx:
 	if vp.has_meta(DRIVER_META):

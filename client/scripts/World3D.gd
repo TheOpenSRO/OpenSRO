@@ -38404,7 +38404,11 @@ func _held_apply(uid: int, e: Dictionary) -> int:
 		e["skel"] = 0
 		return 0
 	e["skel"] = skel.get_instance_id()
-	var n := HeldItems.set_shown(skel, (e["reasons"] as Dictionary).is_empty())
+	var shown := (e["reasons"] as Dictionary).is_empty()
+	var n := HeldItems.set_shown(skel, shown)
+	if shown and n > 0:
+		# Their effects (the + glow, a seal's stars) back with them this frame.
+		EquipFx.hurry_in(get_viewport())
 	var root := _rider_root(uid)
 	if root != null and is_instance_valid(root):
 		_crowd_light_changed(root)
@@ -38420,7 +38424,6 @@ func _step_held() -> void:
 		_qa_held_report()
 	if _held.is_empty():
 		return
-	var now := Time.get_ticks_msec()
 	var own := _own_id()
 	for uid in _held.keys():
 		var e: Dictionary = _held[uid]
@@ -38430,8 +38433,13 @@ func _step_held() -> void:
 			if own >= 0 and int(uid) == own:
 				over = _player_one_shot == null or _player_one_shot != e.get("emote_clip")
 			else:
-				var gait: Dictionary = _other_gaits.get(uid, {})
-				over = now >= int(e.get("emote_until", 0)) or bool(gait.get("moving", false))
+				# The clip clock (not the wall's: a movie-mode run's game time
+				# runs at its own pace), or the clip no longer on the body (a
+				# move's loop, a hit, a re-dress swapped it), checked every
+				# HELD_SCAN_FRAMES frames.
+				over = _idle_anim_time >= float(e.get("emote_until", 0.0))
+				if not over and Engine.get_process_frames() % HELD_SCAN_FRAMES == 0:
+					over = not _held_clip_on(_rider_skeleton(int(uid)), e.get("emote_clip"))
 			if over:
 				_held_set(int(uid), HeldItems.REASON_EMOTE, false)
 				if not _held.has(uid):
@@ -38457,7 +38465,19 @@ func _held_emote(uid: int, emote: int, clip: BanReader.ParsedAnimation, seconds:
 	_held_set(uid, HeldItems.REASON_EMOTE, true)
 	var e: Dictionary = _held.get(uid, {})
 	e["emote_clip"] = clip
-	e["emote_until"] = Time.get_ticks_msec() + int(seconds * 1000.0)
+	e["emote_until"] = _idle_anim_time + seconds
+
+## How often another body's emote is looked for on its skeleton (frames).
+const HELD_SCAN_FRAMES := 6
+
+## Whether `skel` still plays `clip` as its one-shot (its _animated entry).
+func _held_clip_on(skel: Skeleton3D, clip) -> bool:
+	if skel == null or not is_instance_valid(skel) or clip == null:
+		return false
+	for entry in _animated:
+		if entry[0] == skel:
+			return entry[1] == clip
+	return false
 
 ## A body was (re)built for `uid`: a reason that holds is drawn on it from
 ## its first frame (not a frame later, from _step_held).
@@ -38476,6 +38496,7 @@ func _held_state(uid: int) -> String:
 ## and own effects shown -- and its reasons. Measured from the scene.
 var _qa_held_log := OS.get_environment("OPENSRO_QA_HELD_LOG") == "1"
 var _qa_held_last := ""
+var _qa_held_tick := -1
 
 func _qa_held_report() -> void:
 	var parts: PackedStringArray = []
@@ -38505,11 +38526,14 @@ func _qa_held_report() -> void:
 			items.append("%s kind %d %s meshes %d/%d fx %d/%d" % [c.name, int(c.get_meta(HeldItems.ATTACH_KIND_META, -1)),
 				"visible" if (c as Node3D).visible else "HIDDEN", drawn, meshes, fx_on, fx])
 		var e: Dictionary = _held.get(uid, {})
-		parts.append("%d%s [%s] reasons %s" % [int(uid), " (self)" if int(uid) == _own_id() else "", "; ".join(items),
-			str((e.get("reasons", {}) as Dictionary).keys())])
+		var root := _rider_root(int(uid))
+		var at := root.global_position if root != null and is_instance_valid(root) else Vector3.ZERO
+		parts.append("%d%s at (%.0f,%.1f,%.0f) [%s] reasons %s" % [int(uid), " (self)" if int(uid) == _own_id() else "",
+			at.x, at.y, at.z, "; ".join(items), str((e.get("reasons", {}) as Dictionary).keys())])
 	var line := " | ".join(parts)
-	if line != _qa_held_last or _qa_tick % 60 == 0:
+	if line != _qa_held_last or (_qa_tick % 60 == 0 and _qa_tick != _qa_held_tick):
 		print("QA HELD tick %d ms %d: %s" % [_qa_tick, Time.get_ticks_msec(), line])
+		_qa_held_tick = _qa_tick
 	_qa_held_last = line
 
 ## The mount's seat: its `saddle` bone at rest over the mount's root (x its
