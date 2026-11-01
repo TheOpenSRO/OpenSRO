@@ -25,12 +25,20 @@ class_name MonsterMotion
 ## Its zeroing of a component under 0.01f (0xb45df8) is not modelled.
 const MOVER_STEP_CAP := 160.0
 
-## How far the drawn body may drift from the server's position before it is
-## put back there. OpenSRO's own number: it must exceed the lag a moving body
-## legitimately carries, and the fastest roster run -- Earth Ghost's 75 u/s
-## (characterdata col 47, docs/protocol/monster_ai.md "The roster's real walk
-## and run speeds") -- over a 0.3 s round trip is 22.5.
-const RESYNC_DISTANCE := 32.0
+## Round 853: there is no monsters' own resync distance. A monster's move is
+## put where the server had it, and walked to its end, by the rules every
+## other body's is (OtherWalk.start_at, OtherWalk.catch_up, OtherWalk.stop_walks):
+## READ, the original's 0xB021 handler (c:NetProcessInNavAndSkill::
+## FUN_008a5750) finds any object by its id (IGIDObject::FUN_009c31a0), sends
+## its source through FUN_009e11e0 -- whose only branch on the object's class
+## is the collision query's flag (1 for the own player and its own COS,
+## c:0x9e1236..0x9e1260; a monster's is 0), then the 50.0 test (FUN_009e1050)
+## -- and its destination through FUN_009e0550 (the catch-up factor), with no
+## test of the class at all; the MOVE state (c:0xa59680) is every
+## character's. Rounds 533-852 kept OpenSRO's own 32.0 here (from the fastest
+## roster run, Earth Ghost's 75 u/s, over a 0.3 s round trip: 22.5, rounded
+## up) with no catch-up: a body drawn behind stayed behind by its lag for the
+## whole leg, and one 32-50 units off was put back where the original walks it.
 ## How far a walking body moves between two height resolves. OpenSRO's own
 ## number; the height comes from the region's walkable graph, with the
 ## terrain-only ray where no loaded region covers the body
@@ -89,33 +97,55 @@ static func step(pos: Vector2, dest: Vector2, speed: float, delta: float) -> Vec
 		return dest
 	return pos + (dest - pos) / left * s
 
-## The state a new leg starts in. It starts from where the body is DRAWN, so a
-## push never teleports it, unless that is more than RESYNC_DISTANCE from where
-## the server had it -- then from (msg.x, msg.z). A stop (dest == (x, z)) is
-## marked so the body is not turned toward a sub-unit correction; a leg with no
-## speed has nothing to glide at and is placed at its end at once (the server
-## sends a stop with the leg's speed, or the species' walk speed when it was
-## not moving -- the protocol table -- so this is for a malformed message).
+## The state a new leg starts in (round 853: the rules every body's 0xB021
+## leg takes, OtherWalk's). It starts from where the body is DRAWN, unless that
+## is more than OtherWalk.RESYNC_DISTANCE (50) from where the server had it --
+## then from (msg.x, msg.z) -- and walks at the speed times the catch-up factor
+## ("mult", OtherWalk.catch_up: a body drawn behind the server's mover walks
+## faster, up to 3x, to reach the end with it). A stop (dest == (x, z)) is the
+## original's 0xB023 (OtherWalk.stop_walks): a body more than 50 off, or on the
+## point, is put there; a nearer one walks the rest at the factor a mover on its
+## point gets (3x), in the stand clip, not turned toward the correction. A leg
+## with no speed has nothing to walk at and is placed at its end at once (the
+## server sends a stop with the leg's speed, or the species' walk speed when it
+## was not moving -- the protocol table -- so this is for a malformed message).
 static func begin(displayed: Vector2, msg: CombatNet.MonsterMoved) -> Dictionary:
-	var server := Vector2(msg.x, msg.z)
+	var server := Vector3(msg.x, 0.0, msg.z)
 	var dest := Vector2(msg.dest_x, msg.dest_z)
-	var pos := displayed
-	if displayed.distance_to(server) > RESYNC_DISTANCE:
-		pos = server
+	var drawn := Vector3(displayed.x, 0.0, displayed.y)
+	var stop := dest.is_equal_approx(Vector2(msg.x, msg.z))
+	var at := OtherWalk.start_at(drawn, server, true)
+	var mult := 1.0
+	if stop:
+		if OtherWalk.stop_walks(drawn, server):
+			at = drawn
+			mult = OtherWalk.CATCH_UP_MAX
+		else:
+			at = server
+	else:
+		mult = OtherWalk.catch_up(at, server, true, Vector3(dest.x, 0.0, dest.y))
+	var pos := Vector2(at.x, at.z)
 	var speed := absf(msg.speed)
 	if speed <= 0.0:
 		pos = dest
-	return {"pos": pos, "dest": dest, "speed": speed, "mode": msg.mode,
-		"moving": pos != dest, "stop": dest.is_equal_approx(server)}
+	return {"pos": pos, "dest": dest, "speed": speed, "mult": mult, "mode": msg.mode,
+		"moving": pos != dest, "stop": stop}
 
-## Where a listed monster's body is placed on a list refresh. A standing body
-## goes where the list says (the server's word). A walking one keeps its drawn
-## position -- the list is a snapshot of where the server had it, which a body
-## drawn one latency behind never matches, and snapping to it teleported the
-## body back on every refresh -- unless it has drifted more than
-## RESYNC_DISTANCE from the list.
+## One frame of a leg's state: the engine's mover (step) at the leg's speed
+## times its catch-up factor.
+static func step_state(state: Dictionary, delta: float) -> Vector2:
+	return step(state["pos"], state["dest"], float(state["speed"]) * float(state.get("mult", 1.0)), delta)
+
+## Where a listed monster's body is placed on a list refresh (OpenSRO's own
+## list, which the original has no counterpart of). A standing body goes where
+## the list says (the server's word). A walking one keeps its drawn position --
+## the list is a snapshot of where the server had it, which a body drawn one
+## latency behind never matches, and snapping to it teleported the body back
+## on every refresh -- unless it is more than OtherWalk.RESYNC_DISTANCE from the
+## list (round 853: the 0xB021 source's rule, READ, which the list's position
+## is the nearest thing to; 32 before).
 static func reconcile(displayed: Vector2, snapshot: Vector2, moving: bool) -> Vector2:
-	if moving and displayed.distance_to(snapshot) <= RESYNC_DISTANCE:
+	if moving and displayed.distance_to(snapshot) <= OtherWalk.RESYNC_DISTANCE:
 		return displayed
 	return snapshot
 
@@ -183,8 +213,9 @@ static func heading_dir(heading: float) -> Vector2:
 ## The clip for a gait: stand is the model's own idle (the assembler's
 ## `idle_animation`, which falls back to the name hints when the file has no
 ## groups -- animation_for(TYPE_STAND) returns nothing for those), walk and run
-## come from its `default` group. null when the model has no such clip; the
-## caller then keeps whatever loop it has.
+## come from its `default` group. null when the model has no such clip: a walk
+## or run then plays nothing and the body holds its pose (World3D._body_gait,
+## round 853, READ c:0xa59680 / c:0xa5b550); a stand keeps the loop it has.
 static func gait_clip(archive: Pk2Reader, assembled: SkinnedBsrAssembler.AssembledCharacter, gait: int) -> BanReader.ParsedAnimation:
 	if assembled == null:
 		return null

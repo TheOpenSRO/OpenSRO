@@ -78,6 +78,18 @@ static func catch_up(drawn: Vector3, source: Vector3, has_source: bool, dest: Ve
 		return CATCH_UP_MAX
 	return minf(from_drawn / from_source, CATCH_UP_MAX)
 
+## Round 846 (READ, c:FUN_008a4f80): a stop's point goes through the same
+## placement as 0xB021's source (FUN_009e11e0(..., 0) -> FUN_009e1050), so a body
+## more than RESYNC_DISTANCE from it -- or already on it (under 0.01) -- is put
+## there, and a nearer one is not: it walks the rest, at CATCH_UP_MAX times its
+## speed (OURS: the factor FUN_009e0550 gives a mover already on its point,
+## 0xe1b808; how retail's drawn object meets the record after a stop was not
+## read). True when it walks. Round 853: every body's stop, players' and
+## monsters' (World3D._other_stop_at, MonsterMotion.begin).
+static func stop_walks(drawn: Vector3, at: Vector3) -> bool:
+	var off := Vector2(at.x - drawn.x, at.z - drawn.z).length()
+	return off <= RESYNC_DISTANCE and off >= 0.01
+
 ## A heading run along the u16 wire angle `wire` at `speed`.
 static func on_heading(wire: int, speed: float) -> Dictionary:
 	var dir := RemoteFacing.facing_of(RemoteFacing.from_wire_angle(wire))

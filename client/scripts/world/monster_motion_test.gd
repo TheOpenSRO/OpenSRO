@@ -118,16 +118,65 @@ func _test_reconcile() -> void:
 		"a walking body 3 units ahead of the listed position stays where it is drawn (got %s)" % str(placed))
 	_check(MonsterMotion.reconcile(Vector2(100, 0), Vector2(97, 0), false) == Vector2(97, 0),
 		"a standing body goes where the list says")
-	_check(MonsterMotion.reconcile(Vector2(140, 0), Vector2(100, 0), true) == Vector2(100, 0),
-		"a walking body 40 units off the list is put back (beyond RESYNC_DISTANCE 32)")
+	# Round 853: the list's rule is the 0xB021 source's, 50 (OtherWalk.RESYNC_DISTANCE).
+	_check(MonsterMotion.reconcile(Vector2(140, 0), Vector2(100, 0), true) == Vector2(140, 0),
+		"a walking body 40 units off the list keeps where it is drawn (within 50; round 533's 32 put it back)")
+	_check(MonsterMotion.reconcile(Vector2(160, 0), Vector2(100, 0), true) == Vector2(100, 0),
+		"a walking body 60 units off the list is put back (beyond OtherWalk.RESYNC_DISTANCE 50)")
 
 func _test_begin() -> void:
 	var s := MonsterMotion.begin(Vector2(103, -200), _moved(7, 100, -200, 140, -200, 8, 0))
 	_check(s["pos"] == Vector2(103, -200) and bool(s["moving"]) and not bool(s["stop"]),
 		"a leg starts from where the body is drawn, not the server's position")
 	var far := MonsterMotion.begin(Vector2(200, -200), _moved(7, 100, -200, 140, -200, 8, 0))
-	_check(far["pos"] == Vector2(100, -200), "a body more than 32 units off starts from the server's position")
+	_check(far["pos"] == Vector2(100, -200) and float(far["mult"]) == 1.0,
+		"a body more than 50 units off starts from the server's position, at its speed")
 	_check(MonsterMotion.state_gait(s) == 1 and MonsterMotion.turns_to_face(s), "a walking leg plays the walk and turns the body")
+
+## Round 853 (READ: the 0xB021 handler is every object's, c:0x8a5750 ->
+## FUN_009e11e0 / FUN_009e1050 / FUN_009e0550): a monster's leg takes the rules
+## another player's does -- OtherWalk's, called, not copied.
+func _test_begin_shared_rules() -> void:
+	# 40 units behind along the leg: within 50, walked from where it is drawn,
+	# at the factor (60 + 40) / 60 = 1.667 -- round 533's 32 put it on the source.
+	var behind := MonsterMotion.begin(Vector2(60, -200), _moved(7, 100, -200, 160, -200, 22, 1))
+	_check(behind["pos"] == Vector2(60, -200), "40 behind: the leg starts where the body is drawn (got %s)" % str(behind["pos"]))
+	_check(is_equal_approx(float(behind["mult"]), 100.0 / 60.0),
+		"40 behind on a 60-unit leg: catch-up factor 100/60 (got %.4f)" % float(behind["mult"]))
+	# It reaches the end when the server's mover does: 60 / 22 s.
+	var t := 0.0
+	var pos: Vector2 = behind["pos"]
+	behind["pos"] = pos
+	while pos != Vector2(160, -200) and t < 10.0:
+		pos = MonsterMotion.step_state(behind, 1.0 / 60.0)
+		behind["pos"] = pos
+		t += 1.0 / 60.0
+	_check(absf(t - 60.0 / 22.0) <= 1.0 / 60.0 + 1e-4,
+		"and arrives with the server's mover, %.3f s against %.3f" % [t, 60.0 / 22.0])
+	# Far behind: the factor stops at 3.0 (float 0xd8adc4).
+	var far_behind := MonsterMotion.begin(Vector2(55, -200), _moved(7, 100, -200, 110, -200, 22, 1))
+	_check(far_behind["pos"] == Vector2(55, -200) and is_equal_approx(float(far_behind["mult"]), 3.0),
+		"45 behind a 10-unit leg: walked, at the 3.0 cap (got %s x%.3f)" % [str(far_behind["pos"]), float(far_behind["mult"])])
+	# Ahead of the server's mover: 1.0, never slower.
+	var ahead := MonsterMotion.begin(Vector2(120, -200), _moved(7, 100, -200, 160, -200, 22, 1))
+	_check(float(ahead["mult"]) == 1.0, "a body ahead of the source walks at its speed")
+	# The same answers as OtherWalk's for a sweep of drawn places.
+	var same := true
+	for dx in [-60.0, -50.5, -49.5, -20.0, 0.0, 15.0, 49.0, 51.0]:
+		var drawn := Vector2(100.0 + dx, -200.0 + dx * 0.3)
+		var st := MonsterMotion.begin(drawn, _moved(7, 100, -200, 170, -230, 22, 1))
+		var want := OtherWalk.start_at(Vector3(drawn.x, 0, drawn.y), Vector3(100, 0, -200), true)
+		var want_mult := OtherWalk.catch_up(want, Vector3(100, 0, -200), true, Vector3(170, 0, -230))
+		if st["pos"] != Vector2(want.x, want.z) or not is_equal_approx(float(st["mult"]), want_mult):
+			same = false
+	_check(same, "begin's start and factor are OtherWalk.start_at's and catch_up's")
+	# A stop within 50: walked at 3x in the stand clip; beyond 50: put there.
+	var near_stop := MonsterMotion.begin(Vector2(110, -200), _moved(7, 100, -200, 100, -200, 22, 1))
+	_check(near_stop["pos"] == Vector2(110, -200) and float(near_stop["mult"]) == OtherWalk.CATCH_UP_MAX \
+			and MonsterMotion.state_gait(near_stop) == 0,
+		"a stop 10 off walks the rest at 3x in the stand clip")
+	var far_stop := MonsterMotion.begin(Vector2(160, -200), _moved(7, 100, -200, 100, -200, 22, 1))
+	_check(far_stop["pos"] == Vector2(100, -200) and not bool(far_stop["moving"]), "a stop 60 off is put on its point")
 
 ## The stop push (dest == (x, z)): the body is drawn a little off the server's
 ## position. It ends there, in the stand clip, within a second, and is never
@@ -141,7 +190,8 @@ func _test_stop_push() -> void:
 		var t := 0.0
 		var stood := MonsterMotion.state_gait(s) == 0
 		while pos != Vector2(100, -200) and t < 1.0:
-			pos = MonsterMotion.step(pos, s["dest"], float(s["speed"]), 1.0 / 60.0)
+			s["pos"] = pos
+			pos = MonsterMotion.step_state(s, 1.0 / 60.0)
 			t += 1.0 / 60.0
 		_check(pos == Vector2(100, -200) and t < 1.0,
 			"a stop at %.0f u/s with the body drawn off (x,z) ends at (x,z) within 1 s (t %.2f)" % [speed, t])
@@ -313,6 +363,7 @@ func _init() -> void:
 	_test_height_turns()
 	_test_reconcile()
 	_test_begin()
+	_test_begin_shared_rules()
 	_test_stop_push()
 	_test_facing()
 	_test_heading_dir()
@@ -331,6 +382,7 @@ func _initialize() -> void:
 		var arrive: float = world_script.get_script_constant_map()["MOVE_TARGET_STOP_DISTANCE"]
 		_test_receding_target(arrive)
 		_test_world_move(world_script)
+		_test_world_gait_drop(world_script)
 		_test_world_rewalk(world_script)
 		# The height fixture's region group must be IN the tree for
 		# to_local/to_global to have a global transform, and a --script
@@ -482,6 +534,75 @@ func _test_world_move(world_script: GDScript) -> void:
 	world.call("_on_monster_moved", _moved(99, 0, 0, 10, 0, 8.0, 0))
 	_check(not (world.get("_monster_motion") as Dictionary).has(99), "a move for an unknown monster starts no leg")
 	body.free()
+	world.free()
+
+## A clip of `frames` keyframes on one bone (a loop the clip list takes).
+func _clip(name: String, frames: int) -> BanReader.ParsedAnimation:
+	var a := BanReader.ParsedAnimation.new()
+	a.animation_name = name
+	a.duration_ms = frames * 33
+	a.cyclic = true
+	var b := BanReader.Bone.new()
+	b.bone_name = "Bip01"
+	for i in frames:
+		var k := BanReader.Keyframe.new()
+		k.rotation = Quaternion.IDENTITY
+		b.keyframes.append(k)
+	a.bones.append(b)
+	return a
+
+## Round 853 (READ c:0xa59680, c:0xa5b550; World3D._body_gait): a walk the
+## model has no clip for plays nothing. The loop it had plays on for the
+## state exit's 200 ms, then leaves the clip list -- the bones keep their pose
+## -- and the arrival's stand starts from its first frame. NEGATIVE: before,
+## the model kept the loop it had (a ridden mount was made to run).
+func _test_world_gait_drop(world_script: GDScript) -> void:
+	var world: Node = world_script.new()
+	var sk := Skeleton3D.new()
+	var assembled := SkinnedBsrAssembler.AssembledCharacter.new()
+	assembled.skeleton = sk
+	var stand := _clip("stand", 10)
+	assembled.idle_animation = stand
+	(world.get("_monster_assembled") as Dictionary)[7] = assembled
+	var animated: Array = world.get("_animated")
+	animated.append([sk, stand, 10, 0.37, true, 0.0, null])
+	world.set("_idle_anim_time", 5.0)
+	# No archive: the walk has no clip (MonsterMotion.gait_clip -> null).
+	world.call("_set_monster_gait", 7, BsrReader.AnimationEntry.TYPE_WALK)
+	var entries := func() -> int:
+		var n := 0
+		for e in (world.get("_animated") as Array):
+			if e[0] == sk:
+				n += 1
+		return n
+	_check(entries.call() == 1 and ((world.get("_animated") as Array)[0][1] == stand),
+		"a walk with no clip: the stand plays on while it is stopped")
+	world.set("_idle_anim_time", 5.15)
+	world.call("_step_gait_drops")
+	_check(entries.call() == 1, "still there 150 ms on (the stop's 200 ms)")
+	world.set("_idle_anim_time", 5.21)
+	world.call("_step_gait_drops")
+	_check(entries.call() == 0, "dropped after 200 ms: nothing plays, the pose is held")
+	world.set("_idle_anim_time", 7.0)
+	world.call("_set_monster_gait", 7, BsrReader.AnimationEntry.TYPE_STAND)
+	var back: Array = []
+	for e in (world.get("_animated") as Array):
+		if e[0] == sk:
+			back = e
+	_check(back.size() > 0 and back[1] == stand and is_equal_approx(7.0 + float(back[3]), 0.0),
+		"the arrival's stand plays again from its first frame")
+	_check((world.get("_gait_drops") as Dictionary).is_empty(), "and the drop is over")
+	# A walk, then the stand inside the 200 ms: the stand (a clip) cancels the
+	# drop and the loop stays.
+	world.call("_set_monster_gait", 7, BsrReader.AnimationEntry.TYPE_WALK)
+	_check(not (world.get("_gait_drops") as Dictionary).is_empty(), "a second walk with no clip schedules a drop")
+	world.set("_idle_anim_time", 7.1)
+	world.call("_set_monster_gait", 7, BsrReader.AnimationEntry.TYPE_STAND)
+	world.set("_idle_anim_time", 7.5)
+	world.call("_step_gait_drops")
+	_check((world.get("_gait_drops") as Dictionary).is_empty() and entries.call() == 1,
+		"a clip played inside the 200 ms cancels the drop")
+	sk.free()
 	world.free()
 
 func _fixture_moved() -> PackedByteArray:
