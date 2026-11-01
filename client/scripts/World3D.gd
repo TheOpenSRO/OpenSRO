@@ -16042,6 +16042,8 @@ func _snap_to_server_pos(monster_id: int) -> bool:
 	if snap != null:
 		snap.x = at.x
 		snap.z = at.y
+	if _qa_mob_track:
+		print("MOB snap %d ums=%d jump=%.3f" % [monster_id, _qa_unix_ms(), was.distance_to(at)])
 	if _combat_trace or _mob_logging():
 		print("COMBAT monster %d put where the server has it: (%.1f,%.1f), %.1f from where it was drawn" % [
 			monster_id, at.x, at.y, was.distance_to(at)])
@@ -30009,6 +30011,10 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		# until the next one.
 		# A miss keeps the list's y, as before, and puts the body on the retry
 		# list (_book_monster_height); a hit takes it off.
+		if _qa_mob_track:
+			print("MOB list %d ums=%d drawn=(%.3f,%.3f) list=(%.3f,%.3f) moving=%s jump=%.3f" % [monster.monster_id, _qa_unix_ms(),
+				existing.position.x, existing.position.z, monster.x, monster.z, "1" if moving else "0",
+				placed.distance_to(Vector2(existing.position.x, existing.position.z))])
 		var at := Vector3(placed.x, monster.y, placed.y)
 		var found := _moving_monster_hit_height(at) if moving else _terrain_hit_height(at)
 		existing.position = Vector3(placed.x, _book_monster_height(monster.monster_id, found, at.y), placed.y)
@@ -31826,6 +31832,17 @@ func _on_monster_left(ids: Array) -> void:
 func _mob_logging() -> bool:
 	return OS.get_environment("OPENSRO_QA_MOB_LOG") != "" or NetClient.wire_logging
 
+## QA (round 853): OPENSRO_QA_MOB_TRACK=1 logs each monster leg as it starts
+## (where the body was drawn, the message's source and end, its speed and
+## factor, where the leg starts and how far that put the body), every frame
+## each walking body's drawn place, and every list refresh and server snap
+## that moves one -- with the wall clock in ms, against the server's own
+## "aipos" pass trace (OPENSRO_AI_POS_TRACE).
+var _qa_mob_track := OS.get_environment("OPENSRO_QA_MOB_TRACK") != ""
+
+static func _qa_unix_ms() -> int:
+	return int(Time.get_unix_time_from_system() * 1000.0)
+
 ## Whether `monster_id`'s body is walking a leg (a stop's glide does not count):
 ## the approach walk then releases only inside the stop distance
 ## (CombatNet.approach_releases).
@@ -31917,6 +31934,11 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 		if snap != null:
 			snap.x = pos.x
 			snap.z = pos.y
+	if _qa_mob_track:
+		print("MOB leg %d ums=%d drawn=(%.3f,%.3f) src=(%.3f,%.3f) dest=(%.3f,%.3f) speed=%.2f mult=%.3f start=(%.3f,%.3f) jump=%.3f stop=%s" % [
+			moved.monster_id, _qa_unix_ms(), displayed.x, displayed.y, moved.x, moved.z, moved.dest_x, moved.dest_z,
+			float(state["speed"]), float(state.get("mult", 1.0)), pos.x, pos.y, pos.distance_to(displayed),
+			"1" if bool(state["stop"]) else "0"])
 	_set_monster_gait(moved.monster_id, MonsterMotion.state_gait(state))
 	var front := MonsterMotion.front_of(String(body.get_meta("model", "")))
 	if MonsterMotion.turns_to_face(state) and front != "":
@@ -32038,6 +32060,8 @@ func _step_monster_bodies(delta: float, budget: int = MonsterMotion.MAX_HEIGHT_R
 			state["pos"] = pos
 			(body as Node3D).position.x = pos.x
 			(body as Node3D).position.z = pos.y
+			if _qa_mob_track:
+				print("MOB body %d ums=%d pos=(%.3f,%.3f)" % [monster_id, _qa_unix_ms(), pos.x, pos.y])
 			var snap = _monster_snapshots.get(monster_id)
 			if snap != null:
 				snap.x = pos.x
