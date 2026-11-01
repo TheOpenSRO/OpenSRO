@@ -10476,6 +10476,9 @@ func _state_look_resync(key: String) -> void:
 ## (only bodies not at 1.0), and this player's own.
 var _clip_speeds: Dictionary = {}
 var _player_clip_speed := 1.0
+## Round 852: skeleton instance id -> its entry's index in _animated at the
+## last clip-speed step (_step_clip_speeds).
+var _clip_speed_at: Dictionary = {}
 
 func _set_body_clip_speed(body: Node3D, speed: float) -> void:
 	if body == player:
@@ -10484,6 +10487,11 @@ func _set_body_clip_speed(body: Node3D, speed: float) -> void:
 	var skel := SkillEffects.skeleton_of(body)
 	if skel == null:
 		return
+	_set_skeleton_clip_speed(skel, speed)
+
+## A skeleton's clip speed (1.0 forgets it). Round 852: a pet's gait rate
+## (PetGait) comes here every frame it moves.
+func _set_skeleton_clip_speed(skel: Skeleton3D, speed: float) -> void:
 	if is_equal_approx(speed, 1.0):
 		_clip_speeds.erase(skel.get_instance_id())
 	else:
@@ -10509,12 +10517,32 @@ func _step_clip_speeds(delta: float) -> void:
 	if _clip_speeds.is_empty():
 		return
 	var lag := delta
-	for entry in _animated:
-		if not is_instance_valid(entry[0]):
+	# Round 852: each skeleton's entry is found where it was last frame
+	# (_clip_speed_at, OURS) -- a running pet keeps a speed here the whole
+	# time it runs, and scanning every body's clip each frame for it cost a
+	# crowd's frame. A skeleton has one entry (_play_once's rule); any miss
+	# re-finds them all in one scan.
+	var n := _animated.size()
+	var missed := false
+	for id in _clip_speeds:
+		var i: int = _clip_speed_at.get(id, -1)
+		if i < 0 or i >= n or not is_instance_valid(_animated[i][0]) or (_animated[i][0] as Object).get_instance_id() != id:
+			missed = true
+			break
+	if missed:
+		_clip_speed_at.clear()
+		for i in n:
+			var e: Array = _animated[i]
+			if not is_instance_valid(e[0]):
+				continue
+			var eid: int = (e[0] as Object).get_instance_id()
+			if _clip_speeds.has(eid):
+				_clip_speed_at[eid] = i
+	for id in _clip_speeds:
+		var i: int = _clip_speed_at.get(id, -1)
+		if i < 0:
 			continue
-		var id: int = (entry[0] as Object).get_instance_id()
-		if not _clip_speeds.has(id):
-			continue
+		var entry: Array = _animated[i]
 		var held: float = lag * (1.0 - float(_clip_speeds[id]))
 		if entry[4]:
 			entry[3] = float(entry[3]) - held
@@ -25488,8 +25516,10 @@ func _own_leg_free_ms(echo: DestMoveNet.Echo) -> int:
 	return Time.get_ticks_msec() + int(ceil(length / speed * 1000.0))
 
 ## Starts `leg` on another player's body (OtherWalk), turned toward it.
+## Round 852: told whether it meets a wall (_plan_body_leg).
 func _start_other_leg(id: int, leg: Dictionary) -> void:
 	var body: Node3D = _other_bodies[id]
+	_plan_body_leg(leg, body.position)
 	_other_legs[id] = leg
 	_other_body_targets[id] = body.position
 	_other_awake[id] = true
@@ -25507,6 +25537,69 @@ func _start_other_leg(id: int, leg: Dictionary) -> void:
 	if fs:
 		FrameSplit.add("o_start_aim", t1 - t0)
 		FrameSplit.add("o_start_gait", Time.get_ticks_usec() - t1)
+
+## Round 852 (OURS): the most a frame spends walking legs' plans
+## (_plan_body_leg). MEASURED (tools/walk_probe.gd --bench-legs=2000, Jangan
+## 97/168): a plan is 146 us at the median, 652 at the 99th percentile -- a
+## crowd's every leg at once would freeze the frame. A leg the frame has no
+## room for walks straight on and is planned from where it is drawn on a
+## later frame ("plan").
+const BODY_PLAN_BUDGET_USEC := 1500
+var _body_plan_frame := -1
+var _body_plan_spent := 0
+
+## Round 852: `leg` (an OtherWalk leg, from `from`) walked once on the graph
+## under the body (BodyWalk.plan): clear, it is the straight step; walled, its
+## end becomes the wall's stop ("dest", and "wall" true), where the straight
+## step stops as the frame-by-frame walk would; one the walk cannot answer --
+## and a heading run -- is walked through the graph a frame at a time
+## ("walled", _body_walk_step). Over the frame's budget: "plan", done later
+## (the step loops call this again while it is set).
+func _plan_body_leg(leg: Dictionary, from: Vector3) -> void:
+	leg.erase("on")
+	leg.erase("graph")
+	if bool(leg.get("run", false)):
+		leg["walled"] = true
+		leg.erase("plan")
+		return
+	var f := Engine.get_process_frames()
+	if f != _body_plan_frame:
+		_body_plan_frame = f
+		_body_plan_spent = 0
+	if _body_plan_spent >= BODY_PLAN_BUDGET_USEC:
+		leg["walled"] = false
+		leg["plan"] = true
+		return
+	leg.erase("plan")
+	var t0 := Time.get_ticks_usec()
+	var dest: Vector3 = leg["dest"]
+	var pair := _nav_graph_for(from)
+	var p := BodyWalk.plan(null if pair.is_empty() else pair[0],
+		Transform3D.IDENTITY if pair.is_empty() else (pair[1] as Node3D).global_transform, from, Vector2(dest.x, dest.z))
+	var kind := int(p["kind"])
+	leg["walled"] = kind == BodyWalk.FRAMES
+	if kind == BodyWalk.STOP:
+		var stop: Vector2 = p["stop"]
+		leg["dest"] = Vector3(stop.x, dest.y, stop.y)
+		leg["wall"] = true
+		# Turned toward the end it was told of (OtherWalk.facing).
+		leg["aim"] = dest
+		if _qa_move_log:
+			print("MOVE plan ms=%d from (%.3f,%.3f) to (%.3f,%.3f): a wall at (%.3f,%.3f)" % [
+				Time.get_ticks_msec(), from.x, from.z, dest.x, dest.z, stop.x, stop.y])
+	var spent := Time.get_ticks_usec() - t0
+	_body_plan_spent += spent
+	if FrameSplit.on:
+		FrameSplit.add("o_leg_plan", spent)
+
+## Round 852: one frame of a walled leg, from `from` (the body's drawn place)
+## to `next` (x, z), walked on the graph under the body with no slide
+## (BodyWalk.step, READ c:0x9e0fca: every mover's step meets the walls).
+## leg["blocked"] is true when a wall ended it.
+func _body_walk_step(leg: Dictionary, from: Vector3, next: Vector2) -> Vector2:
+	var pair := _nav_graph_for(from)
+	return BodyWalk.step(leg, null if pair.is_empty() else pair[0],
+		Transform3D.IDENTITY if pair.is_empty() else (pair[1] as Node3D).global_transform, from, next)
 
 ## A spawn that names a move (round 749: the record's mover, 0x48be00) walks
 ## on, as FUN_009ca320 aims a body that spawned moving; and its run speed is
@@ -25591,6 +25684,7 @@ func _other_stop_at(id: int, at: Vector3, h: float) -> void:
 		_other_moved(body)
 		return
 	_other_legs[id] = OtherWalk.to_point(at, _other_speed(id), OtherWalk.CATCH_UP_MAX)
+	_plan_body_leg(_other_legs[id], body.position)
 	_other_body_targets[id] = body.position
 	_other_settled.erase(id)
 	_other_moved(body)
@@ -25747,8 +25841,21 @@ func _step_other_legs(delta: float) -> void:
 			_other_legs.erase(id)
 			continue
 		var leg: Dictionary = _other_legs[id]
+		if leg.has("plan"):
+			_plan_body_leg(leg, (body as Node3D).position)
 		var r := OtherWalk.step(leg, (body as Node3D).position, delta)
 		var at: Vector3 = r["pos"]
+		# Round 852: a leg that meets a wall is walked through the graph, and
+		# the wall ends it there (BodyWalk; READ c:0x9e0fca).
+		if bool(leg.get("walled", false)):
+			var walked := _body_walk_step(leg, (body as Node3D).position, Vector2(at.x, at.z))
+			at.x = walked.x
+			at.z = walked.y
+			r["pos"] = at
+			if bool(leg.get("blocked", false)):
+				r["done"] = true
+				if _qa_move_log:
+					print("MOVE wall %d ms=%d at (%.3f,%.3f)" % [id, Time.get_ticks_msec(), at.x, at.z])
 		var xz := Vector2(at.x, at.z)
 		var done := bool(r["done"])
 		var entry := [1, id, body, at, r, xz, leg, -1]
@@ -31826,6 +31933,14 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 		var stopping: Dictionary = _remote_turns[body.get_instance_id()]
 		body.rotation.y = RemoteFacing.yaw_of(float(stopping["target"]), float(stopping["front"]))
 		_remote_turns.erase(body.get_instance_id())
+	# Round 852 (after the turn, which aims at the end it was told of): a
+	# monster's drawn leg meets the walls its server-side mover meets
+	# (BodyWalk; READ c:0x9e0fca, every mover's step, flag 0). The server's
+	# leg already ends at the first wall (round 812), so a leg drawn from
+	# where the server had it is clear; one drawn from a body up to
+	# RESYNC_DISTANCE off may not be.
+	if bool(state["moving"]):
+		_plan_monster_leg(state, body)
 	if _mob_logging():
 		var kind := "stop"
 		if MonsterMotion.turns_to_face(state):
@@ -31835,6 +31950,21 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 			moved.monster_id, kind, pos.x, pos.y, moved.dest_x, moved.dest_z, float(state["speed"]),
 			body.rotation.y, "" if turn == null else " turning to %.2f" % RemoteFacing.yaw_of(float(turn["target"]), float(turn["front"])),
 			"" if front != "" else " (no model: the capsule)"])
+
+## Round 852: a monster's leg (MonsterMotion's state, from where `body` is
+## drawn) planned as every body's is (_plan_body_leg): its end moved to a
+## wall's stop, "walled" for a frame-by-frame walk, "plan" for a later frame.
+func _plan_monster_leg(state: Dictionary, body: Node3D) -> void:
+	var leg_dest: Vector2 = state["dest"]
+	var leg := {"run": false, "dest": Vector3(leg_dest.x, body.position.y, leg_dest.y)}
+	_plan_body_leg(leg, body.position)
+	state["walled"] = bool(leg["walled"])
+	if leg.has("plan"):
+		state["plan"] = true
+	else:
+		state.erase("plan")
+	var d: Vector3 = leg["dest"]
+	state["dest"] = Vector2(d.x, d.z)
 
 ## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
 ## run clip otherwise. A model with no such clip keeps the loop it has.
@@ -31896,7 +32026,15 @@ func _step_monster_bodies(delta: float, budget: int = MonsterMotion.MAX_HEIGHT_R
 		var state: Dictionary = _monster_motion[monster_id]
 		var pos: Vector2 = state["pos"]
 		if bool(state["moving"]):
+			if state.has("plan"):
+				_plan_monster_leg(state, body)
 			pos = MonsterMotion.step(pos, state["dest"], float(state["speed"]), delta)
+			# Round 852: a leg that meets a wall walks the graph and ends there
+			# (BodyWalk, _apply_monster_leg).
+			if bool(state.get("walled", false)):
+				pos = _body_walk_step(state, (body as Node3D).position, pos)
+				if bool(state.get("blocked", false)):
+					state["dest"] = pos
 			state["pos"] = pos
 			(body as Node3D).position.x = pos.x
 			(body as Node3D).position.z = pos.y
@@ -38236,9 +38374,7 @@ func _on_cos_spawned(rec: CosSpawnNet.Record) -> void:
 				old.position = Vector3(at.x, at.y if is_nan(gy) else gy, at.z)
 				_cos_ground_missed(rec.uid, gy)
 				old.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(rec.angle), _cos_front())
-				if bool((_cos_motion.get(rec.uid, {}) as Dictionary).get("moving", false)):
-					_cos_gait(rec.uid, BsrReader.AnimationEntry.TYPE_STAND)
-				_cos_motion.erase(rec.uid)
+				_cos_end_leg(rec.uid)
 			if rec.life == 2:
 				_cos_play(rec.uid, BsrReader.AnimationEntry.TYPE_DIE, true)
 			return
@@ -38688,20 +38824,64 @@ func _cos_ground(at: Vector3) -> float:
 static func _cos_front() -> float:
 	return MonsterMotion.front_yaw(MonsterMotion.MODEL_FRONT)
 
-## Starts a COS's leg toward dest at speed.
-func _cos_start_leg(uid: int, dest: Vector3, speed: float) -> void:
+## Starts a COS's leg toward dest at speed, `mult` times faster while it
+## catches up (round 852: the leg is an OtherWalk leg, walked as every other
+## body's is -- OtherWalk.step, and BodyWalk where it meets a wall). Its gait:
+## a pet's by PetGait (re-chosen every frame, _cos_pet_tick), any other COS's
+## by the leg's speed against COS_RUN_ABOVE (OURS, round 795).
+func _cos_start_leg(uid: int, dest: Vector3, speed: float, mult: float = 1.0) -> void:
 	var body: Node3D = _cos_bodies.get(uid)
 	if body == null:
 		return
-	var from := Vector2(body.position.x, body.position.z)
-	var to := Vector2(dest.x, dest.z)
 	var was: Dictionary = _cos_motion.get(uid, {})
-	_cos_motion[uid] = {"pos": from, "dest": to, "speed": maxf(speed, 1.0), "moving": true}
-	var dir := to - from
+	var leg := OtherWalk.to_point(dest, maxf(speed, 1.0), mult)
+	leg["moving"] = true
+	_plan_body_leg(leg, body.position)
+	_cos_motion[uid] = leg
+	var dir := Vector2(dest.x - body.position.x, dest.z - body.position.z)
 	if dir.length() > 0.01:
 		_aim_remote_body(body, Vector3(dir.x, 0.0, dir.y), _cos_front())
+	var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+	if rec != null and rec.is_pet():
+		leg["gait"] = int(was.get("gait", -1)) if bool(was.get("moving", false)) else -1
+		_cos_pet_tick(uid, rec, leg)
+		return
 	if was.is_empty() or not bool(was.get("moving", false)) or (float(was.get("speed", 0.0)) > COS_RUN_ABOVE) != (speed > COS_RUN_ABOVE):
 		_cos_gait(uid, BsrReader.AnimationEntry.TYPE_RUN if speed > COS_RUN_ABOVE else BsrReader.AnimationEntry.TYPE_WALK)
+
+## A COS's leg over where it stands (a stop, a re-spawn): its stand clip, and
+## a pet's clip rate back to its standing one (round 852, _cos_pet_tick).
+func _cos_end_leg(uid: int) -> void:
+	var st: Dictionary = _cos_motion.get(uid, {})
+	if bool(st.get("moving", false)):
+		_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
+		st["moving"] = false
+		var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+		if rec != null and rec.is_pet():
+			_cos_pet_tick(uid, rec, st)
+	_cos_motion.erase(uid)
+
+## Round 852: a pet's tick (PetGait, READ CICCos slot 9 c:0x9c59c0): its speed
+## is its run speed x its leg's factor; above 20 it runs and its clip plays at
+## speed / 50 (at most 1.5) while it moves, else it walks at 1.0; frostbite
+## halves the rate. Every frame while it moves, and once as it stops.
+func _cos_pet_tick(uid: int, rec: CosSpawnNet.Record, leg: Dictionary) -> void:
+	var moving := bool(leg.get("moving", false))
+	var s := float(leg.get("speed", rec.run)) * float(leg.get("mult", 1.0))
+	var key := _fx_owner_key(uid, SkillNet.OWNER_CHARACTER)
+	var mask := int((_abnormal_states.get(key, {}) as Dictionary).get("mask", 0))
+	var rate := PetGait.rate(s, moving, (mask & StateLook.BIT_FB) != 0)
+	if bool((_state_looks.get(key, {}) as Dictionary).get("frozen", false)):
+		rate = 0.0
+	if moving:
+		var gait := BsrReader.AnimationEntry.TYPE_RUN if PetGait.runs(s) else BsrReader.AnimationEntry.TYPE_WALK
+		if int(leg.get("gait", -1)) != gait:
+			leg["gait"] = gait
+			_cos_gait(uid, gait)
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+	if assembled != null and is_instance_valid(assembled.skeleton):
+		_set_skeleton_clip_speed(assembled.skeleton, rate)
+	leg["rate"] = rate
 
 ## The rider of a mount, -1 when none rides it.
 func _cos_rider_of(uid: int) -> int:
@@ -38732,17 +38912,28 @@ func _cos_move_echo(echo: DestMoveNet.Echo) -> bool:
 		_start_other_leg(rider, leg)
 		return true
 	var rec: CosSpawnNet.Record = _cos_recs[uid]
-	if _qa_cos_trace:
-		print("QA COS leg %d ms %d to (%.1f,%.1f) speed %.1f" % [uid, Time.get_ticks_msec(), echo.dest_world.x, echo.dest_world.z, rec.run])
 	if echo.kind == DestMoveNet.KIND_DESTINATION:
 		var body: Node3D = _cos_bodies.get(uid)
-		if body != null and echo.has_source and Vector2(body.position.x, body.position.z).distance_to(
-				Vector2(echo.source_world.x, echo.source_world.z)) > MonsterMotion.RESYNC_DISTANCE:
-			# Round 796: on its new ground, not the height it had.
-			var gy := _cos_ground(echo.source_world)
-			body.position = Vector3(echo.source_world.x, body.position.y if is_nan(gy) else gy, echo.source_world.z)
-			_cos_ground_missed(uid, gy)
-		_cos_start_leg(uid, echo.dest_world, rec.run)
+		var mult := 1.0
+		if body != null:
+			# Round 852: the 0xB021 handler is every object's (READ round 846,
+			# FUN_008a5750 -> FUN_009e11e0 / FUN_009e0550): a COS drawn more
+			# than 50 from the source is put there (round 796: on its new
+			# ground, not the height it had), a nearer one walks on from where
+			# it is drawn and catches up (OtherWalk) -- the factor a pet's
+			# speed, gait and clip rate take (PetGait). Before, the monsters'
+			# 32 and no catch-up.
+			var start := OtherWalk.start_at(body.position, echo.source_world, echo.has_source)
+			if start != body.position:
+				var gy := _cos_ground(echo.source_world)
+				body.position = Vector3(echo.source_world.x, body.position.y if is_nan(gy) else gy, echo.source_world.z)
+				_cos_ground_missed(uid, gy)
+			mult = OtherWalk.catch_up(body.position, echo.source_world, echo.has_source, echo.dest_world)
+		if _qa_cos_trace:
+			print("QA COS leg %d ms %d to (%.1f,%.1f) speed %.1f x%.2f" % [uid, Time.get_ticks_msec(), echo.dest_world.x, echo.dest_world.z, rec.run, mult])
+		_cos_start_leg(uid, echo.dest_world, rec.run, mult)
+	elif _qa_cos_trace:
+		print("QA COS leg %d ms %d heading (not walked) speed %.1f" % [uid, Time.get_ticks_msec(), rec.run])
 	return true
 
 ## 0xB023 for a COS's uid: true when it was one.
@@ -38774,9 +38965,7 @@ func _cos_move_stop(stop: DestMoveNet.Stop) -> bool:
 		body.position = Vector3(stop.world.x, stop.world.y if is_nan(y) else y, stop.world.z)
 		_cos_ground_missed(uid, y)
 		body.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(stop.angle), _cos_front())
-		if bool((_cos_motion.get(uid, {}) as Dictionary).get("moving", false)):
-			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
-		_cos_motion.erase(uid)
+		_cos_end_leg(uid)
 	return true
 
 ## 0x3036 for a COS (an ability pet's pick, type 38 -- the players' pickup
@@ -38817,17 +39006,68 @@ func _cos_step(delta: float) -> void:
 		var st: Dictionary = _cos_motion[uid]
 		if not bool(st["moving"]):
 			continue
-		# Round 851: the step walks the navigation graph and a wall ends the
-		# leg there (CosWalk; READ c:0x9e0fca, every mover's step).
-		var pair := _nav_graph_for(body.position)
-		var walled := CosWalk.advance(st, null if pair.is_empty() else pair[0],
-			Transform3D.IDENTITY if pair.is_empty() else (pair[1] as Node3D).global_transform, body.position.y, delta)
-		var pos: Vector2 = st["pos"]
-		var y := _cos_ground(Vector3(pos.x, body.position.y, pos.y))
-		body.position = Vector3(pos.x, body.position.y if is_nan(y) else y, pos.y)
-		if walled or pos == st["dest"]:
+		# Round 852: every body's leg (OtherWalk.step, the catch-up factor
+		# included); one that meets a wall walks the navigation graph and the
+		# wall ends it there (BodyWalk; READ c:0x9e0fca, every mover's step;
+		# round 851's CosWalk).
+		if st.has("plan"):
+			_plan_body_leg(st, body.position)
+		var r := OtherWalk.step(st, body.position, delta)
+		var at: Vector3 = r["pos"]
+		var arrived := bool(r["done"])
+		var walled := false
+		if bool(st.get("walled", false)):
+			var walked := _body_walk_step(st, body.position, Vector2(at.x, at.z))
+			at.x = walked.x
+			at.z = walked.y
+			walled = bool(st.get("blocked", false))
+		var y := _cos_ground(Vector3(at.x, body.position.y, at.z))
+		body.position = Vector3(at.x, body.position.y if is_nan(y) else y, at.z)
+		var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+		if walled or arrived:
 			st["moving"] = false
 			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
+			if _qa_cos_trace and walled:
+				print("QA COS wall %d ms %d at (%.2f,%.2f)" % [int(uid), Time.get_ticks_msec(), at.x, at.z])
+		if rec != null and rec.is_pet():
+			_cos_pet_tick(uid, rec, st)
+	if _qa_cos_gait:
+		_qa_cos_gait_log()
+
+## QA (round 852): OPENSRO_QA_COS_GAIT=1 logs, every physics tick, each COS
+## body's playing clip as the clip list has it (its name, and its clock's
+## advance over the clip tick's own clock since the last line: the rate it
+## really plays at), against its leg (moving, gait, speed x factor, the
+## PetGait rate asked) and its record's run speed (0x30D0's).
+var _qa_cos_gait := OS.get_environment("OPENSRO_QA_COS_GAIT") != ""
+var _qa_cos_gait_last := {}
+
+func _qa_cos_gait_log() -> void:
+	for uid in _cos_bodies:
+		var a: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+		var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+		if a == null or rec == null or not is_instance_valid(a.skeleton):
+			continue
+		var clip := "-"
+		var clock := NAN
+		for entry in _animated:
+			if entry[0] != a.skeleton:
+				continue
+			clip = (entry[1] as BanReader.ParsedAnimation).animation_name
+			clock = _idle_anim_time + float(entry[3]) if entry[4] else _idle_anim_time - float(entry[5])
+			break
+		var measured := NAN
+		var last = _qa_cos_gait_last.get(uid)
+		if last != null and String(last[0]) == clip and _idle_anim_time > float(last[2]):
+			measured = (clock - float(last[1])) / (_idle_anim_time - float(last[2]))
+		_qa_cos_gait_last[uid] = [clip, clock, _idle_anim_time]
+		var st: Dictionary = _cos_motion.get(uid, {})
+		var body: Node3D = _cos_bodies[uid]
+		print("QA COS GAIT %d ms %d kind %d pos (%.2f,%.2f) moving %s clip %s rate %s asked %.3f speed %.2f x%.2f run %.2f" % [
+			int(uid), Time.get_ticks_msec(), rec.kind, body.global_position.x, body.global_position.z,
+			"1" if bool(st.get("moving", false)) else "0", clip,
+			"-" if is_nan(measured) else "%.3f" % measured, float(st.get("rate", 1.0)),
+			float(st.get("speed", rec.run)), float(st.get("mult", 1.0)), rec.run])
 
 ## Every frame, after the walkers moved: each mount under its rider's root,
 ## and the rider's skeleton on the mount's saddle (READ ICharactor::

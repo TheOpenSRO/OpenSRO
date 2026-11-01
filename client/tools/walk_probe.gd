@@ -26,6 +26,8 @@ extends SceneTree
 ##                               internal edges between, and report every wall
 ##     [--sweep=n [--seed=s]]    n seeded walks, one line each (diff two builds)
 ##     [--cross=1]               let a --from walk carry on into neighbouring regions
+##     [--bench-legs=n [--seed=s]]  time BodyWalk (round 852): n seeded legs'
+##                               plans and the walled ones' frame steps
 ##     [--ghost=fx,fz:tx,tz:D]   resolve a ground-cast landing (GhostWalk) from
 ##                               one point toward another with reach D
 ##
@@ -382,6 +384,66 @@ func _init() -> void:
 				f = r.standing_on
 			print("sweep %4d from %.2f,%.2f,%.2f on %s heading %.4f -> %.3f,%.3f,%.3f on %s walls %d %s" % [
 				w, start.x, start.y, start.z, _name(names, foot), hd, p.x, p.y, p.z, _name(names, f), nwalls, " ".join(PackedStringArray(path))])
+
+	# --bench-legs=n (round 852): what BodyWalk costs. n seeded legs on the
+	# terrain, 5 to 100 long on a seeded heading: the plan (BodyWalk.meets_wall,
+	# once per leg) and, for the legs it finds walled, the frame-by-frame walk
+	# (BodyWalk.step at 50 a second, 60 frames a second), in microseconds.
+	var bench := int(_arg("--bench-legs", "0"))
+	if bench > 0:
+		var brng := RandomNumberGenerator.new()
+		brng.seed = int(_arg("--seed", "852"))
+		var plan_us: Array = []
+		var step_us: Array = []
+		var walled := 0
+		var worst := 0.0
+		var apart := 0
+		var frames_kind := 0
+		for w in range(bench):
+			var s := Vector3(brng.randf_range(20.0, 1900.0), 0.0, brng.randf_range(20.0, 1900.0))
+			s.y = graph.landing_height_at(s.x, s.z)
+			var hd := brng.randf_range(0.0, TAU)
+			var length := brng.randf_range(5.0, 100.0)
+			var d := Vector2(s.x + sin(hd) * length, s.z + cos(hd) * length)
+			var t0 := Time.get_ticks_usec()
+			var bp := BodyWalk.plan(graph, Transform3D.IDENTITY, s, d)
+			plan_us.append(Time.get_ticks_usec() - t0)
+			if int(bp["kind"]) == BodyWalk.CLEAR:
+				continue
+			walled += 1
+			var leg := {}
+			var at := s
+			var dir := (d - Vector2(s.x, s.z)).normalized()
+			for _f in range(int(ceil(length / (50.0 / 60.0)))):
+				var nx := Vector2(at.x, at.z) + dir * (50.0 / 60.0)
+				var t1 := Time.get_ticks_usec()
+				var got := BodyWalk.step(leg, graph, Transform3D.IDENTITY, at, nx)
+				step_us.append(Time.get_ticks_usec() - t1)
+				at = Vector3(got.x, at.y, got.y)
+				if bool(leg["blocked"]):
+					break
+			# The plan's stop against the frame-by-frame walk's end.
+			if int(bp["kind"]) == BodyWalk.STOP:
+				var off := (bp["stop"] as Vector2).distance_to(Vector2(at.x, at.z))
+				worst = maxf(worst, off)
+				if off > 0.01:
+					apart += 1
+					print("bench-legs apart: from %.3f,%.3f,%.3f to %.3f,%.3f: plan stop %.3f,%.3f, frames end %.3f,%.3f (%.4f)" % [
+						s.x, s.y, s.z, d.x, d.y, (bp["stop"] as Vector2).x, (bp["stop"] as Vector2).y, at.x, at.z, off])
+			else:
+				frames_kind += 1
+		plan_us.sort()
+		step_us.sort()
+		var mean := func(a: Array) -> float:
+			var t := 0.0
+			for v in a:
+				t += float(v)
+			return t / maxf(float(a.size()), 1.0)
+		print("bench-legs %d: %d walled; plan mean %.1f us p50 %d p99 %d max %d; walled step mean %.1f us p99 %d max %d (%d steps)" % [
+			bench, walled, mean.call(plan_us), plan_us[plan_us.size() / 2], plan_us[int(plan_us.size() * 0.99)], plan_us[-1],
+			mean.call(step_us), step_us[int(step_us.size() * 0.99)] if not step_us.is_empty() else 0, step_us[-1] if not step_us.is_empty() else 0, step_us.size()])
+		print("bench-legs stops: %d walked a frame at a time (the plan could not answer); of the rest, %d end more than 0.01 from the frame-by-frame walk's end, the worst %.4f" % [
+			frames_kind, apart, worst])
 
 	# --reach=oi:x,z,y: from the object's cell under (x, z) nearest y, every
 	# cell its own internal edges let a mover reach, and the outline edges

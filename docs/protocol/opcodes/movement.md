@@ -785,6 +785,24 @@ of the client's own walks within 0.05).
   `World3D._cos_step`; READ `c:0x9e0fca`), as it walks its own player. Other players' bodies still
   walk straight (`OtherWalk`, OURS, round 846): a wall reaches an observer as the mover's 0xB023.
 
+**Round 852: every body an observer draws (READ, sro_client.exe).** The mover tick `FUN_009e0e60`
+runs for every character that does not ride (`FUN_009d1d60`, CICharactor slot 9) and asks the query
+at c:0x9e0fca with flag 1 for the own player and own COS, 0 for every other body. The client's query
+(`CRegionManagerBody::vslot_012` c:0x412660) hands both arguments to the navmesh walk
+(c:0x41290a..0x41291c); the terrain walk (`CRTNavMeshTerrain::vslot_002` c:0x4047a0) tests the flag's
+bit 0 at three places only (c:0x404ab9, c:0x404c30, c:0x404f20 -- the cell-object re-checks, as the
+server's) and passes it down unread elsewhere. So another player on foot, its ridden horse or
+transport (the rider's body walks the mount's legs), a following COS and a monster are stopped at the
+same edges as the own player, and drawn there. OpenSRO: `BodyWalk` (`client/scripts/world/
+body_walk.gd`, round 851's `CosWalk` made general) -- each leg walked once on the graph when it starts
+(`BodyWalk.plan`, `World3D._plan_body_leg`): clear, the straight step; walled, it ends at the walk's
+stop; a heading run, a leg off its region or with no graph yet, and a terrain wall's send-back are
+walked a frame at a time (`BodyWalk.step`). OURS: the one walk for the frame-by-frame one (MEASURED,
+`tools/walk_probe.gd --bench-legs=3000` on 97/168: 397 of 400 walled legs' stops within 0.01 of the
+frame-by-frame walk's, the worst 0.052; a plan 140 us at the median, a frame step 97 us); a frame's
+plans capped at 1.5 ms (`BODY_PLAN_BUDGET_USEC`, the rest planned on later frames); the flag's three
+re-checks not modelled.
+
 ## Not read
 
 - ~~What the `+0x14` byte in the heading form is~~: the movement command (round 653, "The heading

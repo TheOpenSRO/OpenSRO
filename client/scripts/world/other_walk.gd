@@ -37,9 +37,13 @@ class_name OtherWalk
 ##   - RESYNC_DISTANCE is measured on the ground (x, z); retail's
 ##     FUN_009ecdb0 is 3-D, and the server's height for a player is a guess
 ##     (world.Mover's straight line) that must not move a body.
-##   - The body walks a straight line: the observer does not run its own
-##     collision. A wall the mover meets reaches the observer as the mover's
-##     stop (0xB023), one transit later.
+##   - Round 852: the body's walk meets walls as the mover's does (BodyWalk,
+##     READ c:0x9e0fca for every mover): a leg's "walled" says whether it is
+##     walked through the navigation graph a frame at a time (true until
+##     BodyWalk.meets_wall finds the straight leg clear). Before, the body
+##     walked a straight line and a wall reached the observer only as the
+##     mover's stop (0xB023), one transit later: it pressed into the wall and
+##     was pulled back.
 
 ## A player's base run speed, characterdata column 47 (server
 ## session.PlayerRunSpeed, MEASURED): the speed of a body whose spawn or buffs
@@ -56,7 +60,7 @@ const CATCH_UP_MAX := 3.0
 ## (catch_up). The leg keeps the factor apart, so a buff's new speed
 ## (World3D._note_other_speed) keeps it.
 static func to_point(dest: Vector3, speed: float, mult: float = 1.0) -> Dictionary:
-	return {"dest": dest, "speed": speed, "mult": mult, "run": false, "dir": Vector2.ZERO, "h_xz": Vector2.INF}
+	return {"dest": dest, "speed": speed, "mult": mult, "run": false, "dir": Vector2.ZERO, "h_xz": Vector2.INF, "walled": true}
 
 ## READ (FUN_009e0550): the speed factor of a walk to `dest` by a body drawn at
 ## `drawn` whose mover the message puts at `source`: the drawn body's ground
@@ -77,7 +81,7 @@ static func catch_up(drawn: Vector3, source: Vector3, has_source: bool, dest: Ve
 ## A heading run along the u16 wire angle `wire` at `speed`.
 static func on_heading(wire: int, speed: float) -> Dictionary:
 	var dir := RemoteFacing.facing_of(RemoteFacing.from_wire_angle(wire))
-	return {"dest": Vector3.INF, "speed": speed, "run": true, "dir": dir, "h_xz": Vector2.INF}
+	return {"dest": Vector3.INF, "speed": speed, "run": true, "dir": dir, "h_xz": Vector2.INF, "walled": true}
 
 ## Where a new leg starts: the drawn position, or the message's source when the
 ## body is more than RESYNC_DISTANCE from it (x, z only).
@@ -107,5 +111,7 @@ static func facing(leg: Dictionary, at: Vector3) -> Vector3:
 	if bool(leg["run"]):
 		var d: Vector2 = leg["dir"]
 		return Vector3(d.x, 0.0, d.y)
-	var dest: Vector3 = leg["dest"]
+	# Round 852: a leg whose end a wall moved still faces the end it was told
+	# of (World3D._plan_body_leg's "aim").
+	var dest: Vector3 = leg.get("aim", leg["dest"])
 	return Vector3(dest.x - at.x, 0.0, dest.z - at.z)
