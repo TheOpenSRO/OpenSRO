@@ -7489,6 +7489,15 @@ The user: "when seeing quest locations, they persist after closing the quest map
 map. You're not supposed to see that when opening a normal map window." Labels: READ (sro_client.exe,
 the decomp dump and objdump on the box), MEASURED, INFERRED, OURS, OPEN.
 
+**OURS at merge (the user's call).** The lane built the original: the marks survive a close and M,
+and only the first ground click brings the map back to the player. The user's case is exactly
+"close the quest map, open a normal map", which the original still showed with marks. So
+`HudWorldmap._close_quest_view` (on any hide outside the teleport selection) drops the quest's
+marks and, if the quest's map left auto-move off with the stale flag, turns auto-move back on; the
+next open is the player's own map with no quest on it. The quest stays tracked. The ground-click
+rule stays as READ for a walk with the window open. `worldmap_quest850_test.gd` was rewritten to
+check the OURS close (ALL PASS on the box's Media.pk2).
+
 **When the original drops the marks (READ).** `0x61a620` (clears +0x229c0 areas, +0x229b0 painted
 colours, +0x229d0 signs; nothing while +0x229ad is 0) has exactly five callers: `0x6256e0` (the next
 quest's map button), `0x622dd0(1)` (the teleport selection), `0x624f40(m, 0, ..)` (a monster picked

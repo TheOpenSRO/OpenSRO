@@ -11,6 +11,8 @@ extends SceneTree
 ## - the ground click 0x793570 (0x793a84..0x793ad8) turns auto-move back on
 ##   when the stale flag is set, outside the teleport selection, and the
 ##   map then follows the player to its own map.
+## OURS on top (the user's call): closing the window drops the quest's marks
+## and puts auto-move back on (HudWorldmap._close_quest_view).
 ## The rule checks run everywhere; the map's checks SKIP without the box's
 ## Media.pk2 (no game data in the repo, docs/LEGAL.md).
 ##
@@ -106,29 +108,44 @@ func _paths(builder: UiBuilder, pk2: Pk2Reader) -> void:
 		"POTION_1: the world map, the water ghost's icon and three areas shown, auto-move off with the flag (got map %d, %s)" % [_map_id(wm), _counts(wm)])
 	var quest_scroll := wm._canvas.position
 
-	# The close button (vslot_043 0x46d7c0 -> ShowWindow(0)): kept.
-	wm.hide()
-	_check(wm.quest_marks_on and _counts(wm) == "1/1 signs, 3/3 areas",
-		"closed: the marks are kept (ShowWindow(0) never reaches 0x61a620; got %s)" % _counts(wm))
-
-	# M at once (0x79abe0 -> 0x46d740 -> ShowWindow(1)), no click between:
-	# auto-move is still off, so 0x623060 keeps the map and the scroll.
-	wm.toggle()
+	# M straight after with the window open (no close between) is not a
+	# close: the quest's map and marks stay.
+	wm.open()
 	_check(wm.visible and _map_id(wm) == 0 and wm._canvas.position == quest_scroll and _counts(wm) == "1/1 signs, 3/3 areas",
-		"M straight after: the quest's map, scroll and marks, as the original (got map %d, %s, canvas %s)" % [_map_id(wm), _counts(wm), wm._canvas.position])
-	wm.toggle()
-	_check(not wm.visible and _counts(wm) == "1/1 signs, 3/3 areas", "M again closes it, the marks kept")
+		"shown again while open: the quest's map, scroll and marks (got map %d, %s)" % [_map_id(wm), _counts(wm)])
 
-	# The player walks by mouse (0x793570's ground branch): auto-move back on;
-	# the next position update follows the player to the town's map.
-	wm.ground_clicked()
-	_check(wm.is_auto_move() and not wm._auto_art_stale, "the ground click turns auto-move back on")
-	wm.update_player(JANGAN_X, JANGAN_Y, JANGAN_AT)
+	# The close button (vslot_043 0x46d7c0 -> ShowWindow(0)). The original
+	# keeps the marks (READ); ours drops them and puts auto-move back on
+	# (_close_quest_view, OURS, the user's call).
+	wm.hide()
+	_check(not wm.quest_marks_on and _counts(wm) == "0/0 signs, 0/0 areas" and wm.is_auto_move() and not wm._auto_art_stale,
+		"closed: the quest's marks dropped, auto-move back on (OURS; got %s)" % _counts(wm))
+
+	# M at once (0x79abe0 -> ShowWindow(1)), no ground click between: the
+	# town's own map, centred on the player, no quest mark (the original
+	# showed the quest's map again here).
 	wm.toggle()
 	_check(wm.visible and _map_id(wm) == town and wm._mode == HudWorldmap.MODE_LOCAL,
-		"M after a walk: the town's own map (got map %d)" % _map_id(wm))
-	_check(_counts(wm) == "0/1 signs, 0/3 areas" and wm._canvas.position == home,
-		"no quest mark shown, the map centred on the player as before the quest (got %s, canvas %s against %s)" % [_counts(wm), wm._canvas.position, home])
+		"M straight after the close: the town's own map (got map %d)" % _map_id(wm))
+	_check(_counts(wm) == "0/0 signs, 0/0 areas" and wm._canvas.position == home,
+		"no quest mark, the map centred on the player as before the quest (got %s, canvas %s against %s)" % [_counts(wm), wm._canvas.position, home])
+	wm.toggle()
+	_check(not wm.visible, "M again closes it")
+
+	# The ground click with nothing stale changes nothing.
+	wm.ground_clicked()
+	_check(wm.is_auto_move() and not wm._auto_art_stale, "a ground click after leaves auto-move on")
+
+	# The quest again, then the player walks by mouse with the window open
+	# (0x793570's ground branch): auto-move back on, the map follows the
+	# player; the marks stay on the world map but a local map shows none.
+	wm.toggle()
+	wm.show_quest(running, "QNO_CH_POTION_1")
+	_check(_counts(wm) == "1/1 signs, 3/3 areas" and not wm.is_auto_move(), "the quest's map again (got %s)" % _counts(wm))
+	wm.ground_clicked()
+	wm.update_player(JANGAN_X, JANGAN_Y, JANGAN_AT)
+	_check(wm.is_auto_move() and _map_id(wm) == town and _counts(wm) == "0/1 signs, 0/3 areas",
+		"a walk with the map open: the town's map, no mark shown there (got map %d, %s)" % [_map_id(wm), _counts(wm)])
 
 	# A local map never draws them (0x61e700 / 0x61e890: modes 0 and 2 only),
 	# even one whose id a mark carries.
@@ -140,11 +157,11 @@ func _paths(builder: UiBuilder, pk2: Pk2Reader) -> void:
 	wm._quest_sign_layer.remove_child(fake)
 	fake.free()
 
-	# The world button (0x6231e0): the field's marks are still there (READ:
-	# nothing on these paths cleared them).
+	# The world button (0x6231e0) with the window still open since the
+	# quest: the field's marks are still there (READ, kept while open).
 	wm.show_world()
 	_check(_map_id(wm) == 0 and _counts(wm) == "1/1 signs, 3/3 areas",
-		"the world button: the world map with the quest's marks, which the original keeps (got %s)" % _counts(wm))
+		"the world button while open: the world map with the quest's marks (got %s)" % _counts(wm))
 
 	# The next quest's button clears the last (0x6256e0 -> 0x61a620).
 	wm.show_quest(running, "QNO_CH_HWAN_1_3_1")

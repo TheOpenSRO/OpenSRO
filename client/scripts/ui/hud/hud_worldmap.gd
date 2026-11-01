@@ -1846,8 +1846,9 @@ func ground_clicked() -> void:
 ## not (UiSounds.window_toggled, round 615) -- and then the window centred on
 ## the screen (0x798c50), on a hide as well. The window's own close button
 ## only hides it (CNIFWorldMap's vslot_043 is CNIFWnd's 0x46d7c0): silent.
-## Neither path drops a quest's marks (round 850, READ: vslot_023 0x624550
-## never reaches 0x61a620; see the quest marks' section).
+## Neither path drops a quest's marks in the original (round 850, READ:
+## vslot_023 0x624550 never reaches 0x61a620; see the quest marks' section);
+## ours does on the hide (_close_quest_view, OURS, the user's call).
 func toggle() -> void:
 	if visible:
 		hide()
@@ -2051,7 +2052,10 @@ func leave_select_mode() -> void:
 	_select_icons.clear()
 
 func _on_visibility_changed() -> void:
-	if visible or not _teleport_select:
+	if visible:
+		return
+	if not _teleport_select:
+		_close_quest_view()
 		return
 	var sent := _select_sent
 	leave_select_mode()
@@ -2401,6 +2405,9 @@ static func dof_room_key(dof: DofReader.Dof, block: int) -> String:
 #   next ground click turns it back on (ground_clicked, 0x793a84), so the
 #   map returns to the player's own -- a town's local map draws no marks; on
 #   the world map (the field) they still draw where they are.
+# - OURS (round 850, the user's call): closing the window drops them and
+#   puts auto-move back on (_close_quest_view), so a normal open after a
+#   quest's map never shows the quest's marks.
 # An icon's text is its tooltip_text, which HelpTips shows in the help bubble
 # (round 848). The map's own hovers go to that bubble too (READ: 0x613260 and
 # 0x614950 fill GInterface +0x730's CIFHelperBubbleWindow and place it with
@@ -2653,6 +2660,23 @@ func _refresh_quest_marks() -> void:
 		pic.size = tile
 	for c in _quest_sign_layer.get_children():
 		(c as Control).visible = quest_marks_on and int(c.get_meta(QUEST_MAP_META, -2)) == id
+
+## OURS (round 850, the user's call: "You're not supposed to see that when
+## opening a normal map window"): the window hidden by any path (its close
+## button, M, Escape) after a quest's map drops that quest's marks (0x61a620's
+## clear) and, when the quest's map left auto-move off with the stale flag,
+## turns auto-move back on as the ground click would (ground_clicked), so
+## the next open shows the player's own map with no quest on it. The
+## original keeps both until the player's first ground click (READ, see the
+## section above): M straight after the quest's map showed it again, marks
+## and all. The quest stays tracked (DAT_00eeae70 is not touched).
+func _close_quest_view() -> void:
+	if not quest_marks_on:
+		return
+	clear_quest_marks()
+	if _auto_art_stale and not _auto:
+		_auto_art_stale = false
+		_auto = true
 
 ## The quest layers' children and how many of them are shown:
 ## {"signs": n, "signs_shown": n, "areas": n, "areas_shown": n}, every count
