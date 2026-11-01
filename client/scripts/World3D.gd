@@ -38732,6 +38732,8 @@ func _cos_move_echo(echo: DestMoveNet.Echo) -> bool:
 		_start_other_leg(rider, leg)
 		return true
 	var rec: CosSpawnNet.Record = _cos_recs[uid]
+	if _qa_cos_trace:
+		print("QA COS leg %d ms %d to (%.1f,%.1f) speed %.1f" % [uid, Time.get_ticks_msec(), echo.dest_world.x, echo.dest_world.z, rec.run])
 	if echo.kind == DestMoveNet.KIND_DESTINATION:
 		var body: Node3D = _cos_bodies.get(uid)
 		if body != null and echo.has_source and Vector2(body.position.x, body.position.z).distance_to(
@@ -38762,6 +38764,8 @@ func _cos_move_stop(stop: DestMoveNet.Stop) -> bool:
 		_other_stop_at(rider, stop.world, RemoteFacing.from_wire_angle(stop.angle))
 		return true
 	var body: Node3D = _cos_bodies.get(uid)
+	if _qa_cos_trace:
+		print("QA COS stop %d ms %d at (%.1f,%.1f)" % [uid, Time.get_ticks_msec(), stop.world.x, stop.world.z])
 	if body != null and _cos_rider_of(uid) < 0:
 		# Round 796: the stop's own ground, not the height the body had --
 		# a pet put down beside its owner from far away kept the old one and
@@ -39057,6 +39061,17 @@ func _on_speed_changed(d: Dictionary) -> void:
 			_server_run_speed = int(run)
 			_foot_move_speed = -1.0
 		return
+	# Round 851: a pet's run speed follows its owner's (READ s:0x548a30, the
+	# server's recompute broadcasts it, s:0x4aa4ce): its record's run and the
+	# leg it walks take it.
+	if _cos_recs.has(uid) and run > 0.0:
+		var rec: CosSpawnNet.Record = _cos_recs[uid]
+		rec.run = run
+		if _cos_motion.has(uid):
+			(_cos_motion[uid] as Dictionary)["speed"] = maxf(run, 1.0)
+		if _qa_cos_trace:
+			print("COS speed %d run=%.2f" % [uid, run])
+		return
 	var id := _other_by_uid(uid)
 	if id >= 0 and run > 0.0:
 		_other_speeds[id] = run
@@ -39095,6 +39110,9 @@ func _cos_clear() -> void:
 
 ## QA (round 796): each COS body's position at the last state line.
 var _qa_cos_last := {}
+## QA (round 851): OPENSRO_QA_COS_TRACE=1 logs every COS body's drawn place
+## every 10 ticks and each COS leg, stop and speed the server sends.
+var _qa_cos_trace := OS.get_environment("OPENSRO_QA_COS_TRACE") != ""
 
 ## QA (round 795): OPENSRO_QA_COS="<tick>:<action>;..." drives the COS through
 ## the client's own sends (needs a server): use=<RefItemID> (the first bag
@@ -39119,6 +39137,15 @@ func _qa_cos_first(kinds: Array) -> int:
 func _qa_cos_step() -> void:
 	if not NetClient.is_connected_to_server():
 		return
+	if _qa_cos_trace and _qa_tick % 10 == 0:
+		# Round 851: every COS body where the client draws it, with the
+		# player's place, against the server's "cos: leg" lines.
+		var drawn: Array = []
+		for uid in _cos_bodies:
+			var cb: Node3D = _cos_bodies[uid]
+			var st: Dictionary = _cos_motion.get(uid, {})
+			drawn.append("%d(%.1f,%.1f)%s" % [int(uid), cb.global_position.x, cb.global_position.z, " moving" if bool(st.get("moving", false)) else ""])
+		print("QA COS drawn tick %d ms %d player (%.1f,%.1f) %s" % [_qa_tick, Time.get_ticks_msec(), player.global_position.x, player.global_position.z, " ".join(drawn)])
 	if OS.get_environment("OPENSRO_QA_COS_LOG") != "" and _qa_tick % 60 == 0:
 		var parts: Array = []
 		for uid in _cos_bodies:
@@ -39225,6 +39252,14 @@ func _qa_cos_step() -> void:
 			"walk":
 				_qa_walk = "" if arg == "off" else arg
 				print("QA COS: tick %d walk %s" % [_qa_tick, arg])
+			"snap":
+				# Round 851: a frame of a real-time run (QA_SHOT_REALTIME writes
+				# none) into OPENSRO_QA_SNAP_DIR as <arg>.png.
+				var sdir := OS.get_environment("OPENSRO_QA_SNAP_DIR")
+				var simg := get_viewport().get_texture().get_image()
+				if sdir != "" and simg != null:
+					simg.save_png(sdir.path_join("%s.png" % arg))
+				print("QA COS: tick %d snap %s" % [_qa_tick, arg])
 			"walkrun":
 				# Round 798: the Walk/Run toggle (0x704F), as the action button.
 				print("QA COS: tick %d walkrun %s" % [_qa_tick, _request_walk_run()])

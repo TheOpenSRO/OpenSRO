@@ -500,7 +500,7 @@ func cosArrived(ctx context.Context, arrived world.Entity) {
 	if out := cosWorld.owned(arrived.CharacterID); len(out) > 0 {
 		for _, o := range out {
 			cosWorld.mu.Lock()
-			o.zone, o.pos, o.heading, o.moving = arrived.Zone, cosSpawnPoint(arrived.Pos, o.kind), arrived.Heading, false
+			o.zone, o.pos, o.heading, o.moving, o.following, o.hasSlot = arrived.Zone, cosSpawnPoint(arrived.Pos, o.kind), arrived.Heading, false, false, false
 			itemID, recID := o.itemID, o.rec.ID
 			cosWorld.mu.Unlock()
 			sendToCOSOwner(o, npcspawn.OpSingleSpawn, append(cosWorld.spawnRecord(o, now), cosSpawnTypeKnown))

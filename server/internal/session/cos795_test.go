@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
-	"math"
 	"net"
 	"strings"
 	"testing"
@@ -351,22 +350,5 @@ func TestRound795RideScrollMountDismount(t *testing.T) {
 	}
 }
 
-// Round 796: FOLLOW's point (and the leash's landing) is beside the owner,
-// perpendicular to the owner's facing on the pet's side, never on the owner.
-func TestRound796SidePoint(t *testing.T) {
-	owner := world.Position{X: 100, Y: 5, Z: 200}
-	// Facing +z (heading 0): the sides are -x and +x.
-	left := cosSidePoint(owner, 0, world.Position{X: 50, Z: 210}, 15)
-	if math.Abs(left.X-85) > 1e-9 || math.Abs(left.Z-200) > 1e-9 || left.Y != 5 {
-		t.Fatalf("pet on the -x side: got %+v, want (85, 5, 200)", left)
-	}
-	right := cosSidePoint(owner, 0, world.Position{X: 400, Z: 150}, 15)
-	if math.Abs(right.X-115) > 1e-9 || math.Abs(right.Z-200) > 1e-9 {
-		t.Fatalf("pet on the +x side: got %+v, want (115, 5, 200)", right)
-	}
-	// Facing +x (heading pi/2): the sides are +z and -z.
-	side := cosSidePoint(owner, math.Pi/2, world.Position{X: 100, Z: 900}, 15)
-	if math.Abs(side.X-100) > 1e-9 || math.Abs(side.Z-215) > 1e-9 {
-		t.Fatalf("facing +x, pet at +z: got %+v, want (100, 5, 215)", side)
-	}
-}
+// Round 796's TestRound796SidePoint is replaced by round 851's
+// TestRound851SidePoint (cos851_test.go): the point is the 36-table's.

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"math"
-	"math/rand"
 	"os"
 	"time"
 
@@ -23,10 +22,12 @@ import (
 // What a COS does on its own (round 795; docs/protocol/pets.md, "Round
 // 795", READ unless marked):
 //
-//   - It follows its owner: IDLE turns to FOLLOW once the owner is 65.0 away
-//     (s:FUN_005485b0, 0xb46298), and FOLLOW runs to a point selfBC +
-//     ownerBC + rand()%10+1 beside the owner (cosSidePoint) and settles within selfBC +
-//     50.0 (s:FUN_00549ac0, 0xb46288). A rider's COS is where its rider is.
+//   - It follows its owner (round 851, cosfollow.go): a ride or transport by
+//     IDLE s:0x5485b0 (65.0) and FOLLOW s:0x549ac0 to a point beside the
+//     owner (cosSidePoint), a growth or ability pet by IDLE s:0x5488b0 (66.0)
+//     and FOLLOW s:0x549f80 to its slot round the owner at its owner's speed;
+//     every leg straight, stopped at the first wall (cosLeg). A rider's COS is
+//     where its rider is.
 //   - An ability pet picks up what its owner's client points it at (0x70C5
 //     command 8: the client chooses the nearest eligible item within 500,
 //     c:0x8af7f0): it runs to the item, takes it within 10.0
@@ -39,29 +40,22 @@ import (
 //     their own clocks (cos.HungerPerSecond, cos.RegenPeriod,
 //     cos.RentCheckPeriod).
 //
-// OURS, disclosed: the tick (cosTick); a pet that falls more than
-// cosWarpRange behind is put back at its follow point beside its owner
-// (cosSidePoint; retail has no such leash: FOLLOW, s:FUN_00549ac0, has no
-// distance cap or teleport, READ round 796); a pet's blows are booked to its
-// owner, whom the monster then answers. Since round 804 a monster whose
+// OURS, disclosed: the tick (cosTick; retail's FOLLOW runs on a 100 ms
+// timer, s:0x55a930, its IDLE on a 30 ms one); a pet's blows are booked to
+// its owner, whom the monster then answers. Since round 804 a monster whose
 // tactics scan the COS (the NPC thieves' and hunters' rows) may take a
-// transport or a growth pet as its target (mobcos.go).
+// transport or a growth pet as its target (mobcos.go). Round 851 removed
+// round 795's 400-unit leash: no ride or transport is ever put back, and a
+// pet only when its owner leaves the 3 x 3 regions round it (READ).
 
 const (
-	cosTick       = 100 * time.Millisecond
-	cosFollowFar  = 65.0
-	cosFollowNear = 50.0
+	cosTick = 100 * time.Millisecond
 	// ownerBCRadius is every player body's col 50 (MEASURED: 4 on all 77
 	// CHAR_ rows).
 	ownerBCRadius = 4.0
 	cosPickReach  = 10.0
 	cosPickGiveUp = 1000.0
 	cosPickDwell  = 3 * time.Second
-	cosWarpRange  = 400.0
-	// cosReaim is how far a leg's end may drift from where the pet wants to
-	// be before it is sent a new one (OURS: retail re-aims on its 100 ms
-	// FOLLOW timer with a fresh random point each time).
-	cosReaim = 20.0
 	// cosCorpse is how long a dead pet lies before it leaves (OURS: the
 	// path that clears a dead COS was not found, OPEN).
 	cosCorpse = 5 * time.Second
@@ -114,6 +108,8 @@ type cosAction struct {
 	// townVeto: a thief with this transport steps into a town (round 801,
 	// thiefEntersTown).
 	townVeto bool
+	// speed: a pet's run speed matched to its owner's, told (0x30D0).
+	speed float64
 }
 
 func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
@@ -139,6 +135,15 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 			ownerPos, _ = owner.Move.At(now)
 		}
 		a := cosAction{o: o, hgp: -1, hp: -1}
+		fo := cosFollowOwner{pos: ownerPos, heading: owner.Heading, zone: owner.Zone, alive: owner.Life != world.LifeDead}
+		if owner.Move != nil && !owner.Move.Heading {
+			if _, arrived := owner.Move.At(now); !arrived {
+				fo.moving, fo.dest = true, owner.Move.Dest
+			}
+		}
+		if cos.IsPetKind(o.kind) {
+			fo.run, fo.current, fo.running = ownerSpeeds(o.owner)
+		}
 		w.mu.Lock()
 		dt := now.Sub(o.lastTick).Seconds()
 		o.lastTick = now
@@ -195,8 +200,7 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 		}
 		pos := o.at(now)
 		// A transport is not put back beside its owner (round 801): its
-		// owner may not walk away from it instead (the leash, READ). Only a
-		// zone change brings it along.
+		// owner may not walk away from it instead (the leash, READ).
 		if o.kind == cos.KindTransport && o.zone == owner.Zone {
 			if owner.Move != nil && transportLeashed(ownerPos, owner.Move, pos, now) {
 				a.leash = true
@@ -204,16 +208,17 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 			if owner.Move != nil && thiefEntersTown(ctx, owner, ownerPos, now) {
 				a.townVeto = true
 			}
-		} else if o.zone != owner.Zone || cosDistance(pos, ownerPos) > cosWarpRange {
+		}
+		if o.zone != owner.Zone {
+			// A zone change brings every COS with its owner (cosArrived, the
+			// arrival's spawn s:0x4fbae0); this catches one the arrival missed.
 			a.warp = true
-			// Put down where FOLLOW would have run it: beside the owner
-			// (round 796; on the owner's spot it stood inside them).
-			r := float64(o.row.BCRadius) + ownerBCRadius + float64(rand.Intn(10)+1)
-			o.zone, o.pos, o.moving = owner.Zone, cosSidePoint(ownerPos, owner.Heading, pos, r), false
+			o.zone, o.pos, o.moving, o.following, o.hasSlot = owner.Zone, cosSpawnPoint(ownerPos, o.kind), false, false, false
 			w.mu.Unlock()
 			acts = append(acts, a)
 			continue
 		}
+		var leg *cosFollowStep
 		switch {
 		case o.pick != 0:
 			a.pickItem = uint32(o.pick)
@@ -231,7 +236,7 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 			case dist > cosPickGiveUp:
 				a.pickFail, o.pick = cosPickBusy, 0
 			case !o.moving || cosDistance(o.to, ip) > 1:
-				a.moveTo = &ip
+				leg = cosLegToward(pos, ip)
 			}
 		case o.target != 0:
 			m, ok := cd.monsters.Get(o.target)
@@ -255,22 +260,38 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 					o.nextSwing = now.Add(cosAttackReuse(o.row))
 				}
 			} else if !o.moving || cosDistance(o.to, mp) > reach {
-				a.moveTo = &mp
+				leg = cosLegToward(pos, mp)
 			}
 		default:
-			d := cosDistance(pos, ownerPos)
-			if (!o.moving && d >= cosFollowFar) || (o.moving && cosDistance(o.to, ownerPos) > cosReaim+float64(o.row.BCRadius)) {
-				r := float64(o.row.BCRadius) + ownerBCRadius + float64(rand.Intn(10)+1)
-				p := cosSidePoint(ownerPos, owner.Heading, pos, r)
-				if d > float64(o.row.BCRadius)+cosFollowNear || o.moving {
-					a.moveTo = &p
+			// IDLE and FOLLOW (round 851, cosfollow.go).
+			st := cosFollowDecide(o, pos, fo, w.slotsTakenLocked, cosOnMesh(o.zone))
+			switch {
+			case st.warp:
+				// A pet's FOLLOW puts it on its owner (s:0x541110's 0x7022).
+				a.warp = true
+				o.pos, o.moving = st.warpTo, false
+			case st.leg:
+				leg = &st
+			}
+			if st.speed > 0 {
+				o.runSpeed = st.speed
+				a.speed = st.speed
+				if o.moving {
+					// The leg walking on at the new speed (the recompute changes
+					// the mover's speed at once, as the client's 0x30D0 does).
+					o.from, o.pos, o.legStart, o.legSpeed = pos, pos, now, st.speed
 				}
 			}
 		}
-		if a.moveTo != nil {
-			o.from, o.to, o.legStart, o.legSpeed, o.moving = pos, *a.moveTo, now, o.row.RunSpeed, true
-			o.pos = pos
-			o.heading = world.HeadingToward(o.heading, a.moveTo.X-pos.X, a.moveTo.Z-pos.Z)
+		if leg != nil && leg.leg {
+			was := o.heading
+			if end, ok := startCOSLeg(o, pos, leg.dir, leg.length, now); ok {
+				a.moveTo = &end
+			} else if math.Abs(math.Remainder(o.heading-was, 2*math.Pi)) > cosTurnShown {
+				// Turned toward a wall it cannot step through: it stands,
+				// facing the way it tried (OURS: retail's refused step).
+				a.stop = true
+			}
 		}
 		w.mu.Unlock()
 		acts = append(acts, a)
@@ -280,24 +301,29 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 	}
 }
 
-// cosSidePoint is FOLLOW's target (round 796, READ s:FUN_00549ac0): a point
-// r from the owner on the owner's side -- the direction perpendicular to the
-// owner's facing, (-fz, fx) times a sign -- not a random angle round them
-// (round 795). r is selfBC + ownerBC + rand()%10+1.
-//
-// INFERRED: which side. Retail's sign is -1 when a cross product of the
-// pet->owner vector and the pet's own direction is under 0.0078125
-// (s:0x549b8c); here the pet keeps the side it is already on. OPEN: retail
-// then snaps the side vector to the nearest of 36 table directions (5, 15,
-// ... 355 degrees, s:0x54ab10; the picker s:FUN_0053dad0 reaches only 0..18),
-// which is not modelled.
-func cosSidePoint(owner world.Position, heading float64, pet world.Position, r float64) world.Position {
-	// The owner faces (sin h, cos h) in (x, z) (world.HeadingToward).
-	sx, sz := -math.Cos(heading), math.Sin(heading)
-	if (pet.X-owner.X)*sx+(pet.Z-owner.Z)*sz < 0 {
-		sx, sz = -sx, -sz
+// cosTurnShown is the smallest turn of a COS a wall leaves standing that is
+// sent as a stop (OURS: about one degree).
+const cosTurnShown = 0.0175
+
+// cosLegToward is a straight leg from pos to p (a pick's or an attack's
+// approach).
+func cosLegToward(pos, p world.Position) *cosFollowStep {
+	L := math.Hypot(p.X-pos.X, p.Z-pos.Z)
+	if L <= 0 {
+		return nil
 	}
-	return world.Position{X: owner.X + r*sx, Y: owner.Y, Z: owner.Z + r*sz}
+	return &cosFollowStep{leg: true, dir: [2]float64{(p.X - pos.X) / L, (p.Z - pos.Z) / L}, length: L}
+}
+
+// slotsTakenLocked are the slots o's owner's other pets hold (the owner's
+// +0x1cec table, s:0x555340; o's own is given back first, s:0x555460).
+func (w *cosRuntime) slotsTakenLocked(o *cosObj) (t [8]bool) {
+	for _, p := range w.byOwner[o.owner] {
+		if p != o && p.hasSlot && p.slot >= 0 && p.slot < 8 {
+			t[p.slot] = true
+		}
+	}
+	return t
 }
 
 // act carries a tick's decision out.
@@ -340,10 +366,10 @@ func (w *cosRuntime) act(ctx context.Context, cd combatDeps, a cosAction, now ti
 	if a.hp >= 0 {
 		sendCOSHP(o, a.hp)
 	}
-	if a.warp {
-		sendCOSStop(o)
+	if a.speed > 0 {
+		sendCOSSpeed(o, o.row.WalkSpeed, a.speed)
 	}
-	if a.stop {
+	if a.warp || a.stop {
 		sendCOSStop(o)
 	}
 	if a.moveTo != nil {

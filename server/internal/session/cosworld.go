@@ -68,6 +68,13 @@ type cosObj struct {
 	nextSwing time.Time
 	pick      int64 // an ability pet's ground item
 	dead      bool
+	// Round 851 (cosfollow.go): FOLLOW (true) or IDLE; a pet's slot of
+	// eight round its owner (hasSlot); a pet's run speed matched to its
+	// owner's (0: the row's).
+	following bool
+	slot      int
+	hasSlot   bool
+	runSpeed  float64
 }
 
 // at is where o stands at now.
@@ -241,14 +248,14 @@ func (w *cosRuntime) spawnRecord(o *cosObj, now time.Time) []byte {
 		life = byte(world.LifeDead)
 	}
 	r := cos.SpawnRecord{RefID: uint32(o.row.ID), TypeID4: o.kind, UID: o.uid,
-		Life: life, Walk: float32(o.row.WalkSpeed), Run: float32(o.row.RunSpeed),
+		Life: life, Walk: float32(o.row.WalkSpeed), Run: float32(o.runSpeedNow()),
 		Name: o.rec.Name, OwnerJob: 4}
 	zone, owner, ridden := o.zone, o.owner, o.ridden
 	w.mu.Unlock()
 	region, lx, lz := regionLocalOf(zone, pos)
 	r.Region, r.X, r.Y, r.Z = region, float32(lx), float32(pos.Y), float32(lz)
 	r.Angle = proto.EncodeMovementAngle(world.WireAngle(heading))
-	r.Running = speed >= o.row.RunSpeed || speed == 0
+	r.Running = speed >= float64(r.Run)-0.01 || speed == 0
 	if moving && !ridden {
 		dr, dx, dz := regionLocalOf(zone, to)
 		r.HasDest, r.DestRegion = true, dr

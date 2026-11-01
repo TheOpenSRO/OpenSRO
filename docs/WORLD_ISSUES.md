@@ -7483,6 +7483,99 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-first round, lane F: how every COS follows its owner
+
+The user: "Please match the exact behavior of pets following you. Especially trade transports. Trade
+transports aren't supposed to be able to go through walls and can [get] stuck so it requires careful
+movement sometimes to make sure you don't get on walls or even trees. Reference the movement/collision
+info though for kind of mount and match it exactly". Lane F owns the following; lane C the collision
+(what blocks a mover, per kind). docs/protocol/pets.md "Round 851" has every address.
+
+**READ (SR_GameServer.exe).**
+- **Two FOLLOWs, chosen at the summon.** The spawn (s:0x4fbae0) calls COS slot 401 (s:0x4d2050 in the
+  CGObjCOS, _Cart, _Pet, _GoldPet and _SilkPet vtables) -> AI command 0xb {1, owner} -> the state's slot
+  14 (s:0x5591b0) -> CTactics slot 18 (s:0x5471b0): an IsPet object (TypeID4 3 or 4) gets IDLE
+  s:0x5488b0, FOLLOW s:0x549f80 and the speed handler s:0x548a30; a ride or transport keeps IDLE
+  s:0x5485b0, FOLLOW s:0x549ac0 and AITactics_Handler_110. Round 795/796 had read only 0x549ac0 and given
+  it to the pets too.
+- **Rides and transports:** follow at 65.0 or more, arrive nearer than BC + 50.0, run at the row's run
+  speed to a point beside the owner from the 36-direction table (the snap keeps only the angle's size, so
+  x is the negated side's and z always the region frame's -z half); a COS inside its own radius of the
+  owner steps out. **No warp and no leash on the COS** -- round 796's "no leash" holds here (the owner's
+  1000.0 leash, round 801, is what keeps a transport near). Round 796 read the side sign's threshold as
+  the double 0.0078125 at 0xade894; the compare is `fcomp DWORD` (0x549c2a), the float 0.0.
+- **Growth and ability pets:** follow past 66.0, arrive within 60.0, run at the OWNER's speed (its run
+  x 1.25 when it runs, at 80.0 or more; its current walk or run nearer; told with 0x30D0), to a slot of
+  eight round the owner (22 + 45 i degrees at BC x 2.4, pulled toward the owner while off the mesh), the
+  length plus the owner's remaining leg. An owner outside the 3 x 3 regions round the pet has it WARPED
+  onto the owner (0x541110's 0x7022 with the owner's position): round 796's "no leash" was wrong for pets.
+- **The leg, both:** straight at the point when it is 5 degrees or more off the heading (or a pet's leg
+  is 30 or shorter, or the heading would miss by over 100); else a COS walking a leg with over 30 left
+  keeps it; else it walks along its own heading. `AITactics_MoveAlongDirection` posts it as a 0x7021,
+  the server's mover stops it at the first blocking edge, no slide. **Nothing path-finds or retries**: a
+  COS behind a wall is re-sent into it every 100 ms until its owner moves so the line changes and clears.
+- **The client** decides nothing: CICCos (c:0x9c59c0) only picks the gait at 20.0 and scales a pet's clip
+  by speed / 50.0; positions come from 0xB021 / 0xB023, speeds from 0x30D0.
+- INFERRED from the READ rules, MEASURED in our server's legs: with the sign and the snap, a transport
+  heading a little right of its owner picks the left point and vice versa, so one closing in weaves
+  (new target every 100 ms while the two points lie 5 degrees or more apart as it sees them).
+
+**Built.** `server/internal/session/cosfollow.go`: both IDLE/FOLLOW pairs (`cosFollowDecide`), the
+side point with the sign and the snap, the slots (`cosPickSlot`, `cosFormationPoint` with the mesh
+probe), the pet speed (`cosPetSpeed`, 0x30D0 `sendCOSSpeed`), the leg rule (`cosSteer`), the 3 x 3 test
+(`cosRegionsAdjacent`), and **`cosLeg(o, from, to)` -- the one function every COS leg goes through**
+(follow, the idle step-out, a pick's and an attack's approach; today the navmesh no-slide walk,
+`navWalk`; lane C's per-kind collision drops in there). Round 795's 400-unit leash is gone. Client:
+0x30D0 on a COS uid sets its record's run and the leg in flight; QA hooks `OPENSRO_QA_COS_TRACE`
+(drawn places, legs, stops, speeds) and the COS step `snap=<name>` (a frame of a real-time run).
+OURS: the 100 ms tick (retail's IDLE checks every 30 ms); a leg a wall stops within 0.5 is not sent --
+the COS stands, turned (a 0xB023) -- where retail posts it and its mover refuses the step; legs are
+clipped before the 0xB021 as round 812 clips a monster's; the slot point's snap to whole units is not
+modelled.
+
+**What happens to a COS left behind (the user's "careful movement").** A ride or transport stays where
+the wall stopped it, for ever: retail has no warp for it, only the owner's own 1000.0 leash (round 801:
+the owner cannot walk farther from a transport) and a teleport or zone change, which brings it along
+(s:0x4fbae0). So the player must walk back round to where its straight line is clear. A pet stays stuck
+the same way until its owner is two regions away (1,920 units or more on a region axis), then appears
+on its owner.
+
+**QA (box, real client, real clicks through the client's own move path; lane server 17210 with
+`-navmesh-dir`, prod-like, `/var/tmp/r851f/qa851.sh`, `OPENSRO_COS_TRACE=1`).** Tess joins the
+traders, wears the suit, calls a wolf cub (growth), a rabbit (ability) and a donkey (transport, run 36
+against her 50), gets off it and walks round the railings north-west of the Jangan spawn (a blocking
+box at world x 704..776, z 728..762, mapped from the server's mesh):
+- **Stuck and freed (run q6, q7).** She stands at (800, 801) beyond the railings: the donkey, at
+  (723.6, 755.3) in q6 and (719.8, 755.3) in q7, is sent straight at her every 100 ms and stopped at
+  zero length -- 94 blocked passes over 9.3 s in each run -- and the main client and an observing
+  second client both draw it standing there the whole time. She steps south to (800, 745), the line
+  clears, and it comes out to (774, 743) -> (825, 748). The pets, matched to her speed, went round.
+- **Positions:** at rest, the server's leg ends against the drawn bodies (main client and observer
+  alike): wolf 805.66, 627.44 / 805.0, 628.0; rabbit 805.63, 638.26 / 805.0, 639.0; donkey 818.93,
+  682.28 / 818.0, 683.0 -- the 0xB021's truncated region-local units (round 812).
+- **Pets:** start following past 66, settle in their slots (wolf slot 0 at 22 degrees, rabbit slot 1);
+  their run speed told as 50 while she runs and 16 when she walks (0x30D0, client log `COS speed`); a
+  wolf behind the railings' end stood stuck ((774.4, 633.4), 2 s of zero-length passes) until she
+  walked on (q2).
+- **Weave (MEASURED, q2/q5):** the donkey's legs alternate between targets either side of its owner each
+  pass while it closes in (e.g. ends 774.8 / 816.9 alternately at x, 100 ms apart).
+- Frames on the box: `/var/tmp/r851f/snaps-q6/` (start, stuck_a, stuck_b, coming, freed, walked).
+- **Tests:** `cos851_test.go` (the side point and its snap with both signs, the slots and the pull, the
+  pet speed, the leg rule, the 3 x 3 test, a transport stuck at a synthetic partial wall for 50 passes
+  and freed when its owner comes round, the pet warp at two regions and none for a ride or a dead
+  owner); round 796's side-point test replaced. `go test ./...` all ok; client `check` ALL LOAD (1096
+  scripts, 9 scenes), `tests` "ran 411 suite(s), 0 failing".
+- **Perf gate** (`perf_gate.sh --base f378ab7e --head e1c57f3e --sites jangan --frames 60000`, 1280x720,
+  median of 3; the client's COS speed handler and QA hooks): all SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.90 -> 0.90 | 8836 -> 8696 | 2806 -> 2752 | 5 -> 4 |
+
+- **OPEN:** the weave's look against the original running (the reads it follows from are 0x53dad0 and
+  0x549c2a); the client's pet clip rate (speed / 50, c:0x9c59c0) is not built; what 0x7022 shows the
+  clients (OURS: a 0xB023 at the owner); retail's IDLE runs every 30 ms against our 100 ms tick.
+
 ## Eight-hundred-and-fiftieth round, lane E: the weapon and shield go away for the emotes and the stall
 
 The user: "when doing action emoticons the weapon is supposed to disappear for most if not all, check
