@@ -18014,6 +18014,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       page tab p (0-based), the pane's cell of bag slot
 #                       <slot> (its page shown) or the card slot (round 843)
 #   gachastate          report the Magic POP window's state (round 843)
+#   wmquest             report the world map's quest marks, auto-move and the
+#                       map shown (round 850)
 #   playerclick:<name>  left click the middle of that player's body (round 839)
 #   groundclick:<dx>,<dz>  left click the ground that far (world units) from
 #                       where this player stands, at the pixel the camera
@@ -19106,6 +19108,12 @@ func _qa_input_step() -> void:
 			# Round 844 part 2: a store good's tooltip lines, for the log.
 			var tl: Array = _hud_panels.item_tip_lines(int(arg), "store", 0, -1, -1, int(_hud_panels._shop_prices.get(int(arg), 0))) if _hud_panels != null else []
 			_qa_input_report = "%s %s" % [action, JSON.stringify(tl.map(func(l) -> String: return String(l["text"])))]
+		"wmquest":
+			# Round 850: the world map's quest marks and shown map, for the QA
+			# log (HudWorldmap.quest_report: the layers' child counts, auto-move,
+			# the map, the scroll).
+			_qa_input_report = "%s visible=%s %s" % [action, _hud_worldmap.visible if _hud_worldmap != null else false,
+				_hud_worldmap.quest_report() if _hud_worldmap != null else "(no world map)"]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
 			_qa_input_report = "%s %s" % [action, _hud_panels.qa_guild_report() if _hud_panels != null else "{}"]
@@ -27643,6 +27651,11 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 	if _try_talk_to_npc(screen_pos):
 		return "approach" if not _talk_approach.is_empty() else "talk"
 	_try_set_move_target(screen_pos)
+	# Round 850 (READ, 0x793a84..0x793ad8): the ground click then turns the
+	# world map's auto-move back on when a press on the map or a quest's map
+	# button turned it off (HudWorldmap.ground_clicked).
+	if _hud_worldmap != null:
+		_hud_worldmap.ground_clicked()
 	return "walk"
 
 ## One line saying what a click ray actually hit: the collider's path, the

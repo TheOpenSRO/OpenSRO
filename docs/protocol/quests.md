@@ -299,6 +299,33 @@ All READ unless marked; `QuestMapGuide` and `HudWorldmap.show_quest` carry the d
   only on its map. The mask pictures (`0x61b0b0`) draw over the map's tile quads (`0x61e700`), before
   the place signs.
 
+- **When the marks go (round 850).** `0x61a620` (the clear; it does nothing while `+0x229ad` is 0) has
+  five callers: `0x6256e0` (the next quest's map), `0x622dd0(1)` (the teleport selection),
+  `0x624f40(m, 0, ..)` (a monster picked in the guide list: `0x628f10` -> `0x628d30`, which also
+  unchecks box 31), `0x6255c0` (box 31, the level box: message map entry `0xeb5600`, set by the init
+  at `0xd6a130`) and the destructor `0x621ed0`. `+0x229ad` is set only by `0x6256e0`, `0x624f40(.., 1,
+  ..)` and `0x6255c0` (box checked), and cleared by the constructor `0x620c80` and `0x61a620`.
+  ShowWindow (`vslot_023` `0x624550`) never clears them, on either side: the close button
+  (`vslot_043` = CNIFWnd `0x46d7c0` -> ShowWindow(0)), M (`0x780610` case 0x4d -> `0x79abe0` ->
+  `0x46d740`), Escape (`0x79d620`) and the quest list's own reopen (`0x6e51e0`) all keep them; so does
+  the quest's completion or abandon (`0x778d10` drops only `DAT_00eeae70`).
+- **What a normal open shows.** ShowWindow(1) re-reads the player's map only when the shown map is
+  not the player's (`+0x798` = 0) and then switches only with auto-move on (`0x623060`), centring
+  only with auto-move on. `0x6256e0` turns auto-move off with the stale flag (`+0x229ac` = 1,
+  `+0x7b1` = 0), so M straight after the quest's map shows the same map, scroll and marks. The
+  world's ground click turns it back on: `0x793570`'s no-object branch, after the walk `0x78f8d0`
+  (`0x793a7d`), at `0x793a84..0x793ad8`: outside the selection (`+0x9990` = 0), stale set and
+  auto-move off -> `+0x229ac` = 0, `+0x7b1` = 1 (written directly; button 20 is not redrawn). That
+  is the only such write besides the world set-up `0x786f30` (`0x616b80(1)`). From then the render
+  (`vslot_013`, `0x6243f8..0x62452a`) and ShowWindow(1) put the player's own map up, centred on the
+  player. The marks draw only in mode 0 (the world map) and 2 (a floor), `+0x97d0` tested in
+  `0x61e700` and `0x61e890`: in a town (a local map) none show; in the field (the world map is the
+  player's map) they still draw where they are.
+- **The tracked quest.** `DAT_00eeae70` (set by `0x6e51e0` and the list, cleared by `0x778d10`) is
+  drawn on the world map by `0x61bac0` (each NPC of the quest's 0x30D5 list at its npcpos spot, the
+  window's sign texture `+0x7f4`, every mode) and on the minimap by `CIFMinimap::vslot_013`
+  (round 785). The world map's draw is not built here (OPEN).
+
 MEASURED (the box's Media.pk2): 128 QUEST rows in service, 127 code names; 120 kind 0 on `field`,
 7 kind 0 on `dunhuang1`, 1 kind 1 (QNO_CH_HWAN_1_3_1). Of the early Jangan quests, SMITH_1 has no row
 (the error line), POTION_1 / CHEF_1 / SOLDIER_EA1_1 and the others name their monsters.
