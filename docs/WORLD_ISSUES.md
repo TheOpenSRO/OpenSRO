@@ -7483,6 +7483,154 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-third round: a walk or run a model has no clip for plays nothing; monsters on the common resync
+
+The user: "Run the open tasks" -- round 852's two: what the original plays for a pet whose model has
+no walk clip, and monsters still on their own 32-unit resync with no catch-up. Labels: READ (`c:`
+sro_client.exe: the decomp dump and objdump on the render box), MEASURED, INFERRED, OURS, OPEN.
+
+**1. A gait the model has no clip for (READ; animation_mixer.md, "A gait the body has no clip for").**
+- `FUN_009ca430(2/3)` (c:0x9ca430) only sets the gait index +0x678 (0 walk, 1 run) and +0x25d and,
+  with the moving state 9 on, leaves it (`FUN_009c8810(9)`) and enters it again (`FUN_009c9920(9,0)`);
+  the pet tick calls it only on a change (it tests +0x678 first, c:0x9c5a98 / c:0x9c5ad8).
+- MOVE's enter (c:0xa59680, every character's) plays type 1 (fade-in 200) or 7 (100) by +0x678, at
+  the clip speed min(+0x6f4, 1.3) (float 0xd82f7c), through the play call (vtable +0xbc) and **does
+  not look at the answer** (c:0xa596fc; the next call is the mover's). The play call (c:0x9cfb40 ->
+  CCObjCharacter slot 3 c:0xa5faf0 -> CCObjAnimation::FUN_00a5b550 c:0xa5b550) looks the type up in
+  the body's group (the avatar group +0x190 first when set, then the weapon group,
+  CObjCharacter::FUN_00a5c740), then in `default` -- the std::string at 0xec6280, made "default"
+  (the literal at 0xd9bac8, length 7) by the static initializer at c:0xd77672 -- and when both miss
+  returns 0 having played nothing. (`FUN_00a5e100`, for types 0, 1 and 7, steps the attached items;
+  it is not a fallback.) IDLE's enter (c:0xa592f0) does test its answer (c:0xa59398) and plays type 0
+  when the battle stance 6 is missing (c:0xa5939c..0xa593c8); MOVE has nothing of the kind. **So no
+  fallback -- not walk to run, not to stand -- and so no clip-rate question.**
+- What played is already stopping: IDLE's exit (c:0xa59660 -> 0xa592f0(1)) stops the stand over 200
+  ms and sets +0x568 to -1 (the next IDLE plays it again); a walk-run change runs MOVE's exit
+  (c:0xa5a6b0: the gait it played, by [+0x518]+8, stopped over 200; IDLE entered) and MOVE's enter,
+  whose clear mask leaves IDLE again. A stopped loop keeps cycling while its weight falls (a lone
+  clip shows fully, round 808) and is dropped at 0. With nothing on either list
+  `AniMixer::FUN_00c54200` runs the per-bone begin (`FUN_00c4c3f0`) but commits (`FUN_00c4c320`) only
+  when a list had a clip: **the bones keep their pose and the body glides in it** until the arrival
+  (MOVE's update leaves 9 at c:0xa59955 -> IDLE plays the stand, 0 ms in, from its first frame). The
+  stop call forwards to a ride's partner like the play call (c:0x9cfc10 / c:0x9cfb40), so a mount
+  under a walking rider does the same.
+- **MEASURED: the rabbit has a walk.** Its `default` group (`tools/probe_ride_bsr.gd`): type 0
+  `p_rabbit_stand01`, **type 1 `p_rabbit_run.ban`**, type 7 `p_rabbit_run.ban`, 38 pick, 50
+  attractive. Round 852's "no walk clip" read the clip names, not the types (corrected): the original
+  plays its run file as its walk, at the walking rate 1.0 -- the s / 50 rule is the run's (s > 20).
+  OpenSRO already did exactly that.
+- **The census (MEASURED, new `tools/census_gait_clips.gd`; MOVE's lookup is every character's, so
+  every model):** the 828 distinct `.bsr` the character rows of `_RefObjCommon` name (org rows
+  resolved; the 7,701 rows with none are the dressed thieves, hunters and guild soldiers, player
+  bodies); 770 are in the box's Data.pk2. Of 99 COS models one has no type 1: **`cos\t_lizard.bsr`,
+  the trade lizard (`COS_T_LIZARD`, in service, walk 24 / run 48)**; the rest have both. Without walk
+  and run: 63 monster models, 236 NPC models (and `NPC_CH_QT_GENARAL_SP` without run), 44 structures
+  -- **every in-service row among them has walk and run speeds 0** (gates, traps, towers, the job
+  box, Haroeris, Seth ...): they never move. So the lizard under a walking rider is the one body the
+  rule reaches today. OPEN: 58 models are not in the box's Data.pk2 or are `.cpd` compounds (18
+  in-service rows: guild towers and gates, the `COS_C_CAMEL1-3` / `COS_C_DONKEY` rides,
+  `MOB_QT_TQ_THIEF_01`, `MOB_EVE_BETRAYER_FLAMEMASTER`).
+- **Built: `World3D._body_gait`, the one path for monsters and COS** (`_set_monster_gait`,
+  `_cos_gait`; `_cos_mount_gait` now just calls it): a walk or run with no clip lets the loop play on
+  for ClipMixer.STOP_MS (200), then takes it off the clip list (a one-shot over it plays on and holds
+  its last frame) and the skeleton keeps its pose; a clip within the 200 ms cancels it; after a drop
+  the next clip starts at its first frame with no fade. Before: the body kept the loop it had, and a
+  ridden mount with no walk was made to run (OURS, round 798).
+
+**2. Monsters on the common resync (READ, re-read for monsters).** The 0xB021 handler
+`NetProcessInNavAndSkill::FUN_008a5750` (c:0x8a5750) finds any object by its id
+(`IGIDObject::FUN_009c31a0`), returns early only when its +0x440 is set, puts the flag-1 source
+through `FUN_009e11e0` -- whose only class test is the collision query's flag (`FUN_00b94b70`
+against CICPlayer 0xef1b44, or a CICCos 0xeef6f0 owned by DAT_00eef5ec: 1, everyone else 0) -- then
+`FUN_009e1050`'s 50.0 (double 0xd8f0b0), and the destination through `FUN_009e0550` (the factor,
+capped at 3.0, float 0xd8adc4), which tests no class; then MOVE (`FUN_009c9920(9,0)`). Its one other
+test, the own player's id, only resets the UI. **A monster takes exactly another player's resync and
+catch-up** (round 852's reading confirmed; no branch found).
+- **What the 32 was:** round 533's own constant (`MonsterMotion.RESYNC_DISTANCE`, OURS), not round
+  637's: "it must exceed the lag a moving body legitimately carries -- Earth Ghost's 75 u/s, the
+  fastest roster run, over a 0.3 s round trip is 22.5", rounded up; round 637 only gave monsters the
+  client's turn rate. Wrong twice: the original's distance is 50 for every object, and with no
+  catch-up a body drawn behind stayed behind for its whole leg (round 785 added `_snap_to_server_pos`
+  for a monster drawn a few units off that "never closed the gap").
+- **Built:** `MonsterMotion.begin` calls `OtherWalk.start_at` and `OtherWalk.catch_up` (one
+  implementation) and keeps the factor ("mult") that `MonsterMotion.step_state` walks at; a stop goes
+  through `OtherWalk.stop_walks`, which `_other_stop_at` now uses too (beyond 50 or on the point: put
+  there; nearer: walked at 3x, OURS since round 846), in the stand clip and unturned (monster-only, as
+  before); the list refresh (OpenSRO's own message) resyncs at 50. Kept: round 852's BodyWalk plan
+  after every leg; the chase and the swing hold (server, round 812); the reach snap (round 785).
+  Round 826's "falling movers" are skill flights and are not touched.
+
+**QA (render box, real clients, lane server 127.0.0.1:17240: in memory, `-navmesh-dir`, no
+`-trust-client-positions`; `/var/tmp/r853/qa853.sh`, analysers `ana853.py`, `pets853.py`; base =
+`3b9527b5`, 2350c395 plus this round's QA hooks only).**
+- **Item 1** (`pets`: an actor -- Tess853, headless, through its own job, COS, Walk/Run and click
+  paths -- and a rendered observer, real time; `OPENSRO_QA_COS_GAIT=1` on both): Tess joins the
+  traders, wears the suit, calls the rabbit and the trade lizard, rides it walking, running, walking,
+  gets off, and walks and runs with both following. The clip on the clip list per tick (owner and
+  observer agree to the tick):
+
+  | body, phase | drawn speed | base | head |
+  |---|---|---|---|
+  | lizard ridden, rider walking (two legs) | 24.0 u/s | `t_lizard_run` at 1.00 | **nothing** for 163 / 139 ticks (2.7 / 2.3 s) after 4.0 units in the stand (the 200 ms stop at 24): the pose held; `QA GAIT drop` twice on each client |
+  | lizard ridden running; following | 48 | `t_lizard_run` 1.00 | `t_lizard_run` 1.00 |
+  | lizard at rest | 0 | stand | stand (from its first frame after each walk) |
+  | rabbit, owner on foot walking (0x30D0 16) | 16.0 | `p_rabbit_run` (its type 1) 1.00 | the same |
+  | rabbit, owner on the walking lizard (24) | 24.0 | run 0.48 | run 0.48 |
+  | rabbit, owner at 48 | 48 | run 0.96 | run 0.965 |
+
+  Frames for a human: `/var/tmp/r853/keep/lizard_walk_sheet.png` (top: base, the second ridden walk
+  at ms 72600 / 73300 / 74000, running legs; bottom: head at ms 74600 / 75300 / 76000, the held
+  pose; illustrative only, the table is the measurement).
+- **Item 2** (`mob`: one rendered client, real time, in Jangan's Mangyang field via `/goto mangyang`,
+  level 3: it fights one Mangyang at a time through the real click path (`OPENSRO_QA_FIGHT`) and
+  walks 60 units away by real ground clicks every 10 s, so the struck one chases and swings while the
+  others wander. The server's `OPENSRO_AI_POS_TRACE` logs each moving monster after every 100 ms
+  pass, the client's `OPENSRO_QA_MOB_TRACK` every walking frame on the wall clock; the server's place
+  at a frame is interpolated between the passes around it). With no delay, and through round 846's
+  lag proxy (100 ms + up to 40 ms each way):
+
+  | run | monsters / frames | drawn vs server, every frame: mean / p99 / max | by leg speed 8 / 14 / 22 (mean) | legs; factor > 1 | resync jumps | frame jumps | chase legs / swings |
+  |---|---|---|---|---|---|---|---|
+  | base | 36 / 141,081 | 0.19 / 0.71 / 1.69 | 0.18 / 0.37 / 0.30 | 324; 0 | 0 | 0 | 13 / 25 |
+  | head | 43 / 113,593 | 0.19 / 0.89 / 1.71 | 0.17 / 0.22 / 0.47 | 263; 20 (max x1.02) | 0 | 0 | 19 / 24 |
+  | base, lag | 33 / 53,221 | 1.21 / 3.54 / 3.88 | 1.11 / 1.98 / 2.73 | 131; 0 | 0 | 0 | 19 / 26 |
+  | head, lag | 41 / 97,339 | 1.51 / 3.65 / 6.70 | 1.11 / 2.02 / 2.91 | 283; 16 (max x1.04) | 1 (64.0) | 0 | 14 / 21 |
+
+  (A resync jump is a leg, stop, list refresh or snap that moved a body; a frame jump a frame step
+  over 2 units beyond 3.2 x 75 u/s. Each run's fight is its own, so counts differ.) MEASURED: the
+  drawn body is one transit behind the server, before and after -- the means are the delay times the
+  speed (about 0.14 s x 8, 14, 22) -- as the original's, which draws on receipt too. Nothing drifted
+  past 32 in this play, so the old and new distances decided nothing here; the factor worked on the
+  chase's re-aims (up to x1.04). Head-lag's one jump: monster 62205's leg came 64.0 from where it was
+  drawn after the server's AOI sleep (legs it did not send) -- put on the source, as the original's 50
+  does (the old 32 too). Swings and chases unchanged in kind (the AI and the swing path are
+  untouched). Logs: `/var/tmp/r853/<run>/godot.log` (the observer / the mob client), `second.log`
+  (the actor), `<run>.server.log`.
+
+**Tests.** `monster_motion_test`: the list keeps a walking body 40 off (round 533's 32 put it back)
+and resyncs one 60 off; a leg 40 behind starts where it is drawn at factor 100/60 and arrives with
+the server's mover; the 3.0 cap; ahead is 1.0; a sweep of drawn places gives OtherWalk's own answers;
+a stop within 50 walks at 3x in the stand clip, beyond it is put there; World3D: a walk with no clip
+keeps the stand 150 ms, drops it at 200, the stand comes back from its first frame, a clip inside the
+200 ms cancels the drop. `remote_godot.sh check` ALL LOAD (1,101 scripts), `tests` "ran 413
+suite(s), 0 failing". Server: only the QA trace; `go build ./... && go test ./...` ok.
+
+**Perf gate** (`perf_gate.sh --base 2350c395 --head c7f326fd --sites jangan --frames 60000`,
+1280x720, median of 3): all SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.89 -> 0.90 | 9034 -> 8703 | 2770 -> 2762 | 5 -> 5 |
+
+**OPEN:**
+- MOVE's clip speed min(+0x6f4, 1.3) (c:0xa59684..0xa596bf; round 808 read it too) is built for no
+  body: a caught-up walk plays at 1.0 here. Whether the client re-enters MOVE on every 0xB021 (so the
+  1.3 is per leg) was not read.
+- The 18 in-service rows whose models the box lacks or are `.cpd` (above) are outside the census.
+- Bodies whose file has no groups keep OpenSRO's idle-name hint for the stand (OURS).
+- The stop's 3x walk (OURS since round 846) now serves monsters too; how retail's drawn object meets
+  the record after 0xB023 is still unread.
+
 ## Eight-hundred-and-fifty-second round: a pet's run plays at its speed; other bodies stop at walls on an observer's screen
 
 The user: "Fix those last two open items" -- round 851's two: a pet's run animation did not scale with
