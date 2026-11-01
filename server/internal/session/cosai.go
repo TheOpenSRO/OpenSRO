@@ -276,6 +276,11 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 			if st.speed > 0 {
 				o.runSpeed = st.speed
 				a.speed = st.speed
+				if o.moving {
+					// The leg walking on at the new speed (the recompute changes
+					// the mover's speed at once, as the client's 0x30D0 does).
+					o.from, o.pos, o.legStart, o.legSpeed = pos, pos, now, st.speed
+				}
 			}
 		}
 		if leg != nil && leg.leg {
