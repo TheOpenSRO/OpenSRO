@@ -7485,8 +7485,6 @@ stays on the box for older revisions through `GODOT_BIN`).
 
 ## Eight-hundred-and-fifty-first round, lane F: how every COS follows its owner
 
-## Eight-hundred-and-fifty-first round, lane C: collision per kind of mover; a following transport stops at the trunk
-
 The user: "Please match the exact behavior of pets following you. Especially trade transports. Trade
 transports aren't supposed to be able to go through walls and can [get] stuck so it requires careful
 movement sometimes to make sure you don't get on walls or even trees. Reference the movement/collision
@@ -7578,6 +7576,11 @@ box at world x 704..776, z 728..762, mapped from the server's mesh):
   0x549c2a); the client's pet clip rate (speed / 50, c:0x9c59c0) is not built; what 0x7022 shows the
   clients (OURS: a 0xB023 at the owner); retail's IDLE runs every 30 ms against our 100 ms tick.
 
+## Eight-hundred-and-fifty-first round, lane C: collision per kind of mover; a following transport stops at the trunk
+
+The user: "Please match the exact behavior of pets following you. Especially trade transports. Trade
+transports aren't supposed to be able to go through walls and can [get] stuck so it requires careful
+movement sometimes to make sure you don't get on walls or even trees. Reference the movement/collision
 info though for kind of mount and match it exactly". Lane C owns what blocks a mover; lane F the
 follow rules. The reading is in `docs/protocol/opcodes/movement.md`, "Collision per kind of mover".
 
