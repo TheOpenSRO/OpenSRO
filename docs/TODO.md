@@ -34,12 +34,12 @@ first wall, a wall-stopped player leg ends with a 0xB023, and the wander probes 
 - [x] **Collision per kind of mover** (round 851, movement.md "Collision per kind of mover"): READ,
       the query takes IsPC || IsCOS and the object's +0x38 (1 on every object) and nothing else --
       a horse, a transport and a pet are blocked as a player on foot. A COS's leg ends at the first
-      wall or tree (`cosLegEnd`), and the client draws a COS's leg on its graph (`CosWalk`).
+      wall or tree (`cosLegEnd`), and the client draws a COS's leg on its graph (`CosWalk`; round 852: `BodyWalk`, every body).
       Left: the flag's three re-checks for monsters and NPCs (`s:0x9a0a43`, `0x9a0bd2`,
       `0x9a0eb8`) are not modelled; a COS's walled leg sends the stop in its 0xB021 (i16) and no
       0xB023 (retail: the destination, then 0xB023 at the wall -- the client draws the truncated
-      point, MEASURED 0.64 from the server's); other players' bodies still walk straight
-      (`OtherWalk`), so an observer sees a rider pass a wall's face until its 0xB023.
+      point, MEASURED 0.64 from the server's). Round 852: every body an observer draws (another
+      player, a rider, a COS, a monster) stops at the wall itself (`BodyWalk`, READ c:0x9e0fca).
 
 ## The job system (rounds 799-804; docs/protocol/jobs.md)
 

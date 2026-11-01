@@ -38,7 +38,10 @@ class_name StateLook
 ## - one pulse per body, the last one set in the walk wins and any tinted bit
 ##   going off ends it, as the walk does;
 ## - +0xc0 is the body's clip speed (INFERRED from the values: 0.5 for
-##   frostbite, 0.75 for slowness); FZ's motion state 9 is taken as a held
+##   frostbite, 0.75 for slowness; round 852 READ it: the tick advances the
+##   body's clip by ROUND(+0xc0 x the frame's ms), GlobalDataManager::
+##   FUN_009c4180 c:0x9c41c1, +0xbd beside it; a pet's tick overwrites it
+##   every frame, PetGait); FZ's motion state 9 is taken as a held
 ##   pose -- clip speed 0 (INFERRED; the state table that would say what
 ##   state 9 plays is filled at run time and was not read, OPEN).
 

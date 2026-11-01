@@ -602,7 +602,39 @@ degrees and the new line is clear.
 takes a pet's (TypeID4 3, 4) walk speed as its run x +0x6f4, picks walk (2) or run (3) at 20.0
 (0xd88108), and scales the clip's rate by speed / 50.0 (0xd8f0b0; x 0.5 under flag +0x2c4 bit 1; at
 most 1.5, 0xd819ec) when its animation allows; the COS moves only by the server's 0xB021 / 0xB023 and
-0x30D0.
+0x30D0. Round 852 has the full read and the build (below).
+
+### Round 852: a pet's gait and clip rate (READ, sro_client.exe)
+
+`CICCos::vslot_009` (0x9c59c0) is the COS's per-frame tick: it calls the characters' own tick
+`FUN_009d1d60` (CICharactor slot 9), which steps the mover (`FUN_009e0e60`, when not ridden) and
+advances the body's clip by ROUND(+0xc0 x the frame's ms) (`FUN_009c4180`, c:0x9c41c1 ->
+`FUN_00a5acb0`, with a flag beside it that +0xbd, frozen, turns off). Around that call, for a TypeID 1/2/3 object with TypeID4 3
+or 4 only (c:0x9c59d0..0x9c5a07, c:0x9c5a2a..0x9c5a79) -- growth and ability pets; not a horse, a
+transport (their gait is the rider's Walk/Run, round 798), a soldier, a player, a monster or an NPC:
+
+- s = run speed (+0x670, the mover's +8, set by 0x30D0) x the mover's speed factor (+0x6f4, the
+  mover's +0x8c: round 846's catch-up factor from `FUN_009e0550`, up to 3.0); stored as the walk
+  speed (+0x66c) as well, so a walking pet moves at s too (the mover's speed is `[+0x66c +
+  [+0x678]*4] x +0x6f4`, c:0xa59724).
+- s <= 20.0 (float 0xd88108) with the speed index on run: `FUN_009ca430(2)` -- walk (+0x25d 0, +0x678
+  0; a moving state 9 is left and entered again, so the clip changes mid-leg). s > 20.0: `FUN_009ca430(3)`
+  -- run, when not already on it.
+- The clip rate +0xc0 = 1.0; s / 50.0 (double 0xd8f0b0) when s > 20.0 and the moving state is on
+  (+0x65c bit 9); x 0.5 (double 0xe1b7d0) when the pet has frostbite (+0x2c4 bit 1, the abnormal mask
+  0x3057 sets); then at most 1.5 (float 0xd819ec); no lower bound. Written every frame, so it overrides
+  the abnormal-state setter's own +0xc0 on a pet (`FUN_009cd5e0`: frostbite 0.5, slowness 0.75): a
+  slowed pet's clip plays at its gait's rate.
+- Re-evaluated every frame, so a 0x30D0 (its owner's Walk/Run, the x1.25 catch-up) or a new leg's
+  catch-up factor changes the gait and the rate on the next frame.
+
+**OpenSRO (round 852):** `PetGait` (`client/scripts/world/pet_gait.gd`) holds the rule;
+`World3D._cos_pet_tick` applies it every frame a pet moves and once as it stops, through the clip-speed
+book abnormal states use (`_set_skeleton_clip_speed`, `_step_clip_speeds`). A COS's leg is now an
+`OtherWalk` leg with round 846's 50-unit resync and catch-up factor (READ: the 0xB021 handler is every
+object's), so s is run x that factor as the original's is. OURS: the slowness override is built as
+read; frostbite is read from the COS's abnormal mask when the server sends one (it sends none for a COS
+today).
 
 **OpenSRO (round 851).** `server/internal/session/cosfollow.go` builds both, every leg through
 `cosLeg` (the navigation mesh's no-slide walk). OURS: the 100 ms tick (retail's IDLE checks every
