@@ -16,7 +16,38 @@ import (
 var (
 	botGMTimed    string
 	botGuildDelay time.Duration
+	// Round 850: -emotes, the action window's emotes at set times after
+	// entry ("5s=0;12s=6"): 0x3091 [byte], so a watching client sees another
+	// player's emote (and its weapon go and come back).
+	botEmotes string
 )
+
+// timedEmotes starts -emotes' requests.
+func (b *bot) timedEmotes(name string) {
+	start := time.Now()
+	for _, item := range strings.Split(botEmotes, ";") {
+		item = strings.TrimSpace(item)
+		at, val, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(at))
+		if err != nil {
+			fmt.Printf("[%s] -emotes: bad time %q\n", name, at)
+			continue
+		}
+		var e int
+		if _, err := fmt.Sscanf(strings.TrimSpace(val), "%d", &e); err != nil || e < 0 || e > 255 {
+			fmt.Printf("[%s] -emotes: bad byte %q\n", name, val)
+			continue
+		}
+		go func() {
+			time.Sleep(time.Until(start.Add(d)))
+			b.send(session.OpEmote, []byte{byte(e)})
+			fmt.Printf("[%s] EMOTE (at %s) byte %d\n", name, d, e)
+		}()
+	}
+}
 
 // timedGMLines starts -gm-timed's lines.
 func (b *bot) timedGMLines(name string) {
