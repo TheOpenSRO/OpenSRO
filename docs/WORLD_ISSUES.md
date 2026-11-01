@@ -7597,6 +7597,97 @@ during an emote (OpenSRO keeps it hidden until the emote ends); emoting while st
 reason holds here; the original's emote leave would show the weapon if the server lets an emote
 through).
 
+## Eight-hundred-and-fiftieth round, lane Q: the quest's map marks after a normal open
+
+The user: "when seeing quest locations, they persist after closing the quest map and opening a normal
+map. You're not supposed to see that when opening a normal map window." Labels: READ (sro_client.exe,
+the decomp dump and objdump on the box), MEASURED, INFERRED, OURS, OPEN.
+
+**OURS at merge (the user's call).** The lane built the original: the marks survive a close and M,
+and only the first ground click brings the map back to the player. The user's case is exactly
+"close the quest map, open a normal map", which the original still showed with marks. So
+`HudWorldmap._close_quest_view` (on any hide outside the teleport selection) drops the quest's
+marks and, if the quest's map left auto-move off with the stale flag, turns auto-move back on; the
+next open is the player's own map with no quest on it. The quest stays tracked. The ground-click
+rule stays as READ for a walk with the window open. `worldmap_quest850_test.gd` was rewritten to
+check the OURS close (ALL PASS on the box's Media.pk2).
+
+**When the original drops the marks (READ).** `0x61a620` (clears +0x229c0 areas, +0x229b0 painted
+colours, +0x229d0 signs; nothing while +0x229ad is 0) has exactly five callers: `0x6256e0` (the next
+quest's map button), `0x622dd0(1)` (the teleport selection), `0x624f40(m, 0, ..)` (a monster picked
+in the guide list, `0x628f10` -> `0x628d30`; it also unchecks box 31), `0x6255c0` (box 31, the level
+box: message-map entry `0xeb5600` -> handler `0xeb5610`, written by the init at `0xd6a130`) and the
+destructor `0x621ed0`. +0x229ad is written only by `0x6256e0`, `0x624f40(.., 1, ..)`, `0x6255c0`
+(set), `0x61a620` and the constructor `0x620c80` (clear). No code address holds a pointer to
+`0x61a620`, `0x6256e0` or `0x624f40` (a byte search of the image), so there is no indirect caller.
+- **Not cleared:** ShowWindow (`CNIFWorldMap::vslot_023` `0x624550`): its hide side only leaves the
+  teleport selection, its show side refreshes the map; the close button (`vslot_043` = CNIFWnd
+  `0x46d7c0` -> ShowWindow(0)); M (`0x780610` case 0x4d -> `0x79abe0` -> `0x46d740`); Escape
+  (`0x79d620`); the quest list's button when the window is open (`0x6e51e0`, vslot 0x50); the
+  quest's completion or abandon (`0x778d10` drops only the tracked id `DAT_00eeae70`).
+- **What the original shows on a normal open:** ShowWindow(1) switches to the player's map only
+  with auto-move on (`0x623060`), and centres only with it on. The quest's button turns auto-move off
+  with the stale flag (+0x229ac = 1, +0x7b1 = 0). **The world's ground click turns it back on**:
+  `0x793570` (CGInterface's left press), its no-object branch, after the walk `0x78f8d0` at
+  `0x793a7d`, runs `0x793a84..0x793ad8`: outside the selection (`0x60fc40`, +0x9990 = 0), stale set
+  (`0x60fc20`) and auto-move off (`0x60fc00`) -> `0x60fc30(0)`, `0x60fc10(1)`, written directly (button
+  20 not redrawn). The only other writes of +0x7b1 = 1 are `0x616b80(1)` from the world set-up
+  `0x786f30` and button 20. From then the render (`vslot_013`, `0x6243f8..0x62452a`) and ShowWindow
+  put the player's own map up, centred on the player.
+- **Where they draw:** `0x61e700` (areas) and `0x61e890` (signs) draw only in mode 0 (+0x97d0, the
+  world map) or 2 (a floor), on their own map id. A local map (mode 1) never shows them.
+- **So the original keeps the marks in three cases, built here as READ:** M (or the close button and
+  M) straight after the quest's map, with no ground click between, shows the same map, scroll and
+  marks; the world button (`0x6231e0`) brings them back on the world map; and in the field, where
+  the player's map is the world map, they still draw where they are once the map follows the player.
+- **The tracked quest** (`DAT_00eeae70`): the world map draws its NPCs (`0x61bac0`, each NPC of the
+  0x30D5 list at its npcpos spot, the window's sign texture +0x7f4, every mode); the minimap draws them
+  too (`CIFMinimap::vslot_013`, built in round 785). The world map's draw is not built (OPEN).
+
+**The bug.** This client never had the ground click's branch: after a quest's map, auto-move stayed
+off for good, so every later M showed the quest's world map at its scroll with the marks, however far
+the player walked.
+
+**Changed.**
+- `HudWorldmap.ground_clicked` (0x793a84's rule), called from `World3D._dispatch_left_click`'s ground
+  branch (after `_try_set_move_target`; items, characters and NPCs are objects there and do not pass).
+  With the window shown it follows the player at once (the render's step).
+- `_refresh_quest_marks`: marks only in mode 0 and 2 (READ above).
+- QA: `quest_layer_counts()`, `quest_report` adds `stale=` and `layers=`; OPENSRO_QA_INPUT `wmquest`
+  (the report) and `hit:<x>,<y>` (every Control that would take a press there -- it found the quest
+  window swallowing a first ground click in the QA).
+- `docs/protocol/quests.md` section 9 has the reading.
+
+**Tests.** `worldmap_quest850_test.gd` (rules everywhere; the real Media.pk2 on the box): the click's
+rule (selection, stale, button 20), and on the real map at Jangan: the quest's map (1/1 signs, 3/3
+areas, auto off, stale), close keeps them, M straight after shows the same map and scroll, the ground
+click then M shows map 1 centred as before (0/1, 0/3 shown), a mark on the local map's id stays hidden,
+the world button shows them again, the next quest and the selection clear them. ALL PASS.
+
+**Live QA** (render box, lane server 17200 in memory with the quest catalogue, character Qaq850, real
+input through OPENSRO_QA_INPUT: `/level 5`, a click on Herbalist Yangyun, talk lines "Talk to this
+person" -> "Yangyun's Anxiety" -> Accept -> OK, Escape, Q, row 5's button 18, the map's X at
+(947, 167), M, M, Q, a ground click 40 ahead, M, M, the minimap's map button; `wmquest` after each;
+evidence in `/var/tmp/r850q/keep`: `{base,fix}_f{640,700,780,980,1100}.png`, `*_log_extract.txt`, the
+scripts). Base = 201bddc5 with only the QA report and actions added. MEASURED:
+
+| Step | Base | Fixed |
+|---|---|---|
+| Before the button | map 1 (Jangan), 0 marks | the same |
+| Button 18 | map 0, canvas (-3584, -266), 1/1 signs, 3/3 areas, auto off, stale | the same |
+| X | hidden, marks kept (1/1, 3/3) | the same (READ: the original keeps them) |
+| M | map 0, same scroll, 1/1 and 3/3 shown | the same (READ: no click yet) |
+| M, Q, ground click (`CLICK ... -> walk`), M | **map 0, 1/1 and 3/3 shown**, auto off | **map 1, canvas (-275, -257), 0/1 and 0/3 shown**, auto on, stale off |
+| M, minimap button | map 0, marks shown | map 1, none shown |
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1093 scripts); `tests` ran 410 suites, 0 failing. The
+server is untouched. UI-only round: no perf gate.
+
+**OPEN.** The world map's tracked-quest NPC signs (`0x61bac0`) are not built. The guide list and box
+31 (the other two clears) are not built either. Whether the world set-up `0x786f30` runs after every
+teleport (it turns auto-move on) is still open (round 603's entry). The minimap's map button's own
+handler was not re-traced; it opens the window as M does here (round 129's wiring).
+
 ## Eight-hundred-and-forty-ninth round: Shift+F3's debug panel back in every build
 
 The user: "these are all really dev builds for now, please add shift+f3 back for now." Round 848

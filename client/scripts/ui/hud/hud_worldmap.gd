@@ -1813,6 +1813,31 @@ func _mouse_turns_auto_off() -> void:
 		_auto_art_stale = true
 		_auto = false
 
+## A left press on the world that picked no object (round 850, READ:
+## CGInterface's click 0x793570, its ground branch -- after the walk
+## 0x78f8d0 at 0x793a7d, 0x793a84..0x793ad8 asks window 28 (0x799920)):
+## outside the teleport selection (+0x9990 == 0, 0x60fc40), with the stale
+## flag set (+0x229ac, 0x60fc20) and auto-move off (+0x7b1, 0x60fc00), the
+## flag is cleared (0x60fc30(0)) and auto-move turned back on (0x60fc10(1)).
+## The byte is written directly, not through 0x616b80, so button 20 is not
+## redrawn -- the press that turned auto-move off (a press on the map, the
+## world button, a floor step, the quest list's map button 0x6256e0) left
+## its auto look in place. This is the only place the client turns
+## auto-move back on by itself (0x60fc10 / 0x616b80 have no other caller
+## that does, besides the world set-up 0x786f30), so after a quest's map the
+## player's first walk by mouse brings the map back to the player: the
+## render follows the player's map each frame (vslot_013, 0x6243f8), and a
+## later ShowWindow(1) switches to it (0x623060) and centres on the player.
+## The arrow keys (0x7023) do not pass here.
+func ground_clicked() -> void:
+	if _teleport_select or not _auto_art_stale or _auto:
+		return
+	_auto_art_stale = false
+	_auto = true
+	# The render's step, now rather than at the next player update.
+	if is_visible_in_tree():
+		_follow_player()
+
 ## M and the minimap's map button (0x79abe0): the window's visibility
 ## toggled (0x46d740), then 0x79ab80 -- which, when the interface itself is
 ## visible (its first 0xb8f530 is on `this`, the interface), calls the
@@ -1821,6 +1846,9 @@ func _mouse_turns_auto_off() -> void:
 ## not (UiSounds.window_toggled, round 615) -- and then the window centred on
 ## the screen (0x798c50), on a hide as well. The window's own close button
 ## only hides it (CNIFWorldMap's vslot_043 is CNIFWnd's 0x46d7c0): silent.
+## Neither path drops a quest's marks in the original (round 850, READ:
+## vslot_023 0x624550 never reaches 0x61a620; see the quest marks' section);
+## ours does on the hide (_close_quest_view, OURS, the user's call).
 func toggle() -> void:
 	if visible:
 		hide()
@@ -2024,7 +2052,10 @@ func leave_select_mode() -> void:
 	_select_icons.clear()
 
 func _on_visibility_changed() -> void:
-	if visible or not _teleport_select:
+	if visible:
+		return
+	if not _teleport_select:
+		_close_quest_view()
 		return
 	var sent := _select_sent
 	leave_select_mode()
@@ -2358,7 +2389,25 @@ static func dof_room_key(dof: DofReader.Dof, block: int) -> String:
 #   middle is the area's middle (0x61c5a0's clamp keeps the map's edges in).
 # - The draw: the area pictures over the map tiles (0x61e700, mode 0 on the
 #   map of their id, mode 2 on their floor), then the place signs (0x61c360),
-#   then the quest and monster icons (0x61e890), each only on its own map.
+#   then the quest and monster icons (0x61e890), each only on its own map,
+#   and only in mode 0 (the world map) or 2 (a floor): a local map draws none.
+# - When they go (round 850, every caller of 0x61a620 and every write of
+#   +0x229ad): the next quest's map button (0x6256e0), the teleport
+#   selection (0x622dd0(1)), a monster picked in the guide list (0x628f10
+#   -> 0x628d30 -> 0x624f40(m, 0, ..), which also unchecks box 31), box 31
+#   itself (control 31 -> 0x6255c0, message map 0xeb5600), and the window's
+#   destruction (0x621ed0). Nothing else: ShowWindow(0) (vslot_023 0x624550,
+#   reached by the close button's vslot_043 0x46d7c0, M's 0x79abe0 ->
+#   0x46d740 and Escape's 0x79d620) and ShowWindow(1) keep them, and so do
+#   the quest's completion or abandon (0x778d10 drops only the tracked id
+#   DAT_00eeae70). What hides them on a normal open is the map shown: the
+#   quest's map turned auto-move off with the stale flag, and the player's
+#   next ground click turns it back on (ground_clicked, 0x793a84), so the
+#   map returns to the player's own -- a town's local map draws no marks; on
+#   the world map (the field) they still draw where they are.
+# - OURS (round 850, the user's call): closing the window drops them and
+#   puts auto-move back on (_close_quest_view), so a normal open after a
+#   quest's map never shows the quest's marks.
 # An icon's text is its tooltip_text, which HelpTips shows in the help bubble
 # (round 848). The map's own hovers go to that bubble too (READ: 0x613260 and
 # 0x614950 fill GInterface +0x730's CIFHelperBubbleWindow and place it with
@@ -2597,7 +2646,11 @@ func _refresh_quest_marks() -> void:
 		id = _dungeon_map.id
 		tile = Vector2.ONE * _dungeon_map.tile_side()
 	elif _current != null:
-		id = _current.id
+		# Round 850 (READ): 0x61e700 and 0x61e890 draw in mode 0 (+0x97d0,
+		# the world map) and mode 2 (a floor) only; a local map (mode 1)
+		# shows no quest mark, whatever its id.
+		if _mode == MODE_WORLD:
+			id = _current.id
 		tile = Vector2(_current.texture_size)
 	for c in _quest_area_layer.get_children():
 		var pic := c as Control
@@ -2607,6 +2660,38 @@ func _refresh_quest_marks() -> void:
 		pic.size = tile
 	for c in _quest_sign_layer.get_children():
 		(c as Control).visible = quest_marks_on and int(c.get_meta(QUEST_MAP_META, -2)) == id
+
+## OURS (round 850, the user's call: "You're not supposed to see that when
+## opening a normal map window"): the window hidden by any path (its close
+## button, M, Escape) after a quest's map drops that quest's marks (0x61a620's
+## clear) and, when the quest's map left auto-move off with the stale flag,
+## turns auto-move back on as the ground click would (ground_clicked), so
+## the next open shows the player's own map with no quest on it. The
+## original keeps both until the player's first ground click (READ, see the
+## section above): M straight after the quest's map showed it again, marks
+## and all. The quest stays tracked (DAT_00eeae70 is not touched).
+func _close_quest_view() -> void:
+	if not quest_marks_on:
+		return
+	clear_quest_marks()
+	if _auto_art_stale and not _auto:
+		_auto_art_stale = false
+		_auto = true
+
+## The quest layers' children and how many of them are shown:
+## {"signs": n, "signs_shown": n, "areas": n, "areas_shown": n}, every count
+## 0 before the first quest (round 850, the QA's measure).
+func quest_layer_counts() -> Dictionary:
+	var out := {"signs": 0, "signs_shown": 0, "areas": 0, "areas_shown": 0}
+	for pair in [[_quest_sign_layer, "signs"], [_quest_area_layer, "areas"]]:
+		var layer := pair[0] as Control
+		if layer == null:
+			continue
+		for c in layer.get_children():
+			out[pair[1]] += 1
+			if (c as Control).visible:
+				out[pair[1] + "_shown"] += 1
+	return out
 
 ## The quest marks in one line, for the QA log and the tests.
 func quest_report() -> String:
@@ -2622,6 +2707,7 @@ func quest_report() -> String:
 			var pc := c as Control
 			areas.append("%s tile %s painted %d%s" % [pc.name, str(pc.get_meta("tile", Vector2i.ZERO)), int(pc.get_meta("painted", 0)),
 				"" if pc.visible else " hidden"])
-	return "on=%s auto=%s focus=%s canvas=(%d,%d) signs=%s areas=%s | %s" % [quest_marks_on, _auto, str(_quest_focus),
+	return "on=%s auto=%s stale=%s layers=%s focus=%s canvas=(%d,%d) signs=%s areas=%s | %s" % [quest_marks_on, _auto, _auto_art_stale,
+		quest_layer_counts(), str(_quest_focus),
 		int(_canvas.position.x) if _canvas != null else 0, int(_canvas.position.y) if _canvas != null else 0,
 		str(signs), str(areas), qa_report()]
