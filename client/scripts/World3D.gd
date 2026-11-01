@@ -38363,15 +38363,13 @@ func _cos_gait(uid: int, gait: int) -> void:
 ## says the body has a mount). Round 850: the emote and the stall hide the
 ## same items (HeldItems has the rule, READ CCompChar slot 22 0xc29bd0), so
 ## the three are reasons on one switch: a character's held items are drawn
-## when none holds. Their own ambient particles on the body skeleton
-## (WornItemFx.MARKER_META naming the node) go with them; their glow and
-## EquipFx's holders hang under the node.
-static func _set_held_items_shown(skel: Skeleton3D, shown: bool) -> int:
-	return HeldItems.set_shown(skel, shown)
-
-## Round 850: character id -> {"reasons": {HeldItems.REASON_*: true}, "skel":
-## the skeleton id it was last applied to, "emote_clip": the emote's clip
-## (this player's), "emote_until": the msec its clip ends (another's)}. Only
+## when none holds (HeldItems.set_shown). Their own ambient particles on the
+## body skeleton (WornItemFx.MARKER_META naming the node) go with them; their
+## glow and EquipFx's holders hang under the node.
+##
+## Character id -> {"reasons": {HeldItems.REASON_*: true}, "skel": the
+## skeleton id it was last applied to, "emote_clip": the emote's clip,
+## "emote_until": the clip clock (_idle_anim_time) its clip ends at}. Only
 ## characters with a reason are here.
 var _held := {}
 

@@ -7564,9 +7564,38 @@ action window's right click (`actionslot`), the bag and the equipment window -- 
 players; `OPENSRO_QA_HELD_LOG=1` prints every body's held items as drawn: each node's visibility, its
 meshes visible in the tree, its effects shown; `/var/tmp/r850e/run*.client.log`):
 
-QA_RESULTS_PLACEHOLDER
+| Check | Result (MEASURED, node visibility in the scene) | Evidence |
+|---|---|---|
+| Own emotes through the action window: Hi, Smile, Greeting, Yes, Joy, No hide the sword (kind 7) and shield (kind 6), meshes 0/1 in the tree, the +8 glow 0/1; back at each clip's end (Hi 2.33 s, tick 481 -> 622; Joy 1.50 s, 1681 -> 1773; No 3.33 s, 1921 -> 2122) | PASS | run1/run7 `QA HELD` lines; `self_hi_hidden_f560.png` |
+| Own Rush (4004): sword and shield stay drawn the whole clip | PASS | run1 tick 720-960, run3 tick 360-540; `self_rush_shown_f700.png` |
+| Equip a blade from the bag onto the weapon slot during Hi (real clicks, bag then worn slot): the new body's blade comes hidden (tick 651), shown at the clip's end (702) | PASS | run3.client.log |
+| A walk click during No: the clip plays on over the run (this client, round 808) and the items stay hidden until it ends | as built (the original's move state is OPEN) | run3 tick 860 -> 1022 |
+| Own stall (action 1009, title, item, open, close with the X): hidden from the stall's creation (tick 1191) to its close (1801) | PASS | run3.client.log |
+| Another player's emotes (partybot `-emotes`): Hi hides, Rush shows (and ends the Hi), Smile hides until its 3.67 s clip ends, the + glow with the sword | PASS | run4/run7; `other_hi_hidden_stall_hidden_f150.png`, `other_rush_shown_f180.png`, `others_smile_and_stall_hidden_self_shown_f300.png` |
+| Another player's stall: hidden from the first frame it is drawn (a spawn already stalling), shown at 0x70B2's close; the + glow back the next frame (`hurry_in`; run 2 without it: 11 frames) | PASS | run4 tick 17 -> 459/460; run7 361/362; `stall_closed_weapon_back_smile_hidden_f400.png` |
 
-**Gates.** GATES_PLACEHOLDER
+Box: `/var/tmp/r850e/keep` (frames and logs); scripts `/var/tmp/r850e/qa850.sh`, `srv850.sh`.
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1095 scripts); `tests` "ran 410 suite(s), 0 failing"
+(`held_items_test.gd` new: the kinds, every op-3 case incl. Rush, Camera and the kept-hidden bit, the
+seven emotes, the nodes and their particles); `go test ./...` ok (partybot only touched).
+Perf gate (`--base 201bddc5 --head ad98c2a4 --sites jangan --frames 20000`, median of 3; the default
+frame count gave the base only 5 fps samples at ~950 fps and no number):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.90 | 0.90 | SAME |
+| entry ms | 8763 | 8707 | SAME |
+| freeze ms | 2773 | 2761 | SAME |
+| hitches | 4 | 4 | SAME |
+
+**OPEN.** The skill visual changes that keep the weapon hidden (op 0) and the skill decorations that
+hide it (op 1); the nasrun avatar groups (op 2); which body state a move is, and so whether a move ends
+an emote in the original (this client plays the emote clip on over the run, and the items come back
+with the clip); whether the original's freshly attached part starts drawn when a weapon is swapped
+during an emote (OpenSRO keeps it hidden until the emote ends); emoting while stalling (the stall's
+reason holds here; the original's emote leave would show the weapon if the server lets an emote
+through).
 
 ## Eight-hundred-and-forty-ninth round: Shift+F3's debug panel back in every build
 

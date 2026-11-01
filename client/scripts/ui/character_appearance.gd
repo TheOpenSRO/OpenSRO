@@ -160,8 +160,8 @@ const SLOT_WEAPON := 6
 const SLOT_SHIELD := 7
 ## Round 796: meta on each worn item's node naming its equip visual slot
 ## (visual_slot), so a rider's weapon and shield can be hidden
-## (World3D._set_held_items_shown, READ CharacterVisualChange::CObjItem::
-## vslot_003).
+## (HeldItems.set_shown, READ CharacterVisualChange::CObjItem::vslot_003;
+## round 850: also for the emotes and the stall).
 const VISUAL_SLOT_META := &"opensro_visual_slot"
 ## Round 850: meta on each worn item's node naming its model's attachable kind
 ## (BsrReader.Attachable.kind), the word the original hides a weapon and
