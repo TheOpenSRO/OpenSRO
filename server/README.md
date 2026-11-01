@@ -21,7 +21,7 @@ go run ./cmd/server -postgres-dsn 'postgres://postgres:postgres@localhost:5432/o
 The production shape is the compose stack in the repo root (`docker-compose.yml`,
 `deploy/`): Postgres plus the server, the server rebuilt from `origin/dev` by
 `deploy/update.sh`. The public test server and its exact override are described
-in `deploy/README.md` and `docs/HANDOFF_OPENSRO.md`.
+in `deploy/README.md`.
 
 ## `cmd/server` flags
 

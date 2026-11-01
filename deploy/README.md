@@ -1,7 +1,7 @@
 # Keeping a deployed server current
 
-A machine that runs the compose stack (`docker compose up -d --build` from the repo root, see
-`docs/HANDOFF_OPENSRO.md`) can follow `dev` on its own. `update.sh` does one round: fetch, and if
+A machine that runs the compose stack (`docker compose up -d --build` from the repo root) can
+follow `dev` on its own. `update.sh` does one round: fetch, and if
 `origin/dev` moved, fast-forward, rebuild the stack, and check that the gateway answers on 15779.
 The timer runs it every five minutes, so **pushing to `dev` is deploying**.
 

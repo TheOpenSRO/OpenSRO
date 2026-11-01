@@ -31,7 +31,6 @@ the `OPENSRO_*` variables use the new one (`docs/WORLD_ISSUES.md`, round 704).
 | `client/tools/` | Dev tools. **Read `client/tools/README.md` before waiting on any render.** |
 | `server/` | Go server. `cmd/` holds analysis tools as well as the server itself. |
 | `docs/HANDOFF.md` | **Picking up the world lane cold? Start here.** NPCs, format readers, terrain — and exactly where the last session stopped. |
-| `docs/HANDOFF_OPENSRO.md` | **Setting up a new agent on this repo?** Machine setup, the three lanes and how not to collide, and the server lane's own work. |
 | `docs/UI_TODO.md` | **The ordered list of UI work**, with the recipe for building a window from the client's own authored data. |
 | `docs/HANDOFF_UI.md` | **Picking up the UI lane cold? Start here.** The HUD, the minimap, and the file split that keeps the two lanes from colliding. |
 | `docs/TODO.md` | **The ordered list of what is left**, with the state of each parked item and the facts not to re-derive. Start here. |

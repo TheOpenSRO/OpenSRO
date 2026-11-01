@@ -1660,8 +1660,7 @@ func main() {
 				"monsterDrops", drops, "dropGroupEntries", groups)
 			if items == 0 {
 				logger.Warn("items table is EMPTY -- weapons have no stats and the shop sells nothing; " +
-					"export the client's itemdata with cmd/export-refdata and load it with cmd/import-refdata " +
-					"(see docs/HANDOFF_OPENSRO.md, 'Where the server actually is today')")
+					"export the client's itemdata with cmd/export-refdata and load it with cmd/import-refdata")
 			}
 			withStatus, err := sqlRef.CountSkillsWithStatusParams(ctx)
 			if err == nil {

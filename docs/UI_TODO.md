@@ -517,8 +517,7 @@ run as retail's dispatcher `0x793b00` runs it (`ActionCommands`); sit, walk/run,
 four window buttons work, the rest say why in the system window; buttons go on the quick slot bar.
 The list is in `docs/WORLD_ISSUES.md`, "Round 781 (part): the action window".
 `partymatch`, `academy`, `autopotion` and `alchemy` open and draw, but there is nothing
-to fill them with — no server side exists. Either build it (server lane, see
-[HANDOFF_OPENSRO.md](HANDOFF_OPENSRO.md)) or make them client-side where they legitimately are
+to fill them with — no server side exists. Either build it (server lane) or make them client-side where they legitimately are
 (Auto Potion is a client setting; System is Option/Help/Restart/Exit).
 
 ### 5. Minimap signs — *done for NPCs, monsters and other players*
