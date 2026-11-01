@@ -7483,6 +7483,21 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-forty-ninth round: Shift+F3's debug panel back in every build
+
+The user: "these are all really dev builds for now, please add shift+f3 back for now." Round 848
+had gated the debug panel on `DevTools.enabled()`, which defaulted to `OS.is_debug_build()`, so a
+release download (`--export-release`) had no panel and Shift+F3 was retail's F3, page 3.
+
+- **OURS:** `DevTools.DEFAULT_ON := true` -- the tools are on in every build unless `OPENSRO_DEV=0`
+  or the settings file's `[dev] tools=false` turns them off (`OPENSRO_DEV` set to anything else
+  still forces them on). The build type is no longer consulted. When the game ships to players,
+  flip `DEFAULT_ON` to false.
+- Shift+F1 and Shift+F2 stay retail's quick slot pages; only Shift+F3 comes back.
+- `native_gui848_test.gd` checks the new rule and that the default is on; `keymap_test.gd` still
+  checks both sides of the toggle. MEASURED: 409 suites, 0 failing (render box,
+  `/var/tmp/opensro-r849`). UI-only, no perf gate.
+
 ## Eight-hundred-and-forty-eighth round, lane W: World3D's native UI, the debug panel, the native GUI guard
 
 The user: "Can you investigate all the cases where use the native gui and not the original gui?

@@ -3279,9 +3279,9 @@ func _on_underbar_menu_action(action_name: String) -> void:
 ## The developer side of the HUD's set-up, and the first hints. Round 848
 ## removed the prototype's native UI (World3D.tscn kept only UI/Control);
 ## what is left for a developer is the Shift+F3 debug panel, which exists
-## only where DevTools.enabled() (a debug build -- a run from source, the
-## box's QA runs -- or OPENSRO_DEV=1 / [dev] tools=true): a release build
-## builds no panel and Shift+F3 is retail's F3, quick slot page 3.
+## only where DevTools.enabled() (every build by default from round 849;
+## OPENSRO_DEV=0 or [dev] tools=false turns it off): with it off there is
+## no panel and Shift+F3 is retail's F3, quick slot page 3.
 func _set_up_dev_tools() -> void:
 	if DevTools.enabled():
 		# The debug panel (dev-only, native widgets by design): build,

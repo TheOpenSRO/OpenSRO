@@ -5,8 +5,8 @@ class_name DebugPanel
 ## otherwise have to be asked for, on one screen, with a Copy button.
 ##
 ## **Developer-only (round 848).** It is built only where DevTools.enabled()
-## (a debug build, OPENSRO_DEV=1 or `[dev] tools=true`); a release build has
-## no panel and Shift+F3 is retail's F3. Its widgets are Godot's own on
+## (every build by default from round 849; OPENSRO_DEV=0 or `[dev]
+## tools=false` turns it off, and then Shift+F3 is retail's F3). Its widgets are Godot's own on
 ## purpose -- a developer's tool, not the game's interface -- and the native
 ## GUI guard (native_gui848_test.gd) allows them for that reason only. What
 ## a player needs of it is elsewhere: /copy builds the same report

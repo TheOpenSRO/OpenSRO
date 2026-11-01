@@ -307,9 +307,12 @@ func _init() -> void:
 	_check(DevTools.enabled() and KeyMap.resolve(KEY_F3, false, false, false, false, true) == ["debug_panel", 0],
 		"with developer tools on Shift+F3 is the debug panel")
 	DevTools.override = -1
-	_check(DevTools.enabled() == (OS.get_environment("OPENSRO_DEV") != "0" and (OS.get_environment("OPENSRO_DEV") != "" or OS.is_debug_build()
-		or bool(ClientSettings.get_value(DevTools.SECTION, DevTools.KEY_TOOLS, false)))),
-		"DevTools follows OPENSRO_DEV, the settings key and the build")
+	_check(DevTools.enabled() == (OS.get_environment("OPENSRO_DEV") != "0" and (OS.get_environment("OPENSRO_DEV") != ""
+		or bool(ClientSettings.get_value(DevTools.SECTION, DevTools.KEY_TOOLS, DevTools.DEFAULT_ON)))),
+		"DevTools follows OPENSRO_DEV and the settings key, defaulting to DEFAULT_ON")
+	# Round 849: every build is a developer's for now -- Shift+F3 is the panel
+	# unless something turns the tools off.
+	_check(DevTools.DEFAULT_ON, "developer tools default on (round 849, the user's call)")
 
 	if _failures == 0:
 		print("ALL PASS")

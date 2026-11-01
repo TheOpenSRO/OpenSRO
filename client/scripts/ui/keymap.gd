@@ -194,7 +194,7 @@ const OTHER_KEYS: Array = [
 	# DevTools.enabled() (round 848; Shift+F1's zone box and Log Out and
 	# Shift+F2's debug tabs went with the prototype's native UI). Retail
 	# reads no modifier on an F key, so elsewhere Shift+F1-F3 are F1-F3.
-	{"keys": "F3", "mods": "shift", "action": "debug_panel", "source": "ours (developer builds only)"},
+	{"keys": "F3", "mods": "shift", "action": "debug_panel", "source": "ours (developer tools; on by default from round 849)"},
 	# Enter (char 0x0d, 0x78b660 -> 0x7a9a70) opens the chat line -- HudChat,
 	# round 606. Escape (char 0x1b, 0x79d620) closes the top window or opens
 	# the system menu -- HudPanels, round 600. Listed, not dispatched here.
@@ -340,8 +340,9 @@ static func is_hold(action: String) -> bool:
 ## round 699 moved the developer toggles from Ctrl, which macOS keeps for
 ## itself -- Ctrl+F1/F2/F3 are its keyboard-access, menu-bar and Dock
 ## shortcuts, so under CrossOver they never reached the game; round 848 kept
-## Shift+F3 alone, and only in a developer build, so Shift+F1, Shift+F2 and a
-## release build's Shift+F3 are retail's pages), Shift+F10 hides the
+## Shift+F3 alone, where DevTools.enabled() -- every build by default from
+## round 849 -- so Shift+F1, Shift+F2 and, with the tools off, Shift+F3 are
+## retail's pages), Shift+F10 hides the
 ## interface, and a key with Meta (the Windows key) does nothing -- the OS
 ## owns those. Alt: the retail message map (0xd71100) registers WM_CHAR,
 ## WM_KEYDOWN and WM_KEYUP only, and Win32 sends a key with Alt held (and F10)

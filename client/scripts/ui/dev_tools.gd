@@ -3,17 +3,20 @@ class_name DevTools
 
 ## Round 848: whether this client shows its developer tools -- the Shift+F3
 ## debug panel, the one native-widget window left in the world (Godot's own
-## buttons, sliders and line edits, dev-only by design). A player's release
-## build has none: Shift+F3 is then retail's F3 (KeyMap.resolve; retail reads
-## no modifier on an F key), and the panel is never built.
+## buttons, sliders and line edits, dev-only by design). With them off the
+## panel is never built and Shift+F3 is retail's F3 (KeyMap.resolve; retail
+## reads no modifier on an F key).
 ##
-## On when any of these holds (OURS):
-##   - OPENSRO_DEV is set and not "0" ("0" turns them off anywhere);
-##   - the settings file has `[dev] tools=true` (ClientSettings), so a tester
-##     on a release build can turn them on without a launcher change;
-##   - this is a debug build (OS.is_debug_build: a run from source or the
-##     editor, every QA run on the render box). Releases are exported with
-##     --export-release (.github/workflows/release.yml), a release build.
+## Round 849: on by default in every build, release downloads included --
+## every build is a developer's build for now (the user's call). Off when
+## either of these holds (OURS):
+##   - OPENSRO_DEV is "0" (any other value forces them on);
+##   - the settings file has `[dev] tools=false` (ClientSettings).
+## When the game ships to players, flip DEFAULT_ON to false (a release
+## build then has none unless OPENSRO_DEV or `[dev] tools=true` asks).
+
+## The default when neither OPENSRO_DEV nor the settings key says (round 849).
+const DEFAULT_ON := true
 
 const SECTION := "dev"
 const KEY_TOOLS := "tools"
@@ -27,6 +30,4 @@ static func enabled() -> bool:
 	var env := OS.get_environment("OPENSRO_DEV")
 	if env != "":
 		return env != "0"
-	if bool(ClientSettings.get_value(SECTION, KEY_TOOLS, false)):
-		return true
-	return OS.is_debug_build()
+	return bool(ClientSettings.get_value(SECTION, KEY_TOOLS, DEFAULT_ON))
