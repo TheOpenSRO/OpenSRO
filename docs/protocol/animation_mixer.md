@@ -70,6 +70,21 @@ forbids, clears); enter `0x9c9920`, leave `0x9c8810`; the live mask `+0x65c`.
 | 13 EMOTE `0xa59bc0` | `0x32 + n` | 200 / 200 |
 | 1 DEAD `0xa59cc0` | 36 loop, then 4 one-shot from standing | 200; 0 / 200 |
 
+**A gait the body has no clip for (round 853, READ).** MOVE's enter (`0xa59680`) picks walk 1 or
+run 7 by the gait index `+0x678` and calls the play call without looking at its answer
+(`0xa596fc`). The play call (`0x9cfb40` -> `CCObjCharacter` slot 3 `0xa5faf0` ->
+`CCObjAnimation::FUN_00a5b550` `0xa5b550`) looks the type up in the body's group, then in
+`default` (the global string at `0xec6280`, set to "default" at `0xd77672`), and returns 0 having
+played nothing when both miss. There is no fallback to run or to stand in MOVE (IDLE has its own:
+the stance 6 missing, it plays 0, `0xa59398..0xa593c8`). What played before was already stopped
+(IDLE's exit stops the stand over 200; a walk-run change leaves MOVE, whose exit stops the gait
+over 200), and with nothing on the lists `AniMixer::FUN_00c54200` commits no bone, so the body
+holds its last pose and glides in it until a clip plays again (the arrival's stand, 0 ms in).
+MEASURED (`tools/census_gait_clips.gd`, every characterdata model on the box): the rabbit's type 1
+IS its run file (`p_rabbit_run.ban`), so it walks in its run clip; of the bodies that move, only
+the trade lizard (`COS_T_LIZARD`, `cos\t_lizard.bsr`) has no walk -- it holds its pose while its
+rider walks. OpenSRO: `World3D._body_gait` (monsters and COS).
+
 The constants are pushed immediates at those sites (`0xc8` = 200, `0x64` = 100, `0x190` = 400).
 
 **The battle stance** (`+0x4e0`, ms): its one setter `0x9c7570` arms **5000** from the attack

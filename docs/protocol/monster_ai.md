@@ -1366,9 +1366,10 @@ Fixtures, pinned by `client/scripts/net/combat_test.gd`:
 
 **The stop.** `dest == (x, z)` means stop at (x, z). The server sends it with the leg's own speed,
 or the species' walk speed (characterdata col 46) when the monster was not moving, and the mode
-unchanged. The client glides from where it draws the body to (x, z) at that speed -- or places it
-there at once when that is more than `RESYNC_DISTANCE` away, or when the speed is 0 -- without
-turning the body, and ends in the stand clip.
+unchanged. The client walks from where it draws the body to (x, z) at that speed times 3.0 (round
+853: the original's stop rule for every body, `OtherWalk.stop_walks`) -- or places it there at once
+when that is more than `OtherWalk.RESYNC_DISTANCE` (50) away, or when the speed is 0 -- without
+turning the body, in the stand clip.
 
 **How the client draws a leg** (`MonsterMotion`):
 
@@ -1381,12 +1382,19 @@ turning the body, and ends in the stand clip.
   body never overshoots. Both re-read on the RE box on 2026-09-24. The mover's zeroing of a
   component under 0.01f (`0xb45df8`) is not modelled.
 - A leg starts from where the body is DRAWN, not from (x, z), unless the two are more than
-  `RESYNC_DISTANCE` apart. A list refresh keeps a walking body where it is drawn on the same
-  terms (`MonsterMotion.reconcile`); before round 533 every refresh put the body at the list's
+  `OtherWalk.RESYNC_DISTANCE` (50) apart, and walks at its speed times the catch-up factor
+  (`OtherWalk.catch_up`, up to 3.0). Round 853: READ, the original's 0xB021 handler
+  (`c:NetProcessInNavAndSkill::FUN_008a5750`) is every object's -- `FUN_009e11e0`'s only test of
+  the class is the collision query's flag (own player, own COS), `FUN_009e1050`'s 50.0 and
+  `FUN_009e0550`'s factor test none -- so a monster takes another player's rules; rounds 533-852
+  used OpenSRO's own 32 and no factor. A list refresh keeps a walking body where it is drawn on the
+  same 50 (`MonsterMotion.reconcile`); before round 533 every refresh put the body at the list's
   position, which teleports a walking body back by its lag.
 - The clip is the model's own: type 1 walk (mode 0) or 7 run (mode 1) from its `default` group,
-  and its idle once it arrives (`docs/protocol/BSR_FORMAT.md`). A model with no such clip keeps
-  the loop it has.
+  and its idle once it arrives (`docs/protocol/BSR_FORMAT.md`). A model with no such clip plays
+  nothing (round 853, READ `c:0xa59680` / `c:0xa5b550`; `World3D._body_gait`): its loop stops over
+  200 ms and the body holds its pose until the stand plays on arrival. Every in-service monster
+  model without a walk or run clip has walk and run speeds of 0 (MEASURED, round 853's census).
 - The body turns to face its destination by its MEASURED front (below). The height comes from the
   region's walkable graph -- `NavGraph.landing_height_at`, the path an NPC is placed by, through
   `World3D._moving_monster_height_at` since round 557; the terrain-only ray where no loaded region
@@ -1406,8 +1414,8 @@ turning the body, and ends in the stand clip.
   picks 0 or 1, and the `0x704f` byte is `(mode == 1) + 2` (`0x54184d..0x541859`). Untraced: the
   mover's use of owner+0x155/+0x174. Unread: `GInterfaceSend::FUN_009d4a00` sends 2 when +0x25d is
   set, and what +0x25d means.
-- **OpenSRO's own numbers:** `RESYNC_DISTANCE` 32 (it must exceed Earth Ghost's 75 u/s run over a
-  0.3 s round trip, 22.5), `HEIGHT_RESOLVE_STEP` 2, `MAX_HEIGHT_RESOLVES_PER_FRAME` 32,
+- **OpenSRO's own numbers:** ~~`RESYNC_DISTANCE` 32 (it must exceed Earth Ghost's 75 u/s run over a
+  0.3 s round trip, 22.5)~~ (round 853: the READ 50 and catch-up, `OtherWalk`), `HEIGHT_RESOLVE_STEP` 2, `MAX_HEIGHT_RESOLVES_PER_FRAME` 32,
   `UNKNOWN_MOVE_PULL_SECONDS` 5, `REAIM_EPSILON` 0.5.
 - **The height along a leg** was the terrain-only ray, not the navmesh, until round 557. It is now
   the region's walkable graph's landing height (`World3D._moving_monster_height_at`: the highest

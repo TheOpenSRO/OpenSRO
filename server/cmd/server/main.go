@@ -2524,7 +2524,8 @@ func main() {
 	// before the gateway serves, so no handler ever sees it half-started.
 	if *monsterAI {
 		session.RunMonsterAI(ctx, hub, monsters, logger, session.MonsterAIConfig{
-			Trace: os.Getenv("OPENSRO_AI_TRACE") != "",
+			Trace:    os.Getenv("OPENSRO_AI_TRACE") != "",
+			PosTrace: os.Getenv("OPENSRO_AI_POS_TRACE") != "",
 			// What a monster's own swing reads and writes (-monster-battle),
 			// the potion queue its kill empties (-player-dead-state), and the
 			// party hub the aggro link reads (round 553, with the battle on).

@@ -108,6 +108,10 @@ type MonsterAIConfig struct {
 	// keep-up end (OPENSRO_AI_TRACE). Off by default: at about 350 monsters
 	// in Jangan it is several lines a second.
 	Trace bool
+	// PosTrace (round 853, QA only) logs every pass each moving monster's
+	// position after the step: "aipos <id> <x> <z> <moving>"
+	// (OPENSRO_AI_POS_TRACE). Off by default.
+	PosTrace bool
 	// What a monster's own swing reads and writes (monsterStrike's strikeDeps):
 	// the target's character row, the gear it wears and wears down, the item
 	// table that gear resolves against, and the mana pool a death refills.
@@ -346,9 +350,12 @@ type monsterAI struct {
 	sessBuf     []*gateway.Session
 	logger      *slog.Logger
 	trace       bool
-	roamRadius  float64
-	last, now   time.Time
-	tickN       uint64
+	// posTrace (round 853, QA only): every pass, each moving monster's
+	// position after the step (OPENSRO_AI_POS_TRACE).
+	posTrace   bool
+	roamRadius float64
+	last, now  time.Time
+	tickN      uint64
 	// dt is this pass's step in seconds (round 813: the reach test over the
 	// step, reachedDuringStep).
 	dt float64
@@ -633,6 +640,7 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 		parties:    cfg.Parties,
 		logger:     logger,
 		trace:      cfg.Trace,
+		posTrace:   cfg.PosTrace,
 		roamRadius: MonsterRoamRadius,
 		sleep:      cfg.Sleep,
 		awake:      map[combat.Cell]struct{}{},
@@ -804,6 +812,12 @@ func (a *monsterAI) tick(now time.Time) {
 			// Round 813: where the step started it (b.m is still the last
 			// pass's snapshot: its leg start, or where a stop left it).
 			b.stepFromX, b.stepFromZ, b.stepMoving, b.stepTick = b.m.X, b.m.Z, b.m.Moving, a.tickN
+			// Round 853 (QA): where the step put a monster that moved, each
+			// pass (OPENSRO_AI_POS_TRACE), against which a client's drawn body
+			// is measured.
+			if a.posTrace && a.logger != nil && (b.m.Moving || m.Moving) {
+				a.logger.Info(fmt.Sprintf("aipos %d %.3f %.3f %t", m.ID, m.X, m.Z, m.Moving))
+			}
 			b.m = *m
 			b.seenTick = a.tickN
 			continue

@@ -9,7 +9,7 @@ class_name QaAttackGoto
 ## at about 0.33 s of wall time, so the client runs about 20x slower than the
 ## wall-clock server (docs/protocol/monster_ai.md, "The live checks"). With the
 ## monster AI on, a drawn body is therefore stale: a walking one is drawn up to
-## MonsterMotion.RESYNC_DISTANCE from where the server has it, and a list
+## OtherWalk.RESYNC_DISTANCE from where the server has it, and a list
 ## refresh leaves it there (MonsterMotion.reconcile). A GOTO beside the drawn
 ## body can put the player out of reach of the real monster, so its first
 ## swing would be refused as too far away; live check 2 measured two targets

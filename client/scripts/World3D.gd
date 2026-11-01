@@ -8224,6 +8224,8 @@ func _tick_idle_animations(delta: float) -> void:
 	_crowd_cull.tick()
 	var pose_tick := _crowd_cull.ticks()
 	_step_other_stances()
+	if not _gait_drops.is_empty():
+		_step_gait_drops()
 	_step_body_fidgets(delta)
 	# Round 808: changes on bodies no longer posed (culled, freed) are
 	# dropped once over.
@@ -16019,11 +16021,14 @@ const SERVER_POS_FRESH_MS := 1000
 ## A reach refusal names its monster and comes right behind the server's own
 ## position of it (session/keepup.go resyncMonster, OURS): the body is put
 ## there, its leg kept, and its snapshot with it, so the walk that follows
-## aims at what the server measures. MonsterMotion.begin keeps a drawn body
-## on its own path unless it is RESYNC_DISTANCE (32) off -- more than a whole
-## melee reach -- so a body drawn a few units ahead along a long leg (MEASURED
-## on the box: a refusal at 13.8 against a reach of 16 + 2, three walks in a
-## row) never closed the gap by itself. OURS. True when it moved the body.
+## aims at what the server measures. MonsterMotion.begin kept a drawn body
+## on its own path unless it was 32 off -- more than a whole melee reach --
+## with no catch-up, so a body drawn a few units ahead along a long leg
+## (MEASURED on the box: a refusal at 13.8 against a reach of 16 + 2, three
+## walks in a row) never closed the gap by itself. Round 853: a leg now walks
+## at the catch-up factor and resyncs at 50 (OtherWalk, READ), as every body's;
+## this stays for the refusal the server sends. OURS. True when it moved the
+## body.
 func _snap_to_server_pos(monster_id: int) -> bool:
 	var told = _monster_server_pos.get(monster_id)
 	if told == null or Time.get_ticks_msec() - int(told[1]) > SERVER_POS_FRESH_MS:
@@ -16042,6 +16047,8 @@ func _snap_to_server_pos(monster_id: int) -> bool:
 	if snap != null:
 		snap.x = at.x
 		snap.z = at.y
+	if _qa_mob_track:
+		print("MOB snap %d ums=%d jump=%.3f" % [monster_id, _qa_unix_ms(), was.distance_to(at)])
 	if _combat_trace or _mob_logging():
 		print("COMBAT monster %d put where the server has it: (%.1f,%.1f), %.1f from where it was drawn" % [
 			monster_id, at.x, at.y, was.distance_to(at)])
@@ -21018,7 +21025,7 @@ func _qa_attack_nearest() -> void:
 	# are in front of the camera rather than 2,000 units away.
 	#
 	# With a server, not beside the drawn body: under qa_shot's time dilation
-	# a walking monster is drawn up to RESYNC_DISTANCE from where the server
+	# a walking monster is drawn up to OtherWalk.RESYNC_DISTANCE from where the server
 	# has it (live check 2 measured two targets 20.7 and 24.7 away), so a
 	# swing from beside the drawn body can be out of reach. So on every swing the
 	# list is asked for, and the next list result to arrive -- that request's
@@ -21073,7 +21080,7 @@ func _qa_goto_plan(fresh: Array) -> Dictionary:
 ## Stands the player beside where the server listed the monster and swings
 ## from there. The swing goes out at once (_flush_position, then
 ## _send_attack), not through _attack_monster: that would measure the reach
-## to the DRAWN body, which under the dilation can be up to RESYNC_DISTANCE
+## to the DRAWN body, which under the dilation can be up to OtherWalk.RESYNC_DISTANCE
 ## from the listed position, and walk toward it. The server measures the
 ## swing against where the monster is when it arrives: the list's position
 ## plus however far it walked in between, which only a live run shows.
@@ -25674,7 +25681,7 @@ func _other_stop_at(id: int, at: Vector3, h: float) -> void:
 	_remote_turns.erase(body.get_instance_id())
 	_other_awake[id] = true
 	var off := Vector2(at.x - body.position.x, at.z - body.position.z).length()
-	if off > OtherWalk.RESYNC_DISTANCE or off < 0.01:
+	if not OtherWalk.stop_walks(body.position, at):
 		body.position = at
 		_other_body_targets[id] = at
 		_set_other_gait(id, false)
@@ -29994,7 +30001,7 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 
 	if _monster_bodies.has(monster.monster_id):
 		# A body walking a server-driven leg keeps where it is drawn unless it
-		# has drifted past MonsterMotion.RESYNC_DISTANCE; a standing one goes
+		# has drifted past OtherWalk.RESYNC_DISTANCE; a standing one goes
 		# where the list says. Before round 533 every refresh set the list's
 		# position, which would teleport a walking body back by its lag.
 		var existing: Node3D = _monster_bodies[monster.monster_id]
@@ -30003,12 +30010,16 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		var placed := MonsterMotion.reconcile(Vector2(existing.position.x, existing.position.z),
 			Vector2(monster.x, monster.z), moving)
 		# The height is resolved where the body is placed, not at the list's
-		# x/z, which can be up to RESYNC_DISTANCE away -- and for a walking
+		# x/z, which can be up to OtherWalk.RESYNC_DISTANCE away -- and for a walking
 		# body from the navmesh (round 557), as the leg's own resolves are,
 		# so a mid-leg refresh does not drop it off a deck for the two units
 		# until the next one.
 		# A miss keeps the list's y, as before, and puts the body on the retry
 		# list (_book_monster_height); a hit takes it off.
+		if _qa_mob_track:
+			print("MOB list %d ums=%d drawn=(%.3f,%.3f) list=(%.3f,%.3f) moving=%s jump=%.3f" % [monster.monster_id, _qa_unix_ms(),
+				existing.position.x, existing.position.z, monster.x, monster.z, "1" if moving else "0",
+				placed.distance_to(Vector2(existing.position.x, existing.position.z))])
 		var at := Vector3(placed.x, monster.y, placed.y)
 		var found := _moving_monster_hit_height(at) if moving else _terrain_hit_height(at)
 		existing.position = Vector3(placed.x, _book_monster_height(monster.monster_id, found, at.y), placed.y)
@@ -31826,6 +31837,17 @@ func _on_monster_left(ids: Array) -> void:
 func _mob_logging() -> bool:
 	return OS.get_environment("OPENSRO_QA_MOB_LOG") != "" or NetClient.wire_logging
 
+## QA (round 853): OPENSRO_QA_MOB_TRACK=1 logs each monster leg as it starts
+## (where the body was drawn, the message's source and end, its speed and
+## factor, where the leg starts and how far that put the body), every frame
+## each walking body's drawn place, and every list refresh and server snap
+## that moves one -- with the wall clock in ms, against the server's own
+## "aipos" pass trace (OPENSRO_AI_POS_TRACE).
+var _qa_mob_track := OS.get_environment("OPENSRO_QA_MOB_TRACK") != ""
+
+static func _qa_unix_ms() -> int:
+	return int(Time.get_unix_time_from_system() * 1000.0)
+
 ## Whether `monster_id`'s body is walking a leg (a stop's glide does not count):
 ## the approach walk then releases only inside the stop distance
 ## (CombatNet.approach_releases).
@@ -31917,6 +31939,11 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 		if snap != null:
 			snap.x = pos.x
 			snap.z = pos.y
+	if _qa_mob_track:
+		print("MOB leg %d ums=%d drawn=(%.3f,%.3f) src=(%.3f,%.3f) dest=(%.3f,%.3f) speed=%.2f mult=%.3f start=(%.3f,%.3f) jump=%.3f stop=%s" % [
+			moved.monster_id, _qa_unix_ms(), displayed.x, displayed.y, moved.x, moved.z, moved.dest_x, moved.dest_z,
+			float(state["speed"]), float(state.get("mult", 1.0)), pos.x, pos.y, pos.distance_to(displayed),
+			"1" if bool(state["stop"]) else "0"])
 	_set_monster_gait(moved.monster_id, MonsterMotion.state_gait(state))
 	var front := MonsterMotion.front_of(String(body.get_meta("model", "")))
 	if MonsterMotion.turns_to_face(state) and front != "":
@@ -31938,7 +31965,7 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 	# (BodyWalk; READ c:0x9e0fca, every mover's step, flag 0). The server's
 	# leg already ends at the first wall (round 812), so a leg drawn from
 	# where the server had it is clear; one drawn from a body up to
-	# RESYNC_DISTANCE off may not be.
+	# OtherWalk.RESYNC_DISTANCE off may not be.
 	if bool(state["moving"]):
 		_plan_monster_leg(state, body)
 	if _mob_logging():
@@ -31967,18 +31994,110 @@ func _plan_monster_leg(state: Dictionary, body: Node3D) -> void:
 	state["dest"] = Vector2(d.x, d.z)
 
 ## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
-## run clip otherwise. A model with no such clip keeps the loop it has.
+## run clip otherwise (_body_gait: a model with no walk or run clip plays
+## nothing, round 853).
 func _set_monster_gait(monster_id: int, gait: int) -> void:
 	if OS.get_environment("OPENSRO_NO_IDLE_ANIM") != "":
 		return
 	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
 	if assembled == null:
 		return
+	_body_gait(assembled, gait)
+
+## Round 853: a body's stand, walk or run loop, the way the client's states
+## play it -- the one path for monsters and COS (_set_monster_gait, _cos_gait;
+## a mount's walk or run too, _cos_mount_gait).
+##
+## READ (sro_client.exe): the MOVE state's enter (c:0xa59680, every
+## character's) plays type 1 (walk, 200 ms in) or 7 (run, 100 ms in) by the
+## gait index +0x678 through the play call (vtable +0xbc, c:0x9cfb40 ->
+## CCObjCharacter slot 3 c:0xa5faf0 -> CCObjAnimation::FUN_00a5b550
+## c:0xa5b550): the type in the body's group, then in `default` (the string
+## at 0xec6280, "default", c:0xd77672), and when both miss it returns 0 and
+## plays nothing -- and MOVE does not look at the answer (c:0xa596fc): there is
+## no fallback, not to run, not to stand. The IDLE state has one of its own
+## (c:0xa59398..0xa593c8: the battle stance 6 missing, it plays 0) and MOVE
+## has none. Entering MOVE has already stopped what played: IDLE's exit
+## (c:0xa59660 -> 0xa592f0(1)) stops the stand over 200 ms, and a moving
+## body's walk-run change leaves MOVE first (FUN_009ca430(2/3) c:0x9ca430 ->
+## the exit c:0xa5a6b0: the gait it played stopped over 200, IDLE entered and
+## left again). A stopped loop keeps cycling while its weight falls (a lone
+## clip shows fully whatever its weight, ClipMixer) and is dropped at 0; with
+## nothing on the lists the mixer writes no bone (AniMixer::FUN_00c54200
+## c:0xc54200 commits only when a list had a clip), so the body holds the pose
+## it had then and glides in it until a clip plays again: the arrival's stand
+## (MOVE's exit -> IDLE, 0 ms in, from its first frame).
+##
+## Who it reaches (MEASURED, tools/census_gait_clips.gd over the box's
+## Data.pk2, every characterdata model): of the in-service bodies that move,
+## only the trade lizard (COS_T_LIZARD, cos\t_lizard.bsr: no type 1) -- it walks
+## when its rider walks. Every other model without a walk or run clip has
+## walk and run speeds of 0. The rabbit's walk (type 1) is its run clip
+## (p_rabbit_run.ban), so it plays that as its walk.
+func _body_gait(assembled: SkinnedBsrAssembler.AssembledCharacter, gait: int) -> void:
+	if assembled == null or not is_instance_valid(assembled.skeleton):
+		return
+	var skel := assembled.skeleton
 	var clip := MonsterMotion.gait_clip(_data_pk2, assembled, gait)
 	if clip == null:
+		# The stand with no clip (a file whose groups name none: OURS, the idle
+		# hint) keeps what it has, as before.
+		if gait != BsrReader.AnimationEntry.TYPE_STAND:
+			_gait_drop(skel)
 		return
-	_end_body_fidget(assembled.skeleton)
-	MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
+	var id := skel.get_instance_id()
+	var drop = _gait_drops.get(id)
+	_gait_drops.erase(id)
+	_end_body_fidget(skel)
+	MonsterMotion.swap_loop(_animated, skel, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
+	if drop != null and bool(drop["held"]):
+		# Nothing was playing: the clip starts at its first frame at full
+		# weight (a loop played starts over; nothing to fade from).
+		_pose_fades.erase(id)
+		for entry in _animated:
+			if entry[0] == skel and entry[4]:
+				entry[3] = -_idle_anim_time
+				entry[5] = _idle_anim_time
+				break
+
+## Round 853 (_body_gait): skeleton id -> {"skel", "at": the clip clock its
+## loop is dropped at (ClipMixer.STOP_MS after the gait it had no clip for),
+## "held": dropped, nothing playing}.
+var _gait_drops := {}
+
+func _gait_drop(skel: Skeleton3D) -> void:
+	var id := skel.get_instance_id()
+	if _gait_drops.has(id):
+		return
+	_end_body_fidget(skel)
+	_gait_drops[id] = {"skel": skel, "at": _idle_anim_time + ClipMixer.STOP_MS / 1000.0, "held": false}
+
+## The drops whose 200 ms are over: the skeleton's loop leaves the clip list
+## (a one-shot over it keeps playing and then holds its last frame, having
+## nothing to hand back to), and its bones keep the pose they have.
+func _step_gait_drops() -> void:
+	for id in _gait_drops.keys():
+		var d: Dictionary = _gait_drops[id]
+		if not is_instance_valid(d["skel"]):
+			_gait_drops.erase(id)
+			continue
+		if bool(d["held"]) or _idle_anim_time < float(d["at"]):
+			continue
+		d["held"] = true
+		var skel: Skeleton3D = d["skel"]
+		_crowd_wake(skel)
+		_pose_fades.erase(id)
+		var i := 0
+		while i < _animated.size():
+			var entry: Array = _animated[i]
+			if entry[0] == skel:
+				if entry[4]:
+					_animated.remove_at(i)
+					continue
+				entry[6] = null
+			i += 1
+		if _qa_cos_gait or _qa_mob_track:
+			print("QA GAIT drop skel %d at %.3f: no clip plays, the pose is held" % [id, _idle_anim_time])
 
 ## Ends a monster's leg where its body is drawn, in its stand clip.
 func _stop_monster_motion(monster_id: int) -> void:
@@ -32028,7 +32147,7 @@ func _step_monster_bodies(delta: float, budget: int = MonsterMotion.MAX_HEIGHT_R
 		if bool(state["moving"]):
 			if state.has("plan"):
 				_plan_monster_leg(state, body)
-			pos = MonsterMotion.step(pos, state["dest"], float(state["speed"]), delta)
+			pos = MonsterMotion.step_state(state, delta)
 			# Round 852: a leg that meets a wall walks the graph and ends there
 			# (BodyWalk, _apply_monster_leg).
 			if bool(state.get("walled", false)):
@@ -32038,6 +32157,8 @@ func _step_monster_bodies(delta: float, budget: int = MonsterMotion.MAX_HEIGHT_R
 			state["pos"] = pos
 			(body as Node3D).position.x = pos.x
 			(body as Node3D).position.z = pos.y
+			if _qa_mob_track:
+				print("MOB body %d ums=%d pos=(%.3f,%.3f)" % [monster_id, _qa_unix_ms(), pos.x, pos.y])
 			var snap = _monster_snapshots.get(monster_id)
 			if snap != null:
 				snap.x = pos.x
@@ -38515,15 +38636,10 @@ func _cos_play(uid: int, action_type: int, hold: bool = false) -> float:
 		return 0.0
 	return _play_once(assembled.skeleton, anim, hold)
 
-## A COS's loop: stand, walk or run.
+## A COS's loop: stand, walk or run (_body_gait: a walk or run its model has no
+## clip for plays nothing, round 853).
 func _cos_gait(uid: int, gait: int) -> void:
-	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
-	if assembled == null or not is_instance_valid(assembled.skeleton):
-		return
-	var clip := MonsterMotion.gait_clip(_data_pk2, assembled, gait)
-	if clip != null:
-		_end_body_fidget(assembled.skeleton)
-		MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
+	_body_gait(_cos_assembled.get(uid), gait)
 
 ## Round 796: a rider's weapon and shield are not drawn (READ,
 ## CharacterVisualChange::CObjItem::vslot_003 0x4e8830: an item in equip
@@ -39153,13 +39269,11 @@ func _rider_walk_speed(rider: int) -> float:
 	var rec: CosSpawnNet.Record = _cos_recs.get(int(_riders[rider]))
 	return rec.walk if rec != null else 0.0
 
-## A ridden mount's loop. A model with no walk clip runs (so a gait never
-## sticks on the clip it had).
+## A ridden mount's loop: its rider's walk or run (the play and stop calls go
+## to the mount too, READ c:0x9cfb40 / c:0x9cfc10). Round 853: a model with no
+## walk clip plays nothing while its rider walks and holds its pose
+## (_body_gait, READ c:0xa59680 / c:0xa5b550); before, OpenSRO ran it (OURS).
 func _cos_mount_gait(uid: int, gait: int) -> void:
-	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
-	if gait == BsrReader.AnimationEntry.TYPE_WALK and assembled != null \
-			and MonsterMotion.gait_clip(_data_pk2, assembled, gait) == null:
-		gait = BsrReader.AnimationEntry.TYPE_RUN
 	_cos_gait(uid, gait)
 
 func _rider_moving(rider: int) -> bool:
