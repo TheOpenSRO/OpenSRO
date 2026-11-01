@@ -7563,7 +7563,18 @@ box at world x 704..776, z 728..762, mapped from the server's mesh):
 - **Tests:** `cos851_test.go` (the side point and its snap with both signs, the slots and the pull, the
   pet speed, the leg rule, the 3 x 3 test, a transport stuck at a synthetic partial wall for 50 passes
   and freed when its owner comes round, the pet warp at two regions and none for a ride or a dead
-  owner); round 796's side-point test replaced. `go test ./...` all ok.
+  owner); round 796's side-point test replaced. `go test ./...` all ok; client `check` ALL LOAD (1096
+  scripts, 9 scenes), `tests` "ran 411 suite(s), 0 failing".
+- **Perf gate** (`perf_gate.sh --base f378ab7e --head e1c57f3e --sites jangan --frames 60000`, 1280x720,
+  median of 3; the client's COS speed handler and QA hooks): all SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.90 -> 0.90 | 8836 -> 8696 | 2806 -> 2752 | 5 -> 4 |
+
+- **OPEN:** the weave's look against the original running (the reads it follows from are 0x53dad0 and
+  0x549c2a); the client's pet clip rate (speed / 50, c:0x9c59c0) is not built; what 0x7022 shows the
+  clients (OURS: a 0xB023 at the owner); retail's IDLE runs every 30 ms against our 100 ms tick.
 
 ## Eight-hundred-and-fiftieth round, lane E: the weapon and shield go away for the emotes and the stall
 
