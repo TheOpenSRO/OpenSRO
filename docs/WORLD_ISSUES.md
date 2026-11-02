@@ -7622,9 +7622,16 @@ release; a run away goes on; a claim 6 past a wall is corrected and one on this 
 `nav/nav_graph_test.gd` `_buried_footprint` (NEGATIVE against base: 4 of 6 fail); its ramp walk
 starts on the ramp (`landing_height_at`), as a mover at the ground's height under a ramp is on the
 ground now. `go test ./...` ok; `remote_godot.sh check` ALL LOAD (1,108 scripts), `tests`
-TESTS_RESULT.
+"ran 417 suite(s), 0 failing".
 
-**Perf gate** PERF_TABLE
+**Perf gate** (`perf_gate.sh --base e06e1ccc --head 92cc3242 --sites jangan --frames 24000`,
+1280x720, median of 3; overlapped runs repeated by the gate): all SAME, GATE EXIT 0. The gate's view
+has no walking body; what the change costs is the settle's compare (no new work) and, on the
+server, a heading run's walk two seconds ahead at a time (about 1.7 us a unit, round 822).
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.91 -> 0.91 | 8789 -> 9064 | 2789 -> 2788 | 5 -> 5 |
 
 **OPEN:**
 - **Pain is still on the rock after the deploy**: his save's y (-73.165) is the footprint's own, so
