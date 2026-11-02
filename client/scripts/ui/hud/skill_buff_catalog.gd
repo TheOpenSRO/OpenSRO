@@ -197,6 +197,10 @@ static func parse_row(cols: PackedStringArray) -> Dictionary:
 	# A protection wall ('pw', client +0x90): its caster is rooted while it
 	# stands (round 640, OURS -- World3D._wall_root).
 	info["pw"] = codes.has("pw")
+	# Round 856: 'mom' (client ref +0x110, READ FUN_009bbca0): a decoration
+	# of this skill marks its object kind 2 (+0x448), which guards the state
+	# colour (StateLook). MEASURED: MSKILL_RM_ROC_ATTACK10 alone.
+	info["mom"] = codes.has("mom")
 	info["basic_code"] = cols[3].strip_edges() if cols.size() > 3 else ""
 	# 'tele' value[0] and value[1] (round 616-618 integration): value[1] is
 	# the ground-cast move's reach, D in the server's FUN_005862e0 (READ);

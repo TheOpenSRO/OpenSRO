@@ -2,12 +2,14 @@ extends SceneTree
 
 ## An abnormal state's colour pulse (StateLook) and the berserk look
 ## (BerserkLook) on one body share its one colour slot, BodyPulse (round 855,
-## READ: the compound's +0x48 / +0x4c -- the last start wins and either end
-## ends the colour, whoever set it). In each of the four orders the two come
-## on and go: the colour drawn is the slot's, the shared material is never
-## painted, and with both off the body draws its own material.
-## Round 785's client review, finding 8 had berserk keep the colour over a
-## state (OURS then); the original does not.
+## READ: the compound's +0x48 / +0x4c -- the last start wins and an end ends
+## the colour, whoever set it). Round 856 (READ, FUN_009cd5e0's guard): while
+## the body mode is 1 (berserk) a state bit's +0x48 and +0x4c are left out,
+## so berserk keeps its colour over a state that starts or ends inside it,
+## and berserk's end ends the colour whatever state still runs. In each of
+## the four orders the two come on and go: the colour drawn is the slot's,
+## the shared material is never painted, and with both off the body draws its
+## own material.
 ## Synthetic tables and bodies, never game data. Run headless on the render
 ## box (`client/tools/remote_godot.sh tests`).
 
@@ -49,12 +51,16 @@ func _body(shared: StandardMaterial3D) -> Array:
 	root.add_child(body)
 	return [body, mi]
 
-## A state's tinted bit on or off, as World3D walks it.
+## The body mode 0x30BF kind 4 gave the body (1 while berserk).
+var _mode := 0
+
+## A state's tinted bit on or off, as World3D walks it, with the body's guard.
 func _state(body: Node3D, on: bool) -> void:
-	var w := StateLook.walk(0 if on else BURN, BURN if on else 0, {})
+	var w := StateLook.walk(0 if on else BURN, BURN if on else 0, {}, StateLook.guard_of(_mode, 0))
 	StateLook.apply_pulse(body, w["pulse"])
 
 func _berserk(body: Node3D, on: bool) -> void:
+	_mode = 1 if on else 0
 	if on:
 		BerserkLook.start(body, true)
 	else:
@@ -105,11 +111,18 @@ func _initialize() -> void:
 	BerserkLook.set_rows(BerserkLook.parse_rows(_table()))
 	BerserkLook.effect_factory = func(_path: String): return null
 	BerserkLook.sound_player = func(_path: String, _pos) -> void: pass
-	# READ: the last start wins; either end clears the slot.
-	_order("state on, berserk on, state off, berserk off", ["S+", "B+", "S-", "B-"], ["state", "berserk", "", ""])
+	# READ: berserk's start overwrites; a state's start and end inside berserk
+	# are left out (round 856); berserk's end clears the slot.
+	_order("state on, berserk on, state off, berserk off", ["S+", "B+", "S-", "B-"], ["state", "berserk", "berserk", ""])
 	_order("state on, berserk on, berserk off, state off", ["S+", "B+", "B-", "S-"], ["state", "berserk", "", ""])
-	_order("berserk on, state on, state off, berserk off", ["B+", "S+", "S-", "B-"], ["berserk", "state", "", ""])
-	_order("berserk on, state on, berserk off, state off", ["B+", "S+", "B-", "S-"], ["berserk", "state", "", ""])
+	_order("berserk on, state on, state off, berserk off", ["B+", "S+", "S-", "B-"], ["berserk", "berserk", "berserk", ""])
+	_order("berserk on, state on, berserk off, state off", ["B+", "S+", "B-", "S-"], ["berserk", "berserk", "", ""])
+	# Before round 856 (no guard) the third order drew the state's colour over
+	# berserk's and left none for berserk's last seconds.
+	var unguarded := StateLook.walk(0, BURN, {})
+	var guarded := StateLook.walk(0, BURN, {}, StateLook.guard_of(1, 0))
+	_check(unguarded["pulse"] != null and guarded["pulse"] == null and guarded["tint"] == StateLook.TINTS[BURN],
+		"the guard leaves the colour call out, not the state's own look (tint %s)" % [guarded["tint"]])
 	# A mask change with no tinted bit leaves berserk's colour (no +0x48/+0x4c).
 	var shared := StandardMaterial3D.new()
 	shared.albedo_color = PLAIN
@@ -123,6 +136,7 @@ func _initialize() -> void:
 	# The size's way back after berserk's end does not end a state's colour
 	# set meanwhile (berserk's +0x4c is called once, at its end).
 	BerserkLook.stop(body)
+	_mode = 0
 	_state(body, false)
 	_state(body, true)
 	BerserkLook.tick(2.0)

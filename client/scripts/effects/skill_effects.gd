@@ -57,6 +57,21 @@ class_name SkillEffects
 ##   Script SCT_SHAKECAM0..3 shakes when the row plays, SCT_SHAKECAM_MOV0..3
 ##   when its mover arrives, unless the caster is another player
 ##   (shake_hook). Rows of no effect are kept for it (has_effect).
+## - A KEPT DECORATION'S COLOUR (round 856, READ): IDecoSkill::FUN_00a513a0,
+##   playing a decoration's rows, hands a row whose Script is SCT_MAT (flag
+##   0x800) to the object's compound +0x48 -- colour 1 the bytes +0x82..0x80,
+##   colour 2 +0x86..0x84 over 255, the ms +0x88 -- and keeps the row
+##   (+0x180); the decoration's destructor CIDecoSkill::FUN_00a53dd0 calls
+##   +0x4c when it kept one (skipped only for the hwan decoration while the
+##   body mode is still 1, FUN_009c7b20). No guard: the body mode and kind
+##   bytes guard the state bits' colour alone (StateLook). So a buff's or a
+##   state's ACT_L row with SCT_MAT -- 22 rows in skilleffect.txt (MEASURED):
+##   PARAM_STONE, the Roc's frenzy, the petrify attacks, two Cleric rebirth
+##   buffs, the flame master's and the event thieves' marks, besides berserk's
+##   three (BerserkLook) -- puts its colour in the body's one slot (BodyPulse,
+##   DECO_WHO) while its aura lives, and its end takes the slot off whoever
+##   set it, once the aura's end fade is over (INFERRED: the decoration is
+##   freed at its fade's end, the rows' Fade; 0 is at once).
 ## - AT_MOV_* (projectiles, round 785): the effect leaves the caster at its
 ##   StartBone + StartOffset and flies to the target's TargetBone +
 ##   TargetOffset; the hit it carries lands when it arrives (`on_arrive`).
@@ -246,7 +261,8 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 		# Round 826: a row of no effect is kept only for its camera shake
 		# (READ: every row reaches the shake test, a sound's and a none's
 		# too; rows_in leaves these out unless asked).
-		if kind != KIND_EFP and kind != KIND_BSR and script & SHAKE_FLAGS == 0:
+		# Round 856: and a row of no effect for its colour (SCT_MAT).
+		if kind != KIND_EFP and kind != KIND_BSR and script & (SHAKE_FLAGS | SCT_MAT) == 0:
 			continue
 		var dir := cols[int(col["path"])].strip_edges()
 		if dir.to_lower() == "none":
@@ -274,6 +290,7 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			"fade": parse_pair(_cell(cols, int(col["fade"]))),
 			"opt": parse_option(_cell(cols, int(col["opt"]))),
 			"obj2": _obj2(_cell(cols, int(col["obj2"]))),
+			"mat": parse_mat(_cell(cols, int(col["script"]))) if script & SCT_MAT != 0 else {},
 		}
 		if not out.has(id):
 			out[id] = []
@@ -340,6 +357,32 @@ const SCT_NAMES := {"none": 0, "SCT_ARROW": 0x1, "SCT_RUT": 0x2, "SCT_MOVER": 0x
 	"SCT_SHAKECAM0": 0x8, "SCT_SHAKECAM1": 0x10, "SCT_SHAKECAM_MOV0": 0x20, "SCT_SHAKECAM_MOV1": 0x40,
 	"SCT_SHAKECAM2": 0x80, "SCT_SHAKECAM3": 0x100, "SCT_SHAKECAM_MOV2": 0x200, "SCT_SHAKECAM_MOV3": 0x400,
 	"SCT_MAT": 0x800, "SCT_CHAR_SCALE": 0x1000, "SCT_EFFECT_SCALE": 0x2000}
+## Round 856: the colour script (READ, the table above).
+const SCT_MAT := 0x800
+## BodyPulse's name for a kept decoration's colour.
+const DECO_WHO := "deco"
+
+## `SCT_MAT,r1,g1,b1,r2,g2,b2,ms` -> {"c1", "c2": Color, "ms": int} (READ,
+## FUN_00a9d0f0 packs the bytes, FUN_00a513a0 divides them by 255), {} for
+## any other cell.
+static func parse_mat(cell: String) -> Dictionary:
+	var p := cell.strip_edges().split(",")
+	if p.size() < 8 or String(p[0]).strip_edges() != "SCT_MAT":
+		return {}
+	var b := func(i: int) -> int: return clampi(int(String(p[i]).strip_edges()), 0, 255)
+	return {"c1": Color8(b.call(1), b.call(2), b.call(3)), "c2": Color8(b.call(4), b.call(5), b.call(6)),
+		"ms": maxi(int(String(p[7]).strip_edges()), 0)}
+
+## The colour a decoration's rows put on the body: the last row with
+## SCT_MAT (FUN_00a513a0 calls +0x48 per row, so the last wins), or {}.
+static func mat_of(rows: Array) -> Dictionary:
+	var out := {}
+	for r in rows:
+		var m: Dictionary = r.get("mat", {})
+		if not m.is_empty():
+			out = m
+	return out
+
 ## Every camera shake flag, at the row's play and at its mover's arrival.
 const SHAKE_FLAGS := 0x8 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400
 
@@ -1184,6 +1227,7 @@ static func _end_kept(fxs: Array, now_ms: int = -1) -> void:
 static func process(now_ms: int = -1) -> void:
 	var now := now_ms if now_ms >= 0 else _now()
 	_step_lingers(now)
+	_step_colour_ends(now)
 	for key in _auras.keys():
 		var a: Dictionary = _auras[key]
 		var alive: Array = []
@@ -1191,13 +1235,18 @@ static func process(now_ms: int = -1) -> void:
 			if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion():
 				alive.append(fx)
 		var models := _alive_models(a)
-		if alive.is_empty() and models.is_empty():
+		var coloured := not (a.get("mat", {}) as Dictionary).is_empty()
+		if coloured and not _valid(a.get("host")):
+			# Round 856: its body is gone, and its colour slot with it.
+			_auras.erase(key)
+		elif alive.is_empty() and models.is_empty() and not coloured:
 			_auras.erase(key)
 		elif int(a["expires"]) >= 0 and now >= int(a["expires"]):
 			print("EFFECTS aura %s: no end arrived %d ms after its time -- ending it" % [key, AURA_GRACE_MS])
 			_note_end(key, alive)
 			_end_kept(alive, now)
 			_release_models(models)
+			_deco_colour_off(a, now)
 			_auras.erase(key)
 		else:
 			a["fx"] = alive
@@ -1242,9 +1291,14 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 	detach_aura(owner_key, token)
 	var started: Array = []
 	var models: Array = []
-	if not _valid(host) or not wants_effect(null, null, host):
+	if not _valid(host):
 		return started
-	for r in rows_for(skill_id, SkillAudio.ACT_L, -1):
+	# Round 856: the decoration's colour (SCT_MAT) is no effect: the Effect
+	# Quality option does not refuse it.
+	warm()
+	var mat := mat_of(rows_in(SkillAudio._skills, _rows, skill_id, SkillAudio.ACT_L, -1, true))
+	var rows: Array = rows_for(skill_id, SkillAudio.ACT_L, -1) if wants_effect(null, null, host) else []
+	for r in rows:
 		# Round 838: an aura's .bsr rows (the mall balloons, 65 AT_LOOP rows,
 		# and the archive's mall visuals, MEASURED) are models kept on the
 		# bone until the buff ends (AuraModel; round 809 drew none).
@@ -1268,21 +1322,66 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		fx.end_fade_ms = end_fade_ms_of(r)
 		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
-	if not started.is_empty() or not models.is_empty():
+	if not started.is_empty() or not models.is_empty() or not mat.is_empty():
 		var now := now_ms if now_ms >= 0 else _now()
 		_auras[_aura_key(owner_key, token)] = {"fx": started, "models": models, "host": host, "skill": skill_id,
 			"expires": now + remaining_ms + AURA_GRACE_MS if remaining_ms > 0 else -1}
-		print("EFFECTS aura on %s token %d: skill %d, %d effect(s), %d model(s)" % [owner_key, token, skill_id,
-			started.size(), models.size()])
+		_deco_colour_on(_auras[_aura_key(owner_key, token)], mat,
+			rows_in(SkillAudio._skills, _rows, skill_id, SkillAudio.ACT_L, -1, true))
+		print("EFFECTS aura on %s token %d: skill %d, %d effect(s), %d model(s)%s" % [owner_key, token, skill_id,
+			started.size(), models.size(), ", colour %s -> %s every %d ms" % [mat["c1"], mat["c2"], mat["ms"]] if not mat.is_empty() else ""])
 	return started
+
+## Round 856: a kept decoration's colour goes on its body (+0x48, READ
+## FUN_00a513a0; the header) and the aura `a` remembers it, with the ms its
+## end fades over (the rows' longest Fade: the decoration is freed then).
+static func _deco_colour_on(a: Dictionary, mat: Dictionary, rows: Array) -> void:
+	if mat.is_empty():
+		return
+	var fade := 0
+	for r in rows:
+		fade = maxi(fade, end_fade_ms_of(r))
+	a["mat"] = mat
+	a["mat_fade"] = fade
+	BodyPulse.start(a["host"], mat["c1"], mat["c2"], float(mat["ms"]), DECO_WHO)
+
+## Round 856: a kept decoration ends: its colour goes off (+0x4c, whoever
+## set it last; CIDecoSkill::FUN_00a53dd0) once its fade is over -- at once
+## for a fade of 0 or a teardown (`now_ms` < 0 with `at_once`).
+static func _deco_colour_off(a: Dictionary, now_ms: int, at_once: bool = false) -> void:
+	if (a.get("mat", {}) as Dictionary).is_empty():
+		return
+	a["mat"] = {}
+	var host = a.get("host")
+	var fade := int(a.get("mat_fade", 0))
+	if at_once or fade <= 0:
+		BodyPulse.stop(host)
+		return
+	_colour_ends.append({"host": host, "at": now_ms + fade})
+
+## Round 856: decoration colours whose end waits for their fade:
+## {host, at (the clock's ms)}.
+static var _colour_ends: Array = []
+
+static func _step_colour_ends(now: int) -> void:
+	var i := 0
+	while i < _colour_ends.size():
+		var e: Dictionary = _colour_ends[i]
+		if now >= int(e["at"]):
+			var host = e["host"]
+			if host != null and is_instance_valid(host):
+				BodyPulse.stop(host)
+			_colour_ends.remove_at(i)
+		else:
+			i += 1
 
 ## The rows of an effect id that is no skill's (a SYSTEM_ or PARAM_ decoration,
 ## StateLook) for one phase.
-static func rows_named(effect_id: String, ani_type: int) -> Array:
+static func rows_named(effect_id: String, ani_type: int, bare := false) -> Array:
 	warm()
 	var out: Array = []
 	for r in _rows.get(effect_id, []):
-		if int(r["ani"]) == ani_type and has_effect(r):
+		if int(r["ani"]) == ani_type and (bare or has_effect(r)):
 			out.append(r)
 	return out
 
@@ -1292,10 +1391,13 @@ static func rows_named(effect_id: String, ani_type: int) -> Array:
 static func play_named(effect_id: String, ani_type: int, host: Node3D, owner_key: String = "",
 		token: int = 0) -> Array:
 	var started: Array = []
-	if not _valid(host) or not wants_effect(null, null, host):
+	if not _valid(host):
 		return started
+	# Round 856: a kept decoration's colour (SCT_MAT, PARAM_STONE's), not
+	# refused by the Effect Quality option.
+	var mat := mat_of(rows_named(effect_id, ani_type, true)) if owner_key != "" else {}
 	var kept: Array = []
-	for r in rows_named(effect_id, ani_type):
+	for r in rows_named(effect_id, ani_type) if wants_effect(null, null, host) else []:
 		# Round 809: a .bsr object is a cast's (play_phase), not a state's.
 		if int(r.get("kind", KIND_EFP)) != KIND_EFP:
 			continue
@@ -1313,12 +1415,14 @@ static func play_named(effect_id: String, ani_type: int, host: Node3D, owner_key
 		started.append(fx)
 		if fx.loop:
 			kept.append(fx)
-	if owner_key != "" and not kept.is_empty():
+	if owner_key != "" and (not kept.is_empty() or not mat.is_empty()):
 		detach_aura(owner_key, token)
 		_auras[_aura_key(owner_key, token)] = {"fx": kept, "host": host, "skill": -1, "expires": -1}
-	if not started.is_empty():
-		print("EFFECTS %s %s on %s: %d effect(s)" % [effect_id, SkillAudio._phase_name(ani_type),
-			owner_key if owner_key != "" else str(host.name), started.size()])
+		_deco_colour_on(_auras[_aura_key(owner_key, token)], mat, rows_named(effect_id, ani_type, true))
+	if not started.is_empty() or not mat.is_empty():
+		print("EFFECTS %s %s on %s: %d effect(s)%s" % [effect_id, SkillAudio._phase_name(ani_type),
+			owner_key if owner_key != "" else str(host.name), started.size(),
+			", colour %s -> %s every %d ms" % [mat["c1"], mat["c2"], mat["ms"]] if not mat.is_empty() else ""])
 	return started
 
 ## Whether buff `token`'s aura is live on `host`: held, of `skill_id`, with at
@@ -1333,7 +1437,8 @@ static func has_aura_on(owner_key: String, token: int, skill_id: int, host: Node
 	for m in _alive_models(a):
 		if host.is_ancestor_of(m):
 			return true
-	return false
+	# Round 856: a decoration whose colour is all it draws.
+	return not (a.get("mat", {}) as Dictionary).is_empty()
 
 ## attach_aura, unless the same buff's aura already draws on this body
 ## (round 646): a re-sent start (a zone change's replay, a body's re-attach
@@ -1365,6 +1470,8 @@ static func detach_aura(owner_key: String, token: int) -> int:
 		var models := _alive_models(_auras[key])
 		_release_models(models)
 		n += models.size()
+		# Round 856: and its colour, once its fade is over.
+		_deco_colour_off(_auras[key], _now())
 	_auras.erase(key)
 	return n
 
@@ -1391,7 +1498,12 @@ static func clear_live() -> void:
 		_stop_all(_auras[key]["fx"])
 		for m in _alive_models(_auras[key]):
 			(m as Node).queue_free()
+		_deco_colour_off(_auras[key], _now(), true)
 	_auras.clear()
+	for e in _colour_ends:
+		if e["host"] != null and is_instance_valid(e["host"]):
+			BodyPulse.stop(e["host"])
+	_colour_ends.clear()
 	for f in _flights:
 		if is_instance_valid(f["fx"]):
 			(f["fx"] as EfpEffect).stop()
