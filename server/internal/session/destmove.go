@@ -447,6 +447,7 @@ func arrowStop(sess *gateway.Session, data []byte, hub *world.Hub) error {
 	}
 	hub.SetHeading(sess, heading)
 	r.Entity.Heading = heading
+	traceMove("move: stop request", "character", e.CharacterID, "x", r.Entity.Pos.X, "y", r.Entity.Pos.Y, "z", r.Entity.Pos.Z)
 	motions.walking(e.CharacterID, time.Now())
 	stopRelay(sess, r, true)
 	return nil

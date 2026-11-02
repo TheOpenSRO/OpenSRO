@@ -23,11 +23,19 @@ first wall, a wall-stopped player leg ends with a 0xB023, and the wander probes 
       client too: `MapLoader::FUN_0042bc00` is not read).
 - [ ] **Doors and gates**: the event objects' state (fortress gates, dungeon doors, arena pads).
 - [ ] **Dungeons on the server**: `navWalk` skips a dungeon zone (the client walks `build_dungeon`).
-- [ ] **The heading run** (sky click, arrow keys) is not walked by the server; its client still
-      reports where a wall stopped it.
+- [x] **The heading run** (sky click, arrow keys) is walked by the server (round 857,
+      `world.Hub.WalkHeadingRuns`, two seconds of run ahead at a time, OURS) and ends at the first
+      wall with a 0xB023; a client claim past a wall from the server's position is corrected.
 - [ ] **The carried cell**: the server settles its footing per leg (`SurfaceAt`) and steps a unit
       at a time (`navmesh.WalkStep`, OURS) as the client steps a frame at a time; retail carries
-      its cell pointer.
+      its cell pointer (READ round 857: the record is {mesh, cell, region, x, y, z},
+      `CRegionManagerBody::vslot_012` c:0x412660). Round 857 made the settle retail's point
+      resolve (the nearest surface to the mover's height, READ c:0x403dd0), which gives the
+      carried footing back at a wall stop; a footing lost on the way (an object the walk left
+      by a seam) is still re-derived from the height.
+- [ ] **A position saved on a buried footprint** (round 857: Pain's prod save, y -73.165 on
+      Tarim's oas_tarim_rock_l_03 in 90/143) settles on it again at the next login, as the
+      original's point resolve would for that height; a return scroll or a teleport frees it.
 - [ ] **The retail mover's own pacing** (`CGObjMoverByDest`'s 160-unit step cap) and its stop at
       the step that blocks; OpenSRO clips the leg at the wall when the order arrives.
 - [ ] **Characters do not block each other** on either side; no read says retail's do.

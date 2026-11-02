@@ -214,6 +214,7 @@ var (
 	dumpObject = -1
 	gridSpec   []float64
 	census     bool
+	newInShown int
 )
 
 func init() {
@@ -319,8 +320,13 @@ func runCensus(w *navmesh.World, dir string) {
 					k.oldIn++
 					trapped = true
 				}
-				if g.SurfaceAt(lx, lz, res.Y).Object == oi {
+				if s := g.SurfaceAt(lx, lz, res.Y); s.Object == oi {
 					k.newIn++
+					if tot := newInShown; tot < 12 {
+						newInShown++
+						fmt.Printf("  new settle inside: %d/%d object %d %s stop (%.3f, %.3f) y %.3f terrain %.3f surface %.3f\n",
+							rx, ry, oi, name, lx, lz, res.Y, g.Region.TerrainHeight(lx, lz), s.Height)
+					}
 				}
 			}
 			if trapped {

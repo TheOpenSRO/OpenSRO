@@ -526,7 +526,10 @@ func _initialize() -> void:
 	walk.cells[0].object_indices = [0]
 	var gw := NavGraph.build(walk, _placed_list(NavGraph.place(_ramp(20.0, 40.0, 30.0), 0, Vector3(100.0, 0.0, 200.0), 0.0)))
 	var pos := Vector3(115.0, 0.0, 201.0)
-	pos.y = gw.height_at(pos.x, pos.z, 0.0)
+	# Placed on the ramp (round 857: a mover at the ground's height there is on
+	# the ground -- the settle takes the surface nearest its height, READ
+	# c:0x403dd0 -- and walks on under the ramp, inside its outline).
+	pos.y = gw.landing_height_at(pos.x, pos.z)
 	var start_y := pos.y
 	# The ramp runs z 200..240, so 76 steps of 0.5 walks it from z=201 to
 	# z=239, one step short of the open head edge.
@@ -655,6 +658,7 @@ func _initialize() -> void:
 
 	_bridge_over_its_own_pier(region)
 	_correction_on_a_deck(region)
+	_buried_footprint(region)
 	_inferred_cell_guards(region)
 	_walk_on_the_ice()
 
