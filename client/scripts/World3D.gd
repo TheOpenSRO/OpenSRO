@@ -22798,6 +22798,7 @@ func _physics_process(delta: float) -> void:
 		FrameSplit.add("pt_texani", Time.get_ticks_usec() - ta_t)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
+	_qa_tint_probe()
 	if FrameSplit.on and fs_t > 0:
 		var t1 := Time.get_ticks_usec()
 		FrameSplit.add("p_ticks", t1 - fs_t)
@@ -35692,6 +35693,48 @@ func _qa_berserk_probe() -> void:
 		print("QA BERSERK PROBE %s screen %d,%d of %dx%d %s tint %s scale %.3f" % [who, int(at.x), int(at.y),
 			int(vp.x), int(vp.y), "on" if on else "off", "none" if tint == null else "%d,%d,%d" % [
 			int(round(tint.r * 255)), int(round(tint.g * 255)), int(round(tint.b * 255))], BerserkLook.scale_of(body)])
+
+## QA (round 855): OPENSRO_QA_TINT_PROBE=1 measures, every frame, the colour
+## each body is drawn with on its own meshes (TintProbe: the object_tint its
+## materials carry), against whether a pulse should be on it (a state's or
+## berserk's), and how many shared per-level materials carry a pulse colour.
+## A line on every change and every 30th frame:
+## `QA TINT f<frame> <who> lit <0|1> meshes <n> tinted <k> colour <r,g,b> shared <s>`.
+## The bodies: this player, every other player, every COS, and every monster
+## an abnormal state was ever heard for.
+var _qa_tint_probe_on := OS.get_environment("OPENSRO_QA_TINT_PROBE") != ""
+var _qa_tint_last := {}
+var _qa_tint_monsters := {}
+var _qa_tint_frame := 0
+
+func _qa_tint_probe() -> void:
+	if not _qa_tint_probe_on:
+		return
+	_qa_tint_frame += 1
+	var shared := TintProbe.shared_tinted()
+	var bodies := {"self": player}
+	for id in _other_bodies:
+		bodies["char:%d" % int(id)] = _other_bodies[id]
+	for id in _cos_bodies:
+		bodies["cos:%d" % int(id)] = _cos_bodies[id]
+	for key in _abnormal_states:
+		if String(key).begins_with("monster:"):
+			_qa_tint_monsters[String(key)] = true
+	for mk in _qa_tint_monsters:
+		bodies[mk] = _state_body_of(String(mk))
+	for who in bodies:
+		var body = bodies[who]
+		if body == null or not is_instance_valid(body):
+			continue
+		var m := TintProbe.measure(body)
+		var lit := StateLook.tinted(body) or BerserkLook.active(body)
+		var sig := "%d/%d/%d/%d" % [int(lit), int(m["meshes"]), int(m["tinted"]), shared]
+		if _qa_tint_last.get(who, "") == sig and _qa_tint_frame % 30 != 0:
+			continue
+		_qa_tint_last[who] = sig
+		var c = m["colour"]
+		print("QA TINT f%d %s lit %d meshes %d tinted %d colour %s shared %d" % [Engine.get_frames_drawn(), who, int(lit),
+			int(m["meshes"]), int(m["tinted"]), "-" if c == null else "%d,%d,%d" % [int(round(c.r * 255)), int(round(c.g * 255)), int(round(c.b * 255))], shared])
 
 var _berserk_flash_t := -1.0
 var _berserk_flash: ColorRect = null
