@@ -630,15 +630,29 @@ func heights_at(x: float, z: float) -> PackedFloat32Array:
 	return out
 
 ## The real surface underfoot at a region-local point, choosing between them
-## the way a character standing at `reference_y` would: the highest surface
-## that is not more than SURFACE_REACH_UP above them, so a real bridge passing
-## overhead is not mistaken for the ground. Falls back to the lowest surface
-## when every candidate is out of reach above.
+## the way a character standing at `reference_y` would: in the field the
+## surface nearest that height (round 857, below), never one more than
+## SURFACE_REACH_UP above it, so a real bridge passing overhead is not
+## mistaken for the ground.
 ##
 ## This is a point query for settling what a *placed* character stands on
 ## (after a teleport, a landing or a region change); a walking character's
 ## footing is tracked by `step_tracked` instead, which is what the real
 ## client does and what keeps a wall a wall.
+##
+## Round 857, the field (READ c:0x403dd0, CRTNavMeshTerrain::vslot_003, the
+## point resolve CRegionManagerBody slot 11 runs for a placement): the terrain
+## first, then an object cell under the point only when its height is
+## STRICTLY nearer `reference_y` than the best so far (the fabs compare at
+## c:0x403e8c..0x403eaf). A mover at the ground's height over a footprint
+## buried under it (Tarim's rocks: cells 9 under the ground, every outline
+## edge 0x03) stays on the ground; one at a deck's height is on the deck.
+## Before, the first object cell found replaced the terrain however far below
+## it lay, and a wall stop 0.01 outside such a footprint (inside a long cell's
+## 0.0001 barycentric tolerance) settled the mover on it after a correction:
+## every way out blocked (0x02). OURS kept: a surface more than
+## SURFACE_REACH_UP above `reference_y` is not stood on. A dungeon keeps the
+## highest room surface in reach (its own resolve is not read).
 func surface_at(x: float, z: float, reference_y: float) -> Surface:
 	var best := Surface.new()
 	# A dungeon has no terrain: off every room the height stays the mover's.
@@ -646,6 +660,7 @@ func surface_at(x: float, z: float, reference_y: float) -> Surface:
 	best.is_terrain = true
 	best.object_index = ON_TERRAIN
 	var found := false
+	var gap := absf(best.height - reference_y)
 	for oi in objects_at(x, z):
 		var placed: PlacedObject = objects[oi]
 		if x < placed.bounds_min.x or x > placed.bounds_max.x:
@@ -663,11 +678,16 @@ func surface_at(x: float, z: float, reference_y: float) -> Surface:
 				continue
 			if h > reference_y + SURFACE_REACH_UP:
 				continue
-			if not found or h > best.height:
-				found = true
-				best.height = h
-				best.is_terrain = false
-				best.object_index = oi
+			if dungeon:
+				if found and h <= best.height:
+					continue
+			elif absf(h - reference_y) >= gap:
+				continue
+			found = true
+			gap = absf(h - reference_y)
+			best.height = h
+			best.is_terrain = false
+			best.object_index = oi
 	if not found and not dungeon and best.height > reference_y + SURFACE_REACH_UP:
 		# Terrain itself is out of reach above; nothing sensible to stand on.
 		best.height = minf(best.height, reference_y)
@@ -1436,9 +1456,14 @@ static func _onward(rest: Vector2, dir: Vector2) -> Vector2:
 
 ## An object other than `except` with a walkable cell at (x, z) within
 ## SURFACE_REACH_UP of `y`, or ON_TERRAIN. The seam hand-off of `step_tracked`.
+##
+## Round 857: in the field an object is handed the mover only when its surface
+## is strictly nearer `y` than the terrain's (the point resolve's rule, READ
+## c:0x403dd0, `surface_at`): stepping off a floor at the ground's height
+## beside a footprint buried under it is stepping onto the ground.
 func _seam_object_at(x: float, z: float, y: float, except: int) -> int:
 	var best := ON_TERRAIN
-	var best_gap := INF
+	var best_gap := INF if dungeon else absf(NvmCollision.terrain_height(region, x, z) - y)
 	for oi in objects_at(x, z):
 		if oi == except:
 			continue

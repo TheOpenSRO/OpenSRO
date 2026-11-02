@@ -262,6 +262,40 @@ func _inferred_cell_guards(region: NvmReader.ParsedRegion) -> void:
 		_check(graze.entered == 0 and graze.blocked and graze.position.x > 99.9,
 			"a step whose entry lands a hair outside every cell is still walked, and stopped at the corner (slide %s: x %.3f, z %.4f, entered %d, blocked %s)" % [slide, graze.position.x, graze.position.z, graze.entered, graze.blocked])
 
+## Round 857: a footprint buried under the ground (Tarim's
+## oas_tarim_rock_l_03, MEASURED with server/cmd/navstuck: flat cells 9 under
+## the terrain round it, every outline edge 0x03). A walk into it stops 0.01
+## short, inside a long cell's 0.0001 barycentric tolerance; the settle there
+## (a correction, a teleport, another body's next leg) must keep the mover on
+## the ground, as the original's point resolve does (READ c:0x403dd0: an
+## object's cell only when strictly nearer the mover's height), and the walk
+## back out must be open. NEGATIVE: the old settle (the first object cell
+## found beat the terrain) put it on the rock, every way out blocked.
+func _buried_footprint(region: NvmReader.ParsedRegion) -> void:
+	var rock := _quad([
+		Vector3(0.0, 0.0, -170.0), Vector3(170.0, 0.0, 0.0),
+		Vector3(0.0, 0.0, 170.0), Vector3(-170.0, 0.0, 0.0),
+	], [3, 3, 3, 3])
+	var g := NavGraph.build(region, _placed_list(NavGraph.place(rock, 0, Vector3(960.0, -9.0, 960.0), 0.0)))
+	# From the west, along z 950: the edge between (790, 960) and (960, 790).
+	var into := g.step_tracked(Vector3(700.0, 0.0, 950.0), Vector2(200.0, 0.0), NavGraph.ON_TERRAIN, false)
+	_check(into.blocked and into.standing_on == NavGraph.ON_TERRAIN and absf(into.position.y) < 0.001,
+		"a walk into a buried footprint stops on the ground (x %.3f, y %.2f, on %d)" % [into.position.x, into.position.y, into.standing_on])
+	var settled := g.surface_at(into.position.x, into.position.z, into.position.y)
+	_check(settled.is_terrain and absf(settled.height) < 0.001,
+		"the stop settles on the ground, not the footprint 9 under it (y %.2f, on %d)" % [settled.height, settled.object_index])
+	var back := g.step_tracked(into.position, Vector2(-30.0, 0.0), settled.object_index, false)
+	_check(not back.blocked and absf(back.position.x - (into.position.x - 30.0)) < 0.001,
+		"from the stop the walk back out is open (x %.3f)" % back.position.x)
+	var again := g.step_tracked(into.position, Vector2(30.0, 0.0), settled.object_index, false)
+	_check(again.blocked and again.position.x <= into.position.x + 0.001,
+		"and the walk in again is blocked (x %.3f)" % again.position.x)
+	var at_rock := g.surface_at(960.0, 960.0, -9.0)
+	_check(at_rock.object_index == 0 and absf(at_rock.height + 9.0) < 0.001,
+		"a mover named at the footprint's own height is on it (on %d)" % at_rock.object_index)
+	var tie := g.surface_at(960.0, 960.0, -4.5)
+	_check(tie.is_terrain, "half way between the two the ground wins (on %d)" % tie.object_index)
+
 func _placed_list(placed: NavGraph.PlacedObject) -> Array[NavGraph.PlacedObject]:
 	var out: Array[NavGraph.PlacedObject] = [placed]
 	return out

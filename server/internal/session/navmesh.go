@@ -35,9 +35,27 @@ func SetNavmesh(w *navmesh.World) {
 	navWorld.Store(w)
 	if w == nil {
 		world.SetGroundFunc(nil)
+		world.SetWallFunc(nil)
 		return
 	}
 	world.SetGroundFunc(navGround)
+	world.SetWallFunc(navRunWall)
+}
+
+// navRunWall is world.WallFunc on the navigation mesh (round 857): a heading
+// run walked `length` on from `from` with no slide, as every mover's step is
+// (READ: CGObjMoverByCmd steps through slot 305 to the collision query,
+// s:0x485740 -> CRegionManagerBody::vslot_012 s:0x98b300, and a blocking
+// edge ends the movement). Before round 857 the server never walked a heading
+// run (round 812's list): an arrow-key or sky-click run went through every
+// wall, and its stop (0x7023's 0xB023) put the mover where the line had it --
+// inside or beyond a building.
+func navRunWall(zone string, from world.Position, dirX, dirZ, length float64) (world.Position, bool, bool) {
+	r, ok := navWalk(zone, from.X, from.Y, from.Z, from.X+dirX*length, from.Z+dirZ*length)
+	if !ok || math.IsNaN(r.Y) {
+		return world.Position{}, false, false
+	}
+	return world.Position{X: r.X, Y: r.Y, Z: r.Z}, r.Blocked, true
 }
 
 // groundWalkLimit is the longest stretch navGround walks (OURS): about 17 ms
@@ -95,6 +113,37 @@ func navWalk(zone string, x, y, z, tx, tz float64) (navmesh.WalkResult, bool) {
 		return navmesh.WalkResult{}, false
 	}
 	return w.Walk(ox, oy, x, y, z, tx, tz), true
+}
+
+// claimReachSlack is how far short of a client's claimed point the server's
+// own walk may stop and still reach it (OURS, round 857): a wall stop's
+// ContactPush and terrain nudge (0.2, READ) and the wire's float rounding.
+const claimReachSlack = 0.5
+
+// claimWalkLimit is the longest claim walked (OURS): past a second of the
+// fastest run (/speed 10 is 1,075 a second) a claim is not one the
+// allowance can take anyway.
+const claimWalkLimit = 1200.0
+
+// claimUnreached is whether a client's claim that e stands at pos lies past a
+// wall from where the server has e (round 857): the server walks there on its
+// own mesh, from e's walked height (world.LegGround) or its stored one, and a
+// wall that stops the walk more than claimReachSlack short refuses the claim
+// (world.Bound.Unreached; the caller corrects the client). Without a mesh, or
+// with nothing to walk, false.
+func claimUnreached(e world.Entity, pos world.Position) bool {
+	if math.Hypot(pos.X-e.Pos.X, pos.Z-e.Pos.Z) > claimWalkLimit {
+		return false // the claim's allowance refuses it, or a named point takes it
+	}
+	y := e.Pos.Y
+	if wy, ok := world.LegGround(e); ok {
+		y = wy
+	}
+	r, ok := navWalk(e.Zone, e.Pos.X, y, e.Pos.Z, pos.X, pos.Z)
+	if !ok || !r.Checked || !r.Blocked {
+		return false
+	}
+	return math.Hypot(r.X-pos.X, r.Z-pos.Z) > claimReachSlack
 }
 
 // navBlocked is the wander's probe (READ, ai.PickWanderLeg's note: the
