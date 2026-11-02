@@ -7483,6 +7483,140 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-fifth round: a status colour that lingered -- the pulse painted a shared material
+
+The user: "Can you also fix the bug where the status effect color lingers when it shouldn't".
+Labels: READ (`c:` sro_client.exe), MEASURED, INFERRED, OURS, OPEN. The reading is
+`docs/protocol/status_effects.md`, "A state's colour: one slot on the body, never in a material", and
+`docs/protocol/berserk_look.md` (the end).
+
+**What lingered (MEASURED).** Not the state, the message or the aura (round 847 measured those on
+time, and they still are): the colour pulse's last colour, left in a material that is not the
+body's own. `StateLook` (round 785) gave each mesh a copy of its material and painted whatever the
+mesh drew every frame. `CharacterLight` rescans a body every 8th visit and swaps each object material
+for ObjectLight's shared per-level copy -- it skipped berserk's copies, not a state's. On a terrain
+tile (any level but the object floor's 0.6) the copy was swapped out within frames, StateLook painted
+the shared level copy, and at the state's end it "restored"... that same painted shared material.
+The body kept the colour, and so did every body at that level wearing the same pieces -- in the
+observer's client its own, never-poisoned body pulsed green with the poisoned player's. It went only
+when the body stepped onto another level or the material was freed. Round 847's runs stood on the
+Jangan plaza deck (an object, 0.6), where nothing is swapped, which is why they saw the colour end on
+time.
+
+- Headless (`r855_probe`, base `6b1b1223`): a poison on a level-153 body, one CharacterLight rescan,
+  the end: the shared level copy's `object_tint` stayed `(0.166, 0.260, 0.108, 1)`; a second body at
+  that level drew it.
+- Live, real client, base + the probe (`99c9b5a9`): see the table.
+
+**What the original does (READ).** The colour is a flag on the character's compound object, never
+in a material: `+0x48` (`CObjRendererVS::FUN_00c25800`) sets `+0x1ec`, the two colours, the ms and
+the elapsed 0; `CCompChar::FUN_00c33430` steps it (`FUN_00c26ff0`); every part drawn reads its
+compound's flag (`CObjRendererVS::vslot_038`, `c:0xbf5830`) and draws the pulse colour in place of the
+material's and the object's (`FUN_00c27180`); `+0x4c` (`FUN_00c258b0`) clears the flag and nothing
+else. One slot: a second start overwrites it. Its callers: the mask setter `FUN_009cd5e0` (a tinted
+bit on: +0x48; off: +0x4c -- `c:0x9cdb5d`, guarded only by the riding byte `+0x2c2` and the kind byte
+`+0x448`, not by another bit still on) and berserk's decoration end `CIDecoSkill::FUN_00a53dd0` (flag
+0x800, SCT_MAT), both on `[obj+0x9c]+4`. So a part rebuilt mid-pulse draws it, the end restores
+nothing, the last start wins, and any end ends the colour whoever set it.
+
+**The fix (`BodyPulse`, OURS method for the READ rule; `0633a130`).** One colour slot per body,
+`client/scripts/effects/body_pulse.gd`, which both `StateLook` and `BerserkLook` use:
+- it paints only copies it made; each frame a mesh drawing its copy is painted, one whose material
+  something else replaced (an equipment glow, a fade's end) has that material taken as its own and a
+  fresh copy made (never painted itself), one on a fade twin keeps it (a cohort's shared twin is never
+  painted; a twin of the copy -- a despawn mid-pulse -- is the mesh's own and pulses, and is unpainted
+  at the end);
+- `CharacterLight` leaves a pulsed mesh alone (the pulse stands in for the object colour, READ), and
+  the end puts each mesh back on its own material at the body's level then;
+- `StateLook.walk` reports the walk's last tinted event (`pulse`: start, end or nothing), as
+  `FUN_009cd5e0` calls +0x48 / +0x4c; berserk starts it and its end ends it once (not again when its
+  size is back);
+- a body with a colour on is not drawn by the far crowd (`_crowd_eligible`: "pulse"), whose instances
+  would keep the copy.
+
+**Two behaviour changes to the original's rule (READ; a player may notice).**
+1. Two tinted states, one ends: the colour ends while the other runs (it was already so here; now
+   stated and tested). The original does the same.
+2. Berserk and a state: before, berserk kept its colour over a state's (round 785's review, finding 8,
+   OURS). Now the last start wins and either end ends the colour: a berserk player who is poisoned
+   pulses green, and when either ends no colour is drawn while the other runs.
+
+**QA (render box, lane server 17270 with prod's flags, in memory; real input through
+`OPENSRO_QA_INPUT`; scripts `/var/tmp/r855/{srv855,qa855,run855}.sh`).** The actor QaB855 on a terrain
+tile of 97/168 (levels MEASURED with `OPENSRO_QA_CHARLIGHT`: local 1002,760 is shadow byte 153 ->
+0.398, local 1360,660 byte 255 -> 0.664; the plaza deck at the spawn is an object, 0.6), the watcher
+Watch855 beside it. Schedule: a poison left to expire; a burn and a poison, the poison expiring
+first, then the universal pill right-clicked in the bag for the burn; a poison while walking (two
+ground clicks); a poison while right-clicking the sword in the bag (it did not equip: OPEN below); a
+poison across a `/tp` to the other tile's level; a poison and a bleeding death. `OPENSRO_QA_TINT_PROBE=1` (`99c9b5a9`) logs,
+per frame on change and every 30th, each body's meshes and how many draw a pulse colour (TintProbe:
+their material's `object_tint`), whether BodyPulse holds a colour on it, and how many shared level
+copies carry one. Own view rendered (the afflicted player) with the observer headless, then the
+observer rendered with the afflicted player headless.
+
+Two spots: run 1 at local 1002,760 (0.398; the camera behind a wall there, so its frames show
+nothing) and run 2 at local 1360,660 (0.664), every path in each. `QA TINT` summaries
+(`/var/tmp/r855/sum.py`; logs in `/var/tmp/r855/{b1,a1,b3,a3}_own`):
+
+| | owner, base | owner, head | observer, base | observer, head |
+|---|---|---|---|---|
+| poison expires | 14 of 15 meshes still green (56,81,38) at the next sample, and at every sample until the next state | 0 the same frame | 14 still green | 0 |
+| poison ends beside a burn | 14 stuck on the poison's frozen green while the burn runs | 0 (READ: the end ends the colour) | 14 stuck | 0 |
+| the burn cured by the universal pill (bag, right-click) | 14 | 0 | 14 | 0 |
+| poison during a walk (two ground clicks) | 14 | 0 | 14 | 0 |
+| poison across a `/tp` to another level | 14 (59,85,41) | 0 | 14 | 0 |
+| poison and a bleeding death | 14 | 0 | 14 | 0 |
+| samples drawing a colour with no colour on (run 1 / run 2) | self 60 / 58 | 0 / 0 | **the observer's own, never-afflicted body 1,100 of 1,209 / 1,065 of 1,181**; the afflicted 520 / 489 | 0 / 0 |
+| shared level copies carrying a colour, most at once | 14 | 0 | 28 | 0 |
+
+While a state runs, head draws it as base did (14 of 15 meshes, the poison's 29,51,16 -> 63,90,45
+triangle; the 15th mesh has no object material). The colour ends the frame the 0x3057 is handled
+(the probe's next sample, e.g. mask at frame 516, `tinted 0` at 517). Frames for a human:
+`/var/tmp/r855/keep/own3_before_after.png` (run 2, the afflicted player rendered: base green at
+f700 / f1050 / f1300 / f1800 / f2300 after each end, head plain), `obs_before_after.png` (the
+observer rendered, the afflicted player headless: in base the observer's own body -- never
+afflicted -- turns green once the poisoned player is beside it and stays green to the run's end,
+121 of its 130 samples, f183 to f3781; head 0). Evidence: `/var/tmp/r855/keep` (logs, scripts,
+sheets).
+
+**Tests.** `client/scripts/effects/body_pulse855_test.gd` (pure: the level copy and CharacterLight's
+rescan -- NEGATIVE on `6b1b1223` as the probe shows; a level change mid-pulse; a material replaced
+mid-pulse; pieces put on, taken off, freed; a rebuilt skeleton; a fade-in begun before the colour with
+a shared twin, and an end before the fade's; a despawn's fade-out mid-pulse; a freed body; the walk's
+events), `client/scripts/world/state_colour855_test.gd` (World3D's `_on_object_status` on the owner and
+an observer on level copies with CharacterLight rescanning every frame: a poison's expiry, a poison
+ending beside a burn, a death, a zone change -- no colour on the body, on a body beside it, or on a
+shared material), `state_berserk_test.gd` rewritten to the one-slot rule, `berserk_look_test.gd`,
+`object_light_test.gd` (CharacterLight.PULSE_META is BodyPulse.ORIGINAL_META).
+
+**Gates.** Client-only (the server is not the cause: it ended every state on time, round 847, and
+nothing server-side changed). `remote_godot.sh check`: ALL LOAD (1107 scripts); `remote_godot.sh
+tests`: "ran 416 suite(s), 0 failing". The perf gate (`perf_gate.sh --base 6b1b1223 --head 2d8c94b1
+--sites jangan --frames 24000`; BodyPulse's tick is a dictionary walk with no colour on, and the probe
+returns at once unless `OPENSRO_QA_TINT_PROBE` is set). A first attempt without `--frames` returned
+"missing numbers" (4 FPS samples, the run too short); rerun with 24000 as round 847 did:
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.90 | 0.90 | SAME |
+| entry ms | 8891 | 8822 | SAME |
+| freeze ms | 2782 | 2757 | SAME |
+| hitches | 5 | 4 | SAME |
+
+**OPEN.**
+- The riding byte (`+0x2c2 == 1`) and the kind byte (`+0x448 == 2`) guard both +0x48 and +0x4c in
+  `FUN_009cd5e0`; OpenSRO has never applied them (a state on a rider pulses here). In the original a
+  state that started before mounting and ended while mounted would keep its colour -- not built, as the
+  user asked for the colour not to linger; the user's call.
+- Whether a model switch or a job suit makes a new compound object in the original (dropping the
+  colour) is not read; here the slot stays on the body node and its rebuilt pieces take it.
+- The live equip step did not equip: a right-click on the sword in the bag answered "that item cannot
+  be used" and left the equipment as it was (MEASURED), so a piece put on mid-pulse is covered by the
+  pure tests only (`body_pulse855_test.gd`: pieces added, removed, a rebuilt skeleton).
+- A monster's state goes the same way (StateLook on its body, CharacterLight on its level copies --
+  shared by the whole species at a level, so before the fix one poisoned monster on terrain coloured
+  every monster of its kind there); not driven live (`/afflict` lands on the GM only).
+
 ## Eight-hundred-and-fifty-fourth round, lane U: UI Scale is a dropdown in Option > Video, in Windows' steps
 
 The user: "Let's make UI scale a dropdown in the graphics settings. Let's use the same percentages
