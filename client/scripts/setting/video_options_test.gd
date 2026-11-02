@@ -419,7 +419,7 @@ func _ui_scale_row(page: OptionVideoPage) -> void:
 	var saved_before := UiScaleChoices.saved_percent()
 	combo.item_selected.emit(2)
 	await _frames()
-	_check(page.ui_scale_choice == 150 and page.slot_combo(n).selected == 2, "choosing 150%% is the row's value")
+	_check(page.ui_scale_choice == 150 and page.slot_combo(n).selected == 2, "choosing 150% is the row's value")
 	_check(UiScaleChoices.saved_percent() == saved_before, "nothing is saved before Apply")
 	_check(is_equal_approx(root.content_scale_factor, 1.0), "and nothing is in force before Apply")
 	# A Resolution picked smaller re-filters the row against it.
@@ -592,8 +592,8 @@ func _page() -> void:
 	# (OptionWindow._on_view_resized): 2400 x 1400 fits up to 225 %.
 	# (Still scrolled to the last line, as _ui_scale_row left it.)
 	var ui_combo := page.combo_of(VideoOptions.UI_SCALE)
-	_check(ui_combo != null and ui_combo.item_count == 7 and ui_combo.get_item_text(6) == "225%",
-		"resized to 2400 x 1400 with the window open: the UI Scale row offers 100%%..225%% (got %d)" % (ui_combo.item_count if ui_combo != null else -1))
+	_check(ui_combo != null and ui_combo.item_count == 6 and ui_combo.get_item_text(5) == "225%",
+		"resized to 2400 x 1400 with the window open: the UI Scale row offers 100%%..225%% (got %d, target %s, offered now %s)" % [ui_combo.item_count if ui_combo != null else -1, str(page.ui_scale_target()), str(page.ui_scale_offered())])
 	root.content_scale_factor = 1.0
 	root.size = Vector2i(1152, 648)
 	await _frames()
