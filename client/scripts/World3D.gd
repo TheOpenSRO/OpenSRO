@@ -26779,19 +26779,21 @@ func _console_host() -> Dictionary:
 		# Round 848: the prototype duel's commands (its native tab is gone),
 		# and the two settings only the debug panel used to set (OURS).
 		"duel": func(verb: String, arg: String) -> void: duel_command(verb, arg),
-		"set_ui_scale": func(v: float) -> float: return _console_set_ui_scale(v),
+		"set_ui_scale": func(p: int) -> String: return _console_set_ui_scale(p),
 		"set_name_range": func(v: float) -> float: return _console_set_name_range(v),
 		"forward_gm": func(line: String) -> void: NetClient.gm_command(NetClient.current_character_name, line, _last_attack_target if _last_attack_target > 0 else 0),
 	}
 
-## /uiscale (round 848, OURS): the UI scale the debug panel's slider set,
-## remembered and applied now. Returns the scale applied.
-func _console_set_ui_scale(v: float) -> float:
-	var scale := clampf(v, 0.5, 3.0)
-	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_UI_SCALE, scale)
-	if is_inside_tree():
-		ClientSettings.apply_ui_scale(get_window(), scale)
-	return scale
+## /uiscale (round 848, OURS): the UI scale, remembered and applied now.
+## Round 854: a percentage of the Option window's list (Console snaps it),
+## applied as the window's Apply does -- the largest that fits when this
+## window is too small for it (UiScaleChoices). Returns the line to show.
+func _console_set_ui_scale(percent: int) -> String:
+	UiScaleChoices.save_percent(percent)
+	if not is_inside_tree():
+		return ""
+	var used := UiScaleChoices.apply_saved(get_window())
+	return UiScaleChoices.describe(UiScaleChoices.saved_percent(), used, get_window().size)
 
 ## /names (round 848, OURS): how near a name plate shows, as the debug
 ## panel's slider set it, remembered. Returns the range applied.

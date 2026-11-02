@@ -65,13 +65,16 @@ const VIEWS := ["free", "third_person", "quarter"]
 
 ## The rows the list shows, in order: retail's 0..13 and 15 (READ), then SSAO,
 ## the temporary fog toggle (round 702), Night Darkness and Shadows Follow the
-## Sun (round 786), Job Titles on Names (round 805) and the renderer (OURS).
+## Sun (round 786), Job Titles on Names (round 805), the renderer and UI
+## Scale (round 854, UiScaleChoices; it fills the list's last half line)
+## (OURS).
 const LIST := [VideoOptions.QUALITY, VideoOptions.SHADOW, VideoOptions.SCENERY,
 	VideoOptions.CHARACTER, VideoOptions.WATER_REFLECTION, VideoOptions.WATER_DETAIL,
 	VideoOptions.METAL, VideoOptions.LIGHT, VideoOptions.FILTERING, VideoOptions.TEXTURE,
 	VideoOptions.LENS_FLARE, VideoOptions.BLOOM, VideoOptions.DYNAMIC_ANIMATION,
 	VideoOptions.EFFECT, VideoOptions.FRIEND_ENEMY, VideoOptions.SSAO, VideoOptions.FOG,
-	VideoOptions.NIGHT, VideoOptions.SUN_SHADOWS, VideoOptions.JOB_TITLES, VideoOptions.RENDERER]
+	VideoOptions.NIGHT, VideoOptions.SUN_SHADOWS, VideoOptions.JOB_TITLES, VideoOptions.RENDERER,
+	VideoOptions.UI_SCALE]
 const COLUMNS := 2
 
 const ARROW_DDJ := "interface\\ifcommon\\com_qst_downarrow_button.ddj"
@@ -102,6 +105,10 @@ var _scroll_track: Control
 var _scroll_thumb: Control
 ## The renderer recorded for the next start, as the window shows it.
 var renderer_choice := ""
+## Round 854: the UI Scale row's choice being edited, a percentage of
+## UiScaleChoices.PERCENTS (the saved one until a choice is made); saved and
+## put in force by Apply / Confirm, as the tab's other rows.
+var ui_scale_choice := UiScaleChoices.DEFAULT_PERCENT
 
 signal changed
 
@@ -120,9 +127,16 @@ func build(options: VideoOptions, view: String, screen: Vector2i, window_size: V
 		return
 	_res_combo = _make_combo(at([ID_PANE, ID_RES_BOX, ID_COMBO]))
 	_bright_combo = _make_combo(at([ID_PANE, ID_BRIGHT_BOX, ID_COMBO]))
-	# Only sizes whose view at the UI scale is at least retail's 800 x 600
-	# (VideoOptions.MIN_VIEW, round 696 review M1).
-	_resolutions = VideoOptions.resolution_choices(screen, window_size, _ui_scale())
+	ui_scale_choice = UiScaleChoices.saved_percent()
+	# Every size whose view at 100 % is at least retail's 800 x 600
+	# (VideoOptions.MIN_VIEW, READ c:0x5fef70). Round 696 listed only the
+	# sizes that fit the scale in force (review M1: a window too small for
+	# the scale stranded the Option window's buttons off the screen); from
+	# round 854 the UI scale follows the window instead -- the largest of
+	# UiScaleChoices that fits it, the UI Scale row filtered against the size
+	# picked here, and Apply lowers the scale before it resizes -- so no size
+	# strands anything and every size is offered.
+	_resolutions = VideoOptions.resolution_choices(screen, window_size, 1.0)
 	if _res_combo != null:
 		for r in _resolutions:
 			_res_combo.add_item("%d x %d" % [r.x, r.y])
@@ -132,6 +146,8 @@ func build(options: VideoOptions, view: String, screen: Vector2i, window_size: V
 		_res_combo.item_selected.connect(func(i: int) -> void:
 			edit.resolution = _resolutions[i]
 			edit.resolution_touched = true
+			# The UI Scale row is filtered against the size picked (round 854).
+			show_values()
 			changed.emit())
 	if _bright_combo != null:
 		for i in VideoOptions.BRIGHTNESS_KEYS.size():
@@ -149,7 +165,9 @@ func build(options: VideoOptions, view: String, screen: Vector2i, window_size: V
 			var full: bool = b == _fullscreen
 			b.toggled.connect(func(_on: bool) -> void:
 				edit.fullscreen = full
-				_show_shared())
+				# show_values, not only the shared rows: the UI Scale row
+				# follows the size the window will have (round 854).
+				show_values())
 	_views = [at([ID_PANE, ID_VIEW_FREE]), at([ID_PANE, ID_VIEW_THIRD]), at([ID_PANE, ID_VIEW_QUARTER])]
 	for i in _views.size():
 		var b := _views[i] as BaseButton
@@ -619,6 +637,8 @@ func tooltip_of(entry: int) -> String:
 			ours = "This client's own option. On: a player in a job suit shows the job's class title left of the name and the job mark right of it. Off: the original's plate, with the mark left of the name and no title."
 		VideoOptions.RENDERER:
 			ours = "Forward+ (Vulkan) or Compatibility (OpenGL). Takes effect at the next start."
+		VideoOptions.UI_SCALE:
+			ours = ui_scale_tooltip()
 		VideoOptions.WATER_REFLECTION:
 			ours = "Takes effect at the next login."
 		VideoOptions.METAL, VideoOptions.LIGHT, VideoOptions.DYNAMIC_ANIMATION, VideoOptions.FRIEND_ENEMY:
@@ -628,6 +648,8 @@ func tooltip_of(entry: int) -> String:
 	return (tip + ("\n" if tip != "" and ours != "" else "") + ours).strip_edges()
 
 func _label_of(entry: int) -> String:
+	if entry == VideoOptions.UI_SCALE:
+		return ui_scale_label()
 	var row := VideoOptions.row_of(entry)
 	var fb: Array = row.get("fallback", [])
 	var s := text(String(row.get("label", "")), fb[0] if fb.size() > 0 else "")
@@ -637,6 +659,11 @@ func _label_of(entry: int) -> String:
 	return s
 
 func _choices_of(entry: int) -> PackedStringArray:
+	if entry == VideoOptions.UI_SCALE:
+		var labels := PackedStringArray()
+		for p in ui_scale_offered():
+			labels.append(UiScaleChoices.label(p))
+		return labels
 	var row := VideoOptions.row_of(entry)
 	var keys: Array = row.get("choices", [])
 	var fb: Array = row.get("fallback", [])
@@ -653,6 +680,8 @@ func shown_value(entry: int) -> int:
 		return edit.current().quality
 	if entry == VideoOptions.RENDERER:
 		return 1 if renderer_choice == "gl_compatibility" else 0
+	if entry == VideoOptions.UI_SCALE:
+		return maxi(ui_scale_offered().find(ui_scale_shown()), 0)
 	return edit.current().value(entry)
 
 ## Every control from `edit` (READ: 0x5fe330 loads the record into the page).
@@ -699,8 +728,87 @@ func _show_shared() -> void:
 		if t != null and TwoDtBuilder.is_checked(t) != (i == edit.active):
 			TwoDtBuilder.set_tab_checked(t, i == edit.active)
 
-func _ui_scale() -> float:
-	return _window.get_window().content_scale_factor if _window != null and _window.is_inside_tree() else 1.0
+# --- the UI Scale row (round 854, OURS; UiScaleChoices) ---------------------------
+
+## The size the game window will have once this tab is stored: the screen
+## for a switch to full screen, the Resolution picked (no larger than the
+## screen) for a window, else the window's size now.
+func ui_scale_target() -> Vector2i:
+	var now := _window_size()
+	var win := _window.get_window() if _window != null and _window.is_inside_tree() else null
+	var full_now := win != null and (win.mode == Window.MODE_FULLSCREEN or win.mode == Window.MODE_EXCLUSIVE_FULLSCREEN)
+	if edit == null:
+		return now
+	if edit.fullscreen:
+		return _screen if not full_now and _screen.x > 0 else now
+	if edit.resolution.x > 0 and (edit.resolution_touched or full_now):
+		return VideoOptions.fit_resolution(edit.resolution, _screen)
+	return now
+
+## The percentages the row offers: those that fit ui_scale_target().
+func ui_scale_offered() -> Array:
+	return UiScaleChoices.offered(ui_scale_target())
+
+## The percentage the row shows: the choice, or the largest that fits when
+## the choice does not (the saved scale with the window made smaller).
+func ui_scale_shown() -> int:
+	return UiScaleChoices.effective(ui_scale_choice, ui_scale_target())
+
+## Whether the choice is larger than the window allows (shown in the label).
+func ui_scale_too_big() -> bool:
+	return ui_scale_shown() != UiScaleChoices.snap(ui_scale_choice / 100.0)
+
+## The row's label: "UI Scale", and when the choice does not fit, which
+## choice is held back -- the longest wording that fits the label's record
+## (141 wide in the file; MEASURED in the live run).
+func ui_scale_label() -> String:
+	var base := "UI Scale"
+	if not ui_scale_too_big():
+		return base
+	var held := UiScaleChoices.label(UiScaleChoices.snap(ui_scale_choice / 100.0))
+	var options := ["%s (%s won't fit)" % [base, held], "%s (%s: too big)" % [base, held], "%s (%s!)" % [base, held]]
+	var n := slot_of(VideoOptions.UI_SCALE)
+	var label := _slots[n][0] as Label if n >= 0 else null
+	var font := _builder.font_at(0) if _builder != null else null
+	var room := 0.0
+	if label != null and label.get_parent() is Control:
+		room = (label.get_parent() as Control).size.x
+	if font == null or room <= 0.0:
+		return options[0]
+	for o in options:
+		if font.get_string_size(o, HORIZONTAL_ALIGNMENT_LEFT, -1, UiBuilder.FONT_SIZES[0]).x <= room:
+			return o
+	return options[-1]
+
+func ui_scale_tooltip() -> String:
+	var t := ui_scale_target()
+	var lines := "This client's own option: the size of the whole interface, in Windows' display-scale steps. 100% is the original's size."
+	lines += "\nOnly the scales that leave the original's smallest screen, %d x %d, are offered: up to %s in a %d x %d window." % [
+		VideoOptions.MIN_VIEW.x, VideoOptions.MIN_VIEW.y, UiScaleChoices.label(int(ui_scale_offered()[-1])), t.x, t.y]
+	if ui_scale_too_big():
+		lines += "\n%s is chosen; %s is used until the window is large enough for it." % [
+			UiScaleChoices.label(UiScaleChoices.snap(ui_scale_choice / 100.0)), UiScaleChoices.label(ui_scale_shown())]
+	return lines
+
+## The game window changed size while the window is open: the row offers
+## what fits now (OptionWindow._on_view_resized).
+func on_view_resized() -> void:
+	if edit != null:
+		show_values()
+
+## Apply / Confirm, before the display rows resize the window: a scale too
+## large for the size it is about to get is lowered first, so the window is
+## placed for the new scale (VideoOptions.window_placement raises a window
+## to a view of MIN_VIEW at the scale in force). A larger scale waits for the
+## resize (UiScaleChoices.apply_saved after it).
+func lower_ui_scale_before_resize() -> void:
+	var win := _window.get_window() if _window != null and _window.is_inside_tree() else null
+	if win == null:
+		return
+	# Called before store(), which clears resolution_touched (the target).
+	var fit := UiScaleChoices.effective(ui_scale_choice, ui_scale_target())
+	if fit < UiScaleChoices.in_force(win):
+		ClientSettings.apply_ui_scale(win, fit / 100.0)
 
 func _window_size() -> Vector2i:
 	return _window.get_window().size if _window != null and _window.is_inside_tree() else Vector2i.ZERO
@@ -731,6 +839,9 @@ func _on_slot_chosen(n: int, i: int) -> void:
 func set_row(entry: int, v: int) -> void:
 	if entry == VideoOptions.RENDERER:
 		renderer_choice = "gl_compatibility" if v == 1 else "forward_plus"
+	elif entry == VideoOptions.UI_SCALE:
+		var offered := ui_scale_offered()
+		ui_scale_choice = int(offered[clampi(v, 0, offered.size() - 1)])
 	else:
 		VideoOptions.set_row(edit.current(), entry, v)
 	show_values()
@@ -750,6 +861,8 @@ func press_default() -> void:
 	p.brightness = VideoOptions.DEFAULT_BRIGHTNESS
 	p.user = VideoOptions.DEFAULTS.duplicate()
 	edit.camera_view = VIEWS[0]
+	# Round 854 (OURS): UI Scale back to 100 %, the original's size.
+	ui_scale_choice = UiScaleChoices.DEFAULT_PERCENT
 	show_values()
 	changed.emit()
 
@@ -757,6 +870,9 @@ func press_default() -> void:
 ## RendererChoice when this build has it). Returns the record stored.
 func store() -> VideoOptions:
 	edit.save()
+	# Round 854: the UI Scale row's choice (OptionWindow.press_apply puts it
+	# in force around the display's resize).
+	UiScaleChoices.save_percent(ui_scale_choice)
 	var rc := VideoOptions.renderer_choice_script()
 	var notice := ""
 	# Only an exported build reads override.cfg (RendererChoice.applies_here);

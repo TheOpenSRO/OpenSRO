@@ -475,7 +475,14 @@ func press_apply() -> void:
 	_stored = true
 	applied.emit(_saved)
 	if video != null and video.edit != null:
+		# Round 854: the UI Scale row (OURS) around the display's resize -- a
+		# scale too large for the new size lowered before it, the choice (or
+		# the largest that fits) in force after it, re-fitted on every later
+		# resize (UiScaleChoices.apply_saved).
+		video.lower_ui_scale_before_resize()
 		video_applied.emit(video.store())
+		if is_inside_tree():
+			UiScaleChoices.apply_saved(get_window())
 	store_extra()
 	# Round 833: Apply stores the current tab (0x5fe670's table, READ); the
 	# Key Map tab's keys and mouse mode only from that tab, or on Confirm.
@@ -549,6 +556,9 @@ func _notification(what: int) -> void:
 func _on_view_resized() -> void:
 	if visible:
 		place_centred()
+		# Round 854: the UI Scale row offers what fits the new size.
+		if video != null:
+			video.on_view_resized()
 
 ## 0x798c50(0x62): centred.
 func place_centred() -> void:
