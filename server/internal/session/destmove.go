@@ -385,6 +385,11 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	if st != world.MoveAccepted {
 		return nil
 	}
+	if order.Heading {
+		// Round 857: the run is walked on the server's mesh before anything
+		// reads where it goes (world.Hub.WalkHeadingRun).
+		hub.WalkHeadingRun(sess)
+	}
 	motions.walking(e.CharacterID, legEnd(r.Entity.Move, now))
 	// A move is the player's own cancel of a running auto-attack (keepup.go);
 	// not of a trace, whose walk this may be (round 832, trace.go).
@@ -442,6 +447,7 @@ func arrowStop(sess *gateway.Session, data []byte, hub *world.Hub) error {
 	}
 	hub.SetHeading(sess, heading)
 	r.Entity.Heading = heading
+	traceMove("move: stop request", "character", e.CharacterID, "x", r.Entity.Pos.X, "y", r.Entity.Pos.Y, "z", r.Entity.Pos.Z)
 	motions.walking(e.CharacterID, time.Now())
 	stopRelay(sess, r, true)
 	return nil
@@ -473,6 +479,7 @@ func arrowTurn(sess *gateway.Session, data []byte, hub *world.Hub) error {
 	if _, ok := hub.Turn(sess, world.HeadingFromWire(angle), angle); !ok {
 		return nil
 	}
+	hub.WalkHeadingRun(sess) // round 857: the bent run is walked again
 	sendAboutPlayerPacket(hub, e.CharacterID, true, OpMovementTurn, encodeMoveTurn(moverUID(e.CharacterID), angle))
 	return nil
 }
@@ -683,6 +690,8 @@ func ensureMoverPass(hub *world.Hub) {
 // delivers what each crossing owes (afterRelocate with no move message): the
 // mover the group spawns and despawns, those players its 0x3015 / 0x3016.
 func moverPass(hub *world.Hub) {
+	// Round 857: every heading run is walked ahead of where it is going.
+	hub.WalkHeadingRuns()
 	pass := hub.AdvanceMovers(moverSpeed)
 	// The walk-in zones along each mover's path (round 773, walkin.go).
 	walkInPass(hub, pass.Moved)

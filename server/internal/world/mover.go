@@ -59,6 +59,64 @@ type Mover struct {
 	// keeps it. The height the leg has the character at now is found by
 	// walking from here (Hub.walkedLocked). The zero Position: Src.
 	Origin Position
+	// A heading run's walk (round 857): walked says the server's navigation
+	// mesh walks the run (a WallFunc is installed); clear is how far along
+	// it from Src the walk has found no wall, clearY the walked height
+	// there, and wallAt (with Wall and Dest) where the first wall stops it
+	// (+Inf: none found yet). The run never goes past clear: an unwalked
+	// stretch holds it until Hub.WalkHeadingRuns walks on.
+	walked bool
+	clear  float64
+	clearY float64
+	wallAt float64
+}
+
+// WallFunc walks a mover from `from` (its height the walk's footing) along
+// the ground direction (dirX, dirZ) for length units on the server's
+// navigation mesh (round 857, session.SetNavmesh): the point reached and its
+// height, and whether a wall stopped it there. ok false where nothing can be
+// walked (no mesh, a dungeon): the run goes on unwalked.
+type WallFunc func(zone string, from Position, dirX, dirZ, length float64) (end Position, wall, ok bool)
+
+var wallFunc atomic.Pointer[WallFunc]
+
+// SetWallFunc installs f (nil: none). Without one a heading run is a straight
+// line until something else stops it, as before round 857.
+func SetWallFunc(f WallFunc) {
+	if f == nil {
+		wallFunc.Store(nil)
+		return
+	}
+	wallFunc.Store(&f)
+}
+
+// HeadingWalkSeconds and HeadingWalkMin are how much of a heading run the
+// server walks at a time (OURS, round 857): that many seconds of run, at
+// least that many units; a run with less than half of it walked ahead is
+// walked on by the mover pass (Hub.WalkHeadingRuns, every 250 ms).
+const (
+	HeadingWalkSeconds = 2.0
+	HeadingWalkMin     = 20.0
+)
+
+// headingSpan is how far the run may go at now: the time's run, cut at the
+// walked stretch (and the wall).
+func (m *Mover) headingSpan(now time.Time) (d float64, atWall bool) {
+	t := now.Sub(m.Start).Seconds()
+	if t < 0 {
+		t = 0
+	}
+	d = m.Speed * t
+	if !m.walked {
+		return d, false
+	}
+	if d >= m.wallAt {
+		return m.wallAt, true
+	}
+	if d > m.clear {
+		d = m.clear
+	}
+	return d, false
 }
 
 // GroundFunc is the height a mover walking from `from` straight to world
@@ -106,14 +164,22 @@ func LegGround(e Entity) (float64, bool) {
 // reached its point. The height is interpolated along the leg: the server has
 // no ground to take it from (OURS).
 func (m *Mover) At(now time.Time) (pos Position, arrived bool) {
+	if m.Heading {
+		// Round 857: the run stops at the first wall the server's own walk
+		// meets (READ: CGObjMoverByCmd's step goes through slot 305 to the
+		// collision query like every mover's, and a blocking edge ends the
+		// movement, movement.md "Collision per kind of mover").
+		d, atWall := m.headingSpan(now)
+		if atWall {
+			return m.Dest, true
+		}
+		return Position{X: m.Src.X + m.DirX*d, Y: m.Src.Y, Z: m.Src.Z + m.DirZ*d}, false
+	}
 	t := now.Sub(m.Start).Seconds()
 	if t < 0 {
 		t = 0
 	}
 	d := m.Speed * t
-	if m.Heading {
-		return Position{X: m.Src.X + m.DirX*d, Y: m.Src.Y, Z: m.Src.Z + m.DirZ*d}, false
-	}
 	if d >= m.dist || m.dist <= 0 {
 		return m.Dest, true
 	}
@@ -127,6 +193,10 @@ func (m *Mover) At(now time.Time) (pos Position, arrived bool) {
 
 // Travelled is how far along the leg the character is at now.
 func (m *Mover) Travelled(now time.Time) float64 {
+	if m.Heading {
+		d, _ := m.headingSpan(now)
+		return d
+	}
 	t := now.Sub(m.Start).Seconds()
 	if t < 0 {
 		t = 0
@@ -141,6 +211,9 @@ func (m *Mover) Travelled(now time.Time) float64 {
 // Length is the destination leg's ground length (+Inf for a heading run).
 func (m *Mover) Length() float64 {
 	if m.Heading {
+		if m.walked {
+			return m.wallAt
+		}
 		return math.Inf(1)
 	}
 	return m.dist
@@ -344,6 +417,7 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 		m.Heading = true
 		m.DirX, m.DirZ = math.Sin(o.HeadingRadians), math.Cos(o.HeadingRadians)
 		m.Command, m.WireAngle = o.Command, o.WireAngle
+		m.startWalk()
 		e.Heading = o.HeadingRadians
 	} else {
 		m.Dest = o.Dest
@@ -529,9 +603,14 @@ func rebaseLocked(e *Entity, now time.Time, speed float64) {
 		return
 	}
 	m := *e.Move
+	gone := m.Travelled(now)
 	m.Src, m.Start, m.Speed = e.Pos, now, speed
 	if !m.Heading {
 		m.dist = math.Hypot(m.Dest.X-m.Src.X, m.Dest.Z-m.Src.Z)
+	} else if m.walked {
+		// The walked stretch and the wall are measured from Src (round 857).
+		m.clear -= gone
+		m.wallAt -= gone
 	}
 	e.Move = &m
 	e.allowLeg, e.allowSpeed = 0, speed
@@ -613,6 +692,7 @@ func (h *Hub) Turn(sess *gateway.Session, heading float64, wire uint16) (e Entit
 		n.Src, n.Origin, n.Start = ent.Pos, ent.Pos, now
 		n.DirX, n.DirZ = math.Sin(heading), math.Cos(heading)
 		n.WireAngle = wire
+		n.startWalk()
 		ent.Move = &n
 		ent.allowLeg, ent.allowSpeed = 0, n.Speed
 	}
@@ -636,4 +716,95 @@ func (h *Hub) Correct(sess *gateway.Session) (r MoveResult, ok bool) {
 	h.refileLocked(e, now, &r)
 	r.Entity = *e
 	return r, true
+}
+
+// startWalk readies a new heading run for the server's walk (round 857): with
+// a WallFunc installed nothing of it is walked yet, so it holds at Src until
+// Hub.WalkHeadingRuns walks it (the session does at once, WalkHeadingRun).
+func (m *Mover) startWalk() {
+	if wallFunc.Load() == nil {
+		return
+	}
+	m.walked, m.clear, m.clearY, m.wallAt, m.Wall = true, 0, m.Src.Y, math.Inf(1), false
+}
+
+// headingAhead is how far ahead of the run one walk reaches at speed.
+func headingAhead(speed float64) float64 {
+	return math.Max(HeadingWalkMin, speed*HeadingWalkSeconds)
+}
+
+// runWalk is one heading run's walk to make: the session, the leg it is for,
+// the zone, where the walked stretch ends and how far to walk on.
+type runWalk struct {
+	sess   *gateway.Session
+	leg    *Mover
+	zone   string
+	from   Position
+	length float64
+}
+
+// WalkHeadingRun walks sess's character's heading run on if it needs it
+// (WalkHeadingRuns for one session): the session calls it right after a run
+// starts or turns, so the run moves from the first pass.
+func (h *Hub) WalkHeadingRun(sess *gateway.Session) {
+	id := sess.ID()
+	h.walkRuns(func(e *Entity) bool { return e.Session.ID() == id })
+}
+
+// WalkHeadingRuns walks every heading run whose walked stretch ends less than
+// half a walk ahead of it (round 857): each is walked on from where its walked
+// stretch ends, outside the hub's lock, and its leg takes the result if it is
+// still the same leg; a wall the walk meets ends the run there (Mover.At), and
+// the pass that finds it there sends the 0xB023 (AdvanceMovers' Ended, as for
+// a destination leg's wall).
+func (h *Hub) WalkHeadingRuns() { h.walkRuns(nil) }
+
+func (h *Hub) walkRuns(only func(e *Entity) bool) {
+	f := wallFunc.Load()
+	if f == nil {
+		return
+	}
+	for pass := 0; pass < 4; pass++ {
+		h.mu.RLock()
+		now := h.clock()
+		var todo []runWalk
+		for _, e := range h.moving {
+			m := e.Move
+			if m == nil || !m.Heading || !m.walked || !math.IsInf(m.wallAt, 1) {
+				continue
+			}
+			if only != nil && !only(e) {
+				continue
+			}
+			ahead := headingAhead(m.Speed)
+			if m.clear-m.Travelled(now) >= ahead/2 {
+				continue
+			}
+			from := Position{X: m.Src.X + m.DirX*m.clear, Y: m.clearY, Z: m.Src.Z + m.DirZ*m.clear}
+			todo = append(todo, runWalk{e.Session, m, e.Zone, from, ahead})
+		}
+		h.mu.RUnlock()
+		if len(todo) == 0 {
+			return
+		}
+		for _, w := range todo {
+			end, wall, ok := (*f)(w.zone, w.from, w.leg.DirX, w.leg.DirZ, w.length)
+			h.mu.Lock()
+			if e, exists := h.bySession[w.sess.ID()]; exists && e.Move == w.leg {
+				n := *w.leg
+				switch {
+				case !ok:
+					n.walked = false // nothing to walk here: straight, as before
+				case wall:
+					n.wallAt = n.clear + math.Hypot(end.X-w.from.X, end.Z-w.from.Z)
+					n.Dest, n.Wall = end, true
+				default:
+					n.clear += w.length
+					n.clearY = end.Y
+				}
+				e.Move = &n
+			}
+			h.mu.Unlock()
+		}
+	}
 }

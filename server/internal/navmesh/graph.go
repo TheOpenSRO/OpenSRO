@@ -205,10 +205,22 @@ type Surface struct {
 	Object int // OnTerrain or an object index
 }
 
-// SurfaceAt is NavGraph.surface_at: the highest surface no more than
-// SurfaceReachUp above refY.
+// SurfaceAt is NavGraph.surface_at: what a mover placed at (x, z) at height
+// refY stands on (round 857, READ c:0x403dd0, CRTNavMeshTerrain::vslot_003,
+// the point resolve CRegionManagerBody slot 11 runs for a placement): the
+// terrain first, then each object listed there whose cell lies under the
+// point, taken only when its height is STRICTLY nearer refY than the best so
+// far (the fabs compare at c:0x403e8c..0x403eaf). So a mover at the
+// terrain's height stays on the terrain over a footprint buried under it
+// (Tarim's rocks: cells 9 under the ground, every outline edge 0x03), and one
+// at a deck's height is on the deck. Before round 857 the first object cell
+// found replaced the terrain however far below it lay, and a wall stop 0.01
+// outside such a footprint (within a long cell's 0.0001 barycentric
+// tolerance) settled the next leg on it: every way out blocked (0x02).
+// OURS kept: a surface more than SurfaceReachUp above refY is not stood on.
 func (g *Graph) SurfaceAt(x, z, refY float64) Surface {
 	best := Surface{Height: g.Region.TerrainHeight(x, z), Object: OnTerrain}
+	gap := math.Abs(best.Height - refY)
 	found := false
 	for _, oi := range g.ObjectsAt(x, z) {
 		p := g.Objects[oi]
@@ -221,8 +233,8 @@ func (g *Graph) SurfaceAt(x, z, refY float64) Surface {
 			if math.IsNaN(h) || h > refY+SurfaceReachUp {
 				continue
 			}
-			if !found || h > best.Height {
-				found = true
+			if d := math.Abs(h - refY); d < gap {
+				found, gap = true, d
 				best = Surface{h, oi}
 			}
 		}
@@ -720,8 +732,14 @@ func onward(rest, dir V2) V2 {
 	return V2{}
 }
 
+// seamObjectAt is NavGraph._seam_object_at: the object a mover stepping off
+// `except` at (x, z, y) is handed to, OnTerrain for none. Round 857: an
+// object is handed the mover only when its surface is strictly nearer y than
+// the terrain's, the point resolve's own rule (READ c:0x403dd0, SurfaceAt):
+// stepping off a floor at the ground's height beside a footprint buried
+// under it is stepping onto the ground.
 func (g *Graph) seamObjectAt(x, z, y float64, except int) int {
-	best, bestGap := OnTerrain, math.Inf(1)
+	best, bestGap := OnTerrain, math.Abs(g.Region.TerrainHeight(x, z)-y)
 	for _, oi := range g.ObjectsAt(x, z) {
 		if oi == except {
 			continue

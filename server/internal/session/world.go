@@ -2064,7 +2064,9 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 		correctMover(sess, hub)
 		return nil
 	}
-	moved, admitted, ok := hub.Claim(sess, pos, kind, heading, claimBound(self.CharacterID, req.Relocated, now))
+	bound := claimBound(self.CharacterID, req.Relocated, now)
+	bound.Unreached = !bound.Trust && claimUnreached(self, pos)
+	moved, admitted, ok := hub.Claim(sess, pos, kind, heading, bound)
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}

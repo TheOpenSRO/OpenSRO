@@ -51,6 +51,12 @@ type Bound struct {
 	Sanity float64
 	Trust  bool
 	Named  func(x, z float64) bool
+	// Unreached (round 857): the server's own walk from where it has the
+	// character does not reach the claim -- a wall lies between -- so only a
+	// named point may take it. The original server takes no position from a
+	// client at all (a stop report is OURS), and one past a wall put the
+	// character inside whatever the client's walk had gone into.
+	Unreached bool
 }
 
 // HeightAllows reports whether height y at ground point (x, z) may follow the
@@ -157,7 +163,7 @@ func (h *Hub) Claim(sess *gateway.Session, pos Position, kind MoveKind, heading 
 	admitted = b.Trust
 	if admitted {
 		trusted = pos
-	} else if outLocked(e, now).HeightAllows(pos.X, pos.Y, pos.Z, b.Height, b.Sanity) {
+	} else if !b.Unreached && outLocked(e, now).HeightAllows(pos.X, pos.Y, pos.Z, b.Height, b.Sanity) {
 		d := math.Hypot(pos.X-anchor.X, pos.Z-anchor.Z)
 		switch need := d - b.Slack; {
 		case need <= 0:
