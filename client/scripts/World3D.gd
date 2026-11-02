@@ -19059,6 +19059,9 @@ func _qa_input_step() -> void:
 			_qa_input_report = "%s (hovered %s)" % [action, hov.get_path() if hov != null else "nothing"]
 		"node":
 			var node := _qa_find_visible(ui_control, arg)
+			# Round 854: the developer panel sits on $UI beside UI/Control.
+			if node == null and _debug_panel != null and _debug_panel.visible:
+				node = _qa_find_visible(_debug_panel, arg)
 			if node == null:
 				_qa_input_report = action + " (no such visible node)"
 			else:

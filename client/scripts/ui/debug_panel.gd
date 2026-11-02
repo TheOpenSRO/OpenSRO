@@ -191,9 +191,13 @@ func _build_town_row() -> HBoxContainer:
 	row.add_child(_label("Go to"))
 	for town in TOWNS:
 		var target: String = town[1]
-		row.add_child(_button(town[0], func() -> void:
+		var go := _button(town[0], func() -> void:
 			_world.travel_to_zone(target)
-			_world._log_system("Travelling to %s (%s)" % [town[0], target])))
+			_world._log_system("Travelling to %s (%s)" % [town[0], target]))
+		# Round 854: named, so a QA run clicks it (OPENSRO_QA_INPUT node:);
+		# the travel is a GM account's only (OpChangeZone, the server's gate).
+		go.name = "DebugGo%s" % town[0]
+		row.add_child(go)
 	return row
 
 ## The zone box that sat beside the player block until round 848 (World3D's
