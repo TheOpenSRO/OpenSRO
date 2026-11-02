@@ -895,6 +895,10 @@ func (b *bot) walkStep(name string, n int) {
 // stand a party member in a dungeon beside a client sent there by /goto.
 var botZone string
 
+// botZoneAfter (round 854, a QA aid) waits that long in the world before the
+// -zone request, so a client can be watching the bot when it asks.
+var botZoneAfter time.Duration
+
 // botKill makes a bot, once it is in a party, wait and then kill one monster
 // of a species with a real blow (round 716: a live 0x3056 run, where the
 // rendered client is the party member who never hits).
@@ -947,6 +951,9 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		fmt.Printf("[%s] -> /tp %s and a relocated move there\n", name, at)
 	}
 	if botZone != "" {
+		if botZoneAfter > 0 {
+			time.Sleep(botZoneAfter)
+		}
 		b.send(session.OpChangeZone, (&session.ChangeZoneRequest{Zone: botZone}).Encode())
 		fmt.Printf("[%s] -> 0x0026 change zone to %s\n", name, botZone)
 	}
@@ -1126,6 +1133,7 @@ func main() {
 	flag.StringVar(&botWalk, "walk-loop", "", "bot (round 832): \"region:lx,lz;...\" waypoints walked in a loop with 0x7021, e.g. 0x61a8:1002,1060;0x61a8:1060,1060")
 	flag.DurationVar(&botWalkEvery, "walk-loop-every", 6*time.Second, "bot -walk-loop: the time between waypoints")
 	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026, a GM tool since round 854: the bot's account must be in the server's -gm-accounts, or it is refused and stays put), e.g. dungeon/32769")
+	flag.DurationVar(&botZoneAfter, "zone-after", 0, "bot -zone: wait this long in the world before asking (round 854: a client watches the refusal)")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	flag.StringVar(&botGuild.create, "guild-create", "", "bot: found a guild of this name once in the world (raises itself to the founder's level and gold; a GM account)")
 	flag.Int64Var(&botGuild.join, "guild-join", 0, "bot: join this guild id once in the world")
