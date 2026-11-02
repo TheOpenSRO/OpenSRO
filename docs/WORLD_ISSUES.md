@@ -7614,7 +7614,10 @@ both builds -- not this round's, not investigated. Evidence: `/var/tmp/r856/keep
 
 **Gates.** Client-only (the server sends the body mode and the buffs already; nothing server-side
 changed). `remote_godot.sh check`: ALL LOAD (1109 scripts); `remote_godot.sh tests`: "ran 418
-suite(s), 0 failing". The perf gate (`perf_gate.sh --base e06e1ccc --head 8499dd9c --sites jangan
+suite(s), 0 failing" on `82f19eb3`; a second full run on `d631ed4e` had `seated_spawn_test.gd` fail
+("the new zone's players are spawned"), and one of three single runs through `remote_godot.sh` after
+it; then 8 of 8 direct runs on head passed, and 14 of 14 on base (OPEN: a zone change's spawn under
+load -- the test awaits `_on_change_zone_result`; nothing this round touches spawns). The perf gate (`perf_gate.sh --base e06e1ccc --head 8499dd9c --sites jangan
 --frames 24000`; the guard is two dictionary reads per mask change, the decoration colour a list walk
 in `SkillEffects.process` that is empty with no colour ending):
 
