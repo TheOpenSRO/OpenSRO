@@ -803,6 +803,65 @@ frame-by-frame walk's, the worst 0.052; a plan 140 us at the median, a frame ste
 plans capped at 1.5 ms (`BODY_PLAN_BUDGET_USEC`, the rest planned on later frames); the flag's three
 re-checks not modelled.
 
+## Where a mover stands, and how it was let into a rock (round 857)
+
+The user: "I can sometimes clip into buildings and other parts of the map and then I can't escape",
+with Pain stuck riding at Tarim Ferry. Labels as above.
+
+**The position record (READ, `CRegionManagerBody::vslot_012` c:0x412660, s:0x98b300).** A mover's
+record is `{+0 cell, +4 object instance (0: the terrain), +8 u16 region, +0xc x, +0x10 y, +0x14 z}`
+(+0x18 a seventh word the client copies along, c:0x9e1244). The walk starts from the record's own
+cell and object (`local_70 + 4`, the mesh's resolver; an object's cell through `+0xb0`) and hands the
+next record back with the cell and object it ended in: **the footing is carried in the record from
+step to step**, never re-derived from the height while walking.
+
+**The point resolve (READ, c:0x403dd0 `CRTNavMeshTerrain::vslot_003`; the server's s:0x99fd90 is the
+same).** `CRegionManagerBody::vslot_011` (c:0x412530, s:0x98b1d0) normalises the region and asks
+the region's mesh for a record at `{x, y, z}`: the terrain cell first (`FUN_00403f30`, the terrain
+height), then every object the terrain cell lists (`FUN_00403d10`: the point in the object's frame,
+its cell under it and that cell's height), each taken only when `|h - y|` is **strictly less** than
+the best so far (`fabs`/`fcomp`/`test ah,5`/`jp` at c:0x403e8c..0x403eaf). So a mover named at the
+ground's height is on the ground, one named at a deck's height on the deck. A terrain cell flagged
+blocked (`FUN_00403940` bit 0) is no record (`+0 = 0`). No reach above the height, no "highest".
+
+**Who resolves (READ, c:0x9e11e0, the placement of a server-named point).** With a record already
+(`+0x4c != 0`) the client WALKS its record to the named point (slot 12, flag 1 for the own player or
+own COS, `+0x38` 1); `param_3 == 0` (0xB021's source, 0xB023): a refused or blocked walk falls back
+to the point resolve (slot 11) at the named point; `param_3 != 0`: a refused walk leaves the mover,
+a blocked one stands it at the wall. Without a record it is resolved directly (`FUN_009e0d50`).
+
+**How OpenSRO let movers in (MEASURED).** OpenSRO's settle (`NavGraph.surface_at`, the server's
+`Graph.SurfaceAt`) took the first object cell under the point over the terrain however far below it
+lay, and the server re-settled every leg (each 0x7021 is one `World.Walk` from the stored point)
+and the client re-settled after a correction, a teleport or a region change. A wall stop is
+`ContactPush` (0.01) short of the crossing; a long cell's 0.0001 barycentric tolerance
+(`triangleHeight`) reaches 0.01 past its edge when its altitude is over 100. So a walk into a
+footprint buried under the ground stopped on the ground, and the next leg started ON the footprint:
+every outline edge 0x03, so every way out blocked (0x02, s:0x9b55ac) and every way in open.
+- Pain (prod DB, read only): saved at 90/143 local (806.875, 474.141), y -73.165 -- 0.01 north of
+  outline edge 5 of `oas_tarim_rock_l_03` (object 3, at (835.14, -72.97, 349.54), yaw -0.9425, 24
+  flat cells at -73.17, every outline edge 0x03), on its cell 4, 9.1 under the terrain (-64.05). His
+  readout X:1621 Y:-350 is 90/143 local x 850..860, z 340..350: the rock's east lobe by edge 16,
+  from inside (`server/cmd/navstuck`).
+- The census (`navstuck -census`, the user's export, all 6,178 regions): 46,614 placements with a
+  mesh, 44,575 with outline edges blocking both ways (1,707 kinds; 21,918 mostly 1 or more under
+  the terrain: trees, rocks, cliffs, walls, Baghdad and Petra pieces); walks at each from 16
+  directions: 506,174 wall stops, **32,977 of them settled inside by the old settle (24,089 on a
+  footprint under the ground, 8,888 on one above it, e.g. Jangan's cj_luxury, floor 9.06 over the
+  ground), at 9,649 placements**; 2,746 by the new, 2,742 of them stops whose own height is off the
+  ground (the walk was already on that object, entered through an open edge) and 4 on an object
+  flush with the ground.
+
+**The heading run (MEASURED, round 812's list).** The server ran a heading run (sky click, arrow
+keys) as a straight line until 0x7023 or 60 s; the original steps it through the same collision
+query as every mover (READ above, "Collision per kind of mover"). Round 857 walks it (OURS: two
+seconds of run ahead at a time, the 250 ms mover pass walking on; `world.Hub.WalkHeadingRuns`) and
+ends it at the first wall with a 0xB023, as a walled 0x7021 leg.
+
+**A claim past a wall (OURS).** The stop report (round 749, OURS) was taken within the slack and the
+banked second wherever it lay; a claim the server's own walk from where it has the character cannot
+reach (a wall more than 0.5 short of it) is now corrected (`world.Bound.Unreached`).
+
 ## Not read
 
 - ~~What the `+0x14` byte in the heading form is~~: the movement command (round 653, "The heading

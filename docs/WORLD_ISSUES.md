@@ -7483,6 +7483,159 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-seventh round: walking into a rock or a building no longer lets you in
+
+The user: "something is up with the collision and I can sometimes clip into buildings and other parts
+of the map and then I can't escape. I have to teleport or unstuck to fix it ... match the original
+game exactly. You check my character Pain since he's stuck right now", then a screenshot (Pain riding
+into a big rock at Tarim Ferry, readout X:1621 Y:-350, `/speed 10` and "Teleport to [Donwhang]area"
+in the chat) and "I believe this occurs at any speed too". Labels: READ (`c:` sro_client.exe, `s:`
+SR_GameServer.exe; decomp dumps and objdump on the render box), MEASURED, INFERRED, OURS, OPEN.
+The reading is in `docs/protocol/opcodes/movement.md`, "Where a mover stands, and how it was let
+into a rock (round 857)".
+
+**Where Pain is (MEASURED; prod DB and log read only, nothing written).** `characters` id 12: zone
+donwhang, frame 97/168, pos (-48153.125, -73.165, 13925.859), i.e. region **90/143** (Tarim Ferry;
+`worldmap.FromWorld` with the frame's origin x 97, y 168 -- not 104/142) local (806.875, 474.141).
+`server/cmd/navstuck` on the user's export: that point is **0.01 north of outline edge 5 of
+`oas_tarim_rock_l_03`** (object 3 at local (835.14, -72.97, 349.54), yaw -0.9425; its mesh is its
+footprint: 24 flat cells at -73.17, **9.1 under the terrain** (-64.05 there), every outline edge
+0x03), and on its cell 4: the save's y is the footprint's own -73.165. The readout X:1621 Y:-350
+(hud_minimap's formula) is local x 850..860, z 340..350: the rock's east lobe by edge 16, i.e. Pain
+walked (rode) inside the footprint from the north edge to the far side. From the save, 36 of 72
+escape directions are blocked at zero length (every way out, 0x02) and the other 36 walk on into
+the rock. The log: `/speed 10` at 16:09:30, a return scroll, the Eu gate to Donwhang at 16:10:23,
+then nothing logged for him (moves are not logged at INFO).
+
+**How a player gets in (MEASURED, base e06e1ccc).**
+1. **Any wall stop beside a footprint under or just above the ground, at any speed, on foot or
+   riding.** OpenSRO's settle (`Graph.SurfaceAt` / `NavGraph.surface_at`) took the first object cell
+   under the point over the terrain however far below it lay (and the highest within 12 above). A
+   wall stop is ContactPush (0.01) short of the crossing, and a long cell's 0.0001 barycentric
+   tolerance reaches past 0.01 once its altitude is over 100, so the stop lay "on" the footprint.
+   The server settles each leg anew (one `World.Walk` per 0x7021), and the client after a correction
+   (0xB023 or a far 0xB021), a teleport or a region change, so **the next leg started on the
+   footprint**: every way out blocked, every way in open. Live (`/var/tmp/r857/qa857.sh b1`, Tess857
+   at Pain's rock, real clicks): the click into the rock stopped at local z 475.109; the click away
+   was a zero-length walled leg (`move: leg ... from_y=-61.56 ... wall=true end_z=13924.89`) and
+   the client was put back; the next click walked into the rock (`from_y=-73.165`, Pain's exact y,
+   `wall=false end_z=13980` = local 420) and the client settled on `oas_tarim_rock_l_03`; every
+   later click away stopped at the inside of the edge, on foot, riding the horse, at `/speed 10`
+   and on a sky-click run (which crossed the whole rock to its south edge, local z 359.4). At
+   Jangan (`rail.sh rb`): an Up-key run at /speed 10 into **cj_luxury**'s north wall (stop 0.01
+   short of its outline edge 0, whose floor is 9.06 over the ground) put the client on the building
+   (`wall ... on object cj_luxury`) and the server's next leg back was a zero-length wall.
+   - The census (`navstuck -census`, all 6,178 regions of the export): 46,614 placements with a
+     mesh, 44,575 walled both ways (1,707 kinds; 21,918 of them mostly 1 or more under the ground:
+     trees, rocks, cliffs, walls, Baghdad and Petra pieces); walks at each from 16 directions:
+     506,174 wall stops, **32,977 of them settled inside by the old settle (24,089 on a footprint
+     under the ground, 8,888 above it), at 9,649 placements**. With the new settle: 2,746, of which 2,742
+     are stops whose own height is off the ground -- the walk was already on that object, entered
+     through an open outline edge, and stopped at its own wall from inside -- and 4 at the ground's
+     height on an object flush with it (within 0.01).
+2. **The heading run was not walked by the server** (round 812's list): a sky-click or Up-key run
+   was a straight line through every wall until 0x7023 or 60 s; the client's own stop report, taken
+   within the claim slack, usually brought it back (MEASURED `rail.sh rb`: every run's claim was
+   taken at the client's wall), but the server's position ran on beyond the wall until it came,
+   and a 0x7023 before it (or a lost or refused report) stopped the character there.
+3. **A claim past a wall stood** (OURS since round 749): a stop report within 9 plus the banked
+   second was taken wherever it lay -- a client whose own walk had gone in put the server in too.
+Not ways in (MEASURED): **tunnelling** -- the server walks a unit at a time with a segment test and
+the client a frame at a time with one (`/speed 10`: 1,075 a second, the stop at Pain's rock was the
+same 475.109 at 1x and x10, riding and on foot); **arrivals** -- the gate and return-scroll points
+are named and settle at the client's own landing height (`relocated` claims); a region crossing
+re-settles the same way as a leg (fixed with it).
+
+**What the original does (READ).**
+- **The record carries the footing.** `CRegionManagerBody::vslot_012` (c:0x412660, s:0x98b300)
+  walks the record `{+0 cell, +4 object (0: terrain), +8 region, +0xc x, +0x10 y, +0x14 z}` cell by
+  cell through each mesh's resolver, at most 7 meshes a step (`local_88 < 7`, else refused,
+  0x10000000), and a step over a region span (1920.0, `0xe1b800`) on either axis is refused; the
+  record that comes back names the cell and object it ended on. Nothing re-derives the footing from
+  the height between steps: a segment walk, not an end-point test.
+- **The point resolve** (`vslot_011` c:0x412530 / s:0x98b1d0 -> `CRTNavMeshTerrain::vslot_003`
+  c:0x403dd0 / s:0x99fd90): the terrain cell first, then each object the cell lists whose cell lies
+  under the point, taken only when STRICTLY nearer the asked height (c:0x403e8c..0x403eaf). Used
+  where a mover is placed with no walk: a new record (`FUN_009e0d50`), and a server-named point
+  the record could not walk to (c:0x9e11e0: with a record the client walks it there, slot 12, and
+  for 0xB021's source and 0xB023 falls back to the resolve when refused or blocked).
+- **Inside an object**: the object walk blocks leaving through 0x02 / 0x10 outline edges whenever
+  `+0x38` is not 0 (s:0x9b55ac; 1 on every object, round 851), so a mover whose record is on a
+  sealed footprint stays there in the original too; the 0.2 nudge toward the cell's centre
+  (`FUN_004472d0`, double 0xe1b850 = 0.2) is the terrain wall's stop in the terrain cell the mover is
+  in, never a move off an object. No push-out was found (INFERRED from the three walks read; OPEN:
+  the dungeon and `.cpd` walks). So the original's escape is a teleport (a return scroll, a gate);
+  what keeps players out is that its record never lands on such a footprint.
+- **Heading runs** step through the same query as every mover (round 851, READ).
+
+**What changed.**
+- **The settle is the original's point resolve** (server `Graph.SurfaceAt`, client
+  `NavGraph.surface_at`): the terrain first, an object only when strictly nearer the mover's
+  height; OURS kept: nothing more than 12 above. The exit hand-off (`seamObjectAt` /
+  `_seam_object_at`) takes an object only when nearer than the ground too. A dungeon's surface pick
+  is unchanged (its resolve is not read).
+- **The server walks a heading run** (`world.WallFunc`, `session.navRunWall`,
+  `world.Hub.WalkHeadingRuns` / `WalkHeadingRun`): two seconds of run (at least 20 units, OURS) are
+  walked ahead, the 250 ms mover pass walks on, a run never goes past what was walked, and the
+  first wall ends it with a 0xB023 as a walled 0x7021 leg; a turn (0x7024) and a speed re-base keep
+  it walked.
+- **A claim past a wall is corrected** (`world.Bound.Unreached`, `session.claimUnreached`, OURS):
+  the server walks from where it has the character to the claim; a wall more than 0.5 short of it
+  refuses the claim (a named point still takes it).
+- `server/cmd/navstuck` (new): a stuck point's cell, edges, objects and escape probe; `-census`.
+
+**QA (render box, real client, lane server 127.0.0.1:17300: in memory, `-navmesh-dir`, no
+`-trust-client-positions`; `/var/tmp/r857/qa857.sh`, `rail.sh`, `pics.sh`; analyser `ana857.py`,
+reports `b1.ana.txt` / `h1.ana.txt`).**
+
+| step at Pain's rock (90/143) | base: client / server | head: client / server |
+|---|---|---|
+| foot 1x, click into the rock | stop z 475.109 / 475.110 | stop 475.109 / 475.110 |
+| click away | put back at the edge; leg walled at 0 | walks to 600 / leg clear to 600 |
+| click into the rock again | walks in to z 420, on the rock / leg from y -73.165 to 420 | stop 475.109 |
+| click away | stops inside at 475.090 (on the rock) | walks out |
+| riding the horse: in, away | in to 420 / stuck inside at 475.090 | stop 475.109 / out to 600 |
+| riding at /speed 10: in, away | in to 420 / stuck | stop 475.109 / out |
+| on foot /speed 10: in, away | in / stuck | stop / out |
+| sky-click run into the rock | runs through the rock to its south edge (359.4) | stops 475.109; the server's own run ends there (`ended by the server` -48145.003, 13924.891) |
+
+Jangan (`rail.sh`): the Up key at 1x into the railings and the sky run stop at z 729.621 on both
+builds; the Up key at /speed 10 south into cj_luxury: base then stuck on the building (the click
+away a zero-length walled leg), head walks away (z 355.6 -> 499.8 in 1.7 s).
+
+Two clients (`pics.sh pb` / `ph`: Tess857 rendered with X grabs, Obs857 headless; both walked the
+foot schedule, 30 apart): each draws the other inside the rock on base (bodies at z 13947-13980 and
+then 13924.91, past the outline at 13924.89) and outside on head (13853 -> 13800). Frames for a
+human (illustrative only; the numbers above are the measurement):
+`/var/tmp/r857/pain_rock_sheet.png` (top base, bottom head: into the rock, click away, into it
+again, click away again, 3.3 s after each leg; base's third frame is the camera inside the rock).
+
+**Tests.** `navmesh/stuck857_test.go`: the settle (terrain over a buried footprint, the footprint
+at its own height, a tie keeps the ground, a deck at its height, the ground under it); a walk into
+a buried footprint from five sides, each next leg back out open and the leg in blocked (NEGATIVE:
+base settles the stop on the rock and the walk out is blocked at 0); on the user's data
+(`NAVMESH_DIR`, run on the box): 49 walks at Pain's rock, 0 stops settled inside (base 16 of 44,
+each with the walk out blocked at once), and the prod save settles on the rock at -73.165 and on the
+ground at the ground's height. `session/stuck857_test.go`: an Up run at a wall at 1x and /speed 10
+is held at the wall, ended by the pass with a 0xB023 to both clients and stopped there by the
+release; a run away goes on; a claim 6 past a wall is corrected and one on this side taken.
+`nav/nav_graph_test.gd` `_buried_footprint` (NEGATIVE against base: 4 of 6 fail); its ramp walk
+starts on the ramp (`landing_height_at`), as a mover at the ground's height under a ramp is on the
+ground now. `go test ./...` ok; `remote_godot.sh check` ALL LOAD (1,108 scripts), `tests`
+TESTS_RESULT.
+
+**Perf gate** PERF_TABLE
+
+**OPEN:**
+- **Pain is still on the rock after the deploy**: his save's y (-73.165) is the footprint's own, so
+  the original's resolve (nearest surface) settles him on it at the next login, as it would the
+  original; a return scroll or a gate frees him (or set his `pos_y` to the ground's -64.05 while
+  he is offline, the user's call; nothing was written).
+- The record is still re-settled per leg on the server (the carried cell, docs/TODO.md); with the
+  original's settle that gives the carried footing back at a wall stop.
+- The dungeon and `.cpd` walks' own resolves and any push-out there are not read.
+- The heading run's walk-ahead (2 s, 20 units minimum) is OURS; the original steps it per tick.
+
 ## Eight-hundred-and-fifty-fifth round: a status colour that lingered -- the pulse painted a shared material
 
 The user: "Can you also fix the bug where the status effect color lingers when it shouldn't".

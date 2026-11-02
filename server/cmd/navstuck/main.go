@@ -246,7 +246,7 @@ func runCensus(w *navmesh.World, dir string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	type kind struct{ placed, buried, trapped, stops, oldIn, newIn int }
+	type kind struct{ placed, walled, buried, trapped, stops, oldIn, oldUnder, newIn, newOff int }
 	kinds := map[string]*kind{}
 	regions, placements := 0, 0
 	for _, e := range entries {
@@ -289,10 +289,13 @@ func runCensus(w *navmesh.World, dir string) {
 					both++
 				}
 			}
-			if under*2 < cells || both == 0 {
+			if both == 0 {
 				continue
 			}
-			k.buried++
+			k.walled++
+			if under*2 >= cells {
+				k.buried++
+			}
 			cx, cz := float64(o.X), float64(o.Z)
 			r := 0.0
 			for _, v := range pl.Vertices {
@@ -318,10 +321,16 @@ func runCensus(w *navmesh.World, dir string) {
 				k.stops++
 				if oldSurfaceObject(g, lx, lz, res.Y) == oi {
 					k.oldIn++
+					if navmesh.SurfaceHeightOf(pl, lx, lz) < res.Y {
+						k.oldUnder++
+					}
 					trapped = true
 				}
 				if s := g.SurfaceAt(lx, lz, res.Y); s.Object == oi {
 					k.newIn++
+					if math.Abs(g.Region.TerrainHeight(lx, lz)-res.Y) > 0.01 {
+						k.newOff++
+					}
 					if tot := newInShown; tot < 12 {
 						newInShown++
 						fmt.Printf("  new settle inside: %d/%d object %d %s stop (%.3f, %.3f) y %.3f terrain %.3f surface %.3f\n",
@@ -337,15 +346,18 @@ func runCensus(w *navmesh.World, dir string) {
 	names := make([]string, 0, len(kinds))
 	tot := kind{}
 	for n, k := range kinds {
-		if k.buried > 0 {
+		if k.walled > 0 {
 			names = append(names, n)
 		}
+		tot.walled += k.walled
+		tot.oldUnder += k.oldUnder
 		tot.placed += k.placed
 		tot.buried += k.buried
 		tot.trapped += k.trapped
 		tot.stops += k.stops
 		tot.oldIn += k.oldIn
 		tot.newIn += k.newIn
+		tot.newOff += k.newOff
 	}
 	sort.Slice(names, func(i, j int) bool { return kinds[names[i]].trapped > kinds[names[j]].trapped })
 	for i, n := range names {
@@ -353,10 +365,10 @@ func runCensus(w *navmesh.World, dir string) {
 			break
 		}
 		k := kinds[n]
-		fmt.Printf("%-64s placed %5d buried %5d trapping %5d wall stops %6d settled inside: old %6d new %d\n", n, k.placed, k.buried, k.trapped, k.stops, k.oldIn, k.newIn)
+		fmt.Printf("%-64s placed %5d walled %5d buried %5d trapping %5d wall stops %6d settled inside: old %6d (%d under the ground) new %d\n", n, k.placed, k.walled, k.buried, k.trapped, k.stops, k.oldIn, k.oldUnder, k.newIn)
 	}
-	fmt.Printf("census: %d regions, %d placements with a mesh; %d buried footprints of %d kinds, %d of them trapping under the old settle; %d wall stops, %d settled inside by the old settle, %d by the new\n",
-		regions, placements, tot.buried, len(names), tot.trapped, tot.stops, tot.oldIn, tot.newIn)
+	fmt.Printf("census: %d regions, %d placements with a mesh; %d walled both ways (%d kinds; %d of them mostly under the ground), %d trapping under the old settle; %d wall stops, %d settled inside by the old settle (%d on a footprint under the ground, %d above it), %d by the new (%d of them stops whose own height is off the ground: the walk was on that object)\n",
+		regions, placements, tot.walled, len(names), tot.buried, tot.trapped, tot.stops, tot.oldIn, tot.oldUnder, tot.oldIn-tot.oldUnder, tot.newIn, tot.newOff)
 }
 
 func dumpAndGrid(g *navmesh.Graph) {
