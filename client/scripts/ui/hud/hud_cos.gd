@@ -179,11 +179,11 @@ func _ensure_pet_info() -> void:
 	add_child(pet_info)
 
 ## Puts the pet strip into the player block (child 100 of
-## GDR_PLAYER_MINI_INFO, at 53,55 of the block).
+## GDR_PLAYER_MINI_INFO, at 53,55 of the block, in control 100's place in
+## the block's draw order: HudPetMiniInfo.attach_to).
 func attach_pet_mini_info(player_info: Control) -> void:
 	_ensure_pet_info()
 	pet_info.attach_to(player_info)
-	pet_info.position = HudPetMiniInfo.RECT.position
 
 # --- records ------------------------------------------------------------------
 

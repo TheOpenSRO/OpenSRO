@@ -276,14 +276,17 @@ func build_section(layout: UiLayoutParser.LayoutDef, section_name: String = "Cre
 	# ifinventory), and a frame has to be behind everything it frames.
 	# Godot draws children in tree order, so the list is added reversed.
 	#
-	# Verified as behaviour rather than traced in the client: in file order
-	# every window covered its own contents, and reversed it matches the
-	# reference screenshots. On the client side the factory appends each
-	# control to a list with a `_Buynode(head, head->prev, value)` -- a
-	# push_back in parse order -- so for a last-declared frame to end up
-	# behind everything, the renderer has to walk that list backwards. That
-	# iteration has not been found, so the ordering here rests on the data
-	# and the pictures, not on reading the draw loop.
+	# READ (round 855, sro_client.exe): the parser keeps a section's controls
+	# in file order (CIFTSection, first +0x84, last +0x88, next +0x4c, prev
+	# +0x50; 0xb3dea0), but CIFTSection::vslot_000 (0xb3dcb0) hands them out
+	# from the LAST back (+0x88, then +0x50). The records keep that order
+	# (0x82c1d0, a push_back per control), 0x8b5580 creates the windows in
+	# it, and each is appended to its parent's child list by AddChild
+	# (vtable +0x1c, 0xb90a80, a push_back; called from 0xba20b0). A window
+	# draws its children in list order (0xba0300). So the file's last
+	# control is drawn first and its first control last, on top. Before
+	# round 855 this rested on the pictures: in file order every window
+	# covered its own contents, and reversed it matches them.
 	#
 	# Adding them in file order put every window's frame and background
 	# tiles on top of its own contents -- which is why the inventory looked
