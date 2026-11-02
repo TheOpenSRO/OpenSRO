@@ -7602,12 +7602,23 @@ perf gate.
 - **Found by the QA and fixed.** A drop from 175 % to 100 % went 175 -> 100 -> 175 -> 100. The
   pre-resize lowering applied 100 % before the choice was saved, and the resize watch put the old
   saved 175 % back. That was two needless re-layouts. Now the choice is saved first.
-  CONFIRMATION_RUN_PLACEHOLDER
+  Confirmed in a second 1920 x 1080 run (`e1080.sh`): 175 % -> 100 % is one change (no re-fit
+  line, scale 1.75 -> 1.0); 150 % applied. Then the OS window was resized while the Option window
+  stayed open:
+
+  | window | content scale | row offered | label |
+  |---|---|---|---|
+  | 1280 x 720 | 1.0 | 100 % | "UI Scale (150% won't fit)" |
+  | 1600 x 900 | 1.5 (a view of exactly 1066.67 x 600) | 100..150 % | "UI Scale" |
+  | 1920 x 1080 | 1.5 | 100..175 % | "UI Scale" |
+
+  The Option window and the underbar stayed on screen at every step.
 - **Frames for a human** (`/var/tmp/r854u/keep/` on the box):
   - `before_base_1280x720_video_tab_end.png`: the base build, the list's last line with its empty
     right-hand slot.
   - `after_1280x720_list_100only.png`, `after_1280x720_150_held_back.png`,
-    `after_winsize_1920x1080_150.png`.
+    `after_winsize_1920x1080_150.png`, `after_resize_to_1280x720_held_back.png`,
+    `after_resize_to_1600x900_150.png`.
   - `after_1920x1080_list_open.png`, `after_1920x1080_175.png`.
   - `after_2560x1440_225.png`.
   - `after_3840x2160_list_open.png` (nine choices), `after_3840x2160_350.png`.
