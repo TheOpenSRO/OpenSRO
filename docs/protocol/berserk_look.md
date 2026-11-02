@@ -104,12 +104,12 @@ Data.pk2 (`Prim\Snd\Player\`).
   material's own.
 - Round 855 (READ): an abnormal state's pulse is the same slot on the same
   compound (`FUN_009cd5e0` calls `[obj+0x9c]+4`'s `+0x48` / `+0x4c`), so the
-  last start wins and either end ends the colour, whoever set it: a berserk
-  body poisoned draws the poison's colour, and berserk's end leaves a state
-  still on uncoloured (and the other way round). Before round 855 OpenSRO
-  kept berserk's colour over a state's (round 785's client review, finding 8,
-  OURS). Both now go through `BodyPulse` (`docs/protocol/status_effects.md`,
-  "A state's colour").
+  last start wins and an end ends the colour, whoever set it. Round 856
+  (READ): `FUN_009cd5e0` leaves a state bit's `+0x48` / `+0x4c` out while
+  the body mode `+0x2c2` is 1 -- so a berserk body poisoned keeps berserk's
+  colour, the poison's end leaves it, and berserk's end leaves a state still
+  on uncoloured. Both go through `BodyPulse` (`docs/protocol/status_effects.md`,
+  "A state's colour" and "The colour's guards").
 
 ## The size (READ)
 

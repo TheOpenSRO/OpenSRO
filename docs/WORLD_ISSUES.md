@@ -7643,6 +7643,163 @@ server, a heading run's walk two seconds ahead at a time (about 1.7 us a unit, r
 - The dungeon and `.cpd` walks' own resolves and any push-out there are not read.
 - The heading run's walk-ahead (2 s, 20 units minimum) is OURS; the original steps it per tick.
 
+## Eight-hundred-and-fifty-sixth round: the state colour's guards -- berserk and the Roc's frenzy, not riding
+
+Round 855 reported that `FUN_009cd5e0` skips a state's colour when "the riding byte" `+0x2c2 == 1` or
+the kind byte `+0x448 == 2`, and asked whether to keep ours or match; the user: "keep the original".
+Labels: READ (`c:` sro_client.exe, `s:` the server), MEASURED, INFERRED, OURS, OPEN. The reading is
+`docs/protocol/status_effects.md`, "The colour's guards".
+
+**What the guard covers (READ, `FUN_009cd5e0` and its disassembly `c:0x9cd640..0x9cdb68`, esi = the
+object whose mask it is).**
+- Only the colour calls. On: the `+0x48` of FB, ES, BU, PS, ZB, DN, STUN, each behind its own test
+  (`0x9cd74a`, `0x9cd7df`, `0x9cd84d`, `0x9cd8b7`, `0x9cd969`, `0x9cd9d1`, `0x9cda37`). Off: the `+0x4c`
+  (`0x9cdb35..0x9cdb56`, and the FB case).
+- Not guarded: the `PARAM_` aura's start `FUN_00a54020` (`0x9cd723`) and end `FUN_009cd2b0`
+  (`0x9cdac0`); FB's and SLOW's clip speed `+0xc0` (`0x9cd7bf`, `0x9cd95e`; off `0x9cdb01`,
+  `0x9cdb2d`); FZ's motion state 9 and `+0xbd` (`0x9cd7ce`, `0x9cd7d3`; off `0x9cdb0b`).
+- Tested per bit, inside each bit's case, on the object itself. **DN's end tests `+0x2c2` alone:**
+  `0x9cdb35 cmp byte [esi+0x2c2],1` jumps to the `je` at `0x9cdb56`, past the `+0x448` compare at
+  `0x9cdb4f`.
+
+**`+0x2c2 == 1` is berserk, not riding (READ).** The byte's one writer is the body-mode setter
+`FUN_009cf880` (`[this+0x2c3] = extra; [this+0x2c2] = mode`); the constructor
+`CICharactor::FUN_009d2ad0` zeroes it. Callers: 0x30BF kind 4 (`FUN_008a80a0` case 4, any object in
+view), the spawn (`FUN_009d17e0`, `GlobalDataManager::FUN_0052dc70`: the state block's `+0x470`) and a
+debug command (`FUN_005470f0`). Mode 1 runs `FUN_009dd620(1, ...)`, the hwan decoration (0x80000000 /
+`SYSTEM_CH_HWAN2MODE`); mode 4 draws the body at alpha 0x50. So the guard is on any body whose body
+mode is 1 -- this player's, another player's, any object the server says is berserk. Mounting writes
+neither byte: **a rider's colour is not guarded.** Round 785's StateLook header ("the player riding")
+and round 855's entry were wrong.
+
+**`+0x448 == 2` is the Roc's frenzy (READ + MEASURED).** Writers: `FUN_00a53850` (a skill decoration's
+start) and `FUN_00a54be0` (a cast's action read) write 2 on the decoration's object (`deco+0x58`) when
+its skill ref (`deco+0x154`) has a non-zero `+0x110`, which the client's skilldata parser
+`FUN_009bbca0` fills for Param code `0x6d6f6d`, `mom`; `FUN_00a54be0` writes 1 when `+0x114` (`pmhp`)
+reads 100; `FUN_00a53120` (a decoration's end) writes 0 for a `mom` skill. MEASURED on the box: Media.pk2's
+ENC skilldata decrypted with the executable's own tables (61,330 rows) -- one skill has `mom`,
+`MSKILL_RM_ROC_ATTACK10` (id 31102), skilleffect.txt's "괴조 로크 광폭화", the Roc's frenzy, whose ACT_L
+row carries its own colour `SCT_MAT,170,30,0,235,155,0,1000`. The server's `SkillAction_Buff`
+(`s:0x5830b0`, ref `+0x57c`) re-arms its stat stacks every value[0] ms.
+
+**Why (INFERRED from the two).** Both guarded bodies hold a decoration colour of their own in the
+one slot (berserk's red, the frenzy's orange): a state may neither replace it nor end it. The
+decoration's end (`+0x4c`, `CIDecoSkill::FUN_00a53dd0`) ends whichever colour is on. So in the
+original:
+- a state begun before berserk and ended inside it: berserk's colour stays, and its end leaves none;
+- a state begun inside berserk draws no colour; when berserk ends first, the state runs on uncoloured;
+- the same for the frenzy; and a `mom` decoration drawing no colour of its own would keep a state's
+  colour begun before it past the state's end (the quirk round 855 described) -- in the data the one
+  `mom` skill does draw one, so the quirk cannot show with retail's tables.
+
+**A kept decoration's colour (READ), built with it.** `IDecoSkill::FUN_00a513a0` hands any row with
+SCT_MAT (flag 0x800) to the compound's `+0x48` and keeps it (`+0x180`); the decoration's destructor
+`CIDecoSkill::FUN_00a53dd0` calls `+0x4c` when one was kept, with no body-mode or kind test. 22 rows
+carry SCT_MAT (MEASURED): berserk's three, `PARAM_STONE`, the frenzy, five petrify attacks, two
+`SKILL_EU_CLERIC_REBIRTHA_SPECIAL_*_BUFF`, seven `EFFECT_AM_*` marks, the two event thieves' marks, and
+the white snake's READY. OpenSRO drew only berserk's: with the kind-2 guard alone a frenzied Roc would
+have kept a poison's green for good. Now `SkillEffects` draws a buff aura's and a state aura's SCT_MAT
+in the body's slot (`DECO_WHO`) and ends it when the aura ends, after its rows' longest Fade (INFERRED:
+the decoration is freed at its fade's end).
+
+**The change (client-only; `82f19eb3`, `8499dd9c`).**
+- `StateLook.walk(old, new, look, guard)`: `guard_of(body_mode, kind)`, `colour_guarded` (body mode 1
+  or kind 2; DN's end the body mode alone); a guarded bit's colour event is left out, its aura, clip
+  speed, freeze and the look's own tint are not.
+- `World3D._state_guard(key)`: body mode from NetClient's `body_modes` (the 0x30BF kind 4 book, a
+  character's), kind 2 from the owner's running buffs (`_fx_owner_buffs`, a skill whose Param block has
+  `mom`: `SkillBuffCatalog` "mom"). A guarded walk logs `state colour left as it is (body mode m, kind k)`.
+- `SkillEffects`: rows with SCT_MAT are kept even without an effect file (`parse_mat`, `mat_of`);
+  `attach_aura` and `play_named` (kept) start the colour, `detach_aura`, the grace expiry and a teardown
+  end it (`_deco_colour_on` / `_deco_colour_off`, `_colour_ends` for the fade). The Effect Quality
+  option does not refuse a colour.
+- The QA probe's `QA TINT` line names the slot's setter (`by state|berserk|deco|-`).
+- Round 855's rule is intact: BodyPulse paints only its own copies; no shared material is painted
+  (every test and live sample below: `shared 0`).
+
+**Behaviour changes a player may notice.** (1) A berserk player who is poisoned, burnt, shocked,
+frostbitten, zombied, darkened or stunned keeps berserk's red; the state's end does not take the red
+away; berserk's end takes all colour away even while a state still runs (before: the last start won
+and either end cleared it, round 855). (2) A frenzied Roc draws its orange pulse, and states on it do
+not change the colour (not reachable on OpenSRO's server today, below). (3) The other SCT_MAT
+decorations draw their colour while they last (the Cleric rebirth special buff, the petrify marks).
+Riding changes nothing: a rider's state colour starts and ends as before.
+
+**Tests.** `client/scripts/world/state_guard856_test.gd` (through World3D's `_on_object_status`, the
+0x30BF `_on_state_changed` and `_on_buff_started` / `_on_buff_ended`, on this player, another player
+and a monster, on a terrain tile's shared level material with CharacterLight rescanning every frame,
+measured with TintProbe): riding guards nothing; a poison begun before berserk and expiring inside, a
+burn and a poison with one cured inside, a poison begun inside and outlasting berserk, frostbite inside
+(clip speed 0.5, no colour); the frenzy's colour over a poison, a poison's end and a burn's start inside,
+the frenzy's end; a `mom` decoration with no colour keeping a poison's colour past its end until the
+next colour call; DN's end inside kind 2 ending the colour; a decoration colour held through its 300 ms
+fade; body modes 0/2/3/4/6/7 and kind 1 guard nothing. `state_berserk_test.gd` rewritten to the guarded
+orders (S+ B+ S- B-: state, berserk, berserk, none; B+ S+ S- B-: berserk, berserk, berserk, none).
+
+**QA (render box, lane server 17290 with prod's flags, in memory; real input through
+`OPENSRO_QA_INPUT`; scripts `/var/tmp/r856/{srv856,qa856,run856,batch1,sum856,win856}.sh|py`).** QaA856
+(level 60, the universal pill and a Red Horse scroll, item 2137, in the bag) and Watch856 beside it on
+97/168. Schedule: a poison, the horse scroll right-clicked in the bag (summoned and mounted), the poison
+expiring while mounted; a burn cured by the pill while mounted; a poison afflicted while mounted, Home
+(dismount), its expiry on foot; a poison, `/hwan 5` and Tab (berserk), the poison expiring inside; a
+burn and a poison inside, the pill inside; a poison begun inside that outlasts berserk. The afflicted
+player rendered with the observer headless (both measured), then the observer rendered. Head
+`8499dd9c`, base `e06e1ccc` (`/var/tmp/opensro-r856-base`). The rendered client ran at ~6.7 frames a
+second, so a state lasts ~200 frames and berserk ~390.
+
+| | owner, base | owner, head | observer, base | observer, head |
+|---|---|---|---|---|
+| poison expiring while mounted (f524) | colour off the next sample | off the next sample | off | off |
+| burn cured by the pill while mounted (f750) | off | off | off | off |
+| poison afflicted mounted, dismount, expiry on foot (f985) | drawn, off | drawn, off | drawn, off | drawn, off |
+| poison expiring inside berserk (f1241 / f1214) | berserk's red gone at once | **red stays** (guarded) | red gone | **red stays** |
+| burn + poison inside, the pill | burn's colour replaces the red, then none | **red stays** (4 guarded walks) | the same as base | **red stays** |
+| poison begun inside berserk (f1418) | green replaces the red | **red stays** | green | **red stays** |
+| berserk's end with the poison on (f1531) | off | off (the original's: the state runs uncoloured) | off | off |
+| samples while berserk: red / other / none | 2 / 6 / 7 of 15 | **14 / 0 / 0 of 14** | 25 / 48 / 51 of 124 | **121 / 0 / 0 of 121** |
+| samples drawing a colour with no colour on; shared materials coloured | 0; 0 | 0; 0 | 0; 0 | 0; 0 |
+
+The observer rendered (the afflicted player headless, its ticks x 4.5 for its 30 frames a second, so
+its states overlapped a little differently -- a burn on beside the poison while mounted, a poison end
+beside it clearing the colour as READ): samples while berserk, red / other / none -- the rendered
+observer's view of QaA856: base 3 / 3 / 11 of 17, head **14 / 0 / 0 of 14**; the afflicted player's own
+headless view: base 21 / 26 / 77 of 124, head **121 / 0 / 0 of 121**; no sample drew a colour with none
+on, no shared material coloured, in any of the four runs. Every guarded walk logged its line, the same count on
+both clients of a run (6 in the first head run, 5 in the second; 0 in base, which has no guard). Frames for a human: `/var/tmp/r856/keep/own_before_after.png` (the afflicted
+player rendered; base row: berserk's red gone at f1260 after the poison's expiry, the burn's colour at
+f1320; head row: red through f1260-f1450, none at f1560) and `obs_before_after.png` (the observer
+rendered). The mounted frames (f450) show the summoned horse as a white shape around the rider in
+both builds -- not this round's, not investigated. Evidence: `/var/tmp/r856/keep` and
+`/var/tmp/r856/{h,b}_{own,obs}*` (logs, `second.log` the headless client's).
+
+**Gates.** Client-only (the server sends the body mode and the buffs already; nothing server-side
+changed). `remote_godot.sh check`: ALL LOAD (1109 scripts); `remote_godot.sh tests`: "ran 418
+suite(s), 0 failing" on `82f19eb3`; a second full run on `d631ed4e` had `seated_spawn_test.gd` fail
+("the new zone's players are spawned"), and one of three single runs through `remote_godot.sh` after
+it; then 8 of 8 direct runs on head passed, and 14 of 14 on base (OPEN: a zone change's spawn under
+load -- the test awaits `_on_change_zone_result`; nothing this round touches spawns). The perf gate (`perf_gate.sh --base e06e1ccc --head 8499dd9c --sites jangan
+--frames 24000`; the guard is two dictionary reads per mask change, the decoration colour a list walk
+in `SkillEffects.process` that is empty with no colour ending):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.91 | 0.91 | SAME |
+| entry ms | 8912 | 8860 | SAME |
+| freeze ms | 2786 | 2786 | SAME |
+| hitches | 5 | 5 | SAME |
+
+**OPEN.**
+- Kind 2 is not reached live: OpenSRO's server starts no monster self-buff, so the Roc never casts its
+  frenzy here; built and tested headless only. The kind-2 mark a `mom` CAST puts on its caster before
+  the buff (`FUN_00a54be0` on the 0xB070 read) is not built (the buff's book stands in for the
+  decoration's life, INFERRED).
+- A cast's SCT_MAT row (`MSKILL_TQ_WHITESNAKE_ATTACK03` READY) is not drawn; the decoration-colour end
+  waits for the rows' longest Fade (INFERRED; the per-decoration alpha owner was not read).
+- The hwan decoration's destructor skips its `+0x4c` while the body mode is still 1 (`FUN_009c7b20`);
+  BerserkLook ends its colour at the 0x30BF end, as before (round 651), not after a fade.
+- `PARAM_STONE` has SCT_MAT but no mask bit reaches it (`StatusNet` has no STONE label), so it does not
+  show today.
+
 ## Eight-hundred-and-fifty-fifth round: a status colour that lingered -- the pulse painted a shared material
 
 The user: "Can you also fix the bug where the status effect color lingers when it shouldn't".

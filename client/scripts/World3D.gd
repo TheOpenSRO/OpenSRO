@@ -10447,7 +10447,11 @@ func _drop_state_look(key: String, body: Node3D) -> void:
 ## follow (StateLook's header has the READ).
 func _apply_state_look(key: String, body: Node3D, old_mask: int, new_mask: int) -> void:
 	var look: Dictionary = _state_looks.get(key, {})
-	var w := StateLook.walk(old_mask, new_mask, look)
+	var guard := _state_guard(key)
+	var w := StateLook.walk(old_mask, new_mask, look, guard)
+	if w["pulse"] == null and _tinted_change(old_mask, new_mask):
+		print("World3D: %s state colour left as it is (body mode %d, kind %d: FUN_009cd5e0's guard, round 856)" % [
+			key, int(guard["body_mode"]), int(guard["kind"])])
 	look = {"tint": w["tint"], "speed": w["speed"], "frozen": w["frozen"]}
 	if new_mask == 0 and (w["tint"] as Array).is_empty() and float(w["speed"]) == 1.0 and not bool(w["frozen"]):
 		_state_looks.erase(key)
@@ -10468,6 +10472,36 @@ func _apply_state_look(key: String, body: Node3D, old_mask: int, new_mask: int) 
 		SkillEffects.play_named(id, SkillAudio.ACT_L, body, key, StateLook.STATE_TOKEN - int(bit))
 	StateLook.apply_pulse(body, w["pulse"])
 	_set_body_clip_speed(body, StateLook.clip_speed(look))
+
+## Round 856: the two bytes FUN_009cd5e0's colour guard reads on the owner's
+## object (StateLook's header, READ): its body mode (+0x2c2, NetClient's
+## body_modes -- the 0x30BF kind 4 book, where 1 is berserk; a character's
+## alone, as the server sends it for characters only) and its decoration
+## kind (+0x448: 2 while it runs a buff whose skill has 'mom', the Roc's
+## frenzy -- the buffs this client saw start on it, _fx_owner_buffs).
+func _state_guard(key: String) -> Dictionary:
+	var mode := 0
+	var parts := key.split(":")
+	if parts.size() == 2 and parts[0] == "character" and parts[1].is_valid_int():
+		var modes = NetClient.get("body_modes")
+		if modes is Dictionary:
+			mode = int((modes as Dictionary).get(int(parts[1]), 0))
+	var kind := 0
+	var m: Dictionary = _fx_owner_buffs.get(key, {})
+	if not m.is_empty() and _hud_buff_board != null and _hud_buff_board.catalog != null:
+		for t in m:
+			if bool(_hud_buff_board.catalog.info(int(m[t])).get("mom", false)):
+				kind = StateLook.KIND_MOM
+				break
+	return StateLook.guard_of(mode, kind)
+
+## Whether a mask change turns a colour bit on or off.
+static func _tinted_change(old_mask: int, new_mask: int) -> bool:
+	var changed := (old_mask ^ new_mask) & 0xffffffff
+	for v in StateLook.TINTS:
+		if changed & int(v) != 0:
+			return true
+	return false
 
 ## An owner's body was (re)built: its abnormal states' looks go on it, as
 ## when they came on (their effects, pulse and clip speed).
@@ -35751,7 +35785,8 @@ func _qa_berserk_probe() -> void:
 ## berserk's), and how many shared per-level materials carry a pulse colour.
 ## A line on every change and every 30th frame (`lit`: BodyPulse holds a
 ## colour on it; before round 855 a state's or berserk's look was on):
-## `QA TINT f<frame> <who> lit <0|1> meshes <n> tinted <k> colour <r,g,b> shared <s>`.
+## `QA TINT f<frame> <who> lit <0|1> meshes <n> tinted <k> colour <r,g,b> shared <s> by <setter>`
+## (round 856: the slot's setter, BodyPulse.who, "-" with none).
 ## The bodies: this player, every other player, every COS, and every monster
 ## an abnormal state was ever heard for.
 var _qa_tint_probe_on := OS.get_environment("OPENSRO_QA_TINT_PROBE") != ""
@@ -35780,13 +35815,16 @@ func _qa_tint_probe() -> void:
 			continue
 		var m := TintProbe.measure(body)
 		var lit := BodyPulse.on(body)
-		var sig := "%d/%d/%d/%d" % [int(lit), int(m["meshes"]), int(m["tinted"]), shared]
+		# Round 856: whose colour the slot holds ("state", "berserk", "deco").
+		var setter := BodyPulse.who(body) if lit else "-"
+		var sig := "%d/%d/%d/%d/%s" % [int(lit), int(m["meshes"]), int(m["tinted"]), shared, setter]
 		if _qa_tint_last.get(who, "") == sig and _qa_tint_frame % 30 != 0:
 			continue
 		_qa_tint_last[who] = sig
 		var c = m["colour"]
-		print("QA TINT f%d %s lit %d meshes %d tinted %d colour %s shared %d" % [Engine.get_frames_drawn(), who, int(lit),
-			int(m["meshes"]), int(m["tinted"]), "-" if c == null else "%d,%d,%d" % [int(round(c.r * 255)), int(round(c.g * 255)), int(round(c.b * 255))], shared])
+		print("QA TINT f%d %s lit %d meshes %d tinted %d colour %s shared %d by %s" % [Engine.get_frames_drawn(), who, int(lit),
+			int(m["meshes"]), int(m["tinted"]), "-" if c == null else "%d,%d,%d" % [int(round(c.r * 255)), int(round(c.g * 255)), int(round(c.b * 255))], shared,
+			setter])
 
 var _berserk_flash_t := -1.0
 var _berserk_flash: ColorRect = null

@@ -22,10 +22,15 @@ class_name BodyPulse
 ## - end, vtable +0x4c (FUN_00c258b0): +0x1ec = 0, nothing else. The next draw
 ##   of every part is its own material again.
 ## - Who ends it: a state's tinted bit going off (FUN_009cd5e0, c:0x9cdb5d and
-##   the FB case) and berserk's decoration end when its row has SCT_MAT
-##   (CIDecoSkill::FUN_00a53dd0, flag 0x800) -- each calls +0x4c whoever set
-##   the colour last. So a berserk body poisoned draws the poison's colour,
-##   and either end leaves the body uncoloured while the other still runs.
+##   the FB case) and a decoration's end when one of its rows had SCT_MAT
+##   (CIDecoSkill::FUN_00a53dd0, flag 0x800: berserk's, and round 856 any
+##   kept skill decoration's, SkillEffects DECO_WHO) -- each calls +0x4c
+##   whoever set the colour last.
+## - Round 856 (READ, StateLook "THE COLOUR'S GUARDS"): a state bit's +0x48
+##   and +0x4c are left out while the body is berserk (body mode +0x2c2 1) or
+##   in the Roc's frenzy (+0x448 2). So a berserk body poisoned keeps
+##   berserk's colour, the poison's end leaves it, and berserk's end ends the
+##   colour while the poison may still run.
 ## So the colour is never written into a material: a part added or rebuilt
 ## mid-pulse draws it, and at the end nothing has to be put back.
 ##
@@ -71,7 +76,8 @@ static func pulse(elapsed_ms: float, c1: Color, c2: Color, ms: float) -> Color:
 	return c1.lerp(c2, f)
 
 ## +0x48: `host` pulses from `c1` to `c2` and back every 2 x `ms`, from colour
-## 1 now. `who` names the setter ("state", "berserk") for the books and logs.
+## 1 now. `who` names the setter ("state", "berserk", "deco") for the books
+## and logs.
 static func start(host: Node3D, c1: Color, c2: Color, ms: float, who: String) -> void:
 	if host == null or not is_instance_valid(host):
 		return
