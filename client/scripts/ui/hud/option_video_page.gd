@@ -808,6 +808,10 @@ func lower_ui_scale_before_resize() -> void:
 	# Called before store(), which clears resolution_touched (the target).
 	var fit := UiScaleChoices.effective(ui_scale_choice, ui_scale_target())
 	if fit < UiScaleChoices.in_force(win):
+		# Saved first: the resize watch re-fits from the saved choice, and
+		# put the old one back for a moment (MEASURED in round 854's QA:
+		# 175 -> 100 -> 175 -> 100 before this, two needless re-layouts).
+		UiScaleChoices.save_percent(ui_scale_choice)
 		ClientSettings.apply_ui_scale(win, fit / 100.0)
 
 func _window_size() -> Vector2i:
