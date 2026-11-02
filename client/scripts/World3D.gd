@@ -35785,7 +35785,8 @@ func _qa_berserk_probe() -> void:
 ## berserk's), and how many shared per-level materials carry a pulse colour.
 ## A line on every change and every 30th frame (`lit`: BodyPulse holds a
 ## colour on it; before round 855 a state's or berserk's look was on):
-## `QA TINT f<frame> <who> lit <0|1> meshes <n> tinted <k> colour <r,g,b> shared <s>`.
+## `QA TINT f<frame> <who> lit <0|1> meshes <n> tinted <k> colour <r,g,b> shared <s> by <setter>`
+## (round 856: the slot's setter, BodyPulse.who, "-" with none).
 ## The bodies: this player, every other player, every COS, and every monster
 ## an abnormal state was ever heard for.
 var _qa_tint_probe_on := OS.get_environment("OPENSRO_QA_TINT_PROBE") != ""
@@ -35814,13 +35815,16 @@ func _qa_tint_probe() -> void:
 			continue
 		var m := TintProbe.measure(body)
 		var lit := BodyPulse.on(body)
-		var sig := "%d/%d/%d/%d" % [int(lit), int(m["meshes"]), int(m["tinted"]), shared]
+		# Round 856: whose colour the slot holds ("state", "berserk", "deco").
+		var setter := BodyPulse.who(body) if lit else "-"
+		var sig := "%d/%d/%d/%d/%s" % [int(lit), int(m["meshes"]), int(m["tinted"]), shared, setter]
 		if _qa_tint_last.get(who, "") == sig and _qa_tint_frame % 30 != 0:
 			continue
 		_qa_tint_last[who] = sig
 		var c = m["colour"]
-		print("QA TINT f%d %s lit %d meshes %d tinted %d colour %s shared %d" % [Engine.get_frames_drawn(), who, int(lit),
-			int(m["meshes"]), int(m["tinted"]), "-" if c == null else "%d,%d,%d" % [int(round(c.r * 255)), int(round(c.g * 255)), int(round(c.b * 255))], shared])
+		print("QA TINT f%d %s lit %d meshes %d tinted %d colour %s shared %d by %s" % [Engine.get_frames_drawn(), who, int(lit),
+			int(m["meshes"]), int(m["tinted"]), "-" if c == null else "%d,%d,%d" % [int(round(c.r * 255)), int(round(c.g * 255)), int(round(c.b * 255))], shared,
+			setter])
 
 var _berserk_flash_t := -1.0
 var _berserk_flash: ColorRect = null

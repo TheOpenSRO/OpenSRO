@@ -244,14 +244,67 @@ players is being spawned, another player's 0x3057 waits behind the group
   material's and the object's (`FUN_00c27180`: c10, c11, c14).
 - `+0x4c`, `FUN_00c258b0`: `+0x1ec = 0` and nothing else; the next draw of every part is its own.
 - Callers of `+0x4c`: the mask setter `FUN_009cd5e0` for a tinted bit going off (`0x9cdb5d` for BU,
-  ES, PS, ZB, DN, STUN; the FB case beside it) -- guarded only by the riding byte `+0x2c2` and the
-  kind byte `+0x448`, not by any other bit still on -- and berserk's decoration end
-  `CIDecoSkill::FUN_00a53dd0` when its row carries SCT_MAT (flag 0x800). Both name the same compound.
+  ES, PS, ZB, DN, STUN; the FB case beside it) -- guarded only by the body mode `+0x2c2` and the
+  decoration kind `+0x448` (round 856, below), not by any other bit still on -- and any skill
+  decoration's end `CIDecoSkill::FUN_00a53dd0` when one of its rows carried SCT_MAT (flag 0x800):
+  berserk's, and every other kept decoration's. All name the same compound.
 
 So: a burn and a poison on one body draw the colour of the bit set last in the walk (low to high);
-either ending ends the colour while the other runs; a berserk body that is poisoned draws the
-poison's colour, and either end leaves it uncoloured. A part added or rebuilt mid-pulse draws it;
-at the end there is nothing to put back.
+either ending ends the colour while the other runs. A part added or rebuilt mid-pulse draws it; at
+the end there is nothing to put back.
+
+### The colour's guards: body mode 1 (berserk) and decoration kind 2 (round 856)
+
+**READ (`FUN_009cd5e0`, its disassembly `c:0x9cd640..0x9cdb68`; esi is the object whose mask it is).**
+
+- Only the colour calls are guarded. On: the `+0x48` of FB, ES, BU, PS, ZB, DN, STUN behind the tests
+  at `0x9cd74a`, `0x9cd7df`, `0x9cd84d`, `0x9cd8b7`, `0x9cd969`, `0x9cd9d1`, `0x9cda37`. Off: the `+0x4c`
+  at `0x9cdb35..0x9cdb56` and in the FB case. Not guarded: the `PARAM_` decoration's start
+  (`FUN_00a54020`, `0x9cd723`) and end (`FUN_009cd2b0`, `0x9cdac0`), FB's and SLOW's clip speed `+0xc0`
+  (`0x9cd7bf`, `0x9cd95e`; off `0x9cdb01`, `0x9cdb2d`), FZ's motion state 9 and `+0xbd` (`0x9cd7ce`,
+  `0x9cd7d3`; off `0x9cdb0b`).
+- The test sits in each bit's case and reads the object's own bytes: `+0x2c2 == 1` or `+0x448 == 2`
+  skips the call. **DN's end reads `+0x2c2` alone** (`0x9cdb35 cmp byte [esi+0x2c2],1` jumps straight
+  to the `je` at `0x9cdb56`, past the `+0x448` compare at `0x9cdb4f`).
+- **`+0x2c2` is the body mode, not riding.** Its one writer is the body-mode setter `FUN_009cf880`
+  (`[this+0x2c3] = extra; [this+0x2c2] = mode`), reached from 0x30BF kind 4 (`FUN_008a80a0` case 4, any
+  object in view), the spawn (`FUN_009d17e0`, `GlobalDataManager::FUN_0052dc70`: the state block's
+  `+0x470`) and a debug command (`FUN_005470f0`); the constructor `CICharactor::FUN_009d2ad0` zeroes it.
+  Mode 1 runs `FUN_009dd620(1, ...)` (the hwan decoration, 0x80000000 / `SYSTEM_CH_HWAN2MODE`), mode 4
+  draws the body at alpha 0x50. **Mode 1 is berserk.** Mounting a horse writes neither byte, so a
+  rider's state colour is drawn and ends as anyone's. (Round 785's StateLook header and round 855's
+  entry called it "the riding byte"; wrong.)
+- **`+0x448` is a skill decoration's mark on its object** (`deco+0x58`): `FUN_00a53850` (a
+  decoration's start) and `FUN_00a54be0` (a cast's action read) write 2 when the decoration's skill ref
+  (`deco+0x154`) has a non-zero `+0x110` -- the client's skilldata parser `FUN_009bbca0` files the
+  Param code `0x6d6f6d` (`mom`) there -- and `FUN_00a54be0` writes 1 when `+0x114` (`pmhp`) reads 100 at
+  its `+8`; `FUN_00a53120` (a decoration's end) writes 0 for a `mom` skill. MEASURED: of the client's
+  61,330 decrypted skilldata rows (Media.pk2's ENC files, decrypted with the executable's own tables on
+  the box) one skill has `mom`: `MSKILL_RM_ROC_ATTACK10` (id 31102), skilleffect.txt's "괴조 로크 광폭화"
+  -- the Roc's frenzy -- whose ACT_L row is `SCT_MAT,170,30,0,235,155,0,1000`. The server's
+  `SkillAction_Buff` (`s:0x5830b0`, ref `+0x57c`) re-arms its stat stacks every value[0] ms.
+- So a state's colour neither starts nor ends while the body's own decoration colour holds the slot
+  (berserk's red, the frenzy's orange); the decoration's end (`+0x4c`) ends whichever colour is on. A
+  state begun before and ended inside leaves the slot as it is; one begun inside never draws.
+
+**A kept decoration's colour (READ).** `IDecoSkill::FUN_00a513a0`, playing a decoration's rows, hands
+a row with flag 0x800 to the compound's `+0x48` (colour 1 the row bytes `+0x82/+0x81/+0x80`, colour 2
+`+0x86/+0x85/+0x84`, each / 255; the ms `+0x88`) and keeps it at `+0x180`; the destructor
+`CIDecoSkill::FUN_00a53dd0` calls `+0x4c` when one was kept, unless the decoration is flagged hwan
+(`+0xfc & 1`) and `FUN_009c7b20` says the body mode is still 1. No body-mode or kind test. 22 rows of
+skilleffect.txt carry SCT_MAT (MEASURED): berserk's three (`SYSTEM_CH_HWANMODE`, `HWAN2MODE`,
+`HWAN2LINKMODE`), `PARAM_STONE`, the Roc's frenzy, five petrify attacks (`status_bad_stone_on.efp`),
+the two `SKILL_EU_CLERIC_REBIRTHA_SPECIAL_*_BUFF`, seven flame-master / dark-mob marks
+(`EFFECT_AM_*`), the two event thieves' marks, and one cast row (`MSKILL_TQ_WHITESNAKE_ATTACK03` READY).
+
+**Here (round 856).** `StateLook.walk(..., guard)` leaves out a guarded bit's colour call
+(`colour_guarded`); World3D's `_state_guard` reads body mode 1 from NetClient's `body_modes` (the
+0x30BF kind 4 book) and kind 2 from the owner's running buffs (a skill whose Param block has `mom`,
+`SkillBuffCatalog` "mom"). `SkillEffects` draws a kept decoration's SCT_MAT colour for buff auras and
+state auras (`DECO_WHO`) and ends it when the aura ends, after its rows' Fade (INFERRED: the
+decoration is freed at its fade's end). Not built: a cast's SCT_MAT row (the white snake's READY), and
+the kind-2 mark a 'mom' CAST sets on its caster before the buff (`FUN_00a54be0`) -- OpenSRO's server
+casts no 'mom' skill (it starts no monster self-buffs), so kind 2 is not reached live.
 
 **The bug (MEASURED, round 855).** OpenSRO drew the pulse by giving each mesh a copy of its material
 and painting `material_override` every frame (StateLook, round 785). `CharacterLight` rescans a body
