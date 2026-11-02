@@ -7483,6 +7483,142 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-fifth round, lane P: the pet strip draws under the player block, as the original does
+
+The user: "When a pet is spawned and it shows up below the player frame it also appears on top
+when it should be behind it." Their screenshots: ours drew the growth pet's strip (its round
+portrait and box) over the player block's race mark and stat button. The original draws the
+block's race mark, stat button and orbs over the strip. Labels: READ (`c:` sro_client.exe, the
+decomp dump and the disassembly on the render box), MEASURED, INFERRED, OURS, OPEN. Base
+`6b1b1223` (v0.1.619). UI-only lane: no world drawing changed, so no perf gate.
+
+**The cause.** `HudPetMiniInfo.attach_to` hung the strip with `player_info.add_child(self)`. That
+made it the block's last child, drawn after (over) the frame and the whole layout root. Godot
+draws children in tree order, and nothing in the block sets a z_index (checked by the test).
+
+**What the original does (READ).**
+- **A window draws its own art, then its children in list order.** The render `c:0xb8f210`
+  (shown byte +0x61, and +0x63) calls vtable +0x34 (the own draw; CIFStatic's `c:0x6550c0` for
+  this block), then +0x38 = `c:0xba0300`, which walks the child list (+0x78, head +0x7c) from the
+  first node forward and draws each shown child the same way, then +0x3c.
+- **A resinfo section's controls join that list in reverse file order.**
+  - The parser keeps them in file order: `CIFTDocument::FUN_00b3dea0` links each control after the
+    last (first +0x84, last +0x88, next +0x4c, prev +0x50).
+  - `CIFTSection::vslot_000` (`c:0xb3dcb0`) lists the names from the last (+0x88) back through
+    +0x50.
+  - `c:0x82c1d0` makes one record per name in that order (a push_back).
+  - `c:0x8b5580` (CIFPlayerMiniInfo::Create's "Create" section) creates the windows in record
+    order through `gwnd::FUN_00ba20b0`.
+  - `gwnd::FUN_00ba20b0` hands each window to the parent's AddChild, vtable +0x1c = `c:0xb90a80`,
+    a push_back.
+  - So the file's first control is drawn last, on top. UiBuilder's "back to front" reversal (its
+    comment said the draw loop was not found) is now READ.
+- **Where control 100 sits (MEASURED, Media.pk2 `resinfo\ifplayerminiinfo.txt`).** 53 controls.
+  `GDR_PMI_PET_MINI_INFO` (CIFPetMiniInfo, id 100, Rect 53,55,154,40) is the 52nd. Only
+  `GDR_PMI_SELECT` (id 200, the selection glow) comes after it. The order is RACE_MARK, PARTY_LEADER,
+  BTN_STATUP, BTN_CINFO, HWAN_EFF_FACE, DECO_HWAN_SLOT4..0, the 20 stat-panel labels,
+  STA_CINFOBG, FORFEIT, BATTLE_GRADE, FORTRESS_INFO, PK, BTN_JAHWAN, PICTURE, CIRCLE4..0,
+  TXT_MP, TXT_HP, TXT_LEVEL, TXT_ID, GAUGE_MP, GAUGE_HP, EFFECT_MP, EFFECT_HP, HWAN_EFF_GLOW,
+  PET_MINI_INFO, SELECT.
+  - So the strip draws over the block's own art (the ring and bar slots, the window's own draw)
+    and the selection glow.
+  - It draws under everything else: the portrait and its picture, the orbs and the ready circle on
+    the ring's left, the race mark, the stat button, the HP/MP gauges with their text and caution
+    effects, and the berserk glow.
+- **Nothing reorders it later (READ).**
+  - Create hides it at `c:0x7b5d65`. `c:0x7b5420` shows it through vtable +0x5c (`c:0x652b70`),
+    which sets the shown byte and notifies; it does not touch the list.
+  - CIFPetMiniInfo overrides only slots 0, 1, 2, 5, 10 (Create `c:0x7b4490`) and 12
+    (`c:0x7b41f0`). Its show and its draw are CIFStatic's.
+  - Its own children (`ifpetminiinfo.txt`) follow the same rule: BUFF (30), the file's first, is
+    on top.
+- The whole account is in `docs/protocol/player_mini_info.md`, "Draw order".
+
+**Built.**
+- `HudPetMiniInfo.attach_to` finds the layout's own control 100 in the block. That control is a
+  hidden placeholder, built by UiBuilder and hidden by HudPlayerInfo's allow-list. The strip goes
+  in right above it (`move_child(slot.get_index() + 1)`), at the placeholder's position. That is
+  control 100's exact place in the original's order: one place, for HudCos and World3D alike.
+- `HudCos.attach_pet_mini_info` no longer sets the position itself.
+- A second attach keeps one strip in the same place.
+- Without a layout (no archives) the strip hangs on the block at the rect read in `build()`.
+- The other layered parts were already in the original's order (the builder's reversal), and the
+  test pins them.
+- The player's buff board (GDR_MAGICSTATEBOARD) is a separate HUD window added after the block, so
+  it draws over it, as round 624 READ for the original (INFERRED from World3D's add order, not
+  re-measured).
+
+**The strip's place (MEASURED).**
+- Our strip is at control 100's Rect, (53, 55) of the block: the scene says `block +(53.0, 55.0)`.
+- The pixels agree with the user's original 1:1 screenshot (block at 38,19; ours at 4,7).
+  - The pet HP gauge's red row is at block y 80, x 101..194 in the original and 101..195 in ours.
+  - The HGP gauge's yellow row is at block y 85 in both.
+  - The block's HP bar rows (y 29-33, x from 100) are the same.
+- So the strip was never shifted: it only looked shifted because it covered the race mark and the
+  stat button.
+
+**Test.** `hud_pet_strip_order_test` (new, 29 checks) builds the block from a fixture carrying the
+53 controls in the archive's file order (names, classes, ids, rects; no art). It checks:
+- nothing in the block sets a z_index or top_level;
+- the block's 53 controls draw in reverse file order;
+- the strip is control 100's sibling, right above it, and the placeholder stays hidden;
+- SELECT draws under the strip and the other 51 controls over it, including PICTURE and its
+  PortraitView, RACE_MARK, BTN_CINFO, BTN_JAHWAN, CIRCLE3/4, the gauges, TXT_HP/MP,
+  HWAN_EFF_GLOW and STA_CINFOBG;
+- the block's own art is under the strip;
+- the strip's own nodes all draw before the next control;
+- its children draw in reverse `ifpetminiinfo.txt` order;
+- the strip is at (53, 55), on screen too;
+- a second attach changes nothing, and the no-layout fallback works.
+
+On the base code the same test fails 19 checks.
+
+**QA (render box, real client against the lane server on 127.0.0.1:17280).**
+- Setup: in memory, prod-like flags with the navmesh; `/var/tmp/r855p/qa855.sh`, real time,
+  960 x 540, UI scale 1.
+- The character is given the wolf flute (ITEM_COS_P_FLUTE 7488, a growth pet). Each step is real
+  input through the client's own paths (`OPENSRO_QA_INPUT`):
+  - I opens the inventory;
+  - a right click on the flute's bag cell (541, 226) summons the pet;
+  - I closes the inventory;
+  - a left click on the block (124, 17) selects the player, which shows the yellow glow as in the
+    user's screenshot.
+- New QA action `pmi_order` measures the block in the scene: its visible controls in draw order,
+  split at the strip, each with its overlap with the strip's rect.
+  - Base: strip `child 3 of HudPlayerInfo`. Drawn under it: Frame, SELECT, GAUGE_HP, GAUGE_MP,
+    TXT_ID, TXT_LEVEL, TXT_HP, TXT_MP, PICTURE, PortraitView, BTN_CINFO (160 px overlap),
+    BTN_STATUP, RACE_MARK (240 px). Drawn over it: nothing.
+  - New: strip `child 2 of Create`. Drawn under it: Frame (2310 px), SELECT (3388 px). Drawn over
+    it: GAUGE_HP, GAUGE_MP, TXT_ID, TXT_LEVEL, TXT_HP, TXT_MP, PICTURE, PortraitView, BTN_CINFO
+    (160 px), BTN_STATUP, RACE_MARK (240 px).
+- Pixel overlap (MEASURED from the frames; a pixel counts as changed when a channel moves more than
+  30). In the race mark's 240 px over the strip and the stat button's 160 px over it, the pixels
+  that changed when the strip appeared were:
+
+  | | race mark (240 px) | stat button (160 px) |
+  |---|---|---|
+  | base | 145 | 73 |
+  | new | 36 | 36 |
+
+  The new build's changes are only the controls' transparent corners, where the strip and the
+  glow show through. Base vs new after the summon: 115 of the race mark's 240 px differ.
+- Frames for a human (`/var/tmp/r855p/keep/` on the box):
+  - `sheet855.png`: the user's original, base after, new before and new after, each the block's
+    area at 1:1 x 3. In the new frame the race mark and the stat button are over the pet's
+    portrait ring, as in the original. In base the ring covers them.
+  - `{base,new}_{before,after,after2}.png`: the full frames.
+- Each run's client ends rc 134 at quit: the known RenderingDevice `finalize` abort after "World3D:
+  left the tree" (round 854). It comes after the measurements, in both builds.
+
+**Gates.** `check` ALL LOAD (1104 scripts); `tests` "ran 415 suite(s), 0 failing". No server
+change.
+
+**OPEN.**
+- The strip's buff row (GDR_PET_MINI_BUFF, id 30) is still empty: this client keeps no pet buff
+  list (round 795). Its place on top of the strip is now right.
+- The 2DT loader's sibling order (`docs/protocol/2DT_FORMAT.md`, CNIF windows created by
+  `0x48cb00`) is a different path and is still measured, not read.
+
 ## Eight-hundred-and-fifty-fourth round, lane U: UI Scale is a dropdown in Option > Video, in Windows' steps
 
 The user: "Let's make UI scale a dropdown in the graphics settings. Let's use the same percentages
