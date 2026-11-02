@@ -7483,6 +7483,128 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-fourth round, lane W: the free zone warp is closed (OpChangeZone is a GM's tool)
+
+The user, on hearing the server accepts a free zone warp: "Free warp? why do we want this? It's not
+in the original game I never asked for it". It was a security hole, flagged in round 848 and left
+open: `handleChangeZone` (OpChangeZone 0x0026, OpenSRO's own message) warped any living player to
+any zone, with a landing spot, checking only alive / not already there. Since round 849 the
+developer panel (Shift+F3, on in every build) put that warp behind buttons any player could click.
+Labels: READ (`s:` SR_GameServer.exe, objdump and the decomp dump on the render box), MEASURED,
+INFERRED, OURS, OPEN.
+
+**What the original does (READ).**
+- The original's GM moves are sub-commands of one message, 0x7010
+  (`GObjPC_MsgHandler_SpecialCommand::DispatchCommand`, s:0x51de90; `docs/protocol/gm_commands.md`:
+  0x10 "MoveTo", 0x08 "MoveToPlayer", 0x1f `OnCommandMoveToNpc`). Its first act, before the
+  switch, is a permission test of the selector: s:0x51dee3..0x51def2 calls CGObjPC vtable +0x634
+  (slot 397, s:0x4e5960, in the table at 0xaf59fc) with the selector; that calls s:0x40b7c0
+  (`[PC+0x188]`'s byte +0x3d and the selector, on the singleton at 0xd6aa1c) -> s:0x82a070: the
+  selector is looked up in a table (s:0x607520); not found refuses, found compares the entry's
+  byte +0xe with s:0x82a0e0 of the account's byte (`required <= level`). A refusal answers 0xB010
+  with error 0x1403 (s:0x51def8..0x51df04) and runs nothing. So a GM's warp is a server-side move,
+  gated per command on the account's level. Which account field that byte is (INFERRED: the
+  shard's security level) is OPEN.
+- Every other relocation the original server makes has a server-side reason (the gate 0x705A
+  `HandleTeleportUse` s:0x513590, the scrolls, the revive 0x7053, the walk-ins). Not claimed: a
+  proven absence of any client zone message -- `handler_payloads.tsv`'s GObjPC table (163 rows) has
+  none, but it does not list the movement handlers either, so it is not a complete census.
+
+**Built.**
+- `handleChangeZone` refuses any account outside `-gm-accounts` before it reads the request
+  (`zoneChangeAllowed`, world.go): `OpChangeZoneResult{OK: false, Reason: "zone change is a GM
+  tool"}` (wording OURS), a `WARN zone change refused: not a GM account account=<name>` log line,
+  and nothing moves -- not the hub, not anyone's view. A malformed request from a non-GM gets the
+  same refusal. A GM's OpChangeZone is unchanged (the developer panel's zone box and town buttons).
+- A GM's `/goto <zone>` is now the server's own warp (`GMCommandHandler` -> `warpVia` "gm /goto",
+  arrival guard on or off) at the zone's landing (`changeZoneLanding`, the point a client-asked
+  change landed at); the reply names no zone, so no client message carries it. Before, the reply
+  named the zone and the client sent OpChangeZone, which any account could send. This is the
+  cleaner of the two: the zone a GM lands in is the one the GM command resolved on the server, as
+  with the original's 0x7010 moves, and OpChangeZone is left only as the developer panel's GM tool.
+- Client: a refused zone change that answers this client's request puts "Zone change refused:
+  <reason>" on the system line (World3D `_on_change_zone_result`). The refusal never showed a
+  loading screen (it goes up only for an accepted result) and consumes its request.
+- partybot: `-zone` documents the GM requirement and prints a refusal with where the bot still
+  is; `-zone-after` (QA aid) delays the request. The developer panel's town buttons are named
+  `DebugGo<Town>` and QA `node:` looks in the shown panel, so a run clicks them.
+- The suite opens OpChangeZone for its older tests (TestMain `zoneChangeAnyone`; no flag sets it,
+  as with `-trust-client-positions`); `changezone854_test.go` shuts it for its own.
+
+**Every zone move checked (server tests with OpChangeZone shut, a plain account unless named):**
+
+| Path | Code | Test |
+|---|---|---|
+| OpChangeZone from a non-GM (town, known spot, arbitrary spot, dungeon, malformed) | `handleChangeZone` | refused, unmoved, the other player sees nothing (`TestRound854NonGMChangeZoneIsRefused`) |
+| GM `/goto` from a non-GM | GM gate | refused, unmoved (same test) |
+| OpChangeZone from a GM (developer panel) | `handleChangeZone` | warps (`TestRound854GMChangeZoneStillWorks`; `TestRound786EveryTeleportPathIsHeld` "zone change") |
+| GM `/goto <zone>` | `GMCommandHandler` -> `warpVia` "gm /goto" | lands at the zone's landing, guard off and on (`TestRound854GMGotoZoneIsTheServersWarp`) |
+| GM `/tp`, `/goto <monster>` | `GMCommandHandler` | unchanged (`TestRound786EveryTeleportPathIsHeld` "gm /tp") |
+| Gate teleport 0x705A | `teleporter.use` | moves (`TestRound854LegitimateMovesNeedNoZoneChange`) |
+| `/unstuck` | `handleUnstuck` | moves (same) |
+| Revive at the return point; respawn after a kill | `returnToPoint` / `returnAfterKill` -> `warpHome` | move (same) |
+| Return scroll, reverse return scroll, return then reverse to the recall point | `ScrollCaster.complete` | move (same: `TestRound786ScrollsAreHeld`, `TestRound778ReturnThenReverseToTheRecallPoint`) |
+| Gate into a dungeon; walk-in portal; walk-in by a reported walk | `teleporter.use` / `walkIn` | move (same: `TestRound773TeleportIntoADungeon`, `...WalkInFiresOnEntering`, `...WalkInFiresOnAReportedWalk`) |
+| Guild recall | `handleRecallAnswer` | moves (same: `TestGuild844RecallAnswer`) |
+| Relog arrival | `enterOwned` (OpEnterWorld) | each rig's own entry, with the gate shut |
+| Walking across region and zone boundaries | 0x7021 / OpMove claims | no zone message: the client sends OpChangeZone only from `_request_zone_change`, reached from the GM reply (now only a guard-off `/goto <monster>` in another zone, a GM's) and the developer panel |
+
+`TestRound786EveryRelocationGoesThroughWarpVia` now expects `GMCommandHandler` twice among
+`warpVia`'s callers.
+
+**Other client messages that choose a position (checked, not changed).**
+- OpMove 0x0022 (a stop, a placement, an older client's walk): with `-trust-client-positions` off
+  a claim is taken only within the server's own leg's reach (`world.Hub.Claim`, `claimBound`) or
+  at a point the server named (`landingTake`, `warpLandingAdmits`); otherwise the mover is
+  corrected (0xB023). With the flag on every position is taken (the startup log warns "QA only").
+  Prod runs without it (INFERRED from the rounds that measured "with prod's flags (no
+  `-trust-client-positions`)", e.g. round 847; prod itself was not read, per the brief).
+- 0x7021 click move: the server paths it (destmove.go).
+- Ghost Walk / Teleport / Sprint ('tele', 'tel2', 'tel3'): the ground point is clamped to the
+  skill's limit (`teleportDestination`, READ c:FUN_005862e0).
+- `/unstuck`: the server picks the point (`unstuckTarget`), once a minute.
+- The developer panel's "Teleport" box moves the player on the client only; it sends no message
+  of its own, and the next claim is bounded as above.
+- Nothing else found that lets a player pick a zone.
+
+**QA (render box, real clients against lane server 127.0.0.1:17250: in memory, `-navmesh-dir`,
+no `-trust-client-positions`, `-gm-accounts r854g` only; `/var/tmp/r854w/qa854.sh`).**
+- **A plain account's crafted OpChangeZone, watched by a GM client (run `gm`).** Plain854 (a
+  partybot, not a GM) entered Jangan at (0, -1380); the rendered GM client Gm854 stood 12 units
+  beside it (`/tp`, the server's warp). 80 s later the bot sent 0x0026 to donwhang: the server
+  logged `WARN zone change refused: not a GM account account=plain854 bytes=10` (08:24:46) and the
+  bot read `zone change refused: "zone change is a GM tool" (still in jangan at 0, 20, -1380)`.
+  MEASURED in the GM client's scene (`OPENSRO_QA_MOVE_LOG`, the bot's drawn body every frame): 7,162
+  frames from its spawn (frame 96) to the GM's own departure (frame 7257), every one at
+  (0.000, -1380.000), before and after the refusal; no despawn, no arrival.
+- **The GM's typed `/goto donwhang` (same run, Enter + typed line + Enter through the chat box).**
+  Reply "travelling to donwhang" with no zone; the server held and released the arrival
+  `via="gm /goto" zone=donwhang x=0 z=0`; the client: "the server moved the character to (0.0, 0.0)",
+  the Donwhang build in its own frame, 0x3012 sent; the GM's drawn position then (0.000, 0.000) for
+  3,031 frames -- Donwhang's centre-region middle, the landing a client-asked change had (Donwhang
+  has no LandingSpot row).
+- **The GM's developer panel (same run, Shift+F3, a click on its Jangan button through the real
+  input path).** OpChangeZone accepted: `via="zone change" zone=97/168 x=9 z=-409` (the button's
+  spot 969, 1369), the GM's drawn position (9.000, -409.000) after.
+- **A plain client (run `plain`, Plain854b).** Shift+F3, a click on the panel's Donwhang button:
+  the server's `WARN zone change refused: not a GM account account=r854p bytes=17`; the client's
+  system line "Zone change refused: zone change is a GM tool", no loading screen. Then a typed
+  `/goto donwhang`: "GM commands are not enabled for your account." MEASURED: the player's drawn
+  position over frames 200-10568, through both, is (0.000, -1380.000) on all 10,369 frames, and no
+  zone-change load ran.
+- Frames for a human (illustrative; the numbers above are the measurement):
+  `/var/tmp/r854w/keep/frames/gm_sheet.png` (Gm854 beside Plain854 after the refusal; in Donwhang
+  after `/goto`; back in Jangan from the panel) and `plain_sheet.png` (the panel and the refusal
+  line; the `/goto` refusal, still in Jangan). Logs in `/var/tmp/r854w/` (`gm.*`, `keep/plain.*`).
+
+**Gates.** `cd server && go build ./... && go test ./...`: every package ok.
+`remote_godot.sh check`: ALL LOAD (1101 scripts). `remote_godot.sh tests`: "ran 413 suite(s), 0 failing" (a first run beside the rendered QA failed `seated_spawn_test.gd` on its dressing frame budget; alone, and the full rerun with the box quiet, it passes).
+Server-side plus a client log line and QA hooks, no world drawing: no perf gate.
+
+**OPEN:** which account field the original's 0x7010 level byte is (`[PC+0x188]+0x3d`); whether the
+developer panel should hide its zone rows from a non-GM (it shows them and the server refuses);
+the panel being on in every build (round 849, `DevTools.DEFAULT_ON`) is still the user's call.
+
 ## Eight-hundred-and-fifty-third round: a walk or run a model has no clip for plays nothing; monsters on the common resync
 
 The user: "Run the open tasks" -- round 852's two: what the original plays for a pet whose model has
