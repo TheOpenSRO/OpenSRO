@@ -19104,6 +19104,11 @@ func _qa_input_step() -> void:
 				var at := camera_3d.unproject_position(pbody.global_position + Vector3(0, top * 0.5, 0))
 				_qa_input_report = "%s at %s" % [action, at]
 				_qa_push_click(at, MOUSE_BUTTON_LEFT)
+		"pmi_order":
+			# Round 855 (QA only): the player block as drawn -- where the pet
+			# strip sits among its children and which of them draw under and
+			# over it, with each one's overlap with the strip in UI pixels.
+			_qa_input_report = "%s %s" % [action, _qa_pmi_order_report()]
 		"groundclick":
 			# Round 846: left click the ground <dx>,<dz> world units from where
 			# this player stands, at the pixel the camera draws that point at
@@ -19672,6 +19677,48 @@ func _qa_push_mouse(at: Vector2, button: MouseButton, pressed: bool, local: bool
 
 ## `local`: `at` is in the UI's own units (a control's global rect), which
 ## differ from the window's pixels at a UI scale other than 1 (round 836).
+## OPENSRO_QA_INPUT "pmi_order" (round 855): the player block's visible
+## controls in draw order (tree order; nothing in the block sets a z_index),
+## split at the pet strip into drawn under / over it, each with its overlap
+## with the strip's rect in UI pixels ("~<area>px").
+func _qa_pmi_order_report() -> String:
+	if _hud_player_info == null or _hud_cos == null or _hud_cos.pet_info == null:
+		return "(no block or no strip)"
+	var strip: Control = _hud_cos.pet_info
+	var items: Array = []
+	var stack: Array = [_hud_player_info]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		var kids := n.get_children()
+		kids.reverse()
+		for k in kids:
+			if k is CanvasItem:
+				stack.append(k)
+		if n != _hud_player_info:
+			items.append(n)
+	var si := items.find(strip)
+	var sr := strip.get_global_rect()
+	var under: Array = []
+	var over: Array = []
+	for i in items.size():
+		var c := items[i] as Control
+		if c == null or c == strip or strip.is_ancestor_of(c) or not c.is_visible_in_tree():
+			continue
+		var nm := String(c.name)
+		if not (nm.begins_with("GDR_PMI_") or nm == "Frame" or nm == "PortraitView"):
+			continue
+		var cr := c.get_global_rect()
+		var area := int(round(cr.intersection(sr).get_area())) if cr.intersects(sr) else 0
+		var line := nm + ("~%dpx" % area if area > 0 else "")
+		if i < si:
+			under.append(line)
+		else:
+			over.append(line)
+	return "strip visible %s rect %s (block +%s) child %d of %s; drawn under it: [%s]; drawn over it: [%s]" % [
+		str(strip.is_visible_in_tree()), str(sr), str(sr.position - _hud_player_info.get_global_rect().position),
+		strip.get_index(), strip.get_parent().name if strip.get_parent() != null else "-",
+		", ".join(under), ", ".join(over)]
+
 func _qa_push_click(at: Vector2, button: MouseButton, local: bool = false) -> void:
 	_qa_push_mouse(at, button, true, local)
 	_qa_push_mouse(at, button, false, local)

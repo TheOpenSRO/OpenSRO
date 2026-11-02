@@ -30,6 +30,57 @@ this project), **OPEN** (not recovered).
 
 `GDR_PMI_RACE_MARK` (id 15) is taken by the one-time fill 0x007b6fd0, not by Create.
 
+## Draw order (READ, round 855)
+
+A CIF window draws its own art, then its children in its child list's order, so a later child
+is drawn over an earlier one:
+
+- **The render.** `0xb8f210` runs only while the window is shown (`+0x61`) and `+0x63` is set.
+  It calls vtable `+0x34`, the window's own draw (CIFStatic's `0x6550c0` for this block: the
+  `window_all.ddj` slice, ring and bar slots). Then `+0x38`, `0xba0300`, which walks the child
+  list (`+0x78`, head `+0x7c`) from the first node forward and draws each shown child the same
+  way. Then `+0x3c`.
+- **The list's order.** A resinfo section's controls join the list in REVERSE file order:
+  - The parser keeps them in file order: `CIFTDocument::FUN_00b3dea0` links each new control
+    after the last (first `+0x84`, last `+0x88`, next `+0x4c`, prev `+0x50`).
+  - `CIFTSection::vslot_000` (`0xb3dcb0`) hands the names out from the last (`+0x88`) back
+    through `+0x50`.
+  - `0x82c1d0` builds one record per name in that order (a push_back).
+  - `0x8b5580` (called from `CIFPlayerMiniInfo::Create` with "Create") creates the windows in
+    record order. Each is created by `gwnd::FUN_00ba20b0`, which hands it to the parent's
+    AddChild (vtable `+0x1c`, `0xb90a80`, a push_back).
+- **So the file's first control is drawn last, on top.** `UiBuilder.build_section` builds the
+  same order: the file reversed into Godot's tree order.
+- **Nothing moves a control later.** Showing one (vtable `+0x5c`, `0x652b70`; CIFPlayerMiniInfo's
+  `0x7b4f10` shows the stat button with the block) sets the shown byte and notifies; it does not
+  touch the list. CIFPetMiniInfo overrides only slots 0, 1, 2, 5, 10 (Create, `0x7b4490`) and 12
+  (`0x7b41f0`): its show and its draw are CIFStatic's.
+
+`ifplayerminiinfo.txt` lists its 53 controls in this file order (MEASURED, Media.pk2):
+
+| file # | control (id) |
+|---|---|
+| 1-4 | RACE_MARK (15), PARTY_LEADER (14), BTN_STATUP (34), BTN_CINFO (20) |
+| 5-10 | HWAN_EFF_FACE (45), DECO_HWAN_SLOT4..0 (44..40) |
+| 11-31 | the stat panel's twenty labels and values, then STA_CINFOBG (21) |
+| 32-35 | FORFEIT (51), BATTLE_GRADE (60), FORTRESS_INFO (70), PK (50) |
+| 36-37 | BTN_JAHWAN (13), PICTURE (12) |
+| 38-42 | CIRCLE4..0 (11..7) |
+| 43-48 | TXT_MP (6), TXT_HP (5), TXT_LEVEL (4), TXT_ID (3), GAUGE_MP (1), GAUGE_HP (0) |
+| 49-51 | EFFECT_MP (78), EFFECT_HP (77), HWAN_EFF_GLOW (46) |
+| 52 | **PET_MINI_INFO (100)**, the CIFPetMiniInfo strip |
+| 53 | SELECT (200) |
+
+So the pet strip is drawn over the block's own art and the selection glow, and under everything
+else: the portrait and its picture, the orbs, the ready circle, the race mark, the stat button,
+the gauges, their text and caution effects, and the berserk glow. The strip's own children
+(`ifpetminiinfo.txt`) follow the same rule: its art, then EFFECT_HP (100), GAUGE_HP (10),
+GAUGE_HGP (11), TXT_NAME (15), TXT_LEVEL (16), PICTURE (20), and BUFF (30) on top.
+
+OpenSRO (round 855): `HudPetMiniInfo.attach_to` puts the strip right above the layout's own
+control 100. That control is built as a hidden placeholder by HudPlayerInfo's allow-list. Before
+round 855 the strip was appended after the whole block and drew over all of it.
+
 ## Clicks: the message map (READ)
 
 Initialised at 0x00d71d40; entries are 0x28 bytes from 0x00ebf1e8 (`msg, 0, id_lo, id_hi, sig, 0,
