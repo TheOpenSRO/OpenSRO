@@ -153,12 +153,15 @@ func _body_checks() -> void:
 		and is_equal_approx(_albedo(hair).a, 0.5), "the material's own alpha is kept")
 	_check(_near(_albedo(_mesh(other, "suit")), Color(0.59, 0.59, 0.59)), "another body keeps its colour")
 	bl.tick(0.5)
+	BodyPulse.tick(0.5)
 	_check(_near(_albedo(suit), Color8(10, 20, 30).lerp(Color8(110, 120, 130), 0.5)), "half a period on, the midpoint (%s)" % _albedo(suit))
 	_check(skel.scale.is_equal_approx(Vector3(2, 2, 2) * 1.05), "and the body has grown half way to x1.1 (%s)" % skel.scale)
 	bl.tick(0.5)
+	BodyPulse.tick(0.5)
 	_check(_near(_albedo(suit), Color8(110, 120, 130)) and skel.scale.is_equal_approx(Vector3(2.2, 2.2, 2.2)),
 		"after the ms: colour 2, and the full x1.1 (%s, %s)" % [_albedo(suit), skel.scale])
 	bl.tick(1.0)
+	BodyPulse.tick(1.0)
 	_check(_near(_albedo(suit), Color8(10, 20, 30)), "and back to colour 1 after twice the ms")
 
 	# Another player, already berserk when drawn: no burst, no sound.
@@ -179,6 +182,7 @@ func _body_checks() -> void:
 	cape.material_override = cm
 	skel.add_child(cape)
 	bl.tick(0.3)
+	BodyPulse.tick(0.3)
 	_check(cape.material_override != cm, "a piece worn later is found and tinted")
 
 	# The end: the colour goes at once, the size over its second, the burst and sound.
@@ -186,14 +190,16 @@ func _body_checks() -> void:
 	heard.clear()
 	_check(bl.stop(own), "the end is taken")
 	_check(suit.material_override == plain_suit and _near(_albedo(suit), Color(0.59, 0.59, 0.59))
-		and not suit.has_meta(bl.ORIGINAL_META) and cape.material_override == cm,
+		and not suit.has_meta(BodyPulse.ORIGINAL_META) and cape.material_override == cm,
 		"every piece has its own material back")
 	_check(made == ["fx\\gone.efp"] and heard == ["prim\\snd\\p\\off.wav"], "the end's burst and sound (%s, %s)" % [made, heard])
 	_check(not bl.active(own) and bl.active(other), "the other body is still berserk")
 	var mid := skel.scale.x
 	bl.tick(0.5)
+	BodyPulse.tick(0.5)
 	_check(skel.scale.x < mid and skel.scale.x > 2.0, "the size is on its way back (%s)" % skel.scale)
 	bl.tick(0.6)
+	BodyPulse.tick(0.6)
 	_check(skel.scale.is_equal_approx(Vector3(2, 2, 2)) and not skel.has_meta(bl.SCALE_META), "and back to its own after a second")
 	_check(bl.count() == 1, "the ended look is forgotten (%d held)" % bl.count())
 	_check(not bl.stop(own), "a second end does nothing")
@@ -201,6 +207,7 @@ func _body_checks() -> void:
 	# The other player's berserk ends too.
 	bl.stop(other)
 	bl.tick(1.1)
+	BodyPulse.tick(1.1)
 	_check(_near(_albedo(_mesh(other, "suit")), Color(0.59, 0.59, 0.59)) and bl.count() == 0, "the other body is itself again")
 
 	# This player's own berserk ended by a zone change's arrival: the look
@@ -211,6 +218,7 @@ func _body_checks() -> void:
 	var mplain := msuit.material_override
 	bl.start(mover, false, true)
 	bl.tick(1.0)
+	BodyPulse.tick(1.0)
 	made.clear()
 	heard.clear()
 	_check(bl.end(mover, true), "the arrival's end is taken")
@@ -223,6 +231,7 @@ func _body_checks() -> void:
 	_check(bl.end(mover, false) and made == ["fx\\gone.efp"] and heard == ["prim\\snd\\p\\off.wav"],
 		"an ordinary end still plays its burst and sound (%s, %s)" % [made, heard])
 	bl.tick(1.1)
+	BodyPulse.tick(1.1)
 	mover.free()
 
 	# A body freed while berserk is dropped.
@@ -230,6 +239,7 @@ func _body_checks() -> void:
 	bl.start(gone, true, false)
 	gone.free()
 	bl.tick(0.1)
+	BodyPulse.tick(0.1)
 	_check(bl.count() == 0, "a freed body's look is dropped")
 	own.free()
 	other.free()

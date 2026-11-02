@@ -8570,6 +8570,10 @@ func _crowd_eligible(character_id: int, node: Node3D, skel: Skeleton3D) -> Strin
 		return "fade"
 	if BerserkLook.active(node):
 		return "berserk"
+	# Round 855: a body drawing a pulse colour draws it from its own copies,
+	# which the far instances would hold on to after the pulse ends.
+	if BodyPulse.on(node):
+		return "pulse"
 	# Detail's ten casters (round 739, B2) cast from their meshes.
 	if bool(node.get_meta(CharacterBlobs.META_DETAIL, false)):
 		return "detail"
@@ -10412,7 +10416,7 @@ func _clear_state_looks(why: String) -> void:
 	_state_looks.clear()
 	# This player's own pulse and clip speed, whoever its key named.
 	if player != null and is_instance_valid(player):
-		StateLook.set_tint(player, [])
+		StateLook.end_pulse(player)
 	_player_clip_speed = 1.0
 	_prune_clip_speeds(true)
 
@@ -10435,7 +10439,7 @@ func _drop_state_look(key: String, body: Node3D) -> void:
 			SkillEffects.detach_aura(key, StateLook.STATE_TOKEN - bit)
 	_state_looks.erase(key)
 	if body != null and is_instance_valid(body):
-		StateLook.set_tint(body, [])
+		StateLook.end_pulse(body)
 		_set_body_clip_speed(body, 1.0)
 
 ## An owner's abnormal states changed from `old_mask` to `new_mask`: each
@@ -10462,7 +10466,7 @@ func _apply_state_look(key: String, body: Node3D, old_mask: int, new_mask: int) 
 			continue
 		SkillEffects.play_named(id, SkillAudio.ACT_S, body)
 		SkillEffects.play_named(id, SkillAudio.ACT_L, body, key, StateLook.STATE_TOKEN - int(bit))
-	StateLook.set_tint(body, w["tint"])
+	StateLook.apply_pulse(body, w["pulse"])
 	_set_body_clip_speed(body, StateLook.clip_speed(look))
 
 ## An owner's body was (re)built: its abnormal states' looks go on it, as
@@ -22828,7 +22832,7 @@ func _physics_process(delta: float) -> void:
 	if FrameSplit.on:
 		FrameSplit.add("pt_skill", Time.get_ticks_usec() - fs_t)
 	BerserkLook.tick(delta)
-	StateLook.tick(delta)
+	BodyPulse.tick(delta)
 	# Monsters and other players fading into existence (round 676): the
 	# frame's steps' time, stepped once in _process (round 748, item 4: a
 	# crowd's arrival keeps dozens of fades running, each setting its
@@ -22845,6 +22849,7 @@ func _physics_process(delta: float) -> void:
 		FrameSplit.add("pt_texani", Time.get_ticks_usec() - ta_t)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
+	_qa_tint_probe()
 	if FrameSplit.on and fs_t > 0:
 		var t1 := Time.get_ticks_usec()
 		FrameSplit.add("p_ticks", t1 - fs_t)
@@ -35739,6 +35744,49 @@ func _qa_berserk_probe() -> void:
 		print("QA BERSERK PROBE %s screen %d,%d of %dx%d %s tint %s scale %.3f" % [who, int(at.x), int(at.y),
 			int(vp.x), int(vp.y), "on" if on else "off", "none" if tint == null else "%d,%d,%d" % [
 			int(round(tint.r * 255)), int(round(tint.g * 255)), int(round(tint.b * 255))], BerserkLook.scale_of(body)])
+
+## QA (round 855): OPENSRO_QA_TINT_PROBE=1 measures, every frame, the colour
+## each body is drawn with on its own meshes (TintProbe: the object_tint its
+## materials carry), against whether a pulse should be on it (a state's or
+## berserk's), and how many shared per-level materials carry a pulse colour.
+## A line on every change and every 30th frame (`lit`: BodyPulse holds a
+## colour on it; before round 855 a state's or berserk's look was on):
+## `QA TINT f<frame> <who> lit <0|1> meshes <n> tinted <k> colour <r,g,b> shared <s>`.
+## The bodies: this player, every other player, every COS, and every monster
+## an abnormal state was ever heard for.
+var _qa_tint_probe_on := OS.get_environment("OPENSRO_QA_TINT_PROBE") != ""
+var _qa_tint_last := {}
+var _qa_tint_monsters := {}
+var _qa_tint_frame := 0
+
+func _qa_tint_probe() -> void:
+	if not _qa_tint_probe_on:
+		return
+	_qa_tint_frame += 1
+	var shared := TintProbe.shared_tinted()
+	var bodies := {"self": player}
+	for id in _other_bodies:
+		bodies["char:%d" % int(id)] = _other_bodies[id]
+	for id in _cos_bodies:
+		bodies["cos:%d" % int(id)] = _cos_bodies[id]
+	for key in _abnormal_states:
+		if String(key).begins_with("monster:"):
+			_qa_tint_monsters[String(key)] = true
+	for mk in _qa_tint_monsters:
+		bodies[mk] = _state_body_of(String(mk))
+	for who in bodies:
+		var body = bodies[who]
+		if body == null or not is_instance_valid(body):
+			continue
+		var m := TintProbe.measure(body)
+		var lit := BodyPulse.on(body)
+		var sig := "%d/%d/%d/%d" % [int(lit), int(m["meshes"]), int(m["tinted"]), shared]
+		if _qa_tint_last.get(who, "") == sig and _qa_tint_frame % 30 != 0:
+			continue
+		_qa_tint_last[who] = sig
+		var c = m["colour"]
+		print("QA TINT f%d %s lit %d meshes %d tinted %d colour %s shared %d" % [Engine.get_frames_drawn(), who, int(lit),
+			int(m["meshes"]), int(m["tinted"]), "-" if c == null else "%d,%d,%d" % [int(round(c.r * 255)), int(round(c.g * 255)), int(round(c.b * 255))], shared])
 
 var _berserk_flash_t := -1.0
 var _berserk_flash: ColorRect = null

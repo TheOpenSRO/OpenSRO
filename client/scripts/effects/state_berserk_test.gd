@@ -1,12 +1,13 @@
 extends SceneTree
 
-## Round 785's client review, finding 8: an abnormal state's colour pulse
-## (StateLook) and the berserk look (BerserkLook) on one body compose -- in
-## any of the four orders the two come on and go, the body ends on its own
-## material, and the shared material itself is never painted. Before the fix
-## each kept the other's copy as "the original": a state ending under berserk
-## put the shared material under berserk's pulse (which then painted every
-## body sharing it), and berserk's end put the state's stale copy back.
+## An abnormal state's colour pulse (StateLook) and the berserk look
+## (BerserkLook) on one body share its one colour slot, BodyPulse (round 855,
+## READ: the compound's +0x48 / +0x4c -- the last start wins and either end
+## ends the colour, whoever set it). In each of the four orders the two come
+## on and go: the colour drawn is the slot's, the shared material is never
+## painted, and with both off the body draws its own material.
+## Round 785's client review, finding 8 had berserk keep the colour over a
+## state (OURS then); the original does not.
 ## Synthetic tables and bodies, never game data. Run headless on the render
 ## box (`client/tools/remote_godot.sh tests`).
 
@@ -15,6 +16,7 @@ const BerserkLook = preload("res://scripts/effects/berserk_look.gd")
 var _failures := 0
 const PLAIN := Color(0.59, 0.59, 0.59, 1.0)
 const BURN := 0x8
+const BERSERK_C1 := Color8(10, 20, 30)
 
 func _check(cond: bool, msg: String) -> void:
 	if cond:
@@ -47,9 +49,10 @@ func _body(shared: StandardMaterial3D) -> Array:
 	root.add_child(body)
 	return [body, mi]
 
+## A state's tinted bit on or off, as World3D walks it.
 func _state(body: Node3D, on: bool) -> void:
-	StateLook.set_tint(body, StateLook.TINTS[BURN] if on else [])
-	StateLook.tick(0.25)
+	var w := StateLook.walk(0 if on else BURN, BURN if on else 0, {})
+	StateLook.apply_pulse(body, w["pulse"])
 
 func _berserk(body: Node3D, on: bool) -> void:
 	if on:
@@ -59,14 +62,15 @@ func _berserk(body: Node3D, on: bool) -> void:
 	BerserkLook.tick(0.25)
 	BerserkLook.tick(0.25)
 
-func _order(name: String, steps: Array) -> void:
+func _order(name: String, steps: Array, want: Array) -> void:
 	var shared := StandardMaterial3D.new()
 	shared.albedo_color = PLAIN
 	var made := _body(shared)
 	var body: Node3D = made[0]
 	var mi: MeshInstance3D = made[1]
 	var worst := ""
-	for st in steps:
+	for i in steps.size():
+		var st: String = steps[i]
 		if st == "S+":
 			_state(body, true)
 		elif st == "S-":
@@ -75,16 +79,24 @@ func _order(name: String, steps: Array) -> void:
 			_berserk(body, true)
 		else:
 			_berserk(body, false)
-		# Either look still on draws a copy; the shared material is never painted.
-		StateLook.tick(0.25)
-		BerserkLook.tick(0.25)
+		BodyPulse.tick(0.0)
 		if not shared.albedo_color.is_equal_approx(PLAIN) and worst == "":
 			worst = "after %s the shared material is painted %s" % [st, shared.albedo_color]
-		var lit := StateLook.tinted(body) or BerserkLook.active(body)
-		if lit and mi.material_override == shared and worst == "":
-			worst = "after %s a look is on but the mesh draws the shared material" % st
-	_check(worst == "", "%s: the shared material is never painted, and a look on draws a copy%s" % [name, " (" + worst + ")" if worst != "" else ""])
-	_check(mi.material_override == shared and not mi.has_meta(StateLook.ORIGINAL_META) and not mi.has_meta(BerserkLook.ORIGINAL_META),
+		var who := BodyPulse.who(body)
+		if who != want[i] and worst == "":
+			worst = "after %s the colour is %s's, want %s's" % [st, who, want[i]]
+		if who != "" and mi.material_override == shared and worst == "":
+			worst = "after %s a colour is on but the mesh draws the shared material" % st
+		if who == "" and mi.material_override != shared and worst == "":
+			worst = "after %s no colour is on but the mesh draws %s" % [st, mi.material_override]
+		var drawn := (mi.material_override as StandardMaterial3D).albedo_color
+		if who == "berserk" and not drawn.is_equal_approx(Color(BERSERK_C1, 1.0)) and worst == "":
+			worst = "after %s berserk's colour 1 is not drawn (%s)" % [st, drawn]
+		if who == "state" and not drawn.is_equal_approx(Color(StateLook.TINTS[BURN][0], 1.0)) and worst == "":
+			worst = "after %s the burn's colour 1 is not drawn (%s)" % [st, drawn]
+	_check(worst == "", "%s: %s%s" % [name, " -> ".join(PackedStringArray(want.map(func(w): return w if w != "" else "none"))),
+		" (" + worst + ")" if worst != "" else ""])
+	_check(mi.material_override == shared and not mi.has_meta(BodyPulse.ORIGINAL_META),
 		"%s: both off, the body draws its own material again (got %s)" % [name,
 			"the shared one" if mi.material_override == shared else str(mi.material_override)])
 	body.free()
@@ -93,10 +105,30 @@ func _initialize() -> void:
 	BerserkLook.set_rows(BerserkLook.parse_rows(_table()))
 	BerserkLook.effect_factory = func(_path: String): return null
 	BerserkLook.sound_player = func(_path: String, _pos) -> void: pass
-	_order("state on, berserk on, state off, berserk off", ["S+", "B+", "S-", "B-"])
-	_order("state on, berserk on, berserk off, state off", ["S+", "B+", "B-", "S-"])
-	_order("berserk on, state on, state off, berserk off", ["B+", "S+", "S-", "B-"])
-	_order("berserk on, state on, berserk off, state off", ["B+", "S+", "B-", "S-"])
+	# READ: the last start wins; either end clears the slot.
+	_order("state on, berserk on, state off, berserk off", ["S+", "B+", "S-", "B-"], ["state", "berserk", "", ""])
+	_order("state on, berserk on, berserk off, state off", ["S+", "B+", "B-", "S-"], ["state", "berserk", "", ""])
+	_order("berserk on, state on, state off, berserk off", ["B+", "S+", "S-", "B-"], ["berserk", "state", "", ""])
+	_order("berserk on, state on, berserk off, state off", ["B+", "S+", "B-", "S-"], ["berserk", "state", "", ""])
+	# A mask change with no tinted bit leaves berserk's colour (no +0x48/+0x4c).
+	var shared := StandardMaterial3D.new()
+	shared.albedo_color = PLAIN
+	var made := _body(shared)
+	var body: Node3D = made[0]
+	_state(body, true)
+	_berserk(body, true)
+	var w := StateLook.walk(BURN, BURN | 0x100, {"tint": StateLook.TINTS[BURN]})
+	StateLook.apply_pulse(body, w["pulse"])
+	_check(w["pulse"] == null and BodyPulse.who(body) == "berserk", "a slowness coming on beside a burn leaves berserk's colour (%s)" % BodyPulse.who(body))
+	# The size's way back after berserk's end does not end a state's colour
+	# set meanwhile (berserk's +0x4c is called once, at its end).
+	BerserkLook.stop(body)
+	_state(body, false)
+	_state(body, true)
+	BerserkLook.tick(2.0)
+	_check(BodyPulse.who(body) == "state", "a state set after berserk's end keeps its colour while the size goes back")
+	body.free()
+	BodyPulse.tick(0.0)
 	StateLook.clear()
 	BerserkLook.clear()
 	# The static hooks hold lambdas bound to this script: left set, the exit's

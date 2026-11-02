@@ -52,8 +52,11 @@ extends RefCounted
 ## the material's own again. HERE (round 706) the character's materials
 ## compute the client's vertex colour themselves (ObjectLight), so the pulse
 ## is their `object_tint`: c10 = ambient x pulse, c11 = diffuse x pulse, on
-## every piece of the body -- the skin, the clothes, the worn items -- and
-## the original material goes back at the end.
+## every piece of the body -- the skin, the clothes, the worn items. Round
+## 855: the colour is the body's one pulse slot, BodyPulse -- the compound's
+## +0x48 / +0x4c, which an abnormal state's pulse shares (READ, FUN_009cd5e0
+## and CIDecoSkill::FUN_00a53dd0 both call [obj+0x9c]+4's +0x4c): the last
+## start wins, and berserk's end ends the colour whoever set it.
 ##
 ## THE SIZE (READ). `SCT_CHAR_SCALE,s,ms` is flag 0x1000: the apply sets the
 ## character's scale target to s, reached over ms x 0.001 s (FUN_00a513a0,
@@ -76,8 +79,7 @@ extends RefCounted
 ## SkillAudio plays a cast's.
 ##
 ## OURS: a looping effect is re-found on a rebuilt skeleton by EfpEffect's own
-## follow (round 620); the mesh list is re-scanned every RESCAN_S seconds so
-## an equipment change mid-berserk takes the colour too.
+## follow (round 620); BodyPulse takes a piece put on mid-berserk.
 
 const EFFECT_ID := "SYSTEM_CH_HWANMODE"
 const SKILLEFFECT_PATH := "server_dep\\silkroad\\textdata\\skilleffect.txt"
@@ -89,15 +91,8 @@ const SCT_CHAR_SCALE := 0x1000
 const FLASH_ALPHA := 128.0 / 255.0
 const FLASH_IN_S := 0.2
 const FLASH_OUT_S := 0.5
-## OURS: how often a berserk body's meshes are looked for again.
-const RESCAN_S := 0.25
-## The meta a tinted mesh keeps its own material under.
-const ORIGINAL_META := "berserk_original_material"
-## StateLook.ORIGINAL_META (round 785's client review, finding 8; spelled out
-## here, as StateLook preloads this script): a mesh an abnormal state's pulse
-## holds keeps its real material there, and its material_override is the
-## pulse's copy.
-const STATE_ORIGINAL_META := "state_original_material"
+## BodyPulse's name for berserk's colour.
+const WHO := "berserk"
 const SCALE_META := "berserk_base_scale"
 
 # Fallback column indices (0-based, the skilleffectset header's own order).
@@ -202,11 +197,7 @@ static func parse_script(cell: String) -> Dictionary:
 ## The body colour `elapsed_ms` after the start (CCompChar::FUN_00c26ff0):
 ## colour 1 at 0, colour 2 at `ms`, colour 1 again at 2 x `ms`, and so on.
 static func pulse(elapsed_ms: float, c1: Color, c2: Color, ms: float) -> Color:
-	if ms <= 0.0:
-		return c1
-	var cycle := fposmod(maxf(elapsed_ms, 0.0), 2.0 * ms)
-	var f := cycle / ms if cycle <= ms else (2.0 * ms - cycle) / ms
-	return c1.lerp(c2, f)
+	return BodyPulse.pulse(elapsed_ms, c1, c2, ms)
 
 ## The screen flash's alpha `t` seconds after an own activation (0 before and
 ## after it): up to FLASH_ALPHA over FLASH_IN_S, then down over FLASH_OUT_S.
@@ -309,9 +300,9 @@ static func start(host: Node3D, instant: bool = false, own: bool = false) -> Dic
 		_restore(_looks[key])
 	var mat := _script(SkillAudio.ACT_L, SCT_MAT)
 	var grow := _script(SkillAudio.ACT_L, SCT_CHAR_SCALE)
-	var look := {"host": host, "own": own, "t0": _clock, "loops": [], "meshes": {}, "rescan": 0.0,
+	var look := {"host": host, "own": own, "t0": _clock, "loops": [],
 		"mat": mat, "grow": grow, "scale": 1.0, "scale_from": 1.0, "scale_to": 1.0,
-		"scale_t0": _clock, "scale_secs": 0.0, "ending": false, "skeleton": null}
+		"scale_t0": _clock, "scale_secs": 0.0, "ending": false}
 	if not instant:
 		_play(SkillAudio.ACT_S, host, own, true)
 	look["loops"] = _play(SkillAudio.ACT_L, host, own, not instant)
@@ -319,6 +310,9 @@ static func start(host: Node3D, instant: bool = false, own: bool = false) -> Dic
 		look["scale_to"] = float(grow["scale"])
 		look["scale_secs"] = float(grow["secs"])
 	_looks[key] = look
+	# The colour (+0x48): the body's one pulse slot.
+	if not mat.is_empty():
+		BodyPulse.start(host, mat["c1"], mat["c2"], float(mat["ms"]), WHO)
 	_update(look)
 	print("BERSERK look on %s%s: %d kept effect(s), colour %s, size x%s" % [host.name,
 		" (already berserk when drawn)" if instant else "", (look["loops"] as Array).size(),
@@ -382,10 +376,9 @@ static func active(host: Node3D) -> bool:
 
 ## The colour `host`'s body is drawn with now, or null when it has none.
 static func tint_of(host: Node3D):
-	var look: Dictionary = _looks.get(host.get_instance_id(), {}) if host != null and is_instance_valid(host) else {}
-	if look.is_empty() or bool(look["ending"]) or (look["mat"] as Dictionary).is_empty():
+	if BodyPulse.who(host) != WHO:
 		return null
-	return _colour(look)
+	return BodyPulse.colour_of(host)
 
 ## `host`'s current size factor (1.0 without the look).
 static func scale_of(host: Node3D) -> float:
@@ -401,10 +394,6 @@ static func clear() -> void:
 	for key in _looks.keys():
 		_restore(_looks[key])
 	_looks.clear()
-
-static func _colour(look: Dictionary) -> Color:
-	var mat: Dictionary = look["mat"]
-	return pulse((_clock - float(look["t0"])) * 1000.0, mat["c1"], mat["c2"], float(mat["ms"]))
 
 ## Advances every look by `delta` seconds. World3D calls it every frame.
 static func tick(delta: float) -> void:
@@ -431,86 +420,17 @@ static func _update(look: Dictionary) -> void:
 			skel.set_meta(SCALE_META, skel.scale)
 		var base: Vector3 = skel.get_meta(SCALE_META)
 		skel.scale = base * float(look["scale"])
-	if bool(look["ending"]) or (look["mat"] as Dictionary).is_empty():
-		return
-	# The colour, on every piece of the body.
-	if skel != look["skeleton"] or _clock >= float(look["rescan"]):
-		look["skeleton"] = skel
-		look["rescan"] = _clock + RESCAN_S
-		_take_meshes(look, skel)
-	var c := _colour(look)
-	for id in (look["meshes"] as Dictionary).keys():
-		var mi = instance_from_id(id)
-		if mi == null or not is_instance_valid(mi):
-			(look["meshes"] as Dictionary).erase(id)
-			continue
-		_paint((mi as MeshInstance3D).material_override, c)
 
-## The body's meshes that are not an effect's: each gets its own copy of its
-## material, the original kept in ORIGINAL_META.
-static func _take_meshes(look: Dictionary, skel: Skeleton3D) -> void:
-	if skel == null:
-		return
-	for n in skel.find_children("*", "MeshInstance3D", true, false):
-		var mi := n as MeshInstance3D
-		if mi == null or mi.is_queued_for_deletion() or _in_effect(mi, skel):
-			continue
-		if (look["meshes"] as Dictionary).has(mi.get_instance_id()):
-			continue
-		# A body fading into existence (AppearFade, round 676) draws with a
-		# blended twin for two seconds; its own material is the one to copy.
-		# Round 785's client review, finding 8: under a state's pulse the real
-		# material is StateLook's original, not the pulse's copy now on it.
-		var orig: Material = mi.get_meta(STATE_ORIGINAL_META) if mi.has_meta(STATE_ORIGINAL_META) \
-			else AppearFade.original_material(mi)
-		if orig == null or not (orig is StandardMaterial3D or orig is ShaderMaterial):
-			continue
-		mi.set_meta(ORIGINAL_META, orig)
-		mi.material_override = orig.duplicate()
-		(look["meshes"] as Dictionary)[mi.get_instance_id()] = true
-
-static func _in_effect(n: Node, stop_at: Node) -> bool:
-	var p := n.get_parent()
-	while p != null and p != stop_at:
-		if p is EfpEffect:
-			return true
-		p = p.get_parent()
-	return false
-
-static func _paint(m: Material, c: Color) -> void:
-	if m is StandardMaterial3D:
-		var sm := m as StandardMaterial3D
-		sm.albedo_color = Color(c.r, c.g, c.b, sm.albedo_color.a)
-	elif m is ShaderMaterial:
-		var sh := m as ShaderMaterial
-		if sh.shader != null and sh.shader.code.contains("srr_obj_od0") or _includes_object_light(sh.shader):
-			# The object shaders (round 706, ObjectLight): the pulse stands in
-			# for both the material's and the object's colour (c11 and c10),
-			# as the original's does. A Vector4: as given in both renderers.
-			sh.set_shader_parameter("object_tint", Vector4(c.r, c.g, c.b, 1.0))
-			return
-		var was = sh.get_shader_parameter("albedo")
-		if was is Color:
-			sh.set_shader_parameter("albedo", Color(c.r, c.g, c.b, (was as Color).a))
-
-## Whether a file shader is built on the object lighting include (its code
-## names the include, not the functions).
-static func _includes_object_light(shader: Shader) -> bool:
-	return shader != null and shader.code.contains("object.gdshaderinc")
-
+## Berserk's colour ends (+0x4c, CIDecoSkill::FUN_00a53dd0 for a row with
+## SCT_MAT): the body's pulse slot goes off, whoever set it last -- once per
+## look (the end, a drop), not again when the size is back after an end.
 static func _restore_materials(look: Dictionary) -> void:
-	for id in (look["meshes"] as Dictionary).keys():
-		var mi = instance_from_id(id)
-		if mi != null and is_instance_valid(mi) and (mi as Node).has_meta(ORIGINAL_META):
-			var orig: Material = (mi as Node).get_meta(ORIGINAL_META)
-			# A state's pulse still holding the mesh (finding 8) paints its own
-			# copy again, never the shared original.
-			if (mi as Node).has_meta(STATE_ORIGINAL_META) and orig != null:
-				(mi as MeshInstance3D).material_override = orig.duplicate()
-			else:
-				(mi as MeshInstance3D).material_override = orig
-			(mi as Node).remove_meta(ORIGINAL_META)
-	(look["meshes"] as Dictionary).clear()
+	if bool(look.get("colour_off", false)):
+		return
+	look["colour_off"] = true
+	var host = look["host"]
+	if not (look["mat"] as Dictionary).is_empty() and host != null and is_instance_valid(host):
+		BodyPulse.stop(host)
 
 static func _restore(look: Dictionary) -> void:
 	for fx in look["loops"]:

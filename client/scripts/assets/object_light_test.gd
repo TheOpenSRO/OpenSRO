@@ -229,16 +229,15 @@ func _character_light() -> void:
 	body.add_child(mi)
 	var mb := MeshInstance3D.new()
 	mb.material_override = base
-	mb.set_meta(CharacterLight.BERSERK_META, base)
+	mb.set_meta(CharacterLight.PULSE_META, base)
 	body.add_child(mb)
 	CharacterLight.set_on(body, 0.5)
 	_check(mi.material_override != base and ObjectLight.base_of(mi.material_override) == base
 		and absf(((mi.material_override as ShaderMaterial).get_shader_parameter("object_color") as Vector3).x - 0.5) < 1e-3, "set_on draws a mesh with its copy at the level")
-	_check(mb.material_override == base, "a mesh berserk owns is left alone")
+	_check(mb.material_override == base, "a mesh a pulse holds (a state's or berserk's colour) is left alone")
 	CharacterLight.set_on(body, 0.6)
 	_check(mi.material_override == base, "back to 0.6: the material itself")
-	var berserk_script := load("res://scripts/effects/berserk_look.gd") as GDScript
-	_check(berserk_script.get_script_constant_map().get("ORIGINAL_META") == CharacterLight.BERSERK_META, "CharacterLight.BERSERK_META is BerserkLook.ORIGINAL_META")
+	_check(BodyPulse.ORIGINAL_META == CharacterLight.PULSE_META, "CharacterLight.PULSE_META is BodyPulse.ORIGINAL_META")
 	body.free()
 	group.free()
 

@@ -102,6 +102,14 @@ Data.pk2 (`Prim\Snd\Player\`).
 - The end (`CIDecoSkill::FUN_00a53dd0`): vtable `+0x4c`,
   `CObjRendererVS::FUN_00c258b0`, clears `+0x1ec`; the next draw is the
   material's own.
+- Round 855 (READ): an abnormal state's pulse is the same slot on the same
+  compound (`FUN_009cd5e0` calls `[obj+0x9c]+4`'s `+0x48` / `+0x4c`), so the
+  last start wins and either end ends the colour, whoever set it: a berserk
+  body poisoned draws the poison's colour, and berserk's end leaves a state
+  still on uncoloured (and the other way round). Before round 855 OpenSRO
+  kept berserk's colour over a state's (round 785's client review, finding 8,
+  OURS). Both now go through `BodyPulse` (`docs/protocol/status_effects.md`,
+  "A state's colour").
 
 ## The size (READ)
 

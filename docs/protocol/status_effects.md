@@ -229,6 +229,53 @@ icon there can stay up to a second after its end, in the original as here. OURS:
 players is being spawned, another player's 0x3057 waits behind the group
 (`NetClient._passes_group`); this player's own never does.
 
+### A state's colour: one slot on the body, never in a material (round 855)
+
+**READ (`sro_client.exe`).** The colour pulse is a state of the character's compound object
+(`[obj+0x9c]+4`, CCompChar), not of any material:
+
+- `+0x48`, `CObjRendererVS::FUN_00c25800(c1, c2, ms)`: `+0x1ec = 1`, the colours at `+0x238` /
+  `+0x244`, the ms at `+0x250`, the elapsed `+0x254 = 0` rising (`+0x258 = 1`), the current colour
+  `+0x1f4` = colour 1. A second call overwrites the same fields: **one slot, the last start wins.**
+- Each frame the compound's update `CCompChar::FUN_00c33430` steps it while `+0x1ec` is set
+  (`FUN_00c26ff0`: the elapsed up to the ms and back down, the colour lerped between the two).
+- Every part drawn reads its compound's flag (`CObjRendererVS::vslot_038`, `c:0xbf5830`:
+  `param_1[0x38] = [compound+0x1ec]`) and while it is set draws with the pulse colour in place of the
+  material's and the object's (`FUN_00c27180`: c10, c11, c14).
+- `+0x4c`, `FUN_00c258b0`: `+0x1ec = 0` and nothing else; the next draw of every part is its own.
+- Callers of `+0x4c`: the mask setter `FUN_009cd5e0` for a tinted bit going off (`0x9cdb5d` for BU,
+  ES, PS, ZB, DN, STUN; the FB case beside it) -- guarded only by the riding byte `+0x2c2` and the
+  kind byte `+0x448`, not by any other bit still on -- and berserk's decoration end
+  `CIDecoSkill::FUN_00a53dd0` when its row carries SCT_MAT (flag 0x800). Both name the same compound.
+
+So: a burn and a poison on one body draw the colour of the bit set last in the walk (low to high);
+either ending ends the colour while the other runs; a berserk body that is poisoned draws the
+poison's colour, and either end leaves it uncoloured. A part added or rebuilt mid-pulse draws it;
+at the end there is nothing to put back.
+
+**The bug (MEASURED, round 855).** OpenSRO drew the pulse by giving each mesh a copy of its material
+and painting `material_override` every frame (StateLook, round 785). `CharacterLight` rescans a body
+every 8th visit and swaps each object material for ObjectLight's shared per-level copy -- it left a
+berserk copy alone but not a state's. So on any terrain tile (a level other than 0.6) the pulse's
+copy was replaced within a few frames by the shared level copy, StateLook painted *that*, and at the
+state's end it put back... the same shared material, with the last pulse colour in it: the body kept
+the colour, and so did every body at that level wearing the same material, until the body stepped to
+another level or the material was freed. A body on an object (the Jangan plaza deck, 0.6) was never
+swapped, which is why round 847's live runs at the spawn saw the colour end on time.
+`r855_probe` (headless, base `6b1b1223`): after a poison on a level-153 body, CharacterLight's rescan
+and the end, the shared level copy's `object_tint` stayed `(0.166, 0.260, 0.108, 1)` and a second
+body at that level drew it. Live numbers: WORLD_ISSUES round 855.
+
+**Now (`BodyPulse`, OURS method for the READ rule).** One slot per body, started and ended by the
+state walk's events (`StateLook.walk()["pulse"]`: the last tinted event of the change) and by
+berserk (`BerserkLook`), last start wins, any end ends it. It paints only copies it made: each frame
+a mesh drawing its copy is painted; one whose material something else replaced (an equipment glow,
+a fade's end) has that material taken as its own and a new copy made; one drawing a fade twin keeps
+the twin (a cohort's shared twin is never painted; a twin made from the copy is the mesh's alone and
+pulses). `CharacterLight` leaves a pulsed mesh alone (the pulse stands in for the object colour) and
+the end puts each mesh back on its material at the body's level then. A body with a colour on is not
+drawn by the far crowd (`_crowd_eligible`: "pulse"), whose instances would keep the copy.
+
 ## How a skill applies one -- `Combat_ApplyStatusEffects` (`0x590680`), round 249
 
 The applier is one block per status the skill row can carry, in this order of skill
