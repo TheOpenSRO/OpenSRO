@@ -41,7 +41,7 @@ func _host() -> Dictionary:
 		"unstuck": func() -> void: _calls["unstuck"] = true,
 		"forward_gm": func(line: String) -> void: _calls["gm"] = line,
 		"duel": func(verb: String, arg: String) -> void: _calls["duel"] = [verb, arg],
-		"set_ui_scale": func(v: float) -> float: _calls["ui_scale"] = v; return clampf(v, 0.5, 3.0),
+		"set_ui_scale": func(p: int) -> String: _calls["ui_scale"] = p; return "UI scale %d%%." % p,
 		"set_name_range": func(v: float) -> float: _calls["names"] = v; return clampf(v, 0.0, 400.0),
 	}
 
@@ -168,7 +168,15 @@ func _test_round848_commands() -> void:
 	_check(not _calls.has("duel") and _joined().contains("Usage: /duel"), "/duel alone prints its usage and sends nothing")
 	_reset()
 	c.submit("/uiscale 1.5")
-	_check(_calls.get("ui_scale") == 1.5 and _joined().contains("UI scale 1.50."), "/uiscale 1.5 sets the scale and says so (%s)" % _joined())
+	_check(_calls.get("ui_scale") == 150 and _joined().contains("UI scale 150%."), "/uiscale 1.5 sets 150 %% and says so (%s)" % _joined())
+	# Round 854: snapped to the Option window's list (UiScaleChoices).
+	for case in [["150%", 150], ["125", 125], ["1.3", 125], ["0.5", 100], ["275", 250], ["2.8", 300], ["900", 500]]:
+		_reset()
+		c.submit("/uiscale " + String(case[0]))
+		_check(_calls.get("ui_scale") == case[1], "/uiscale %s snaps to %d%% (got %s)" % [case[0], case[1], _calls.get("ui_scale")])
+	_reset()
+	c.submit("/uiscale 0")
+	_check(not _calls.has("ui_scale") and _joined().contains("Usage: /uiscale") and _joined().contains("500%"), "/uiscale 0 prints its usage with the list")
 	_reset()
 	c.submit("/uiscale big")
 	_check(not _calls.has("ui_scale") and _joined().contains("Usage: /uiscale"), "/uiscale with no number prints its usage")

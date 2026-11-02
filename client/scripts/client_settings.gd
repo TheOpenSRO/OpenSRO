@@ -111,8 +111,11 @@ static func server_name() -> String:
 static func username() -> String:
 	return str(get_value(SECTION_SERVER, KEY_USERNAME, ""))
 
+## The saved UI scale as a factor, snapped to the Option window's list
+## (round 854, UiScaleChoices: 1.0 to 5.0 in Windows' steps; an older
+## build's 0.5 reads as 1.0, its 1.3 as 1.25).
 static func ui_scale() -> float:
-	return clampf(float(get_value(SECTION_UI, KEY_UI_SCALE, DEFAULT_UI_SCALE)), 0.5, 3.0)
+	return UiScaleChoices.saved_percent() / 100.0
 
 static func chat_font_size() -> int:
 	return clampi(int(get_value(SECTION_UI, KEY_CHAT_FONT_SIZE, 0)), 0, 72)
@@ -166,7 +169,9 @@ static func seasonal_shown() -> String:
 static func apply_ui_scale(window: Window, scale: float) -> void:
 	if window == null:
 		return
-	var factor := clampf(scale, 0.5, 3.0)
+	# Round 854: up to 5.0, the list's 500 % (UiScaleChoices decides which
+	# scale a window gets; this only applies one).
+	var factor := clampf(scale, 0.5, 5.0)
 	# Only the main window drives the oversampling, and only it may set the
 	# flag once it is in the tree (Window::set_use_font_oversampling). It is
 	# already on (project.godot); setting it again changes nothing, and it

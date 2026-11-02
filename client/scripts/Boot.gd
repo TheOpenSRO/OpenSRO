@@ -46,7 +46,15 @@ func _ready() -> void:
 	AutoUpdater.after_update_startup()
 	# Before any screen draws, so the login screen is already the size the
 	# player asked for last time (the debug panel changes it live).
-	ClientSettings.apply_ui_scale(get_window(), ClientSettings.ui_scale())
+	# Round 854: the saved scale as far as the size the saved Resolution will
+	# give the window allows (UiScaleChoices), so the display below places
+	# the window for that scale and never raises a saved size for a larger
+	# one; apply_saved after it fits the result.
+	var saved_video := VideoOptions.in_force()
+	var scale_target := get_window().size
+	if not saved_video.fullscreen and saved_video.resolution.x > 0:
+		scale_target = saved_video.resolution
+	ClientSettings.apply_ui_scale(get_window(), UiScaleChoices.effective(UiScaleChoices.saved_percent(), scale_target) / 100.0)
 	# The game's cursor from the first screen on (round 697): retail's first
 	# process state sets resource cursor 0x95 before the login screen
 	# (CPSVersionCheck::vslot_011 0x86d150, READ), read here from the
@@ -62,6 +70,10 @@ func _ready() -> void:
 	# world applies the rest when it loads.
 	var video := VideoOptions.in_force()
 	VideoOptions.apply_display(get_window(), video)
+	# Round 854: the saved UI scale, or the largest of the Option window's
+	# list that fits the window the display left (UiScaleChoices); re-fitted
+	# whenever the window changes size from now on.
+	UiScaleChoices.apply_saved(get_window())
 	VideoOptions.apply_brightness(get_tree().root, video.current().brightness)
 	print("OpenSRO video: graphic %d, quality %d, brightness %d, fullscreen %s, resolution %s" % [
 		video.active + 1, video.current().quality, video.current().brightness, str(video.fullscreen),

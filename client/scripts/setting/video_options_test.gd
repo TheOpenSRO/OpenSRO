@@ -96,7 +96,7 @@ func _rows() -> void:
 	var entries: Array = []
 	for r in VideoOptions.ROWS:
 		entries.append(int(r["entry"]))
-	_check(entries == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 19, 20, 21, 17], "the list: retail's rows 0..13 and 15 (READ, 14 never listed), then SSAO, the temporary fog row, Night Darkness, Shadows Follow the Sun, Job Titles on Names (round 805) and the renderer (OURS)")
+	_check(entries == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 19, 20, 21, 17, 22], "the list: retail's rows 0..13 and 15 (READ, 14 never listed), then SSAO, the temporary fog row, Night Darkness, Shadows Follow the Sun, Job Titles on Names (round 805), the renderer and UI Scale (round 854) (OURS)")
 	# Round 786: the two OURS rows, the player's under every preset.
 	var pn := VideoOptions.Profile.new()
 	_check(pn.value(VideoOptions.NIGHT) == 0 and pn.value(VideoOptions.SUN_SHADOWS) == 1, "Night Darkness defaults to Original (retail's nights, the user's choice), Shadows Follow the Sun to On (OURS)")
@@ -390,6 +390,63 @@ func _click(at: Vector2) -> void:
 		ev.global_position = at
 		root.push_input(ev)
 
+## Round 854: the UI Scale row (OURS, UiScaleChoices) -- the list's last
+## half line, the original's slot (label 216, combo 217), the choices
+## filtered against the window, the held-back choice said in the label.
+## Leaves the list scrolled to its last line.
+func _ui_scale_row(page: OptionVideoPage) -> void:
+	page.scroll_to(page.max_line())
+	await _frames()
+	var n := page.slot_of(VideoOptions.UI_SCALE)
+	_check(n == 11 and page.max_line() == 5, "UI Scale fills the last line's second slot (slot %d), still five lines to scroll" % n)
+	if n < 0:
+		return
+	var combo := page.slot_combo(n)
+	var label := page.slot_label(n)
+	_check(label != null and label.text == "UI Scale" and combo != null and combo.has_meta(OptionVideoPage.LIST_META),
+		"its label reads UI Scale and its combo is the original's (ComboList) (got '%s')" % (label.text if label != null else ""))
+	_check(combo.item_count == 1 and combo.get_item_text(0) == "100%" and combo.selected == 0,
+		"a 1152 x 648 window (a 648-tall view at 125%% would be 518): 100%% only (got %d items)" % combo.item_count)
+	page.ui_scale_choice = 100
+	root.size = Vector2i(1920, 1080)
+	await _frames()
+	page.on_view_resized()
+	combo = page.slot_combo(n)
+	var texts: Array = []
+	for i in combo.item_count:
+		texts.append(combo.get_item_text(i))
+	_check(texts == ["100%", "125%", "150%", "175%"], "1920 x 1080: 100%%..175%% as Windows offers there (got %s)" % [texts])
+	var saved_before := UiScaleChoices.saved_percent()
+	combo.item_selected.emit(2)
+	await _frames()
+	_check(page.ui_scale_choice == 150 and page.slot_combo(n).selected == 2, "choosing 150% is the row's value")
+	_check(UiScaleChoices.saved_percent() == saved_before, "nothing is saved before Apply")
+	_check(is_equal_approx(root.content_scale_factor, 1.0), "and nothing is in force before Apply")
+	# A Resolution picked smaller re-filters the row against it.
+	var res := page.resolution_combo()
+	var small := -1
+	for i in res.item_count:
+		if res.get_item_text(i) == "1280 x 720":
+			small = i
+	_check(small >= 0, "1280 x 720 is listed whatever the scale (the scale follows the window from round 854)")
+	if small >= 0:
+		res.item_selected.emit(small)
+		await _frames()
+		_check(page.slot_combo(n).item_count == 1 and page.ui_scale_shown() == 100 and page.slot_label(n).text.begins_with("UI Scale (150%"),
+			"1280 x 720 picked: the row offers 100%% only, shows 100%% and says 150%% is held back (label '%s')" % page.slot_label(n).text)
+		_check(page.slot_combo(n).tooltip_text.contains("800 x 600") and page.slot_combo(n).tooltip_text.contains("150% is chosen"),
+			"the tooltip names the minimum view and the held-back choice")
+		# Back to the window's own size: 150 % fits again and shows.
+		page.edit.resolution = Vector2i(1920, 1080)
+		page.show_values()
+		_check(page.ui_scale_shown() == 150 and page.slot_label(n).text == "UI Scale", "at 1920 x 1080 again the choice shows as itself")
+		page.edit.resolution = Vector2i.ZERO
+		page.edit.resolution_touched = false
+	page.ui_scale_choice = UiScaleChoices.saved_percent()
+	root.size = Vector2i(1152, 648)
+	await _frames()
+	page.show_values()
+
 func _page() -> void:
 	# After the first frame (round 754): the start-up resets a root size set
 	# before it to 64 x 64 (MEASURED, 4.2.2 and 4.7.2), and from Godot 4.7 a
@@ -461,6 +518,7 @@ func _page() -> void:
 	_check(night != null and night.tooltip_text.contains("This client's own option"), "... with a tooltip saying it is ours")
 	var renderer := page.combo_of(VideoOptions.RENDERER)
 	_check(renderer != null and renderer.item_count == 2 and renderer.get_item_text(0) == "Forward+", "the renderer row lists Forward+ / Compatibility")
+	await _ui_scale_row(page)
 	# Graphic 2: its own record.
 	var tab2: BaseButton = win.control([78, 25])
 	_click(tab2.get_global_rect().get_center())
@@ -489,6 +547,9 @@ func _page() -> void:
 	var had := FileAccess.file_exists(path)
 	var original := FileAccess.get_file_as_bytes(path) if had else PackedByteArray()
 	win.press_apply()
+	# Round 854: Apply put the UI scale under UiScaleChoices' resize watch;
+	# the checks below set the scale by hand.
+	UiScaleChoices.release(root)
 	_check(got.size() == 1 and (got[0] as VideoOptions).current().quality == VideoOptions.QUALITY_LOW and (got[0] as VideoOptions).camera_view == "third_person",
 		"Apply hands the record on (Low, Third Person)")
 	_check(got.size() == 1 and (got[0] as VideoOptions).resolution_touched and not page.edit.resolution_touched,
@@ -527,6 +588,12 @@ func _page() -> void:
 	want = Vector2(maxi(0, (int(view.x) >> 1) - (int(win.size.x) >> 1)), maxi(0, (int(view.y) >> 1) - (int(win.size.y) >> 1)))
 	_check(absf(view.x - 2400.0 / 1.95) < 1.0 and win.position == want,
 		"at UI scale 1.95 a 2400 x 1400 window is a %s view and the Option window is centred in it (%s, want %s)" % [str(view), str(win.position), str(want)])
+	# Round 854: the open window's UI Scale row follows the resize by itself
+	# (OptionWindow._on_view_resized): 2400 x 1400 fits up to 225 %.
+	# (Still scrolled to the last line, as _ui_scale_row left it.)
+	var ui_combo := page.combo_of(VideoOptions.UI_SCALE)
+	_check(ui_combo != null and ui_combo.item_count == 6 and ui_combo.get_item_text(5) == "225%",
+		"resized to 2400 x 1400 with the window open: the UI Scale row offers 100%%..225%% (got %d, target %s, offered now %s)" % [ui_combo.item_count if ui_combo != null else -1, str(page.ui_scale_target()), str(page.ui_scale_offered())])
 	root.content_scale_factor = 1.0
 	root.size = Vector2i(1152, 648)
 	await _frames()

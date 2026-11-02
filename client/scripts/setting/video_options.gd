@@ -118,6 +118,11 @@ const SUN_SHADOWS := 20
 ## slot emptied in a suit (READ, c:0x9c28a0) and the mark left of the name
 ## (c:0x9debe3). On by default.
 const JOB_TITLES := 21
+## OURS (round 854, the user's request; UiScaleChoices): the interface's
+## scale in Windows' display-scale steps, only those that fit the window.
+## Like the renderer it is not a profile's value: one choice for the client
+## ([ui] scale, round 672's key), listed with the other rows.
+const UI_SCALE := 22
 ## The values a profile holds, by entry (QUALITY is held apart).
 const VALUE_ENTRIES := [SHADOW, SCENERY, CHARACTER, WATER_REFLECTION, WATER_DETAIL, METAL, LIGHT,
 	FILTERING, TEXTURE, LENS_FLARE, BLOOM, DYNAMIC_ANIMATION, EFFECT, FRIEND_ENEMY, SSAO, FOG,
@@ -183,6 +188,9 @@ const ROWS := [
 		"choices": ["", ""], "fallback": ["Job Titles on Names", "Off", "On"]},
 	{"entry": RENDERER, "key": "renderer", "label": "", "tip": "",
 		"choices": ["", ""], "fallback": ["Renderer (on restart)", "Forward+", "Compatibility"]},
+	# The choices depend on the window (UiScaleChoices.offered): none here.
+	{"entry": UI_SCALE, "key": "ui_scale", "label": "", "tip": "",
+		"choices": [], "fallback": ["UI Scale"]},
 ]
 
 ## READ, 0x5015a0: each Graphic Quality's row values, by entry (index 0 and 14
@@ -355,7 +363,7 @@ static func set_row(profile: Profile, entry: int, v: int) -> void:
 	if entry == QUALITY:
 		profile.quality = clampi(v, QUALITY_LOW, QUALITY_USER)
 		return
-	if entry == RENDERER:
+	if entry == RENDERER or entry == UI_SCALE:
 		return
 	v = clampi(v, 0, maxi(choice_count(entry) - 1, 0))
 	if entry in OURS_ENTRIES:

@@ -124,14 +124,15 @@ func _build_slider_row() -> HBoxContainer:
 	row.add_child(_range_value)
 	row.add_child(_label("  UI scale"))
 	_scale_slider = HSlider.new()
-	_scale_slider.min_value = 0.5
-	_scale_slider.max_value = 3.0
-	_scale_slider.step = 0.05
-	_scale_slider.value = ClientSettings.ui_scale()
+	# Round 854: the Option window's list (UiScaleChoices), one step a notch.
+	_scale_slider.min_value = 0
+	_scale_slider.max_value = UiScaleChoices.PERCENTS.size() - 1
+	_scale_slider.step = 1
+	_scale_slider.value = maxi(UiScaleChoices.PERCENTS.find(UiScaleChoices.saved_percent()), 0)
 	_scale_slider.custom_minimum_size.x = 110.0
 	_scale_slider.value_changed.connect(_on_scale_changed)
 	row.add_child(_scale_slider)
-	_scale_value = _label("%.2f" % ClientSettings.ui_scale())
+	_scale_value = _label(UiScaleChoices.label(UiScaleChoices.saved_percent()))
 	row.add_child(_scale_value)
 	return row
 
@@ -493,14 +494,16 @@ const SCALE_SETTLE_S := 0.15
 var _scale_timer: Timer
 
 func _on_scale_changed(value: float) -> void:
-	_scale_value.text = "%.2f" % value
-	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_UI_SCALE, value)
+	var pct: int = UiScaleChoices.PERCENTS[clampi(int(value), 0, UiScaleChoices.PERCENTS.size() - 1)]
+	_scale_value.text = UiScaleChoices.label(pct)
+	UiScaleChoices.save_percent(pct)
 	if _scale_timer == null:
 		_scale_timer = Timer.new()
 		_scale_timer.one_shot = true
 		_scale_timer.wait_time = SCALE_SETTLE_S
-		_scale_timer.timeout.connect(func() -> void:
-			ClientSettings.apply_ui_scale(get_window(), _scale_slider.value))
+		# As the Option window applies it: the largest that fits when the
+		# window is too small (UiScaleChoices).
+		_scale_timer.timeout.connect(func() -> void: UiScaleChoices.apply_saved(get_window()))
 		add_child(_scale_timer)
 	_scale_timer.start()
 

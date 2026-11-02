@@ -136,13 +136,17 @@ func submit(line: String) -> bool:
 			else:
 				_call("duel", ["challenge", " ".join(args)])
 		"uiscale":
-			# Round 848 (OURS): the debug panel's UI scale, for everyone.
-			if args.size() != 1 or not String(args[0]).is_valid_float():
-				_log("Usage: /uiscale <0.5 to 3> (the interface's scale; 1 is the original's size)")
+			# Round 848 (OURS): the debug panel's UI scale, for everyone. Round
+			# 854: snapped to the Option window's list (UiScaleChoices: 100 % to
+			# 500 % in Windows' steps); "150", "150%" and "1.5" all mean 150 %.
+			var pct := uiscale_percent(args)
+			if pct <= 0:
+				_log("Usage: /uiscale <100%% to 500%%> (the interface's scale in Windows' steps, %s; 100%% is the original's size; Option > Video > UI Scale)" % \
+					", ".join(UiScaleChoices.PERCENTS.map(func(p: int) -> String: return UiScaleChoices.label(p))))
 			else:
-				var applied := float(_call("set_ui_scale", [float(args[0])], -1.0))
-				if applied > 0.0:
-					_log("UI scale %.2f." % applied)
+				var said := String(_call("set_ui_scale", [pct], ""))
+				if said != "":
+					_log(said)
 		"names":
 			# Round 848 (OURS): the debug panel's name range, for everyone.
 			if args.size() != 1 or not String(args[0]).is_valid_float():
@@ -169,7 +173,7 @@ func submit(line: String) -> bool:
 
 ## The one-line help. The client commands always; the GM line only for a GM.
 func help_line() -> String:
-	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /layer <path> /w <name> <msg> /grantname <name> /uiscale <n> /names <n> /duel <name>"
+	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /layer <path> /w <name> <msg> /grantname <name> /uiscale <%> /names <n> /duel <name>"
 	if is_gm:
 		return base + "\n" + gm_help_line()
 	return base
@@ -195,6 +199,20 @@ func _log(text: String) -> void:
 			(_host["log"] as Callable).call(String(l))
 
 ## Calls a host callable if present, returning its result or `default`.
+## /uiscale's argument as a listed percentage, or 0 when it is not a number:
+## above 5 it is a percentage ("150", "150%"), else a factor ("1.5"); either
+## way snapped to the list (UiScaleChoices.snap: below 100 % is 100 %).
+static func uiscale_percent(args: Array) -> int:
+	if args.size() != 1:
+		return 0
+	var a := String(args[0]).strip_edges().trim_suffix("%")
+	if not a.is_valid_float():
+		return 0
+	var v := a.to_float()
+	if v <= 0.0:
+		return 0
+	return UiScaleChoices.snap(v / 100.0 if v > 5.0 else v)
+
 func _call(name: String, args: Array = [], default: Variant = null) -> Variant:
 	if not _host.has(name):
 		return default

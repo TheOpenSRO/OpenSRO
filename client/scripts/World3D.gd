@@ -18080,6 +18080,13 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   guildnode:<id>[,..] / rguildnode:..  left (right) click a guild window
 #                       control by GetChild path (round 844)
 #   cmd:<line>          one console line at that tick (round 844)
+#   optnode:<id>[,..][,<child>] / optlist:<i> / localnode:<name>  left click
+#                       an Option window control by GetChild path, row i of
+#                       the open combo list, a named Control -- in UI units,
+#                       right at any UI scale (round 854)
+#   uiscale             report the UI scale, the UI Scale row and every shown
+#                       window's rect / on-screen state (round 854)
+#   winsize:<w>x<h>     resize the game window (round 854)
 #   storebuy:<id> / storetip:<id>  the store's buy box for a good (as its
 #                       drop on the bag opens it) / its tooltip lines (round 844)
 #   hudnode:<path>      left click a control by node path under HudPanels
@@ -19241,6 +19248,24 @@ func _qa_input_step() -> void:
 				var at := cl.to_canvas * (cl.list_rect.position + ComboList.row_rect(cl.list_rect.size, int(arg)).get_center())
 				_qa_input_report = "%s at %s (%s)" % [action, at, cl.items[int(arg)] if int(arg) < cl.items.size() else "?"]
 				_qa_push_click(at, MOUSE_BUTTON_LEFT)
+		"optnode", "optlist", "localnode":
+			# Round 854: optnode:<id>[,..][,<child name>] left-clicks an Option
+			# window control by its GetChild path (10 the Video tab, 9 Apply,
+			# 6 Confirm, 78,465,Down the list's scroll arrow, 78,248,217 the
+			# last row's combo); optlist:<i> row i of the open combo list;
+			# localnode:<name> as node:. All in UI units, so the click lands at
+			# any UI scale.
+			_qa_input_report = _qa_option_click(kind, arg)
+		"uiscale":
+			# Round 854: the UI scale in force and where every shown window is.
+			_qa_input_report = "%s %s" % [action, _qa_ui_scale_report()]
+		"winsize":
+			# Round 854: resize the game window to <w>x<h>, as a player's drag
+			# of its frame does (the OS window; UiScaleChoices re-fits).
+			var ws := arg.split("x")
+			if ws.size() == 2:
+				get_window().size = Vector2i(int(ws[0]), int(ws[1]))
+			_qa_input_report = "%s -> window %s" % [action, str(get_window().size)]
 		"stallclose":
 			# Round 839: left click the stall window's X.
 			var sw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null
@@ -26789,19 +26814,21 @@ func _console_host() -> Dictionary:
 		# Round 848: the prototype duel's commands (its native tab is gone),
 		# and the two settings only the debug panel used to set (OURS).
 		"duel": func(verb: String, arg: String) -> void: duel_command(verb, arg),
-		"set_ui_scale": func(v: float) -> float: return _console_set_ui_scale(v),
+		"set_ui_scale": func(p: int) -> String: return _console_set_ui_scale(p),
 		"set_name_range": func(v: float) -> float: return _console_set_name_range(v),
 		"forward_gm": func(line: String) -> void: NetClient.gm_command(NetClient.current_character_name, line, _last_attack_target if _last_attack_target > 0 else 0),
 	}
 
-## /uiscale (round 848, OURS): the UI scale the debug panel's slider set,
-## remembered and applied now. Returns the scale applied.
-func _console_set_ui_scale(v: float) -> float:
-	var scale := clampf(v, 0.5, 3.0)
-	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_UI_SCALE, scale)
-	if is_inside_tree():
-		ClientSettings.apply_ui_scale(get_window(), scale)
-	return scale
+## /uiscale (round 848, OURS): the UI scale, remembered and applied now.
+## Round 854: a percentage of the Option window's list (Console snaps it),
+## applied as the window's Apply does -- the largest that fits when this
+## window is too small for it (UiScaleChoices). Returns the line to show.
+func _console_set_ui_scale(percent: int) -> String:
+	UiScaleChoices.save_percent(percent)
+	if not is_inside_tree():
+		return ""
+	var used := UiScaleChoices.apply_saved(get_window())
+	return UiScaleChoices.describe(UiScaleChoices.saved_percent(), used, get_window().size)
 
 ## /names (round 848, OURS): how near a name plate shows, as the debug
 ## panel's slider set it, remembered. Returns the range applied.
@@ -34402,6 +34429,83 @@ func _stall_refresh(uid: int) -> void:
 		_refresh_other_loop(uid)
 
 ## Round 840: the control a QA netnode / netbox / underbar step clicks.
+## Round 854 (QA): the optnode / optlist / localnode clicks (_qa_input_step).
+func _qa_option_click(kind: String, arg: String) -> String:
+	var action := "%s:%s" % [kind, arg]
+	if kind == "optlist":
+		var cl := ComboList.current()
+		if cl == null:
+			return action + " (no list open)"
+		var at := cl.to_canvas * (cl.list_rect.position + ComboList.row_rect(cl.list_rect.size, int(arg)).get_center())
+		_qa_push_click(at, MOUSE_BUTTON_LEFT, true)
+		return "%s at %s UI units (%s)" % [action, at, cl.items[int(arg)] if int(arg) < cl.items.size() else "?"]
+	var c: Control = null
+	if kind == "localnode":
+		c = _qa_find_visible(ui_control, arg)
+	else:
+		var ow := _hud_panels.option_window() if _hud_panels != null else null
+		var ids: Array = []
+		var child := ""
+		for b in arg.split(",", false):
+			if b.is_valid_int():
+				ids.append(int(b))
+			else:
+				child = b
+		c = ow.control(ids) if ow != null else null
+		if c != null and child != "":
+			c = c.get_node_or_null(child) as Control
+	if c == null or not c.is_visible_in_tree():
+		return action + " (not shown)"
+	var centre := c.get_global_rect().get_center()
+	_qa_push_click(centre, MOUSE_BUTTON_LEFT, true)
+	var hov := get_viewport().gui_get_hovered_control()
+	return "%s at %s UI units (hovered %s)" % [action, centre, hov.get_path() if hov != null else "nothing"]
+
+## Round 854 (QA): the UI scale in force -- the window, its content scale,
+## the view, the saved choice, the Option window's UI Scale row -- and every
+## shown window's rect in the view (UI units) with whether it is wholly on
+## the screen, plus the underbar and minimap drawn sizes in window pixels
+## (the HUD's applied scale, measured).
+func _qa_ui_scale_report() -> String:
+	var win := get_window()
+	var k := win.content_scale_factor
+	var view := get_viewport().get_visible_rect().size
+	var d := {"frame": Engine.get_frames_drawn(), "window": [win.size.x, win.size.y], "scale": snappedf(k, 0.001), "view": [snappedf(view.x, 0.01), snappedf(view.y, 0.01)],
+		"saved": UiScaleChoices.saved_percent(), "in_force": UiScaleChoices.in_force(win),
+		"offered_here": UiScaleChoices.offered(win.size)}
+	var ow := _hud_panels.option_window() if _hud_panels != null else null
+	if ow != null and ow.video != null:
+		var page := ow.video
+		var n := page.slot_of(VideoOptions.UI_SCALE)
+		var combo := page.slot_combo(n) if n >= 0 else null
+		var items: Array = []
+		if combo != null:
+			for i in combo.item_count:
+				items.append(combo.get_item_text(i))
+		d["row"] = {"slot": n, "label": page.slot_label(n).text if n >= 0 else "", "items": items,
+			"shown": combo.text if combo != null else "", "choice": page.ui_scale_choice, "scroll": page.scroll_line()}
+	var off: Array = []
+	var shown: Array = []
+	var screen := Rect2(Vector2.ZERO, view).grow(0.5)
+	for node in ui_control.find_children("*", "HudWindow", true, false):
+		var w := node as Control
+		if not w.is_visible_in_tree() or w.size.x <= 0.0:
+			continue
+		var r := w.get_global_rect()
+		shown.append("%s %d,%d %dx%d" % [w.name, roundi(r.position.x), roundi(r.position.y), roundi(r.size.x), roundi(r.size.y)])
+		if not screen.encloses(r):
+			off.append(String(w.name))
+	d["windows"] = shown
+	d["off_screen"] = off
+	for pair in [["underbar", _hud_underbar.bar_root if _hud_underbar != null else null], ["minimap", _hud_minimap]]:
+		var c := pair[1] as Control
+		if c != null and c.is_visible_in_tree():
+			var r := c.get_global_rect()
+			d[pair[0]] = {"ui": [roundi(r.position.x), roundi(r.position.y), roundi(r.size.x), roundi(r.size.y)],
+				"px": [roundi(r.position.x * k), roundi(r.position.y * k), roundi(r.size.x * k), roundi(r.size.y * k)],
+				"on_screen": screen.encloses(r)}
+	return JSON.stringify(d)
+
 func _qa_net_control(kind: String, arg: String) -> Control:
 	if _hud_panels == null:
 		return null
