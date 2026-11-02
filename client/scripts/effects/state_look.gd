@@ -35,8 +35,10 @@ class_name StateLook
 ## HERE:
 ## - the effects are SkillEffects auras keyed by (owner, STATE_TOKEN - bit),
 ##   ended with their DEACT rows;
-## - one pulse per body, the last one set in the walk wins and any tinted bit
-##   going off ends it, as the walk does;
+## - the pulse is the body's one colour slot, BodyPulse (round 855, READ: the
+##   compound's +0x48 / +0x4c, shared with berserk's SCT_MAT): the walk's
+##   events go to it in order -- a tinted bit on starts it, a tinted bit off
+##   ends it, whoever set it -- and a change with no tinted bit leaves it;
 ## - +0xc0 is the body's clip speed (INFERRED from the values: 0.5 for
 ##   frostbite, 0.75 for slowness; round 852 READ it: the tick advances the
 ##   body's clip by ROUND(+0xc0 x the frame's ms), GlobalDataManager::
@@ -44,8 +46,6 @@ class_name StateLook
 ##   every frame, PetGait); FZ's motion state 9 is taken as a held
 ##   pose -- clip speed 0 (INFERRED; the state table that would say what
 ##   state 9 plays is filled at run time and was not read, OPEN).
-
-const BerserkLook = preload("res://scripts/effects/berserk_look.gd")
 
 ## Aura tokens for the states: STATE_TOKEN - bit, never a server token.
 const STATE_TOKEN := -1000
@@ -70,13 +70,18 @@ const SPEED_SLOW := 0.75
 ## What one mask change does, walked as FUN_009cd5e0 walks it. `state` is the
 ## body's look so far ({"tint": [] or [c1, c2], "speed": float,
 ## "frozen": bool}); returns {"on": [bits came on], "off": [bits went off],
-## "tint", "speed", "frozen"} -- the look after the change.
+## "tint", "speed", "frozen"} -- the look after the change -- and "pulse",
+## the body's colour slot after the walk's events (round 855): null when no
+## tinted bit changed (the slot is left as it is, whoever set it), [c1, c2]
+## when the last event was a tinted bit coming on (+0x48), [] when it was one
+## going off (+0x4c).
 static func walk(old_mask: int, new_mask: int, state: Dictionary) -> Dictionary:
 	var tint: Array = state.get("tint", [])
 	var speed := float(state.get("speed", 1.0))
 	var frozen := bool(state.get("frozen", false))
 	var on: Array = []
 	var off: Array = []
+	var pulse = null
 	var changed := (old_mask ^ new_mask) & 0xffffffff
 	for bit in 32:
 		var v := 1 << bit
@@ -87,6 +92,7 @@ static func walk(old_mask: int, new_mask: int, state: Dictionary) -> Dictionary:
 			on.append(bit)
 			if TINTS.has(v):
 				tint = TINTS[v]
+				pulse = tint
 			if v == BIT_FB:
 				speed = SPEED_FB
 			elif v == BIT_SLOW:
@@ -97,11 +103,12 @@ static func walk(old_mask: int, new_mask: int, state: Dictionary) -> Dictionary:
 			off.append(bit)
 			if TINTS.has(v):
 				tint = []
+				pulse = []
 			if v == BIT_FB or v == BIT_SLOW:
 				speed = 1.0
 			elif v == BIT_FZ:
 				frozen = false
-	return {"on": on, "off": off, "tint": tint, "speed": speed, "frozen": frozen}
+	return {"on": on, "off": off, "tint": tint, "speed": speed, "frozen": frozen, "pulse": pulse}
 
 ## The clip speed a look gives the body: 0 while frozen, else its speed.
 static func clip_speed(look: Dictionary) -> float:
@@ -116,86 +123,34 @@ static func effect_id(bit: int) -> String:
 	return "PARAM_" + label if label != "" else ""
 
 # --- the colour pulse ---------------------------------------------------------
+# Round 855: the colour is the body's one pulse slot (BodyPulse: the
+# compound's +0x48 / +0x4c, READ), which berserk's SCT_MAT shares.
 
-const ORIGINAL_META := "state_original_material"
-## host instance id -> {host, c1, c2, t0, meshes}
-static var _pulses: Dictionary = {}
-static var _clock := 0.0
+## BodyPulse's name for a state's colour.
+const WHO := "state"
 
-## Starts (or replaces) `host`'s pulse; an empty `tint` ends it.
-static func set_tint(host: Node3D, tint: Array) -> void:
-	if host == null or not is_instance_valid(host):
+## A walk's pulse event on `host` (walk()["pulse"]): null changes nothing, two
+## colours start the slot (+0x48), [] ends it (+0x4c) -- whoever set it.
+static func apply_pulse(host: Node3D, event) -> void:
+	if event == null or host == null or not is_instance_valid(host):
 		return
-	var key := host.get_instance_id()
-	if tint.size() != 2:
-		_end(key)
-		return
-	var p: Dictionary = _pulses.get(key, {"host": host, "meshes": {}})
-	p["c1"] = tint[0]
-	p["c2"] = tint[1]
-	p["t0"] = _clock
-	_pulses[key] = p
-	_paint(p)
+	var tint: Array = event
+	if tint.size() == 2:
+		BodyPulse.start(host, tint[0], tint[1], PULSE_MS, WHO)
+	else:
+		BodyPulse.stop(host)
 
+## Ends `host`'s colour when a state set it (OURS: a body's states dropped
+## without a mask walk -- a death, a zone change, a world entry -- leave a
+## colour berserk set to berserk, whose own end or drop ends it).
+static func end_pulse(host: Node3D) -> void:
+	if tinted(host):
+		BodyPulse.stop(host)
+
+## Whether `host` draws a state's colour now.
 static func tinted(host: Node3D) -> bool:
-	return host != null and is_instance_valid(host) and _pulses.has(host.get_instance_id())
+	return BodyPulse.who(host) == WHO
 
-static func tick(delta: float) -> void:
-	_clock += maxf(delta, 0.0)
-	for key in _pulses.keys():
-		var p: Dictionary = _pulses[key]
-		if not is_instance_valid(p["host"]):
-			_pulses.erase(key)
-			continue
-		_paint(p)
-
-## Round 785's client review, finding 8: a mesh the berserk look holds now
-## (its own copy on it, BerserkLook.ORIGINAL_META) is left to it -- only this
-## pulse's mark goes; berserk's end puts the real material back. Before, the
-## state's end put the shared original under berserk's pulse, which then
-## painted every body sharing it, and berserk's end put the state's stale
-## copy back.
-static func _end(key: int) -> void:
-	var p: Dictionary = _pulses.get(key, {})
-	_pulses.erase(key)
-	for id in (p.get("meshes", {}) as Dictionary).keys():
-		var mi = instance_from_id(id)
-		if mi != null and is_instance_valid(mi) and (mi as Node).has_meta(ORIGINAL_META):
-			if not (mi as Node).has_meta(BerserkLook.ORIGINAL_META):
-				(mi as MeshInstance3D).material_override = (mi as Node).get_meta(ORIGINAL_META)
-			(mi as Node).remove_meta(ORIGINAL_META)
-
-static func _paint(p: Dictionary) -> void:
-	var host: Node3D = p["host"]
-	# A berserk body keeps the berserk pulse (OURS: one pulse slot, and the
-	# berserk look owns the materials while it runs).
-	if BerserkLook.active(host):
-		return
-	var skel := SkillEffects.skeleton_of(host)
-	if skel == null:
-		return
-	var meshes: Dictionary = p["meshes"]
-	for n in skel.find_children("*", "MeshInstance3D", true, false):
-		var mi := n as MeshInstance3D
-		if mi == null or mi.is_queued_for_deletion() or meshes.has(mi.get_instance_id()):
-			continue
-		if BerserkLook._in_effect(mi, skel):
-			continue
-		var orig := AppearFade.original_material(mi)
-		if orig == null or not (orig is StandardMaterial3D or orig is ShaderMaterial):
-			continue
-		mi.set_meta(ORIGINAL_META, orig)
-		mi.material_override = orig.duplicate()
-		meshes[mi.get_instance_id()] = true
-	var c := BerserkLook.pulse((_clock - float(p["t0"])) * 1000.0, p["c1"], p["c2"], PULSE_MS)
-	for id in meshes.keys():
-		var mi = instance_from_id(id)
-		if mi == null or not is_instance_valid(mi):
-			meshes.erase(id)
-			continue
-		BerserkLook._paint((mi as MeshInstance3D).material_override, c)
-
+## Every body's colour off (a world unload).
 static func clear() -> void:
-	for key in _pulses.keys():
-		_end(key)
-	_pulses.clear()
+	BodyPulse.clear()

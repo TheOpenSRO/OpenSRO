@@ -23,8 +23,11 @@ class_name CharacterLight
 ## position; here a character is revisited every couple of frames, and
 ## skipped while it has not moved (MOVE_EPSILON). A mesh added to a body (a
 ## new piece of equipment) takes the value at the body's next full rescan
-## (RESCAN_VISITS). Meshes drawing a fade twin (AppearFade) or a berserk copy
-## (BerserkLook) are left to those; they put the copy back when they end.
+## (RESCAN_VISITS). Meshes drawing a fade twin (AppearFade) or a pulse's copy
+## (BodyPulse: a state's or berserk's colour) are left to those; they put the
+## mesh's own material back when they end, BodyPulse at the body's level then.
+## Round 855: before, a state's pulse copy was swapped for the shared level
+## copy here and the pulse then painted that shared material (MEASURED).
 ## Both renderers (round 706 review: a per-instance uniform overflowed
 ## Godot's instance buffer, and Compatibility has none).
 
@@ -36,9 +39,10 @@ const META_POS := &"opensro_obj_color_at"
 const META_MESHES := &"opensro_obj_color_meshes"
 const META_VISITS := &"opensro_obj_color_visits"
 
-## BerserkLook.ORIGINAL_META: a mesh berserk has given its own tinted copy
-## (that script has no class_name; object_light_test holds the two equal).
-const BERSERK_META := "berserk_original_material"
+## BodyPulse.ORIGINAL_META: a mesh drawing a pulse's own tinted copy (spelled
+## out so this script does not name BodyPulse, which names it;
+## object_light_test holds the two equal).
+const PULSE_META := "body_pulse_original_material"
 
 ## OURS: bodies visited a frame, the distance a body must move before its
 ## tile is read again, and how many visits between rescans of its meshes.
@@ -178,7 +182,7 @@ static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
 		if not is_instance_valid(m):
 			continue
 		var mi := m as MeshInstance3D
-		if mi.has_meta(BERSERK_META):
+		if mi.has_meta(PULSE_META):
 			continue
 		if ObjectLight.is_object_material(mi.material_override):
 			var want := ObjectLight.with_object_color(mi.material_override, value)
