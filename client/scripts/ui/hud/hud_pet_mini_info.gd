@@ -77,6 +77,8 @@ var hgp_gauge: TextureProgressBar
 var effect: CanvasItem
 var picture: TextureRect
 var uid := 0
+## Control 100's rect as read in build() (RECT without the layout).
+var authored_rect := RECT
 
 func _init(builder: UiBuilder = null, text: Callable = Callable()) -> void:
 	_builder = builder
@@ -108,6 +110,7 @@ func build() -> bool:
 				lt = d.uv_lt
 				rb = d.uv_rb
 				break
+	authored_rect = rect
 	position = rect.position
 	size = rect.size
 	custom_minimum_size = rect.size
@@ -157,14 +160,43 @@ func build() -> bool:
 	UiBuilder.settle_authored_rects(root)
 	return true
 
-## Hangs the strip on the player block (child 100 of GDR_PLAYER_MINI_INFO),
-## at its authored 53,55 relative to the block's origin.
+## Hangs the strip on the player block as child 100 of GDR_PLAYER_MINI_INFO:
+## in control 100's own place among the block's children, at its authored
+## rect (53,55 of the block). Round 855: it was appended after the whole
+## block, so it drew over the portrait ring, the race mark and the stat
+## button, which the original draws over it.
+##
+## The original's order (READ, round 855; docs/protocol/player_mini_info.md
+## "Draw order"): a window draws its children in its child list's order
+## (0xba0300), and ifplayerminiinfo.txt's controls join that list in
+## REVERSE file order -- CIFTSection::vslot_000 (0xb3dcb0) lists a section's
+## controls from the last (+0x88, via +0x50) back, the records keep that
+## order (0x82c1d0) and 0x8b5580 creates them in it, each appended by its
+## parent's AddChild (0xb90a80, a push_back; called from 0xba20b0). So the
+## file's first control is drawn last, on top. Control 100 is the file's
+## 52nd of 53, so only GDR_PMI_SELECT (id 200, the 53rd) is drawn under it;
+## everything else of the block -- the portrait, the ring's orbs and ready
+## circle, the race mark, the stat button, the gauges and their text -- is
+## drawn over it. Showing it (0x7b5420 -> vtable +0x5c, 0x652b70) does not
+## move it in the list. UiBuilder.build_section builds the same order (the
+## file reversed into Godot's tree order), with the layout's own control 100
+## as a hidden placeholder (HudPlayerInfo's allow-list); the strip goes in
+## right above it, which is exactly control 100's place.
 func attach_to(player_info: Control) -> void:
 	if player_info == null:
 		return
 	if get_parent() != null:
 		get_parent().remove_child(self)
-	player_info.add_child(self)
+	var slot := player_info.find_child(PARENT_CONTROL, true, false) as Control
+	if slot == null or slot.get_parent() == null:
+		# No layout (no archives): nothing of the block to draw over.
+		player_info.add_child(self)
+		position = authored_rect.position
+		return
+	var holder := slot.get_parent()
+	holder.add_child(self)
+	holder.move_child(self, slot.get_index() + 1)
+	position = slot.position
 
 ## FUN_007b4800: the pet's picture, name and level.
 func fill(cos_uid: int, pet_name: String, level: int, icon: Texture2D) -> void:

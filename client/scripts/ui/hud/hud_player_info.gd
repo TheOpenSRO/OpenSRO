@@ -151,6 +151,10 @@ func setup() -> void:
 	#
 	# An allow-list rather than a deny-list, so a control nobody has
 	# accounted for stays hidden instead of appearing unannounced.
+	#
+	# The pet strip's own control (GDR_PMI_PET_MINI_INFO, id 100) stays a
+	# hidden placeholder: HudPetMiniInfo.attach_to puts the real strip right
+	# above it, in control 100's place in the draw order (round 855).
 	for child in root.get_children():
 		if child is CanvasItem:
 			(child as CanvasItem).visible = child.name in SHOWN_CONTROLS
