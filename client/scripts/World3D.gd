@@ -7560,6 +7560,13 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		# not a teleport's arrival leaves a pending request alone.
 		if teleport_arrival:
 			_teleport_request_pending = false
+		elif result != null and result.reason != "":
+			# Round 854: OpChangeZone is a GM's tool (the developer panel's
+			# zone box and town buttons); anyone else is refused and stays
+			# where they are. The reason goes to the system line, so the
+			# panel's "Travelling to ..." is not left unanswered.
+			_log_system("Zone change refused: %s" % result.reason)
+			print("ZONE CHANGE refused: %s" % result.reason)
 		return
 	# Round 786 (part): this arrival's loading-done report (0x3012) goes when
 	# its load is over (_drain_initial_load); until then the server keeps the
@@ -19052,6 +19059,9 @@ func _qa_input_step() -> void:
 			_qa_input_report = "%s (hovered %s)" % [action, hov.get_path() if hov != null else "nothing"]
 		"node":
 			var node := _qa_find_visible(ui_control, arg)
+			# Round 854: the developer panel sits on $UI beside UI/Control.
+			if node == null and _debug_panel != null and _debug_panel.visible:
+				node = _qa_find_visible(_debug_panel, arg)
 			if node == null:
 				_qa_input_report = action + " (no such visible node)"
 			else:

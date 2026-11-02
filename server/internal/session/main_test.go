@@ -45,6 +45,11 @@ func TestMain(m *testing.M) {
 	// result in order, so it is off here, and celestial786_test.go turns it
 	// on.
 	clockAtEntry.Store(false)
+	// Round 854: OpChangeZone is a GM's tool (world.go zoneChangeAllowed);
+	// the suite's older tests move their characters between zones with it
+	// from plain accounts, so it is open here, and changezone854_test.go
+	// closes it for its own tests.
+	zoneChangeAnyone.Store(true)
 	release := testdb.Lock(inventoryTestDSN())
 	code := m.Run()
 	release()
