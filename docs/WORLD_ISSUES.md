@@ -7483,6 +7483,146 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-fourth round, lane U: UI Scale is a dropdown in Option > Video, in Windows' steps
+
+The user: "Let's make UI scale a dropdown in the graphics settings. Let's use the same percentages
+that Windows supports to keep simple yet powerful." Labels: READ (`c:` sro_client.exe), MEASURED,
+INFERRED, OURS, OPEN. Base `df8ba2cb` (v0.1.618). UI-only lane: no world drawing changed, so no
+perf gate.
+
+**The game's minimum (READ / MEASURED; the brief asked to verify 1024 x 768 rather than assume it).**
+- READ: the Video tab's resolution list keeps only modes with `799 < w && 599 < h` (c:0x5fef70, the
+  decomp's mode loop): **800 x 600 is the smallest screen the original lays its interface out on**,
+  not 1024 x 768. (1024 x 768 is only the record constructor's default mode, c:0x5f75e0.)
+- MEASURED: the original places its windows at run time, not from a design resolution -- all 92
+  window records in `resinfo\ginterface.txt` carry zero rects (three have 2..12-pixel offsets).
+  Its largest windows fit 800 x 600: the item mall `GDR_RENEWAL_ITEM_MALL` 800 x 600 (round 838),
+  this Option window 700 x 500 (optionwnd.2dt, MEASURED earlier).
+- So the minimum is `VideoOptions.MIN_VIEW` (800 x 600), the same one round 696 already used for
+  the resolution list.
+
+**Built (OURS, from the original's parts).**
+- `UiScaleChoices` (new): the list 100 / 125 / 150 / 175 / 200 / 225 / 250 / 300 / 350 / 400 / 450 /
+  500 %. A scale is offered only when the view (window / scale) is at least 800 x 600, as Windows
+  hides a scale below its minimum; 100 % is always offered. Exact in integers: 150 % needs
+  1200 x 900. What that offers:
+
+  | window | offered up to |
+  |---|---|
+  | 800 x 600, 1280 x 720 | 100 % |
+  | 1024 x 768, 1366 x 768 | 125 % |
+  | 1600 x 900 | 150 % |
+  | 1920 x 1080 | 175 % (Windows offers the same there) |
+  | 1920 x 1200 | 200 % |
+  | 2560 x 1440, 3440 x 1440 | 225 % |
+  | 3840 x 2160 | 350 % |
+  | 5120 x 2880 | 450 % |
+  | 7680 x 4320 | 500 % |
+
+- **The row.** A "UI Scale" row is in the Video tab's list (the tab the user calls the graphics
+  settings: its sub-tabs read Graphic 1 / Graphic 2). It is the list's 22nd entry and fills the
+  last line's empty right-hand slot -- the original's CNIFVideoOptionSlot (label 216, the
+  original's combo 217 through `make_combo` / ComboList), white label in font 0. So no squeezing:
+  the slot was empty before (frame below). It scrolls into view as the last line, like the other
+  OURS rows (renderer, Job Titles).
+- **Filtering.** The row is filtered against the size the window will have: the Resolution picked
+  in the tab, the screen for Full screen, else the window now. It is filtered again on every
+  resize while the window is open (`OptionWindow._on_view_resized`).
+- **A choice that no longer fits.** It is kept saved, and the largest scale that fits is used. The
+  label says which: "UI Scale (150% won't fit)" fits the 141-wide label record at 1280 x 720
+  (frame). The tooltip names the 800 x 600 minimum and the size. When the window grows back, the
+  saved choice comes back.
+- **Applying.** As the tab's other rows: on Apply / Confirm (nothing changes before), saved as
+  [ui] scale (round 672's key, a factor).
+  - A scale too large for a new Resolution is lowered before the window is resized, so
+    `window_placement` places the window for the new scale. A larger scale goes in after the resize.
+  - `UiScaleChoices.apply_saved` then watches the window's size and re-fits on every resize.
+  - At start-up (Boot) the saved scale is applied as far as the saved Resolution allows, before the
+    display, and fitted after it.
+  - Default (the tab's button) puts 100 % back (OURS).
+- **The Resolution list** now lists every size at least 800 x 600 at 100 %. Round 696's review
+  listed only sizes that fit the scale in force, because a window too small for the scale stranded
+  the Option window's buttons off screen. Now the scale follows the window, so no size strands
+  anything (OPTION_VIDEO.md updated).
+- **Below 100 % and odd values.** The old `/uiscale` allowed 0.5..3; nothing below 100 % is offered
+  now (the original's size is the smallest, its fonts drawn 1:1). A saved or typed value is
+  snapped to the nearest listed step, ties to the smaller: 0.5 -> 100 %, 1.3 -> 125 %, 1.95 -> 200 %,
+  2.75 -> 250 %, above 5 -> 500 %.
+  - `/uiscale` stays and snaps: "150", "150%" and "1.5" all mean 150 %. It answers with what is
+    used, e.g. "UI scale 150% saved; a 1280x720 window fits up to 100%, so 100% is used until the
+    window is larger."
+  - The dev panel's slider steps through the list.
+  - `ClientSettings.apply_ui_scale` now allows up to 5.0.
+- **Departure, disclosed.** The original has no UI scale at all (it draws 1:1); the whole row is
+  OURS.
+
+**Tests.**
+- `ui_scale_choices_test` (new, 61 checks): the list, the filter at 14 sizes and its exact edges,
+  `effective`, snapping (19 values incl. NaN / inf), `/uiscale` parsing (12), a saved 1.3 / 0.5,
+  the saved format, and the re-fit on a real root window: 150 % at 1920 x 1080, 100 % at
+  1280 x 720 with 150 % still saved, 150 % again at 1600 x 900, 500 % at 4000 x 3000; a released
+  window keeps a hand-set scale.
+- `video_options_test` (+12): the row is slot 11 and the list still scrolls five lines; the original
+  combo and label; 100 % only at 1152 x 648; 100..175 % at 1920 x 1080; a choice is not saved
+  before Apply; 1280 x 720 picked -> 100 % only, label "UI Scale (150% won't fit)", the tooltip;
+  back to 1920 x 1080 the choice shows. With the window open, a resize to 2400 x 1400 re-filters it
+  by itself (100..225 %).
+- `console_test`: `/uiscale` snaps (7 values) and prints the list in its usage.
+- The native GUI guard (`native_gui848_test`) passes: no native widget added (the row is the
+  original's combo).
+- `check` ALL LOAD (1103 scripts); `tests` "ran 414 suite(s), 0 failing".
+
+**QA (render box, real client against the lane server on 127.0.0.1:17260, in memory;
+`/var/tmp/r854u/qa854.sh`, `batch.sh`, `e1080.sh`, summariser `sum.py`).**
+- **The path.** Each run opens the window as a player does: Escape -> the System window's Option
+  button -> Video. It scrolls the list with the scroll bar's Down arrow (five clicks), opens the UI
+  Scale combo, picks a row of the open list, presses Apply. Every click is a real `push_input`
+  click in UI units at the control's drawn centre (new QA actions `optnode`, `optlist`,
+  `localnode`).
+- **What is measured** after each Apply (new QA action `uiscale`): the window's content scale and
+  view, the saved choice, the row's items / shown / label, every shown HudWindow's rect against the
+  view, and the underbar's drawn size in window pixels.
+
+  | window | offered (MEASURED in the row) | each pick -> content scale | underbar drawn (px) | windows off screen |
+  |---|---|---|---|---|
+  | 1280 x 720 | 100 % | 1.0 | 800 x 68 | none |
+  | 1920 x 1080 | 100..175 % | 1.25 / 1.5 / 1.75 / 1.0, view 1536 x 864 / 1280 x 720 / 1097 x 617 / 1920 x 1080 | 1000 / 1200 / 1400 / 800 wide, centred | none |
+  | 2560 x 1440 | 100..225 % | 1.25 ... 2.25 (view 1138 x 640), then 1.0 | 1000 ... 1800 wide | none |
+  | 3840 x 2160 | 100..350 % (9) | 1.25 ... 3.5 (view 1097 x 617), then 1.0 | 1000 ... 2800 wide | none |
+
+  - The underbar's drawn width is exactly 800 x the scale, centred.
+  - The Option window (700 x 500) is re-centred in the view at every scale, and stays wholly on
+    screen down to the smallest view, 1097 x 617.
+- **A choice too big for the window (1280 x 720).**
+  - `/uiscale 150`: saved 150, used 100. Reopened, the row reads "UI Scale (150% won't fit)",
+    showing 100 %.
+  - The window resized to 1920 x 1080 (QA `winsize`, the OS window): 150 % went in by itself, and
+    the row offered 100..175 %.
+  - Back to 1280 x 720: 100 % used, 150 % still saved, the label back on.
+- **Found by the QA and fixed.** A drop from 175 % to 100 % went 175 -> 100 -> 175 -> 100. The
+  pre-resize lowering applied 100 % before the choice was saved, and the resize watch put the old
+  saved 175 % back. That was two needless re-layouts. Now the choice is saved first.
+  CONFIRMATION_RUN_PLACEHOLDER
+- **Frames for a human** (`/var/tmp/r854u/keep/` on the box):
+  - `before_base_1280x720_video_tab_end.png`: the base build, the list's last line with its empty
+    right-hand slot.
+  - `after_1280x720_list_100only.png`, `after_1280x720_150_held_back.png`,
+    `after_winsize_1920x1080_150.png`.
+  - `after_1920x1080_list_open.png`, `after_1920x1080_175.png`.
+  - `after_2560x1440_225.png`.
+  - `after_3840x2160_list_open.png` (nine choices), `after_3840x2160_350.png`.
+- Every run's client aborts at quit, in RenderingDevice `finalize` ("can only be called from the
+  render thread") after "World3D: left the tree". It happens after the measurements, at shutdown,
+  in the base build too (its run also ended rc 134); not this round's.
+
+**OPEN.**
+- The minimap's control rect hangs 11 UI units past the right edge at every scale: 1151 + 140 at a
+  1280-wide view. It is the same in UI units at every scale, so it is not caused by the scale.
+  Whether the original's minimap rect does the same is not checked.
+- Windows' own cut-off is its minimum effective resolution, not this game's. The table above
+  matches Windows at 1080p (175 %) by the game's 800 x 600 rule; it is not claimed to match Windows
+  everywhere.
+
 ## Eight-hundred-and-fifty-third round: a walk or run a model has no clip for plays nothing; monsters on the common resync
 
 The user: "Run the open tasks" -- round 852's two: what the original plays for a pet whose model has
