@@ -98,7 +98,7 @@ func newArrivalRig(t *testing.T) *arrivalRig {
 		LoginHandler(accounts),
 		WorldHandlerWithHook(chars, eq, hub, nil, nil),
 		TeleportHandler(chars, eq, hub, teleportFixture(t), gm.ParseAccounts("alice"), true, nil, nil),
-		GMCommandHandler(chars, gm.ParseAccounts("alice"), &gm.Deps{Equip: eq}, hub, nil),
+		GMCommandHandler(chars, gm.ParseAccounts("alice"), &gm.Deps{Equip: eq, Zones: []string{"jangan", "donwhang", "hotan"}}, hub, nil),
 		CombatHandler(chars, eq, items, hub, monsters, quest.NewMemStore(), inv, skill.NewMemStore(), nil, nil, nil),
 		ReviveHandler(chars, hub, RegenDeps{Equipment: eq}),
 	)
@@ -478,7 +478,7 @@ func TestRound786EveryTeleportPathIsHeld(t *testing.T) {
 			rig.send("Aria", OpTeleportUse, clientTeleportUse(1, 2))
 			rig.until("Aria", OpChangeZoneResult)
 		}},
-		{"zone change", func(rig *arrivalRig) { // the GM /goto <zone> rides this too
+		{"zone change", func(rig *arrivalRig) { // a GM's (Aria): the developer panel (round 854)
 			rig.send("Aria", OpChangeZone, (&ChangeZoneRequest{Zone: "donwhang"}).Encode())
 			rig.until("Aria", OpChangeZoneResult)
 		}},
@@ -732,7 +732,7 @@ func TestRound786EveryRelocationGoesThroughWarpVia(t *testing.T) {
 		"warpHome": {"returnAfterKill:death: respawn after a kill", "returnToPoint:death: return point", "complete:return scroll",
 			"skillReset:skill reset scroll"}, // round 838, servicescroll.go
 		"warpVia": {"handleUnstuck:/unstuck", "use:gate teleport", "walkIn:walk-in teleport", "complete:reverse return scroll",
-			"warpHome", "warpTo:zone change", "GMCommandHandler",
+			"warpHome", "warpTo:zone change", "GMCommandHandler", "GMCommandHandler", // round 854: /goto <zone> too
 			"handleRecallAnswer:guild recall"}, // round 844 lane G part 2, guildrecall.go
 	}
 	for k, w := range want {

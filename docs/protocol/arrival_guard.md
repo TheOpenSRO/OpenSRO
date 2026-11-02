@@ -139,8 +139,8 @@ INFERRED.
 | Reverse return scroll (recall point, death point, map point) | `ScrollCaster.complete` | `warpVia` "reverse return scroll" |
 | Death: resurrect at the return point (option 1) | `ReviveHandler` -> `returnToPoint` -> `warpHome` | `warpVia` "death: return point" |
 | Death with `-player-dead-state` off (the instant respawn) | `returnAfterKill` -> `warpHome` | `warpVia` "death: respawn after a kill" |
-| Zone change, the dev zone box, GM `/goto <zone>` | `handleChangeZone` (OpChangeZone) | `warpVia` "zone change" |
-| GM `/tp x z`, GM `/goto <monster>` | `GMCommandHandler` | `warpVia` "gm /tp", "gm /goto" (the server warps; the reply carries no move) |
+| The developer panel's zone box and town buttons (OpChangeZone, a GM account only since round 854; anyone else is refused and stays put) | `handleChangeZone` | `warpVia` "zone change" |
+| GM `/tp x z`, GM `/goto <monster>`, GM `/goto <zone>` (round 854: the server's warp, guard or not) | `GMCommandHandler` | `warpVia` "gm /tp", "gm /goto" (the server warps; the reply carries no move) |
 | `/unstuck` (OURS command) | `handleUnstuck` | `warpVia` "/unstuck" |
 | Revive in place (option 2) | `ReviveHandler` | `startProtection` (no hold: not a re-entry, as retail) |
 | Ghost Walk / blink skills | `moveBySkill` | none (READ: not a re-entry) |

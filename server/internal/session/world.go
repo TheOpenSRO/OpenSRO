@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"math"
 	"sync/atomic"
 	"time"
@@ -1180,6 +1181,25 @@ func zoneSpotGM(username string) bool {
 	return g != nil && username != "" && g.Allows(username)
 }
 
+// zoneChangeRefusal is what OpChangeZone answers an account that is not a GM
+// (round 854; the wording is OURS: the original has no such message).
+const zoneChangeRefusal = "zone change is a GM tool"
+
+// zoneChangeAnyone opens OpChangeZone to every account. It is the test
+// suite's (TestMain turns it on, as it does -trust-client-positions, so the
+// older tests can still move their characters between zones with it); no
+// flag sets it, so a running server never has it.
+var zoneChangeAnyone atomic.Bool
+
+// zoneChangeAllowed reports whether username may send OpChangeZone (round
+// 854): only a GM account (-gm-accounts, the gate GMCommandHandler was made
+// with). OpChangeZone is OpenSRO's own message, the developer panel's zone
+// box and town buttons; before this round any living player could warp
+// anywhere with it.
+func zoneChangeAllowed(username string) bool {
+	return zoneSpotGM(username) || zoneChangeAnyone.Load()
+}
+
 // changeZoneLanding is where a zone change to req lands, given arrival's
 // point `mid` (the zone's centre region's middle in the frame it is named
 // in): the request's spot, when it names one inside the region, or else the
@@ -1806,6 +1826,16 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 // OpEntityEntered at the landing (a flicker, recorded in round 571, not a
 // bug). A label with no frame keeps the old rule.
 func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packet, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker) error {
+	// Round 854: a GM's tool only. The original has no message by which a
+	// client picks its own zone; every move there has a server-side reason
+	// (a gate 0x705A, a scroll, the revive, a walk-in portal, a GM command).
+	// Anyone else is refused before the request is even read, and nothing
+	// moves (zoneChangeAllowed).
+	username, _ := AuthenticatedUsername(sess)
+	if !zoneChangeAllowed(username) {
+		slog.Warn("zone change refused: not a GM account", "account", username, "bytes", len(p.Data))
+		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: zoneChangeRefusal}).Encode()})
+	}
 	req, err := DecodeChangeZoneRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "malformed request"}).Encode()})
@@ -1831,7 +1861,6 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if !oneWorld && req.Zone == current.Zone {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
-	username, _ := AuthenticatedUsername(sess)
 	pos = changeZoneLanding(req, pos, zoneSpotGM(username))
 	_, err = warpTo(ctx, sess, eq, chars, hub, zerk, req.Zone, bucket, pos, frame)
 	return err

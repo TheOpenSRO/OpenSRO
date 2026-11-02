@@ -204,7 +204,13 @@ func (b *bot) note(p *proto.Packet) {
 			}
 		}
 	case session.OpChangeZoneResult:
-		if r, err := session.DecodeChangeZoneResult(p.Data); err == nil && r.OK {
+		if r, err := session.DecodeChangeZoneResult(p.Data); err == nil && !r.OK {
+			// Round 854: a refused change (a non-GM's 0x0026) moves nothing.
+			b.mu.Lock()
+			z, x, y, zz := b.zone, b.x, b.y, b.z
+			b.mu.Unlock()
+			fmt.Printf("[%s] zone change refused: %q (still in %s at %.0f, %.0f, %.0f)\n", b.name, r.Reason, z, x, y, zz)
+		} else if err == nil && r.OK {
 			// Round 786 (QA aid): where the zone change put the bot, so a
 			// later -tp2 in a dungeon keeps the dungeon's height, not the
 			// field's it entered the world at.
@@ -1119,7 +1125,7 @@ func main() {
 	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
 	flag.StringVar(&botWalk, "walk-loop", "", "bot (round 832): \"region:lx,lz;...\" waypoints walked in a loop with 0x7021, e.g. 0x61a8:1002,1060;0x61a8:1060,1060")
 	flag.DurationVar(&botWalkEvery, "walk-loop-every", 6*time.Second, "bot -walk-loop: the time between waypoints")
-	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026), e.g. dungeon/32769")
+	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026, a GM tool since round 854: the bot's account must be in the server's -gm-accounts, or it is refused and stays put), e.g. dungeon/32769")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	flag.StringVar(&botGuild.create, "guild-create", "", "bot: found a guild of this name once in the world (raises itself to the founder's level and gold; a GM account)")
 	flag.Int64Var(&botGuild.join, "guild-join", 0, "bot: join this guild id once in the world")

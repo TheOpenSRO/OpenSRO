@@ -7560,6 +7560,13 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		# not a teleport's arrival leaves a pending request alone.
 		if teleport_arrival:
 			_teleport_request_pending = false
+		elif result != null and result.reason != "":
+			# Round 854: OpChangeZone is a GM's tool (the developer panel's
+			# zone box and town buttons); anyone else is refused and stays
+			# where they are. The reason goes to the system line, so the
+			# panel's "Travelling to ..." is not left unanswered.
+			_log_system("Zone change refused: %s" % result.reason)
+			print("ZONE CHANGE refused: %s" % result.reason)
 		return
 	# Round 786 (part): this arrival's loading-done report (0x3012) goes when
 	# its load is over (_drain_initial_load); until then the server keeps the

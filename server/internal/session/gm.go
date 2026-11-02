@@ -318,8 +318,25 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// /goto to a monster is the server's own warp -- out of the world
 		// behind the loading screen until the client's 0x3012, then the
 		// protection -- not the client's placement; the reply then names no
-		// move of its own. A /goto to a zone alone stays the client's
-		// OpChangeZone, which warps the same way.
+		// move of its own.
+		//
+		// Round 854: a /goto to a zone alone is the server's own warp too,
+		// guard or not, to the zone's landing -- before, the reply named the
+		// zone and the client asked for it with OpChangeZone, which any
+		// account could send. Now the zone the GM lands in is the one the GM
+		// command resolved, and OpChangeZone is the developer panel's alone
+		// (a GM's too, world.go zoneChangeAllowed).
+		if !out.HasPos && !out.Refused && out.Zone != "" && out.KilledMonsterID == 0 && gmVerb(req.Line) == "/goto" && hub != nil {
+			if _, in := hub.EntityBySession(sess.ID()); in {
+				zone := out.Zone
+				bucket, pos, frame, _ := arrival(zone)
+				pos = changeZoneLanding(&ChangeZoneRequest{Zone: zone}, pos, true)
+				result.Zone = ""
+				defer func() {
+					_, _ = warpVia(ctx, sess, deps.Equip, chars, hub, deps.Berserk, zone, bucket, pos, frame, "gm "+gmVerb(req.Line))
+				}()
+			}
+		}
 		if out.HasPos && !out.Refused && arrivalGuardOn.Load() && hub != nil {
 			if zone, bucket, pos, frame, ok := gmWarpTarget(sess, hub, out.Zone, out.X, out.Z); ok {
 				result.HasPos, result.Zone = false, ""
