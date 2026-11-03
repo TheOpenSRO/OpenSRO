@@ -42,8 +42,9 @@ class_name ExpOrbs
 ## flying effect is freed at once (slot 2), ABSORB[kind] is made at the point
 ## (placed once), `prim\snd\ui\hyanget.wav` plays there (the sound manager's
 ## +0x30 with 1.0), and a violet orb adds one to the berserk gauge's display
-## (FUN_009d4ad0(1); OURS: not modelled -- OpenSRO's gauge follows the
-## server's attack result). The absorb effect plays to its end and is freed.
+## (FUN_009d4ad0(1); round 860: `arrived` hands each arrival's kind to the
+## owner -- World3D's HwanGauge steps the display). The absorb effect plays
+## to its end and is freed.
 const KIND_EXP := 0
 const KIND_SP := 1
 const KIND_HWAN := 2
@@ -208,6 +209,8 @@ var parent: Node = null
 var factory: Callable = Callable()
 ## (path, world position) -> void: the absorb chime.
 var sound: Callable = Callable()
+## Round 860: (kind) -> void, each orb's arrival (the violet one's gauge step).
+var arrived: Callable = Callable()
 ## () -> int 0..32767.
 var rand: Callable = func() -> int: return randi() & 0x7fff
 ## Orbs launched and absorbed (QA, tests).
@@ -309,10 +312,36 @@ func _absorb(o: Dictionary) -> void:
 				anchor.queue_free(), CONNECT_ONE_SHOT)
 	if sound.is_valid():
 		sound.call(ABSORB_SOUND, at)
+	if arrived.is_valid():
+		arrived.call(kind)
 
 ## Orbs in flight (tests, QA).
 func live() -> int:
 	return _orbs.size()
+
+## Round 860: drops the orbs of one kind in flight (READ, FUN_009d8610: the
+## hwan count's reset deletes the violet orbs). Returns how many.
+func drop_kind(kind: int) -> int:
+	var keep: Array = []
+	var n := 0
+	for o in _orbs:
+		if int(o["kind"]) == kind:
+			var c = o["carrier"]
+			if c != null and is_instance_valid(c):
+				(c as Node).queue_free()
+			n += 1
+		else:
+			keep.append(o)
+	_orbs = keep
+	return n
+
+## Orbs of one kind in flight.
+func live_of(kind: int) -> int:
+	var n := 0
+	for o in _orbs:
+		if int(o["kind"]) == kind:
+			n += 1
+	return n
 
 ## Drops every orb at once (a world teardown).
 func clear() -> void:

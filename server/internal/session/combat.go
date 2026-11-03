@@ -2092,7 +2092,7 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 		releaseTurn := zerk.Turn(characterID)
 		if gained := zerk.EarnOnKill(characterID, berserk.Kill{
 			KillerLevel: killerLevel, VictimLevel: monster.Level,
-			VictimIsMonster: true, VictimRarity: monster.Rarity,
+			VictimIsMonster: true, VictimRarity: monster.Rarity, Source: uint32(monster.ID),
 		}); gained > 0 {
 			// The engine's count is a character-row column, so a gain has
 			// to reach the row -- see character.Character.HwanCount.

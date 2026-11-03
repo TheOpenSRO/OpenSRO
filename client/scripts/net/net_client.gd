@@ -203,6 +203,8 @@ signal level_up(new_level: int, stat_points: int)
 signal exp_gained(gain: RewardNoticeNet.ExpGain)
 ## Round 716: retail 0x304E kind 1, the character's new gold total.
 signal gold_total(total: int, show: bool)
+## Round 860: 0x304E kind 4, the berserk count and the source it rose from.
+signal hwan_count(count: int, source: int)
 signal learn_skill_result(ok: bool, reason: String)
 ## The same answer with the skill it was for (round 639): the result names no
 ## skill, so the ids are queued as the requests go out and matched in order
@@ -3271,6 +3273,9 @@ func _dispatch(p: Packet) -> void:
 			var gold := RewardNoticeNet.decode_gold(p.data)
 			if not gold.is_empty():
 				gold_total.emit(gold[0], gold[1])
+			var hwan := RewardNoticeNet.decode_hwan(p.data)
+			if not hwan.is_empty():
+				hwan_count.emit(hwan[0], hwan[1])
 		GuildNet.OP_CREATE_RESULT:
 			var r := GuildNet.decode_result(p.data)
 			_keep_guild(r)
