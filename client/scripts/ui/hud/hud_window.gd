@@ -474,6 +474,9 @@ func _add_title_bar(title: String) -> void:
 		close.texture_pressed = _builder.load_texture(
 			UiBuilder.CLOSE_BUTTON_DDJ.replace(".ddj", "_press.ddj"))
 	close.pressed.connect(_on_close_pressed)
+	# Round 860: CIFMainFrame's own close button (a CIFCloseButton made in
+	# code, c:0x817028) clicks as every CIFButton does.
+	UiSounds.hook_cif_button(close, "CloseButton")
 	add_child(close)
 
 ## Where the close button goes: CIFMainFrame's (width - 26, 10) on a

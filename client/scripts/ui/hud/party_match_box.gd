@@ -97,6 +97,8 @@ func build_radio(group: Control, key: String, labels: Array, origin: Vector2, pi
 		var at := origin + (Vector2(pitch * i, 0) if horizontal else Vector2(0, pitch * i))
 		var dot := TextureButton.new()
 		dot.name = "Item%d" % i
+		# Round 860: a radio dot is a CIFButton made in code (c:0x657d71).
+		UiSounds.hook_cif_button(dot, dot.name)
 		dot.ignore_texture_size = true
 		dot.stretch_mode = TextureButton.STRETCH_SCALE
 		dot.position = at

@@ -25391,8 +25391,20 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, ow
 			var mine_pluses := _player_avatar_pluses.duplicate()
 			CharacterLook.avatar_into(mine, mine_pluses, ref_id, plus)
 			_set_player_avatars(mine, mine_pluses, "0x%x avatar %d" % [op, ref_id])
+			_set_fx_on(player, ref_id, plus >= 0, {}, {})
 			return
 		print("World3D: 0x%x for this player -- drawn from the equipment result" % op)
+		# Round 860 (SetItemFx): the set's look. The equipment result came
+		# first, so the worn list is the new one; the old is it with this
+		# slot's piece back (taken off) or out (put on).
+		var now_worn: Dictionary = _player_equipped_last.duplicate()
+		var was_worn := now_worn.duplicate()
+		if plus >= 0:
+			was_worn.erase(slot)
+		else:
+			was_worn[slot] = ref_id
+		_set_fx_on(player, ref_id, plus >= 0, SetItemFx.complete_sets(was_worn, _set_of_item, SetItemFx.sizes()),
+			SetItemFx.complete_sets(now_worn, _set_of_item, SetItemFx.sizes()))
 		return
 	var id := _other_by_uid(uid)
 	if id < 0:
@@ -25418,7 +25430,13 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, ow
 		target.own = look.own
 	# Round 843 (OURS): the item's own id beside a model switcher's row; a
 	# change of it redraws the body (its glow and seal come from it).
+	var sets_before := SetItemFx.complete_sets(target.worn, _set_of_item, SetItemFx.sizes()) if not avatar else {}
 	var change := target.apply_broadcast(slot, ref_id, plus, own_ref, avatar)
+	# Round 860 (SetItemFx, READ c:0x8a9260 / 0x8a9560): the itemeffect row or
+	# the set's look, on a body that is drawn.
+	if kept == null:
+		_set_fx_on(_other_bodies.get(id), ref_id, plus >= 0, sets_before,
+			SetItemFx.complete_sets(target.worn, _set_of_item, SetItemFx.sizes()) if not avatar else {})
 	var same_item := bool(change["same_item"])
 	if bool(change["own_changed"]) and target.own.has(slot):
 		print("World3D: player %d slot %d is drawn as item %d with item %d's own glow and seal" % [id, slot, ref_id, int(target.own[slot])])
@@ -25443,6 +25461,20 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, ow
 	if same_item and _reglow_other(id, pluses):
 		return
 	_redress_other(id)
+
+## Round 860: an item's set id (0 none).
+func _set_of_item(item_id: int) -> int:
+	var row: ItemTableReader.Item = _item_rows.get(item_id)
+	return row.set_id if row != null else 0
+
+func _set_fx_on(body, ref_id: int, put_on: bool, before: Dictionary, after: Dictionary) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var row: ItemTableReader.Item = _item_rows.get(ref_id)
+	var code := row.code_name if row != null else ""
+	var played := SetItemFx.play(body, code, put_on, before, after)
+	if played != "":
+		print("World3D: %s on %s (%s %s)" % [played, (body as Node).name, "put on" if put_on else "taken off", code])
 
 ## Redraws another player's weapon and shield glow at `pluses` on the body
 ## drawn now (CharacterAppearance.reglow), only when they differ from those it

@@ -121,6 +121,31 @@ const KEY_BUTTON_CLICK := "UI:snd_button_click:-:-:-:-"
 static func button_clicked(what: String) -> void:
 	play(KEY_BUTTON_CLICK, what + " clicked")
 
+## Round 860: makes `btn` an original CIFButton's for its click -- the one
+## place every CIFButton gets snd_button_click, whether the layout built it
+## (UiBuilder._build_button) or a window made it in code. READ: CIFButton's
+## class link is 0xee9828 (CIFButton::vslot_000 c:0x656560; CIFCloseButton
+## 0xee9868, CIFButtonTree 0xee9780, CIFDropDownButton 0xee9888); the code
+## that creates one by that link (`push 0xee9828` then the GWnd create
+## FUN_00ba20b0), besides the layout loader: CIFMainFrame::vslot_010 (its
+## close button, c:0x817028), CIFWorldMap::vslot_017 -> FUN_00631d60 (the
+## teleport choice popup's rows, c:0x631dfe), FUN_00648a80 (the page-number
+## buttons of the stall network, the mall's hot store and wish list,
+## c:0x648b85), IFRadioButton's FUN_00657c40 (every radio dot -- the party
+## settings, the party match box, the input option -- c:0x657d71),
+## CIFQuickPartyWnd::vslot_010 (its lock, c:0x6db2d6), CIFComboBox::vslot_010
+## (its drop button, c:0x63283e), CIFVerticalSpinCtrl::vslot_010 (its arrows,
+## c:0x65883c / 0x6588a8), CPSTitle::vslot_006, the item mall (c:0x647e38,
+## 0x65243c) and CIFConfirmReputationGuide. None of those sites sets the
+## style's 0x20 (no `push 0x20` near them; INFERRED their style is 0, so they
+## click). The scroll bars' and the 2dt windows' (CNIFButton) buttons are no
+## CIFButtons and stay silent. Hooked once, whatever calls this.
+static func hook_cif_button(btn: BaseButton, what: String) -> void:
+	if btn == null or btn.has_meta(&"cif_click"):
+		return
+	btn.set_meta(&"cif_click", true)
+	btn.pressed.connect(func() -> void: button_clicked(what))
+
 ## A routine that plays snd_window_close itself (the storage and store close
 ## handlers, 0x798e20's alchemy close, the message box's hide).
 static func window_closed(what: String) -> void:

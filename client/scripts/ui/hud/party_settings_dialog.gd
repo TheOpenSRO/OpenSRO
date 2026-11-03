@@ -117,6 +117,8 @@ func _build_radio(group: Control, key: String, text_keys: Array, fallbacks: Arra
 		dot.size = DOT_SIZE
 		dot.custom_minimum_size = DOT_SIZE
 		dot.pressed.connect(choose.bind(key, i))
+		# Round 860: a radio dot is a CIFButton made in code (c:0x657d71).
+		UiSounds.hook_cif_button(dot, dot.name)
 		group.add_child(dot)
 		dots.append(dot)
 		# The item's label is a CIFStatic (0x657c40), font 0, centred

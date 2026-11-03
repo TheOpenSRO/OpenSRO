@@ -618,8 +618,7 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 	# is silent). MEASURED: none of the 529 CIFButtons in the resinfo
 	# layouts sets 0x20. Godot's `pressed` is that release inside, enabled.
 	if (def.style & BUTTON_STYLE_REPEAT) == 0:
-		var what := def.name
-		btn.pressed.connect(func() -> void: UiSounds.button_clicked(what))
+		UiSounds.hook_cif_button(btn, def.name)
 	return btn
 
 ## Round 859: the CIFButton style bit that makes it click on the press and

@@ -322,6 +322,11 @@ func GainChance(k Kill) (chance int, amount int) {
 // roll10000 is rand()%10000; swapped by tests to force the dice.
 var roll10000 = func() int { return rand.Intn(10000) }
 
+// ForceGainForQA makes every roll succeed (OPENSRO_QA_HWAN_CERTAIN, cmd/server;
+// round 860, OURS, QA only): a kill always earns its orbs, so a short live run
+// sees the violet orbs fly. Never set in play.
+func ForceGainForQA() { roll10000 = func() int { return 0 } }
+
 // Tracker holds each character's berserk state.
 //
 // The ORB COUNT is persisted as of 2026-09-20: it is `_CHAR.RemainHwanCount`

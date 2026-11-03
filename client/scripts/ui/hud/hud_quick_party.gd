@@ -301,6 +301,8 @@ func _build_lock() -> void:
 	_lock.position = Vector2(-position.x, 0.0) + LOCK_OFFSET
 	_lock.visible = false
 	_lock.pressed.connect(toggle_lock)
+	# Round 860: CIFQuickPartyWnd's lock, a CIFButton made in code (c:0x6db2d6).
+	UiSounds.hook_cif_button(_lock, "QuickPartyLock")
 	add_child(_lock)
 	_lock_art()
 
