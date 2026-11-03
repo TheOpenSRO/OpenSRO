@@ -27,11 +27,17 @@ class_name TextLayout
 ## tmHeight` (0x637e3d).
 ##
 ## **A long edit's text (READ, 0x637d85..0x637de3, 0x637ef1..0x637f6f).** A
-## single-line edit whose text is at least `width - 5` wide is drawn with its
-## END at `left + width - 5` (left = that minus the text's width), whatever
-## the caret; then, while that start is left of the rect and the caret is
-## within 40 (the double at 0xe1b8f8) of the rect's left, the text moves right
-## by min(rect left - text left, rect left - caret x + 40).
+## single-line edit (style bit 0x40 clear, 0x637d7c) whose text is MORE than
+## `width - 5` wide (`fcom` of `w - 5` against the text's width, taken only
+## when below: 0x637d9c..0x637da3) is drawn with its END at `left + width - 5`
+## (left = that minus the text's width), whatever the alignment and the
+## caret; then, when that start is left of the rect (0x637efb) and the caret
+## x is at most the rect's left + 40 (the integer `left + 0x28`, 0x637f04..
+## 0x637f1a), the text and the caret move right by min(rect left - text left,
+## rect left - caret x + 40.0) (the double at 0xe1b8f8, 0x637f1c..0x637f4b):
+## the caret ends 40 px in, or the text's start at the rect's left, whichever
+## is less. There is no remembered scroll: the draw works it out afresh every
+## frame from the text's width and the caret's advance (round 860).
 ##
 ## **The caret (READ, 0x637e80..0x637ee5 and the quad at 0x637f83..).** Its x
 ## is the text's left plus the advances of the characters before the caret
@@ -97,6 +103,8 @@ static func edit_origin(rect: Rect2, client: Rect2i, halign: int, valign: int, t
 ## unscrolled `left`, the text rect, the text's width and the caret's advance
 ## from the text's start.
 static func edit_scrolled_left(left: float, r: Rect2, text_w: float, caret_advance: float) -> float:
+	# Strictly wider (READ 0x637d9c: `w - 5 < text w`); at exactly `w - 5` the
+	# alignment's own left stays.
 	if r.size.x - LONG_RIGHT_GAP < text_w:
 		left = r.position.x + r.size.x - LONG_RIGHT_GAP - text_w
 	var caret_x := left + caret_advance
