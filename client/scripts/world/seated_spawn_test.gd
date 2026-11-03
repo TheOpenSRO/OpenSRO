@@ -158,6 +158,14 @@ func _test_zone_change(world: Node) -> void:
 	zone.others = [_snap(44, "Dara"), _snap(45, "Eun")]
 	zone.seated = [44]
 	await world.call("_on_change_zone_result", zone)
+	# The arrival's bodies are built under the frame's build budget
+	# (_pump_other_builds, round 739): on a loaded CI runner a body can land a
+	# frame or more later, which failed this check on and off (round 860).
+	# Wait for them, bounded, rather than assert on the same frame.
+	var waited := 0
+	while waited < 600 and not ((world.get("_other_gaits") as Dictionary).has(44) and (world.get("_other_gaits") as Dictionary).has(45)):
+		await process_frame
+		waited += 1
 	var gaits: Dictionary = world.get("_other_gaits")
 	_check(not gaits.has(42) and not gaits.has(43), "the old zone's bodies are gone")
 	_check(gaits.has(44) and gaits.has(45), "the new zone's players are spawned")
