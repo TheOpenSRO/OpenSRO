@@ -1082,6 +1082,8 @@ type potionFixture struct {
 	conn    net.Conn
 	r       *bufio.Reader
 	clock   time.Time
+	// useEffects counts the 0x305Cs read() stepped over (round 859).
+	useEffects int
 	// bag and store are what UseItemHandler is given: inv and chars, with a
 	// RemoveItem and a Heal a test can make fail (round 511).
 	bag   *flakyBag
@@ -1182,12 +1184,20 @@ func newPotionFixture(t *testing.T) *potionFixture {
 
 func (f *potionFixture) read() *proto.Packet {
 	f.t.Helper()
-	f.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	p, err := proto.Read(f.r, nil, nil)
-	if err != nil {
-		f.t.Fatalf("read: %v", err)
+	for {
+		f.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		p, err := proto.Read(f.r, nil, nil)
+		if err != nil {
+			f.t.Fatalf("read: %v", err)
+		}
+		// Round 859: an accepted use's 0x305C follows its reply
+		// (useitem_effect.go; its own test checks it), counted and stepped over.
+		if p.Opcode == OpItemUseEffect {
+			f.useEffects++
+			continue
+		}
+		return p
 	}
-	return p
 }
 
 func (f *potionFixture) send(op uint16, data []byte) *proto.Packet {
