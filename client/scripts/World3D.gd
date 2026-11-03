@@ -18154,6 +18154,9 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   textalign:<name>    the text alignment census (TextAlignCensus) of the
 #                       first shown Control of that name: TEXT / CARET lines,
 #                       each text and caret against the original's rule (859)
+#   editstate:<name>    report an edit's caret column, text width, drawn text
+#                       left and caret x (UI px, its own coordinates) and the
+#                       long-text rule's span (round 860)
 #   netnode:<id>[,..] / netbox:<id> / underbar:<id>[,..]  left click a control
 #                       of the stall network window, its buy box or the
 #                       underbar by GetChild path (round 840)
@@ -19381,6 +19384,27 @@ func _qa_input_step() -> void:
 				_qa_input_report = action + " (not shown)"
 			else:
 				TextAlignCensus.measure(tn, "qa_" + arg, TextAlignCensus.index_layouts(_ui_builder), false)
+		"editstate":
+			# Round 860: where an edit draws its text and caret now (the
+			# CifEdit named so, or the one under a shown Control of that name
+			# with the keyboard, else its first): the caret column, the
+			# text's width, its drawn left and the caret's x in the edit (UI
+			# px), the long-text rule's span, the UI scale.
+			var en := _qa_find_visible(ui_control, arg)
+			var ce := en as CifEdit
+			if ce == null and en != null:
+				for c in en.find_children("*", "CifEdit", true, false):
+					if ce == null or (c as CifEdit).has_focus():
+						ce = c as CifEdit
+			if ce == null:
+				_qa_input_report = action + " (not shown)"
+			else:
+				var pl := ce.placement()
+				var cr: Rect2 = pl.get("caret", Rect2())
+				_qa_input_report = "%s -> EDIT %s col %d len %d text_w %.1f left %.1f caret_x %.1f caret_y %.1f span %s size %s at %s scale %.2f" % [
+					action, ce.name, ce.caret_column, ce.text.length(), float(pl.get("text_w", 0.0)), float(pl.get("left", 0.0)),
+					cr.position.x, cr.position.y, ce.rule_span(), ce.size, ce.get_global_rect().position,
+					get_tree().root.content_scale_factor]
 		"helpclose", "helptab", "helpstate":
 			# Round 858: left click the Help window's X or a menu tab; report
 			# its state (root, frame, tab, document).

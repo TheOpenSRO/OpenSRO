@@ -145,7 +145,8 @@ static func font_census(root: Node) -> PackedStringArray:
 
 ## The alpha a canvas item draws at: its own and every ancestor's modulate.
 static func _shown_alpha(ci: CanvasItem) -> float:
-	var a := ci.self_modulate.a
+	# A CifEdit hides LineEdit's own drawing and draws on its ink (round 860).
+	var a := 1.0 if ci is CifEdit else ci.self_modulate.a
 	var n: Node = ci
 	while n is CanvasItem:
 		a *= (n as CanvasItem).modulate.a

@@ -7483,6 +7483,181 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixtieth round, lane T: a long line in an edit, drawn where the original draws it
+
+The user asked for round 859 lane C's remaining open text item: "the original's long-text rule in
+edits is read and in `TextLayout` but not drawn". Labels: READ (`c:` sro_client.exe; the decomp dump
+and `/var/tmp/sro_client.asm` on the box), MEASURED, INFERRED, OURS, OPEN. Base `ca24154b`
+(v0.1.625). UI-only lane (no world drawing changed): no perf gate.
+
+**The rule, read again in full (READ, CIFEdit's draw `c:0x637b70`, CIFEdit and CIFEInputChatBox
+slot 13).**
+- It keeps **no scroll**: every frame the draw starts from the text rect (0x652800: the control's
+  `+0x40` rect less the ClientRect), puts the text by HAlign / VAlign (round 859), then, for a
+  single-line edit (style bit 0x40 clear, 0x637d7c):
+  - `w - 5 < text w` (0x637d85..0x637da3: `fild w - 5`, `fcom` against the text board's width,
+    taken only when below; **strictly** wider -- round 859's "at least" was one pixel loose, and at
+    exactly `w - 5` the alignment's own left stays): the text's end goes to `left + w - 5` and its
+    left to that minus its width (0x637da5..0x637de3), whatever the alignment and the caret.
+  - The caret's x is then the text's left + 0x8b3820's sum of cell advances before the caret
+    column (+1 while an IME composition is open, 0x634c50).
+  - When the text's left is left of the rect (`fcomp`, 0x637efb) **and** the caret x is at most the
+    rect's left + 40 (the integer `left + 0x28`, 0x637f04..0x637f1a), text and caret move right by
+    `min(rect left - text left, rect left - caret x + 40.0)` (the double at 0xe1b8f8;
+    0x637f1c..0x637f6f): the caret ends exactly 40 px in, or the text's start at the rect's left,
+    whichever is the smaller move.
+- So, step by step: **typing at the end** keeps the end at `w - 5` and the caret on it (`w - 5`,
+  the quad to `w - 3`). **Left** walks the caret left over a still text until the caret is 40 px
+  in; from there each Left moves the text right by that character's width and the caret stays 40
+  px in, until the text's start reaches the rect's left; then the caret walks on to the start.
+  **Right** from Home: the mirror -- the caret walks to 40 px in, then the text moves left a
+  character a step until its end is back at `w - 5`. **Home** puts the start at the left at once;
+  **End** the end at `w - 5` at once. **Backspace / Delete** at the end: the end stays at `w - 5`
+  and the start comes in; once the text is no longer wider than `w - 5` it is drawn by its
+  alignment again. **Focus in / out** change nothing (the rule reads no focus). **An empty edit**
+  has no text width: round 859's empty-caret rule. **A password**: the text board holds '*' per
+  character (0x636330 with style 2), so the rule measures the mask.
+- **Where it is drawn (READ).** The board is drawn at the left and top truncated (0x6356c0:
+  `_ftol` = `cvttsd2si` of `+0x370` / `+0x374`, 0xb42d10) -- whole pixels. The whole draw is inside
+  a viewport of the **edit's own rect** (0x6531a0 with 0xb8f420's `+0x40` rect, set before the
+  draw; 0x653220 sets the full screen back after), so a glyph crossing the edit's edge is cut there
+  and drawn in part, and the ClientRect's inset (the chat line's 5 px at the left) shows the
+  scrolled text. INFERRED: that a D3D9 viewport clips pre-transformed (XYZRHW) UI quads -- the
+  draw sets it around exactly this.
+- **IME (READ / OPEN).** The composition is in the edit's buffer, drawn in the text at the caret,
+  the caret one column after it (0x634c50). Its underline (0x637b70 from 0x6380bb: type 3 per
+  clause -- 0 dotted 0xff969696, 1 a white bar, else a grey line; otherwise one white line from
+  the composition's start to its end) takes its x from 0x635580 plus only the `w - 5` move
+  (`+0x1c`, the `_ftol` delta at 0x637dda), not the 40 px pull-back; its y adds the font's `+0x38`
+  and a second `+0x44` that was not traced through: OPEN, not drawn.
+
+**Built (one place: `CifEdit`).** LineEdit's scroll has no setter, so CifEdit hides LineEdit's own
+drawing (`self_modulate` alpha 0) and draws on an internal child (`CifEditInk`, `clip_contents`:
+the original's viewport -- the edit's width and the layout's height, since Godot holds an edit at
+least a line tall: party match's 11 px name edit stands 17 px, and the original cuts its 16 px caret
+at 11): the edit's art box (normal / read-only, once: Godot's
+second "focus" box while the edit has the keyboard is not drawn, the original has no focus look),
+the whole-text mark, the text (or the placeholder) and the caret. `CifEdit.placement()` is the one
+place every position comes from: vertically, and horizontally for a text that is not long,
+exactly where LineEdit put it (line_edit.cpp's NOTIFICATION_DRAW with no scroll, its int
+truncations; round 859's 0 px); a long text by `TextLayout.edit_scrolled_left` on the text rect
+(`rule_span`: the laid-out ClientRect, else the content margins), with the text's extent in whole
+pixels (ceil, INFERRED: the GDI board's width is whole) and the left floored when the rule moved
+it. The caret quad, `caret_rect()` and the new `text_left()` come from the same placement. Colours
+are read from the edit's theme each draw (font / uneditable / placeholder / selected / selection),
+so callers that set `font_color` directly and the census's hiding still work. The IME composition is
+drawn in the text at the caret and the caret after it; the IME window is put under our caret
+(OURS: LineEdit puts it under its own). Every CifEdit takes it (UiBuilder's edits, TwoDtBuilder's,
+the chat line, Login's, CharacterCreate's name, the rename and captcha boxes: chat, whisper,
+login, character name, guild notice title, stall title, search and amount boxes), at every UI scale
+(the rule is in UI px; the ink scales with the window's content scale).
+
+**The two smaller opens.**
+- **The .2dt caption half pixel (READ, fixed).** CNIFStatic's text left is `left + (w - text w) *
+  0.5` (0x4820b0, CNIFStatic slot 42; 0.5 the double at 0xe1b7d0) and its draw (0x482020, slot 13)
+  puts the board at `_ftol` of `+0x354` / `+0x358`, a positive screen coordinate: the floor -- the
+  same truncation for every .2dt caption. Label centres a text that fits by `int(w - text w) / 2`
+  (the floor already); a text wider than its control grows both ways, which puts an odd overrun's
+  half pixel on the right ("Silk Charge History", +1 px, round 859). `TwoDtBuilder.
+  _hold_centred_overrun`: a centred label's left offset takes `2 * ceil(over / 2) - over`, so the
+  grown label starts at `floor(-over / 2)`; horizontal only, recomputed on the label's minimum size
+  and the control's size. (Round 859's floor of every .2dt position moved twelve vertically centred
+  captions; this touches only the horizontal overrun.)
+- **IME composition placement**: above (drawn in the text, caret after; underline OPEN).
+
+**Tests.** `long_text860_test.gd` (new): the rule on the chat line's text rect (349 / 350 / 351 px:
+strictly wider; 500 px with the caret at 500, 200, 191, 190, 150, 0; H1 / H2 long and short); a
+caret walked a 10 px character at a time from End to Home (15 of 50 steps move the text, 10 px
+each, the caret held at 83 = 43 + 40) and back from Home; CifEdit laid out as the chat line with
+a 90-character line: End (the end at 355, the caret at w - 5), every Left to Home against the
+rule, the caret never outside the text rect and 40 px in whenever the text moves, End / Home /
+three Rights, Backspace to empty (the end held at w - 5 until the text fits), focus in / out the
+same, the ink internal and clipped, LineEdit's drawing hidden; a password (the mask's width), H2
+short and long, a long placeholder; the .2dt centred overrun (25, 28, 32 px: the label at the
+floor). `text_layout859_test.gd` and `native_gui848_test.gd` pass unchanged.
+
+**Real client (MEASURED).** Lane server on 17380 (`/var/tmp/r860t/qa860.sh`, in memory, navmesh),
+`Long860`, real Enter, an 80-character line typed (`type:`, real key events; 438 px at 100 %), every
+Left to Home, three Rights, End, Backspace to empty; after each key `editstate:HudChat` (new QA
+step: the edit's caret column, text width, drawn text left and caret x in the edit, the rule's
+span), at eleven points `textalign:HudChat` (round 859's frame census; its reference text for an
+edit is now cut at the edit's rect, as the original's viewport cuts it) and a snap. Base is
+`ca24154b` with only the QA hook added (LineEdit's `scroll_offset` and round 859's caret).
+`steps860.py` checks every step against the rule worked out from the step's own text width and
+caret advance.
+
+The chat line (360x20 at 40,451 in a 960x540 window; text rect 5..360, `w - 5` = 350; the line 438
+px wide), text left and caret x in the edit's own UI px, base -> this branch (the rule worked out from
+the step's own width and advance gives this branch's numbers at every step):
+
+| After the key | Column | Base text left | Base caret | This branch left | This branch caret |
+|---|---|---|---|---|---|
+| typed to the end | 80 | -78 | 360 (the edit's right edge) | -83 | 355 (`w - 5`) |
+| Left x14 | 66 | -78 | 275 | -83 | 270 |
+| Left x49 | 31 | -78 | 90 | -83 | 85 |
+| Left x57 | 23 | -78 | 48 | -81 | 45 (40 in: the text moves) |
+| Left x60 | 20 | -78 | 28 | -61 | 45 |
+| Left x64 | 16 | -78 | 9 | -42 | 45 |
+| Left x68 | 12 | -57 | 5 (Godot scrolls at the edge) | -17 | 45 |
+| Left x72 | 8 | -37 | 5 | 3 | 45 |
+| Left x73 | 7 | -31 | 5 | 5 (start at the left) | 41 |
+| Left x80 (Home) | 0 | 5 | 5 | 5 | 5 |
+| three Rights | 3 | 5 | 22 | 5 | 22 |
+| End | 80 | -78 | 360 | -83 | 355 |
+| Backspace x4 | 76 | -55 | 360 | -60 | 355 |
+| Backspace x14 (353 px: still more than 350) | 66 | 5 | 358 | 2 | 355 |
+| Backspace x15 (fits) | 65 | 5 | 351 | 5 | 351 |
+| Backspace to empty | 0 | -- | 5 | -- | 5 |
+
+| Run (`/var/tmp/r860t/qa/`) | Steps | Off the original's rule by 1 px or more | The text moved on |
+|---|---|---|---|
+| base 100 % (`base100h`) | 166 | 95 | -- |
+| this branch 100 % (`after100d`) | 166 | 0 | 33 steps |
+| base 200 % (`base200h`, 1920x1080, `OPENSRO_QA_UI_SCALE=2`) | 166 | 95 | -- |
+| this branch 200 % (`after200d`) | 166 | 0 | 33 steps |
+
+At 200 % every step's numbers (UI px) are the 100 % ones, base and branch alike. **In the frame**
+(`textalign:HudChat` at eleven points, both scales): base's caret dx +5 at End and with the end
+pinned, -17 at column 20 and -40 at column 10 (the caret at the box's left edge where the original
+holds it 40 px in), 0 at Home / Home + 3 / short texts; its text ends 5 px right of the original's and
+leaves out the glyphs crossing the content edges (`base100`). This branch: every TEXT dx / dy / dr
++0.0 and every CARET dx / dy / dw / dh +0.0, at 100 % and 200 % (`after100d`, `after200d`). Frames for
+a human (`snap:`): `/var/tmp/r860t/qa/{base100h,after100d,base200h,after200d}.snaps/{end,left20,left50,
+left60,left70,home,home_right3,end2,bs10,bs25,empty}.png`; the chat line cropped, base above and this
+branch below: `/var/tmp/r860t/evidence/chat_{100h,200h}_<state>.png`.
+
+**Every edit and caption (MEASURED, TextAlignCensus).** `tools/window_text_census.gd` (round 859:
+61 windows + the chat line + the front end's edits, 1280x720 UI, Forward+ on the box) on this branch
+(`/var/tmp/r860t/census/a100c.log`, `a200c.log`) against round 859's own run of the same tree's UI
+(`/var/tmp/r859c/census/a100.log`, `a200.log`). The census now cuts an edit's reference text and
+reference caret at the edit's rect, as CIFEdit's viewport cuts them (READ above):
+
+| | round 859, 100 % / 200 % | this branch, 100 % / 200 % |
+|---|---|---|
+| texts + carets measured | 393 / 393 | 393 / 393 |
+| texts off by 1 px or more | 4 / 4 | 3 / 3 (the three checked tabs' bold second pass, round 833 / 859: not a misalignment) |
+| carets off (any edge) | 0 of 18 / 0 of 18 | 0 of 18 / 0 of 18 |
+| silk history "Silk Charge History" | dx +1, dr +1 | dx 0, dr 0 |
+
+Every other text and caret is 0 in both (no other `.2dt` caption moved). Before the ink took the
+layout's height, five carets of edits Godot holds taller than their rect (party match's name and
+level edits, the rename / custom title boxes, guild donate) measured 1-2 px shorter than the uncut
+quad -- the original's cut; the ink at the authored rect and the cut reference give 0.
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1123 scripts, 9 scenes); `tests` "ran 423 suite(s), 0 failing" (one earlier full run while two QA clients rendered failed `buff_persist_test` once, "a body built after its owner's buff arrived"; it passed alone and in both other full runs: load, not this lane). UI-only: no perf gate (no world drawing changed). The server is untouched (the
+lane server is a build of this tree's).
+
+**OPEN.**
+- The IME composition's underline (its y not read through); the candidate window's place in the
+  original (not read; OURS under our caret).
+- The guild notice body (a multi-line CIFEdit, a TextEdit here) keeps Godot's scroll; style 0x40
+  takes the other arm of the draw (0x637de5: the line offset), not this rule.
+- GDI's text extent vs Godot's shaped width (the rule's `w - 5` is compared with Godot's width,
+  ceiled): equal on the box's face with subpixel positioning off (whole-pixel advances), not
+  established against Tahoma.
+- Partial glyphs at the edit's edges: drawn and cut by the clip, as the viewport would cut them
+  (INFERRED that D3D9 clips the pre-transformed quads to it); not compared with a retail frame.
+
 ## Eight-hundred-and-sixtieth round, lane E: fireworks, the guild war mark, the violet and COS orbs, a set's look, every CIFButton's click
 
 The user: do the remaining open effects from round 859 (WORLD_ISSUES 859 lanes A and B, TODO "Round

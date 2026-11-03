@@ -353,8 +353,35 @@ func set_text(node: Control, text: String, r: TwoDtReader.Record = null) -> Labe
 		label.grow_horizontal = _grow_for(int(style[1]))
 		label.grow_vertical = _grow_for(int(style[2]))
 		node.add_child(label)
+		if int(style[1]) == 1:
+			var hold := _hold_centred_overrun.bind(label)
+			label.minimum_size_changed.connect(hold)
+			node.resized.connect(hold)
 	label.text = text
+	if int(label.horizontal_alignment) == HORIZONTAL_ALIGNMENT_CENTER:
+		_hold_centred_overrun(label)
 	return label
+
+## A centred text wider than its control starts where the original draws it
+## (round 860, READ): CNIFStatic's text left is `left + (w - text w) * 0.5`
+## (0x4820b0, the double 0.5 at 0xe1b7d0) and its draw puts the text board at
+## `_ftol` of that screen x (0x482020: cvttsd2si of `+0x354`), a truncation
+## of a positive screen coordinate: the floor. Growing both ways, Godot puts
+## an overrun of an odd number of pixels at a half pixel and draws it on the
+## pixel to its right ("Silk Charge History", 1 px right, round 859). So the
+## label's left offset takes the half pixel: left = -ceil(overrun / 2). Only
+## the horizontal overrun of a centred text; a text that fits is centred by
+## Label's own `int(w - text w) / 2`, already the floor.
+static func _hold_centred_overrun(label: Label) -> void:
+	var parent := label.get_parent() as Control
+	if parent == null or not is_instance_valid(label):
+		return
+	var over := label.get_combined_minimum_size().x - parent.size.x
+	var d := 0.0
+	if over > 0.0:
+		d = 2.0 * ceilf(over / 2.0) - over
+	if label.offset_left != -d:
+		label.offset_left = -d
 
 ## The grow direction that keeps an overrunning text aligned the way its
 ## record says (0 left / top, 1 centre, 2 right / bottom -- the inferred

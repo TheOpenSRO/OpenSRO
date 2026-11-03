@@ -108,9 +108,36 @@ class_name CifEdit
 ## (TextServer's caret at the column, the same buffer LineEdit draws), so it
 ## stays on the glyph boundary LineEdit draws at every UI scale.
 ##
+## **A long text, and what the edit draws (READ, round 860; TextLayout has
+## the rule).** The draw works out where the text goes afresh every frame --
+## no scroll is kept: a text more than `w - 5` wide (w the text rect's width)
+## has its end at the rect's left + `w - 5` whatever the caret, and when its
+## start is then left of the rect and the caret within 40 px of the rect's
+## left, it moves right until the caret is 40 px in or its start is at the
+## rect's left (0x637d85..0x637de3, 0x637ef1..0x637f6f). The text is drawn at
+## that left truncated (0x6356c0: `_ftol`, cvttsd2si, of `+0x370` / `+0x374`),
+## the caret from it. The whole draw runs inside a viewport of the edit's own
+## rect (0x6531a0 with the control's `+0x40` rect from 0xb8f420, before the
+## draw; 0x653220 puts the full screen back after), so a glyph crossing the
+## edit's edge is cut there and drawn in part -- at the edit's edge, not the
+## text rect's (the ClientRect's inset shows text). A password edit's text
+## board holds '*' per character (0x636330, style 2), so the rule measures the
+## mask. LineEdit's own scroll (the caret kept just inside the content area,
+## glyphs crossing it left out) has no setter, so CifEdit draws the text itself
+## (`_draw_ink`, on an internal child clipped to the edit's rect) by that rule,
+## and LineEdit's own drawing is hidden (`self_modulate` alpha 0: its box,
+## text, marked text and caret). The art box is drawn once, as CIFEdit draws
+## it: Godot's second "focus" box over it while the edit has the keyboard is
+## not drawn (the draw has no focus look but the caret).
+##
 ## **Not built (OPEN):** the IME composition underline the draw adds
-## (0x637b70, `0x468` / DAT_0110f9c8: dotted 0xff969696 or solid white); Godot
-## draws its own IME underline.
+## (0x637b70, `0x468` / DAT_0110f9c8: dotted 0xff969696 or solid white; its
+## y not read through); none is drawn. The composition itself is drawn in the
+## text at the caret and the caret after it (READ: the composition is in the
+## edit's buffer and 0x634c50 adds one to the caret column while it is open;
+## a multi-character composition's caret at its end is INFERRED). Where the
+## IME's own window goes (OURS): under our caret, as LineEdit puts it under
+## its own.
 
 ## The caret's width (READ, the double at 0xe1b898).
 const CARET_WIDTH := 2
@@ -136,6 +163,26 @@ var _blink_on := false
 var _blink_t := 0.0
 ## A caret drawn regardless of the blink and the focus (the census's probe).
 var caret_probe := false
+## What the edit draws (round 860): an internal child the size of the edit,
+## clipped to it (the original's viewport), drawn after LineEdit's own
+## (hidden) drawing. `_draw_ink` fills it.
+var _ink: Control
+## The shaped text the ink draws, kept while its text and face do not change.
+var _shaped: TextLine
+var _shaped_key := []
+
+## The ink: draws for its edit (`CifEdit._draw_ink`).
+class Ink extends Control:
+	var edit: Object
+	func _init() -> void:
+		name = "CifEditInk"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		clip_contents = true
+		set_anchors_preset(Control.PRESET_TOP_WIDE)
+	func _draw() -> void:
+		if edit != null:
+			edit.call(&"_draw_ink", self)
 
 func _init() -> void:
 	text_changed.connect(_hold_byte_limit)
@@ -157,6 +204,12 @@ func _init() -> void:
 	# 4 px margins would also hold the edit taller than its rect.
 	for st in _STYLES:
 		add_theme_stylebox_override(st, StyleBoxEmpty.new())
+	# Round 860: LineEdit's own drawing hidden (its scroll is not the
+	# original's); the ink draws the box, the text and the caret.
+	self_modulate = Color(1, 1, 1, 0)
+	_ink = Ink.new()
+	_ink.edit = self
+	add_child(_ink, false, Node.INTERNAL_MODE_FRONT)
 
 ## The edit's FontColor: its text, its caret and its marked text. Also the
 ## colour of an edit that does not take input (INFERRED: CIFEdit's draw has
@@ -189,6 +242,7 @@ func lay_out(client: Rect2i, halign: int, valign: int) -> void:
 		2: alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		_: alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_apply_margins()
+	_fit_ink()
 
 ## The same layout as `other` (an edit laid over an authored one, as the chat
 ## line is over GDR_CHAT_INPUTBOX).
@@ -251,6 +305,19 @@ func layout_height() -> float:
 			return r.size.y
 	return size.y
 
+## The ink is the original's viewport: the edit's rect as the layout gives it
+## (0x6531a0 with the control's `+0x40` rect). Godot can hold the edit taller
+## than that (its minimum: the font's line), so the ink takes the edit's
+## width and the layout's height -- a caret or glyph below the authored rect
+## is cut there, as the original cuts it (the party match name edit, 11 px
+## tall, cuts the 16 px caret to 11).
+func _fit_ink() -> void:
+	if _ink == null:
+		return
+	var h := minf(size.y, layout_height()) if layout_height() > 0.0 else size.y
+	if _ink.offset_bottom != h:
+		_ink.offset_bottom = h
+
 static func _set_margins(sb: StyleBox, m: PackedFloat32Array) -> void:
 	if sb.content_margin_left != m[0]:
 		sb.content_margin_left = m[0]
@@ -265,6 +332,7 @@ func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_RESIZED, NOTIFICATION_THEME_CHANGED, NOTIFICATION_ENTER_TREE:
 			_apply_margins()
+			_fit_ink()
 		NOTIFICATION_FOCUS_ENTER:
 			_blink_on = false
 			_blink_t = 0.0
@@ -282,14 +350,44 @@ func _process(delta: float) -> void:
 		_blink_on = not _blink_on
 		queue_redraw()
 
-## The original's caret, drawn over LineEdit's own drawing (READ 0x637b70:
-## while the blink flag is set and the edit has the keyboard).
+## LineEdit redraws on every change of its text, caret, focus, IME and
+## theme; the ink follows it in the same frame (round 860).
 func _draw() -> void:
-	if not caret_probe and not (_blink_on and caret_shown()):
+	if _ink != null:
+		_ink.queue_redraw()
+
+## What the edit shows (round 860, the header): its box, the marked text's
+## background, the text where the original puts it and the original's caret
+## (READ 0x637b70: while the blink flag is set and the edit has the keyboard),
+## on the ink -- the edit's own coordinates, clipped to its rect.
+func _draw_ink(ink: Control) -> void:
+	var sb := get_theme_stylebox(&"normal" if editable else &"read_only")
+	if not flat and sb != null:
+		ink.draw_style_box(sb, Rect2(Vector2.ZERO, size))
+	var p := placement()
+	if p.is_empty():
 		return
-	var r := caret_rect()
-	if r.size.x > 0.0:
-		draw_rect(r, _colour)
+	var line: TextLine = p["line"]
+	if line != null:
+		var at := Vector2(p["left"], p["top"])
+		var marked: bool = has_selection() and not p["placeholder"]
+		if marked:
+			var sel := TextServerManager.get_primary_interface().shaped_text_get_selection(line.get_rid(),
+				get_selection_from_column(), get_selection_to_column())
+			for v in sel:
+				ink.draw_rect(Rect2(at.x + v.x, at.y, v.y - v.x, p["text_h"]), get_theme_color(&"selection_color"))
+		var colour: Color
+		if p["placeholder"]:
+			colour = get_theme_color(&"font_placeholder_color")
+		elif marked:
+			colour = get_theme_color(&"font_selected_color")
+		else:
+			colour = get_theme_color(&"font_color" if editable else &"font_uneditable_color")
+		line.draw(ink.get_canvas_item(), at, colour)
+	var r: Rect2 = p["caret"]
+	if (caret_probe or (_blink_on and caret_shown())) and r.size.x > 0.0:
+		ink.draw_rect(r, _colour)
+	_place_ime_window(r)
 
 ## Whether the caret is drawn at all now (the blink aside): the edit has the
 ## keyboard and takes input.
@@ -302,12 +400,47 @@ func caret_shown() -> bool:
 
 ## Where the caret goes, in the edit's own coordinates (READ, the header):
 ## x at the text's left + the advance before the caret column, 2 wide; from
-## the text's top, tmHeight + 2 tall. The text's left is where LineEdit draws
-## it (its alignment and scroll on the content margins lay_out set).
+## the text's top, tmHeight + 2 tall.
 func caret_rect() -> Rect2:
+	var p := placement()
+	return p["caret"] if not p.is_empty() else Rect2()
+
+## The text's drawn left in the edit's coordinates (the long-text rule
+## applied), 0 without a face.
+func text_left() -> float:
+	var p := placement()
+	return p["left"] if not p.is_empty() else 0.0
+
+## The text rect's left and width along x in the edit's coordinates, which
+## the long-text rule measures: the laid-out ClientRect (0x652800; no HAlign
+## 2 inset), else the content margins.
+func rule_span(sb: StyleBox = null) -> Vector2:
+	if _laid:
+		return Vector2(_client.position.x, size.x - _client.position.x - _client.size.x)
+	if sb == null:
+		sb = get_theme_stylebox(&"normal" if editable else &"read_only")
+	var ml := sb.get_margin(SIDE_LEFT)
+	return Vector2(ml, size.x - ml - sb.get_margin(SIDE_RIGHT))
+
+## The composition the IME holds now (drawn at the caret), or "".
+func _ime_text() -> String:
+	if not has_focus() or not (has_method("has_ime_text") and bool(call("has_ime_text"))):
+		return ""
+	return DisplayServer.ime_get_text()
+
+## Where everything goes this frame: `line` (the shaped text, or the
+## placeholder; null when there is neither), `left` / `top` (the text's
+## top-left), `text_w` / `text_h`, `advance` (the caret's, from the text's
+## left), `caret` (its quad), `placeholder`, `shown` (the text as drawn: the
+## IME composition in it, a password masked). Vertically, and horizontally
+## for a text that is not long, where LineEdit puts it on the content margins
+## lay_out set (line_edit.cpp's NOTIFICATION_DRAW with no scroll; round 859
+## measured that against the original's rule: 0 px); a long text by the
+## original's rule (round 860).
+func placement() -> Dictionary:
 	var font := get_theme_font(&"font")
 	if font == null:
-		return Rect2()
+		return {}
 	var fs := get_theme_font_size(&"font_size")
 	var sb := get_theme_stylebox(&"normal" if editable else &"read_only")
 	var ml := sb.get_margin(SIDE_LEFT)
@@ -315,9 +448,45 @@ func caret_rect() -> Rect2:
 	var mt := sb.get_margin(SIDE_TOP)
 	var y_area := int(size.y - sb.get_minimum_size().y)
 	var fh := font_height()
+	var col := caret_column
 	var shown := text
+	var ime := _ime_text()
+	if ime != "":
+		shown = text.substr(0, col) + ime + text.substr(col)
+		col += ime.length()
 	if secret and shown != "":
 		shown = (secret_character if secret_character != "" else "*").left(1).repeat(shown.length())
+	var placeholder := shown == "" and placeholder_text != ""
+	var drawn := atr(placeholder_text) if placeholder else shown
+	var line: TextLine = _shape(drawn, font, fs) if drawn != "" else null
+	var tw := line.get_size().x if line != null else 0.0
+	var th := line.get_size().y if line != null else 0.0
+	# LineEdit's x with no scroll (ints, as line_edit.cpp has them).
+	var x := float(int(ml))
+	match alignment:
+		HORIZONTAL_ALIGNMENT_CENTER:
+			x = float(int(ml + maxi(0, int(size.x - float(int(ml + mr)) - tw) / 2)))
+		HORIZONTAL_ALIGNMENT_RIGHT:
+			x = float(maxi(int(ml), int(size.x - ceilf(mr + tw))))
+	var top := float(int(mt + (y_area - th) / 2.0))
+	var adv := 0.0
+	if line != null and not placeholder:
+		var carets: Dictionary = TextServerManager.get_primary_interface().shaped_text_get_carets(line.get_rid(), col)
+		var lead: Rect2 = carets.get("leading_rect", Rect2())
+		var trail: Rect2 = carets.get("trailing_rect", Rect2())
+		adv = lead.position.x if lead != Rect2() else trail.position.x
+		if lead == Rect2() and trail == Rect2():
+			adv = tw if col >= shown.length() else 0.0
+	var left := x
+	if line != null:
+		# The long-text rule (READ, the header): the text's extent in the
+		# text board's whole pixels; the left truncated where it is drawn
+		# (0x6356c0) -- only when the rule moved it.
+		var span := rule_span(sb)
+		var ruled := TextLayout.edit_scrolled_left(x, Rect2(span.x, 0.0, span.y, 0.0), ceilf(tw), adv)
+		if ruled != x:
+			left = floorf(ruled)
+	var caret: Rect2
 	if shown == "":
 		# No text: the empty caret (LineEdit's x per alignment; the
 		# original's VAlign 1 / 2 tops, 0x637e3d..0x637e7c).
@@ -330,28 +499,37 @@ func caret_rect() -> Rect2:
 		var ey := mt + int((y_area - ceilf(fh)) / 2.0)
 		if _laid:
 			ey = TextLayout.edit_origin(Rect2(Vector2.ZERO, size), _client, 0, _valign, Vector2.ZERO, fh).y
-		return Rect2(Vector2(floorf(ex), floorf(ey)), Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
-	var line := TextLine.new()
-	line.add_string(shown, font, fs, language)
-	var ts := TextServerManager.get_primary_interface()
-	var tw := line.get_size().x
-	var th := line.get_size().y
-	var x_ofs := ml
-	match alignment:
-		HORIZONTAL_ALIGNMENT_CENTER:
-			if is_zero_approx(get_scroll_offset()):
-				x_ofs = ml + maxi(0, int(size.x - ml - mr - tw) / 2)
-		HORIZONTAL_ALIGNMENT_RIGHT:
-			x_ofs = maxf(ml, int(size.x - ceilf(mr + tw)))
-	var carets: Dictionary = ts.shaped_text_get_carets(line.get_rid(), caret_column)
-	var lead: Rect2 = carets.get("leading_rect", Rect2())
-	var trail: Rect2 = carets.get("trailing_rect", Rect2())
-	var adv := lead.position.x if lead != Rect2() else trail.position.x
-	if lead == Rect2() and trail == Rect2():
-		adv = tw if caret_column >= shown.length() else 0.0
-	var y_ofs := mt + int((y_area - th) / 2.0)
-	return Rect2(Vector2(x_ofs + get_scroll_offset() + adv, y_ofs),
-		Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
+		caret = Rect2(Vector2(floorf(ex), floorf(ey)), Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
+	else:
+		caret = Rect2(Vector2(left + adv, top), Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
+	return {"line": line, "left": left, "top": top, "text_w": tw, "text_h": th, "advance": adv,
+		"caret": caret, "placeholder": placeholder, "shown": shown}
+
+## `s` shaped in the edit's face, kept until the text or the face changes.
+func _shape(s: String, font: Font, fs: int) -> TextLine:
+	var key := [s, font.get_rid(), fs, language]
+	if _shaped != null and key == _shaped_key:
+		return _shaped
+	_shaped = TextLine.new()
+	_shaped.add_string(s, font, fs, language)
+	_shaped_key = key
+	return _shaped
+
+## The IME's window under our caret while the edit is editing (OURS: LineEdit
+## puts it under its own caret in its draw, which runs before the ink's; the
+## same sum with our caret's x).
+func _place_ime_window(caret: Rect2) -> void:
+	if not (has_method("is_editing") and bool(call("is_editing"))):
+		return
+	if not DisplayServer.has_feature(DisplayServer.FEATURE_IME):
+		return
+	var w := get_window()
+	if w == null:
+		return
+	var font := get_theme_font(&"font")
+	var fh := font.get_height(get_theme_font_size(&"font_size")) if font != null else 0.0
+	var pos := w.get_screen_transform() * (Vector2(caret.position.x, (size.y + fh) / 2.0) + get_global_position())
+	DisplayServer.window_set_ime_position(Vector2i(pos), w.get_window_id())
 
 ## Whether the player's Windows code page is a double-byte one (INFERRED from
 ## the OS locale's language: Korean, Chinese, Japanese).
