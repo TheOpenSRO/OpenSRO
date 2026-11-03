@@ -87,6 +87,9 @@ class Record:
 	## u32, handed to the crest cache 0x9a4780 with the guild's); 0 none.
 	var union_id := 0
 	var union_crest_rev := 0
+	## Round 860: the guild block's war flag (0 at war, 1 not; READ server
+	## s:0x4e5e27, client c:0x9de046): -1 when the block was not sent.
+	var guild_war_flag := -1
 	## Round 839: the interaction byte (+0x471, c:0x9ddee9) and, when it is 4,
 	## the stall block after the guild block (c:0x9de103..0x9de1bd): the
 	## stall's name (kept as "[name]" at +0x798) and its booth (+0x790).
@@ -254,7 +257,9 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 		# Round 842: the union's id and crest revision.
 		rec.union_id = r.u32()
 		rec.union_crest_rev = r.u32()
-		r.u8() # membership
+		# Round 860: the war flag, then the fortress role (READ s:0x4e5ea2 /
+		# 0x4e5eae; rounds 814-859 named the first "membership").
+		rec.guild_war_flag = r.u8()
 		r.u8() # fortress role
 	rec.interact = interact
 	if interact == 4:

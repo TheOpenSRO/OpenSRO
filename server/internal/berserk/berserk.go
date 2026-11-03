@@ -268,6 +268,10 @@ type Kill struct {
 	// (chance = chance * GainPercent / 100 when non-zero). OpenSRO has no
 	// source for it yet; pass 0.
 	GainPercent int
+	// Source is the victim's uid (round 860): the 0x304E kind 4 a gain
+	// sends names it (the killing blow's AddHwanCount, s:0x593b97), so the
+	// client flies the violet orbs out of it.
+	Source uint32
 }
 
 // LevelGapClass is FUN_0040fe60: the class of a victim's level against the
@@ -318,6 +322,11 @@ func GainChance(k Kill) (chance int, amount int) {
 // roll10000 is rand()%10000; swapped by tests to force the dice.
 var roll10000 = func() int { return rand.Intn(10000) }
 
+// ForceGainForQA makes every roll succeed (OPENSRO_QA_HWAN_CERTAIN, cmd/server;
+// round 860, OURS, QA only): a kill always earns its orbs, so a short live run
+// sees the violet orbs fly. Never set in play.
+func ForceGainForQA() { roll10000 = func() int { return 0 } }
+
 // Tracker holds each character's berserk state.
 //
 // The ORB COUNT is persisted as of 2026-09-20: it is `_CHAR.RemainHwanCount`
@@ -342,6 +351,24 @@ type Tracker struct {
 	turnsMu  sync.Mutex
 	turns    map[int64]*sync.Mutex
 	bonusGen uint64
+	// notify is told every change of a character's count (SetNotify).
+	notify func(characterID int64, count int, source uint32)
+}
+
+// SetNotify installs the count's announcer (round 860): GObjPC::AddHwanCount
+// (s:0x4e4d00, READ) sends 0x304E {u8 4, u8 the new count, u32 the source}
+// to the player alone (GObjPC::FUN_004e3fb0, the only 0x304E builder) after
+// every change -- a kill's gain with the victim as the source, a potion's,
+// a fill's or the activation's spend with 0. fn runs outside the tracker's
+// lock; set it once, before play starts.
+func (t *Tracker) SetNotify(fn func(characterID int64, count int, source uint32)) {
+	t.notify = fn
+}
+
+func (t *Tracker) told(characterID int64, before, after int, source uint32) {
+	if t.notify != nil && before != after {
+		t.notify(characterID, after, source)
+	}
 }
 
 type timedBonus struct {
@@ -435,12 +462,13 @@ func (t *Tracker) DurationBonus(characterID int64, now time.Time) (int, time.Tim
 // reach this on a kill, which is that condition.
 func (t *Tracker) EarnOnKill(characterID int64, k Kill) int {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if time.Now().Before(t.activeUntil[characterID]) {
+		t.mu.Unlock()
 		return 0
 	}
 	chance, amount := GainChance(k)
 	if chance < GainCertain && roll10000() >= chance {
+		t.mu.Unlock()
 		return 0
 	}
 	before := t.charges[characterID]
@@ -449,6 +477,8 @@ func (t *Tracker) EarnOnKill(characterID int64, k Kill) int {
 		after = Orbs
 	}
 	t.charges[characterID] = after
+	t.mu.Unlock()
+	t.told(characterID, before, after, k.Source)
 	return after - before
 }
 
@@ -503,11 +533,12 @@ const PotionCharges = 5
 // the result clamped to [0, Orbs]. It returns the orbs actually added.
 func (t *Tracker) Add(characterID int64, delta int) int {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if delta == 0 {
+		t.mu.Unlock()
 		return 0
 	}
 	if delta > 0 && time.Now().Before(t.activeUntil[characterID]) {
+		t.mu.Unlock()
 		return 0
 	}
 	before := t.charges[characterID]
@@ -518,6 +549,8 @@ func (t *Tracker) Add(characterID int64, delta int) int {
 		after = Orbs
 	}
 	t.charges[characterID] = after
+	t.mu.Unlock()
+	t.told(characterID, before, after, 0)
 	return after - before
 }
 
@@ -532,8 +565,10 @@ func (t *Tracker) SetCharges(characterID int64, n int) int {
 		n = Orbs
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	before := t.charges[characterID]
 	t.charges[characterID] = n
+	t.mu.Unlock()
+	t.told(characterID, before, n, 0)
 	return n
 }
 
@@ -548,12 +583,14 @@ func (t *Tracker) SetCharges(characterID int64, n int) int {
 // modelled: OpenSRO has no body mode 2 (OPEN).
 func (t *Tracker) Activate(characterID int64) bool {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	now := time.Now()
 	if now.Before(t.activeUntil[characterID]) {
+		t.mu.Unlock()
 		return false
 	}
-	if t.charges[characterID] < Orbs {
+	before := t.charges[characterID]
+	if before < Orbs {
+		t.mu.Unlock()
 		return false
 	}
 	t.charges[characterID] = 0
@@ -562,6 +599,9 @@ func (t *Tracker) Activate(characterID int64) bool {
 		d += time.Duration(b.seconds) * time.Second
 	}
 	t.activeUntil[characterID] = now.Add(d)
+	t.mu.Unlock()
+	// The handler's AddHwanCount(-5) (round 860): 0x304E {4, 0, 0}.
+	t.told(characterID, before, 0, 0)
 	return true
 }
 

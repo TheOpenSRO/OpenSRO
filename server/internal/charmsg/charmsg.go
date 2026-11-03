@@ -102,6 +102,29 @@ func EncodeGold(total int64, show bool) []byte {
 	return append(out, 0)
 }
 
+// CharInfoHwan is 0x304E's kind 4, the berserk (hwan) count (round 860).
+const CharInfoHwan = 4
+
+// EncodeHwan is 0x304E kind 4 (round 860): u8 4, u8 the new count, u32 the
+// source's uid. GObjPC::AddHwanCount (s:0x4e4d00, READ) builds it through
+// GObjPC::FUN_004e3fb0 after any change of the count, to the player alone; a
+// killing blow names its victim (s:0x593b97), a potion, a fill or the
+// activation's spend 0. The client (c:0x8a70d0) flies a rise from a body in
+// view as violet orbs and shows anything else at once.
+func EncodeHwan(count uint8, source uint32) []byte {
+	out := []byte{CharInfoHwan, count, 0, 0, 0, 0}
+	binary.LittleEndian.PutUint32(out[2:], source)
+	return out
+}
+
+// DecodeHwan reads EncodeHwan's bytes back.
+func DecodeHwan(b []byte) (count uint8, source uint32, err error) {
+	if len(b) < 6 || b[0] != CharInfoHwan {
+		return 0, 0, fmt.Errorf("charmsg: not a 0x304E hwan update (% x)", b)
+	}
+	return b[1], binary.LittleEndian.Uint32(b[2:]), nil
+}
+
 // DecodeGold reads EncodeGold's bytes back.
 func DecodeGold(b []byte) (total int64, show bool, err error) {
 	if len(b) < 10 || b[0] != CharInfoGold {

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/pcspawn"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -121,6 +122,11 @@ type EntityGuildUpdate struct {
 	CrestRev      uint32
 	UnionID       uint32
 	UnionCrestRev uint32
+	// AtWar is the war flag (round 860): 0x30FF writes the fortress role
+	// (FUN_005cffe0) and then 1 when the guild has no war, 0 while it has
+	// one (READ, s:0x4ea4bb..0x4ea4f2) -- the spawn block's two bytes the
+	// other way round.
+	AtWar bool
 }
 
 // Encode is the update's bytes.
@@ -135,7 +141,7 @@ func (u *EntityGuildUpdate) Encode() []byte {
 	out = binary.LittleEndian.AppendUint32(out, u.CrestRev)
 	out = binary.LittleEndian.AppendUint32(out, u.UnionID)
 	out = binary.LittleEndian.AppendUint32(out, u.UnionCrestRev)
-	return append(out, 0, 0) // the fortress role, FUN_005cffe0's byte
+	return append(out, 0, pcspawn.WarFlag(u.AtWar)) // the fortress role (FUN_005cffe0), the war flag
 }
 
 func appendWireString(out []byte, s string) []byte {
@@ -254,7 +260,7 @@ func refreshGuildPlate(hub *world.Hub, characterID int64, g *guild.Guild) {
 		return
 	}
 	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev,
-		UnionID: p.UnionID, UnionCrestRev: p.UnionCrestRev}
+		UnionID: p.UnionID, UnionCrestRev: p.UnionCrestRev, AtWar: guildAtWar(int64(p.ID))}
 	sendAboutOwner(equipObservers(hub, characterID), characterID, OpEntityGuildUpdate, msg.Encode())
 }
 
@@ -332,6 +338,6 @@ func ownGuildLine(ctx context.Context, characterID int64) *proto.Packet {
 		return nil
 	}
 	msg := &EntityGuildUpdate{UID: uint32(characterID), GuildID: p.ID, GuildName: p.Name, Nickname: p.Nickname, CrestRev: p.CrestRev,
-		UnionID: p.UnionID, UnionCrestRev: p.UnionCrestRev}
+		UnionID: p.UnionID, UnionCrestRev: p.UnionCrestRev, AtWar: guildAtWar(int64(p.ID))}
 	return &proto.Packet{Opcode: OpEntityGuildUpdate, Data: msg.Encode()}
 }

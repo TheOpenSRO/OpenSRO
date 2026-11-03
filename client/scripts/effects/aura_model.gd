@@ -49,6 +49,10 @@ static var _lock := Mutex.new()
 static var _textures: Dictionary = {}
 ## Test seam: Callable(path) -> Node3D (a template), instead of the archive.
 static var builder: Callable = Callable()
+## Round 860: Callable(host) -> float, the body's `*` height in its own units
+## (GuildWarMark.star_height of its characterInfo Size; World3D sets it).
+## Unset, `*` stays at the skeleton's origin as before.
+static var star_height_of: Callable = Callable()
 
 var path := ""
 var host: Node3D = null
@@ -164,10 +168,18 @@ func _place() -> void:
 		if _bone >= 0:
 			var pose := skel.get_bone_global_pose(_bone)
 			global_transform = Transform3D(g.basis * pose.basis.orthonormalized(), g * (pose.origin + offset))
+		elif bone == "*" and star_height_of.is_valid():
+			# Round 860 (READ, IDecoSkill::FUN_00a4a680 flags 3 and
+			# FUN_009c7780): the body's turn, the offset and the body's
+			# height, both at the body's scale (the skeleton's frame has it).
+			global_transform = g * Transform3D(Basis.IDENTITY, offset + Vector3(0, float(star_height_of.call(host)), 0))
 		else:
 			global_transform = g * Transform3D(Basis.IDENTITY, offset)
 	elif host.is_inside_tree():
-		global_transform = host.global_transform * Transform3D(Basis.IDENTITY, offset)
+		var lift := Vector3.ZERO
+		if bone == "*" and star_height_of.is_valid():
+			lift = Vector3(0, float(star_height_of.call(host)), 0)
+		global_transform = host.global_transform * Transform3D(Basis.IDENTITY, offset + lift)
 
 ## The buff ended: the model goes.
 func release() -> void:

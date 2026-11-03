@@ -10,12 +10,16 @@ extends RefCounted
 ##           then a u32 when flags & 0x0f == 1 and two u32s when
 ##           flags & 0xf0 == 0x10 (training-camp states), then a u16 -- the
 ##           unspent stat points -- only when the gain raised the level.
-##   0x304E  the character-info update (c:0x8a70d0; GS FUN_004e3fb0). Only
-##           kind 1 is read here: u8 1, u64 the new gold total, u8 show.
+##   0x304E  the character-info update (c:0x8a70d0; GS FUN_004e3fb0). Kind 1:
+##           u8 1, u64 the new gold total, u8 show. Round 860, kind 4: u8 4,
+##           u8 the new hwan (berserk) count, u32 the source's uid (GS
+##           GObjPC::AddHwanCount s:0x4e4d00, to the player only; a kill's
+##           victim, 0 for a potion, the activation's spend or a fall).
 
 const OP_EXP_GAIN := 0x3056
 const OP_CHAR_INFO := 0x304E
 const CHAR_INFO_GOLD := 1
+const CHAR_INFO_HWAN := 4
 
 class ExpGain:
 	var source: int = 0
@@ -65,6 +69,13 @@ static func decode_gold(data: PackedByteArray) -> Array:
 	if data.size() < 10 or data.decode_u8(0) != CHAR_INFO_GOLD:
 		return []
 	return [data.decode_s64(1), data.decode_u8(9) != 0]
+
+## Round 860: reads 0x304E kind 4 as [count, source uid]; empty for any
+## other kind or a short message.
+static func decode_hwan(data: PackedByteArray) -> Array:
+	if data.size() < 6 or data.decode_u8(0) != CHAR_INFO_HWAN:
+		return []
+	return [data.decode_u8(1), data.decode_u32(2)]
 
 ## The system lines Client_ApplyExpAndLevelUp writes, all type 1 (GAIN):
 ## UIIT_MSG_STATE_GAIN_EXP when the EXP is above 0 (0x8a9a45..0x8a9a76),

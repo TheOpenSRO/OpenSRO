@@ -1235,6 +1235,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if isSkillItem(it) {
 			return useSkillItem(ctx, sess, fail, inv, items, hub, characterID, it, held, have)
 		}
+		// The fireworks (round 860, firework.go): DoJob's TypeID3 6 case --
+		// accepted and spent; the show is every client's, from the 0x305C.
+		if isFirework(it) {
+			return useFirework(ctx, sess, fail, inv, characterID, it, held, have, useItemClock())
+		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.
 		if !restoresUserPool(it) {

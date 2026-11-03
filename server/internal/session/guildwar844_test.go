@@ -105,6 +105,22 @@ func TestRound844WarFlow(t *testing.T) {
 	if !guildWarAnswer(ctx, nil, bramE, []byte{1, 1}) {
 		t.Fatal("the answer was not the war's")
 	}
+	// Round 860: each guild's first war puts it in its members' "at war" set
+	// (0x30EF {0, the guild}, s:0x5c8800), before the 0x19.
+	for _, c := range []struct {
+		conn net.Conn
+		r    *bufio.Reader
+		id   uint32
+	}{{f.connA, f.rA, uint32(ga.GuildID)}, {f.connB, f.rB, uint32(gb.GuildID)}} {
+		p := warNext(t, f, c.conn, c.r, OpGuildWarState)
+		if !bytes.Equal(p.Data, binary.LittleEndian.AppendUint32([]byte{0}, c.id)) {
+			t.Fatalf("0x30EF at the start % x", p.Data)
+		}
+	}
+	// And a spawn / 0x30FF of a member writes the war flag 0 now.
+	if line := ownGuildLine(ctx, f.aria); line == nil || line.Data[len(line.Data)-1] != 0 {
+		t.Fatalf("Aria's 0x30FF during the war: %v", line)
+	}
 	for _, c := range []struct {
 		conn net.Conn
 		r    *bufio.Reader
@@ -191,6 +207,21 @@ func TestRound844WarFlow(t *testing.T) {
 		if p := warNext(t, f, c.conn, c.r, guild.OpUpdate); !bytes.Equal(p.Data, guild.EncodeWarEnded(w.ID, ga.GuildID)) {
 			t.Fatalf("0x1c % x", p.Data)
 		}
+	}
+	// Round 860: the last war's end takes both out (0x30EF {1, the guild},
+	// s:0x5c88d0), and the flag is 1 again.
+	for _, c := range []struct {
+		conn net.Conn
+		r    *bufio.Reader
+		id   uint32
+	}{{f.connA, f.rA, uint32(ga.GuildID)}, {f.connB, f.rB, uint32(gb.GuildID)}} {
+		p := warNext(t, f, c.conn, c.r, OpGuildWarState)
+		if !bytes.Equal(p.Data, binary.LittleEndian.AppendUint32([]byte{1}, c.id)) {
+			t.Fatalf("0x30EF at the end % x", p.Data)
+		}
+	}
+	if line := ownGuildLine(ctx, f.aria); line == nil || line.Data[len(line.Data)-1] != 1 {
+		t.Fatalf("Aria's 0x30FF after the war: %v", line)
 	}
 	if n, _ := guilds.Booty(ctx, ga.GuildID); n != 200000 {
 		t.Fatalf("Alpha's booty %d", n)

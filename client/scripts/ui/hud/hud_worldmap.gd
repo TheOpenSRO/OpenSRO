@@ -2190,6 +2190,8 @@ func _show_select_popup(i: int) -> void:
 func _popup_button(pt: OptionalTeleportReader.Point) -> BaseButton:
 	var btn := TextureButton.new()
 	btn.name = "Choice%d" % pt.id
+	# Round 860: the popup's rows are CIFButtons made in code (c:0x631dfe).
+	UiSounds.hook_cif_button(btn, btn.name)
 	btn.ignore_texture_size = true
 	btn.stretch_mode = TextureButton.STRETCH_SCALE
 	btn.size = SELECT_POPUP_BUTTON_SIZE

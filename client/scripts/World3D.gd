@@ -2224,6 +2224,7 @@ func _ready() -> void:
 	NetClient.level_up.connect(_on_level_up)
 	NetClient.exp_gained.connect(_on_exp_gained)
 	NetClient.gold_total.connect(_on_gold_total)
+	NetClient.hwan_count.connect(_on_hwan_count)
 	NetClient.loot_dropped.connect(_on_loot_dropped)
 	NetClient.ground_item_list_result.connect(_on_ground_item_list_result)
 	NetClient.ground_item_spawned.connect(_on_ground_item_spawned)
@@ -8042,6 +8043,15 @@ func _exit_tree() -> void:
 	_exp_orbs.clear()
 	_orb_pending.clear()
 	_orb_death_passed.clear()
+	_orb_cos_of.clear()
+	for m in _war_marks.values():
+		if is_instance_valid(m):
+			(m as AuraModel).release()
+	_war_marks.clear()
+	_war_mark_row = {}
+	AuraModel.star_height_of = Callable()
+	if _hud_player_info != null:
+		_hud_player_info.hwan_gauge.reset()
 	_fx_owner_buffs.clear()
 	# Round 796: the statics round 795 bound to this world (_cos_bind_table,
 	# _hud_cos_setup) let go now. They are lambdas over this node and its
@@ -22940,6 +22950,10 @@ func _physics_process(delta: float) -> void:
 	var fs_t := Time.get_ticks_usec() if FrameSplit.on else 0
 	SkillEffects.tick(delta)
 	_exp_orbs.tick(delta)
+	# Round 860: the guild war marks (GuildWarMark), every 15th frame (OURS
+	# cadence; the original asks every frame -- a change shows within 0.25 s).
+	if Engine.get_process_frames() % 15 == 0:
+		_update_war_marks()
 	_tick_decos(delta)
 	_tick_skill_slides(delta)
 	_tick_skill_cooldowns(delta)
@@ -25404,8 +25418,20 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, ow
 			var mine_pluses := _player_avatar_pluses.duplicate()
 			CharacterLook.avatar_into(mine, mine_pluses, ref_id, plus)
 			_set_player_avatars(mine, mine_pluses, "0x%x avatar %d" % [op, ref_id])
+			_set_fx_on(player, ref_id, plus >= 0, {}, {})
 			return
 		print("World3D: 0x%x for this player -- drawn from the equipment result" % op)
+		# Round 860 (SetItemFx): the set's look. The equipment result came
+		# first, so the worn list is the new one; the old is it with this
+		# slot's piece back (taken off) or out (put on).
+		var now_worn: Dictionary = _player_equipped_last.duplicate()
+		var was_worn := now_worn.duplicate()
+		if plus >= 0:
+			was_worn.erase(slot)
+		else:
+			was_worn[slot] = ref_id
+		_set_fx_on(player, ref_id, plus >= 0, SetItemFx.complete_sets(was_worn, _set_of_item, SetItemFx.sizes()),
+			SetItemFx.complete_sets(now_worn, _set_of_item, SetItemFx.sizes()))
 		return
 	var id := _other_by_uid(uid)
 	if id < 0:
@@ -25431,7 +25457,13 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, ow
 		target.own = look.own
 	# Round 843 (OURS): the item's own id beside a model switcher's row; a
 	# change of it redraws the body (its glow and seal come from it).
+	var sets_before := SetItemFx.complete_sets(target.worn, _set_of_item, SetItemFx.sizes()) if not avatar else {}
 	var change := target.apply_broadcast(slot, ref_id, plus, own_ref, avatar)
+	# Round 860 (SetItemFx, READ c:0x8a9260 / 0x8a9560): the itemeffect row or
+	# the set's look, on a body that is drawn.
+	if kept == null:
+		_set_fx_on(_other_bodies.get(id), ref_id, plus >= 0, sets_before,
+			SetItemFx.complete_sets(target.worn, _set_of_item, SetItemFx.sizes()) if not avatar else {})
 	var same_item := bool(change["same_item"])
 	if bool(change["own_changed"]) and target.own.has(slot):
 		print("World3D: player %d slot %d is drawn as item %d with item %d's own glow and seal" % [id, slot, ref_id, int(target.own[slot])])
@@ -25456,6 +25488,20 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int, ow
 	if same_item and _reglow_other(id, pluses):
 		return
 	_redress_other(id)
+
+## Round 860: an item's set id (0 none).
+func _set_of_item(item_id: int) -> int:
+	var row: ItemTableReader.Item = _item_rows.get(item_id)
+	return row.set_id if row != null else 0
+
+func _set_fx_on(body, ref_id: int, put_on: bool, before: Dictionary, after: Dictionary) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var row: ItemTableReader.Item = _item_rows.get(ref_id)
+	var code := row.code_name if row != null else ""
+	var played := SetItemFx.play(body, code, put_on, before, after)
+	if played != "":
+		print("World3D: %s on %s (%s %s)" % [played, (body as Node).name, "put on" if put_on else "taken off", code])
 
 ## Redraws another player's weapon and shield glow at `pluses` on the body
 ## drawn now (CharacterAppearance.reglow), only when they differ from those it
@@ -36748,12 +36794,78 @@ func _orb_gain(source: int, exp_gain: int, sp_gain: int) -> void:
 	var counts := ExpOrbs.gain_counts(exp_gain, sp_gain, _exp_unit_of(level))
 	if int(counts[0]) + int(counts[1]) == 0:
 		return
-	var had: Array = _orb_pending.get(source, [0, 0])
-	_orb_pending[source] = [int(had[0]) + int(counts[0]), int(had[1]) + int(counts[1])]
+	_orb_add(source, [int(counts[0]), int(counts[1]), 0, 0])
 	print("World3D: kill orbs from monster %d: +%d EXP, +%d SP (level %d unit %d)%s" % [source,
 		counts[0], counts[1], level, _exp_unit_of(level), ", now" if _orb_death_passed.has(source) else ", at its die clip's end"])
 	if _orb_death_passed.has(source):
 		_orb_launch(source)
+
+## Round 860: adds [exp, sp, hwan, cos] orbs to a source's pending counts
+## (+0x759 / +0x75a / +0x75b / +0x75c, READ); `cos_uid` names kind 3's target
+## (+0x760).
+func _orb_add(source: int, counts: Array, cos_uid: int = -1) -> void:
+	var had: Array = _orb_pending.get(source, [0, 0, 0, 0])
+	var sum: Array = []
+	for k in 4:
+		sum.append(int(had[k]) + (int(counts[k]) if k < counts.size() else 0))
+	_orb_pending[source] = sum
+	if cos_uid >= 0:
+		_orb_cos_of[source] = cos_uid
+
+## Round 860: source -> the COS uid its kind-3 orbs fly to.
+var _orb_cos_of := {}
+
+## Round 860: 0x304E kind 4 (HwanGauge has the READ): the hwan count, and
+## the monster it rose from. A rise from a body in view becomes violet orbs
+## that fly with the kill's others (at its die clip's end) and light the
+## gauge one by one as they land; anything else drops the violet orbs in
+## flight and shows the count.
+func _on_hwan_count(count: int, source: int) -> void:
+	if _hud_player_info == null:
+		return
+	var body = _monster_bodies.get(source)
+	var in_view: bool = source != 0 and body != null and is_instance_valid(body)
+	var r: Dictionary = _hud_player_info.hwan_count_told(count, in_view)
+	var fly := int(r["fly"])
+	print("World3D: hwan count %d from %d (%s): %s" % [count, source, "in view" if in_view else "no body",
+		"%d violet orb(s)" % fly if fly > 0 else "shown now"])
+	if bool(r["reset"]):
+		var dropped := _exp_orbs.drop_kind(ExpOrbs.KIND_HWAN)
+		for id in _orb_pending:
+			(_orb_pending[id] as Array)[ExpOrbs.KIND_HWAN] = 0
+		if dropped > 0:
+			print("World3D: %d violet orb(s) in flight dropped" % dropped)
+		return
+	if fly > 0:
+		_orb_add(source, [0, 0, fly, 0])
+		if _orb_death_passed.has(source):
+			_orb_launch(source)
+
+## Round 860: 0x30C9 kind 3, a COS's EXP (READ c:0x8aa340): for this
+## player's own COS, a gain from a body in view adds
+## count_for(float(exp / unit[the COS's level])) orbs (the 64-bit division
+## before the float) to the source's +0x75c with the COS at +0x760; they fly
+## hwan_g to the COS's Bip01 Spine1 with the kill's others, and land as the
+## blue indraft and the chime -- no gauge.
+func _cos_exp_orbs(u: CosNet.Update) -> void:
+	if u.exp_delta <= 0 or u.source == 0 or _hud_cos == null:
+		return
+	var d: CosNet.Data = _hud_cos.cos_data(u.uid)
+	var body = _monster_bodies.get(u.source)
+	if d == null or body == null or not is_instance_valid(body):
+		return
+	var unit := _exp_unit_of(d.level)
+	if unit <= 0:
+		return
+	@warning_ignore("integer_division")
+	var n := ExpOrbs.count_for(float(u.exp_delta / unit))
+	if n <= 0:
+		return
+	_orb_add(u.source, [0, 0, 0, n], u.uid)
+	print("World3D: COS %d EXP orbs from monster %d: +%d (level %d unit %d)%s" % [u.uid, u.source, n, d.level, unit,
+		", now" if _orb_death_passed.has(u.source) else ", at its die clip's end"])
+	if _orb_death_passed.has(u.source):
+		_orb_launch(u.source)
 
 func _exp_unit_of(level: int) -> int:
 	if _exp_units == null:
@@ -36784,17 +36896,29 @@ func _orb_death_event(monster_id: int) -> void:
 func _orb_launch(monster_id: int) -> void:
 	var counts: Array = _orb_pending.get(monster_id, [])
 	_orb_pending.erase(monster_id)
+	var cos_uid := int(_orb_cos_of.get(monster_id, -1))
+	_orb_cos_of.erase(monster_id)
 	var body = _monster_bodies.get(monster_id)
+	var violet := int(counts[ExpOrbs.KIND_HWAN]) if counts.size() > ExpOrbs.KIND_HWAN else 0
 	if counts.is_empty() or body == null or not is_instance_valid(body) or player == null:
+		_orb_violet_at_once(violet)
 		return
 	if SkillEffects.quality < ExpOrbs.QUALITY_NEEDED:
+		# READ (FUN_009cb7c0): below 2 only the violet count reaches the
+		# gauge, at once; the rest are dropped.
 		print("World3D: kill orbs of monster %d dropped (Effect Quality %d)" % [monster_id, SkillEffects.quality])
+		_orb_violet_at_once(violet)
 		return
 	var particles := _open_particles_pk2_if_set()
 	if particles == null:
 		return
 	if _exp_orbs.parent == null:
 		_exp_orbs.parent = self
+		_exp_orbs.arrived = func(kind: int) -> void:
+			if kind == ExpOrbs.KIND_HWAN and _hud_player_info != null:
+				_hud_player_info.hwan_orb_arrived()
+				print("World3D: violet orb arrived -- the gauge shows %d of %d" % [
+					_hud_player_info.hwan_gauge.display, _hud_player_info.hwan_gauge.real])
 		_exp_orbs.factory = func(path: String) -> EfpEffect: return EfpEffect.create(path, _open_particles_pk2_if_set())
 		_exp_orbs.sound = func(path: String, at: Vector3) -> void:
 			SoundTable.play_file(path, at)
@@ -36804,9 +36928,18 @@ func _orb_launch(monster_id: int) -> void:
 	var start: Vector3 = (body as Node3D).global_position
 	if skel != null and skel.is_inside_tree() and skel.find_bone(ExpOrbs.SOURCE_BONE) >= 0:
 		start = SkillEffects.bone_point(body, ExpOrbs.SOURCE_BONE, Vector3.ZERO)
-	var n := _exp_orbs.launch(start, [int(counts[0]), int(counts[1]), 0, 0], player)
-	print("World3D: kill orbs launched from monster %d: %d EXP + %d SP = %d in flight" % [monster_id,
-		counts[0], counts[1], n])
+	var cos_body: Node3D = _cos_bodies.get(cos_uid) if cos_uid >= 0 else null
+	var n := _exp_orbs.launch(start, counts, player, cos_body)
+	print("World3D: kill orbs launched from monster %d: %d EXP + %d SP + %d violet + %d COS = %d in flight" % [monster_id,
+		counts[0], counts[1], counts[2], counts[3], n])
+
+## Round 860: violet orbs that will not fly (no body, Effect Quality below 2)
+## reach the gauge at once.
+func _orb_violet_at_once(violet: int) -> void:
+	if violet <= 0 or _hud_player_info == null:
+		return
+	for _i in violet:
+		_hud_player_info.hwan_orb_arrived()
 
 ## Round 716: retail 0x304E kind 1, the new gold total (c:0x8a70d0): a shown
 ## update prints UIIT_MSG_STATE_GAIN_GOLD with the rise over the last total
@@ -38602,6 +38735,9 @@ func _on_item_use_effect(uid: int, ref_id: int) -> void:
 				_automob_ref = int(id)
 				break
 	var effect := ItemUseEffect.effect_id(types, code, ref_id, _automob_ref, ItemUseEffect.use_rows(), ItemUseEffect.knows)
+	if effect == ItemUseEffect.FIREWORK and body != null and is_instance_valid(body):
+		_set_off_firework(ref_id, code, body, who)
+		return
 	if body == null or not is_instance_valid(body):
 		print("ITEMUSE uid %d item %d %s %s: %s, no body drawn" % [uid, ref_id, code, str(types), effect if effect != "" else "no effect"])
 		return
@@ -38619,6 +38755,97 @@ func _on_item_use_effect(uid: int, ref_id: int) -> void:
 	print("ITEMUSE uid %d item %d %s %s on %s: effect %s, %d effect(s) [%s], sound(s) [%s] (frame %d)" % [uid, ref_id, code,
 		str(types), who, effect if effect != "" else "none", (got["fx"] as Array).size(), ", ".join(parts),
 		", ".join(got["sounds"]), Engine.get_frames_drawn()])
+
+## Round 860: a firework (3/3/6) -- the original's CIParticleObj (Firework has
+## the reading): the item's drop model where the user stands, turned as the
+## user is, and its bursts from 8 above it every 2 s.
+func _set_off_firework(ref_id: int, code: String, body: Node3D, who: String) -> void:
+	var path: String = _item_drop_models.get(ref_id, "")
+	var model: Node3D = null
+	var archive := _data_pk2 if _data_pk2 != null else _open_pk2_if_set()
+	if archive != null and path != "":
+		if not path.to_lower().begins_with("res\\"):
+			model = ObjectLoader.load_object(archive, "res\\" + path)
+		if model == null:
+			model = ObjectLoader.load_object(archive, path)
+	var fwd := body.global_transform.basis.z
+	var yaw := atan2(fwd.x, fwd.z) if Vector2(fwd.x, fwd.z).length() > 0.001 else 0.0
+	var fw := Firework.make(code, model, body.global_position, yaw)
+	if fw == null:
+		print("ITEMUSE firework %d %s by %s: no rows, nothing made" % [ref_id, code, who])
+		return
+	var parent: Node = other_entities if other_entities != null else self
+	parent.add_child(fw)
+	print("ITEMUSE firework %d %s by %s: model %s %s at %s" % [ref_id, code, who, path,
+		"drawn" if model != null else "missing", fw.global_position])
+
+# --- Round 860: the guild war mark (GuildWarMark has the READ) -----------------
+
+## uid -> AuraModel: the marks drawn.
+var _war_marks := {}
+var _war_mark_row := {}
+
+## FUN_009ddb00 over every body this client draws, the own player too.
+func _update_war_marks() -> void:
+	if _war_mark_row.is_empty():
+		_war_mark_row = GuildWarMark.row()
+		if _war_mark_row.is_empty():
+			return
+		AuraModel.star_height_of = func(host: Node3D) -> float: return _star_height_of(host)
+	var seen := {}
+	# The model's archive (Data.pk2), as a cast's .bsr objects open it.
+	if BsrEffect.archive == null:
+		_deco_archive()
+	if player != null and is_instance_valid(player) and NetClient.own_character_id >= 0:
+		var own_uid := NetClient.own_character_id & 0xffffffff
+		var gid := int(NetClient.guild_data.guild_id) if NetClient.guild_data.in_guild else int(NetClient.own_guild_line.get("guild_id", 0))
+		_war_mark_on(own_uid, player, GuildWarMark.decide(gid, NetClient.war_guilds, _own_job_state()))
+		seen[own_uid] = true
+	for id in _other_bodies:
+		var body: Node3D = _other_bodies[id]
+		if body == null or not is_instance_valid(body):
+			continue
+		var uid := int(id) & 0xffffffff
+		var line: Dictionary = NetClient.user_guilds.get(uid, {})
+		var job: Dictionary = NetClient.user_jobs.get(uid, {})
+		_war_mark_on(uid, body, GuildWarMark.decide(int(line.get("guild_id", 0)), NetClient.war_guilds,
+			int(job.get("state", UserSpawnNet.JOB_STATE_NONE))))
+		seen[uid] = true
+	for uid in _war_marks.keys():
+		if not seen.has(uid):
+			_war_mark_on(int(uid), null, GuildWarMark.OFF)
+
+func _war_mark_on(uid: int, body: Node3D, what: int) -> void:
+	var had: AuraModel = _war_marks.get(uid)
+	if had != null and (not is_instance_valid(had) or had.host != body):
+		if is_instance_valid(had):
+			had.release()
+		_war_marks.erase(uid)
+		had = null
+	if what == GuildWarMark.ON and had == null and body != null:
+		var m := AuraModel.spawn(String(_war_mark_row["path"]), body, String(_war_mark_row["bone"]), _war_mark_row["offset"])
+		if m != null:
+			m.name = "GuildWarMark"
+			_war_marks[uid] = m
+			print("World3D: guild war mark on uid %d (%s), %.1f above its foot (placed %.2f)" % [uid, body.name,
+				_star_height_of(body) + float((_war_mark_row["offset"] as Vector3).y),
+				m.global_position.y - body.global_position.y if m.is_inside_tree() else -1.0])
+	elif what == GuildWarMark.OFF and had != null:
+		had.release()
+		_war_marks.erase(uid)
+		print("World3D: guild war mark off uid %d" % uid)
+
+## A body's `*` height (GuildWarMark.star_height of its characterInfo Size).
+func _star_height_of(body: Node3D) -> float:
+	var rec: SoundTable.CharacterInfo = null
+	if body.has_meta("monster_id"):
+		rec = _monster_char_record(_monster_code_of(int(body.get_meta("monster_id"))))
+	else:
+		var code := _player_body if body == player else String(body.get_meta("body", ""))
+		var svc := AudioService.instance()
+		if svc != null and code != "":
+			rec = svc.character_record(code)
+	return GuildWarMark.star_height(rec.size if rec != null else 0.0)
 
 ## ITEM_ETC_AUTOMOB's ref (ItemUseEffect.AUTOMOB_CODE): -2 not looked up yet,
 ## -1 not in the table.
@@ -40509,6 +40736,8 @@ func _hud_cos_setup() -> void:
 	ItemTooltipLines.cos_row_by_code = func(code: String): return _cos_table.by_code.get(code) if _cos_table != null else null
 
 func _on_cos_update_hud(u: CosNet.Update) -> void:
+	if u.type == CosNet.UPDATE_EXP:
+		_cos_exp_orbs(u)
 	if u.type == CosNet.UPDATE_REMOVED:
 		_hud_cos.remove_cos(u.uid)
 		_cos_attack_target.erase(u.uid)

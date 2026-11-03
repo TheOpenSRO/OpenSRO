@@ -193,6 +193,32 @@ func (d *guildWarDeps) toGuild(ctx context.Context, guildID int64, op uint16, da
 	}
 }
 
+// OpGuildWarState is 0x30EF {u8 op, u32 guild}: op 0 puts the guild in the
+// client's "at war" set (0xeedc04, READ c:0x88a770), op 1 takes it out.
+const OpGuildWarState uint16 = 0x30EF
+
+// tellWarState is the war count's edge (round 860, READ): CGuild's war add
+// s:0x5c8800 sends 0x30EF {0, id} when the count goes 0 -> 1 (`cmp byte
+// [guild+0x44],1 ; jne` with the old count 0), its remove s:0x5c88d0 {1, id}
+// when it reaches 0, each to that guild's own members (FUN_005c4350). Called
+// after the cache changed: a guild with exactly one war has just begun its
+// first, one with none has just ended its last; any other count says
+// nothing. The other guilds' players learn of it at the next spawn or 0x30FF
+// (the original's gap too).
+func (d *guildWarDeps) tellWarState(ctx context.Context, guildID int64) {
+	var op byte
+	switch hostileCount(guildID) {
+	case 1:
+		op = 0
+	case 0:
+		op = 1
+	default:
+		return
+	}
+	data := binary.LittleEndian.AppendUint32([]byte{op}, uint32(guildID))
+	d.toGuild(ctx, guildID, OpGuildWarState, data)
+}
+
 func (d *guildWarDeps) guildName(ctx context.Context, id int64) string {
 	if g, err := d.guilds.Get(ctx, id); err == nil && g != nil {
 		return g.Name
@@ -404,6 +430,9 @@ func guildWarAnswer(ctx context.Context, sess *gateway.Session, me world.Entity,
 		return true
 	}
 	cacheWar(*begun)
+	// Round 860: a guild's first war puts it in its members' "at war" set.
+	d.tellWarState(ctx, ga.ID)
+	d.tellWarState(ctx, gb.ID)
 	// The stake from both masters (vslot 0x16c(-stake, .., 10)).
 	for _, who := range []int64{req.declarer, me.CharacterID} {
 		if stake > 0 {
@@ -483,6 +512,9 @@ func endGuildWar(ctx context.Context, d *guildWarDeps, warID, winner int64, why 
 	msg := guild.EncodeWarEnded(w.ID, winner)
 	d.toGuild(ctx, w.GuildA, guild.OpUpdate, msg)
 	d.toGuild(ctx, w.GuildB, guild.OpUpdate, msg)
+	// Round 860: a guild's last war takes it out of the set.
+	d.tellWarState(ctx, w.GuildA)
+	d.tellWarState(ctx, w.GuildB)
 	// The engine's record: "GuildWar Guild[%d,%d] Winner[%s]".
 	slog.Info(fmt.Sprintf("GuildWar Guild[%d,%d] Winner[%s]", w.GuildA, w.GuildB, d.guildName(ctx, winner)),
 		"war", w.ID, "why", why, "lodged", w.LodgedGold, "a", w.PointsA, "b", w.PointsB)

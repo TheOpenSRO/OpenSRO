@@ -7483,6 +7483,165 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixtieth round, lane E: fireworks, the guild war mark, the violet and COS orbs, a set's look, every CIFButton's click
+
+The user: do the remaining open effects from round 859 (WORLD_ISSUES 859 lanes A and B, TODO "Round
+859 lane B follow-ups"). Labels: READ (`c:` sro_client.exe, `s:` SR_GameServer.exe; the box's decomp
+dumps and objdump), MEASURED (the box's archives), INFERRED, OURS, OPEN. Base `ca24154b`.
+
+| # | Item | READ (addresses) | State | Evidence |
+|---|---|---|---|---|
+| 1 | Fireworks | s:0x510f55 slot 0x4c8 -> `CGItemExpendable::DoJob` s:0x49aca0 (vtable s:0xaeb2b4), TypeID3 6 case s:0x49ae83 (TypeID4 2 -> slot 0x524, else accept, s:0x49aeb5); c:0x8737d0 `FUN_00ba36d0(&0xeef6d0)` = `CIParticleObj` (c:0x9c5090), set-up c:0x9c5340, frame c:0x9c5460; delayed row sounds c:0xa4fe7a / c:0xa50420 | **built** (server + client) | QA run `fw_head`, below |
+| 2 | Guild war mark | `FUN_009ddb00`; the "4" call is vtable slot 43 (+0xac) -> c:0x9c7a60, byte +0x50d, the job state (4 no suit; ctor c:0x9d2d97, suit c:0x9db8b0); set 0xeedc04 (c:0x9dd8a0) from 0x30EF c:0x88a770 (server s:0x5c8800 / 0x5c88d0), the spawn's war flag (s:0x4e5e27, client c:0x9de046), 0x30FF's (s:0x4ea4db), 0x3109 (c:0x99ac71); `*` = IDecoSkill::FUN_00a4a680 flags 3 + FUN_009c7780 (20 x Size x 0.5 x scale) | **built** (server + client) | QA run `war_head` |
+| 3a | Violet hwan orbs | 0x304E kind 4 c:0x8a70d0 {u8 4, u8 count, u32 source}; FUN_009d4ad0 the arrival step; s:0x4e4d00 AddHwanCount -> s:0x4e3fb0 (player only), the kill's victim s:0x593b97 | **built** (server sends it; client HwanGauge + orbs) | QA run `hw_head` |
+| 3b | A COS's EXP orbs | 0x30C9 kind 3 c:0x8aa340, FUN_009c7520 (+0x75c, +0x760), kind 3 to the COS | **built** (client; the server already sent it) | QA run `hw_head` |
+| 4 | Full gear-set look | 0x3038 c:0x8a9260 / 0x3039 c:0x8a9560; `FUN_0095d950(state 0/1)` the itemeffect rows first; flags +0x1a1 / +0x1a2 set by `CObjCharacter::InstallEquipVisual` c:0xa61010 via FUN_00a60220 / FUN_00a60c60 (not FUN_0095d950, round 859's guess) | **built** (effect + sound; the itemeffect put-on/take-off rows too); full-set model switch OPEN; mask column OPEN | tests; not live (no set gear in the QA kits) |
+| 5 | snd_warp | `CGInterface::Create` c:0x78c910 plays it only for argument 2 (c:0x78cef1); the one caller found (`CPSMission::OnCreate` c:0x84ca63 -> c:0xba2261) passes 0; MEASURED effectsound's SND_WARP row is commented out | **nothing to build** (the original is silent) | -- |
+| 6a | Code-made CIFButtons | CIFButton's class link 0xee9828 (c:0x656560), CIFCloseButton 0xee9868, CIFButtonTree 0xee9780, CIFDropDownButton 0xee9888; every code site that creates one (UiSounds.hook_cif_button lists them) | **built** (one hook; UiBuilder and five code-made sites use it) | `cif_button860_test`, `ui_sounds_test` |
+| 6b | Helper mark, Nasrun run, rogue key | read (TODO has the addresses: c:0x9db970, 0x7402/0xB402 s:0x518b80; c:0x9db9e0 / 0x9db180, Pram2 c:0x4eb5d0; c:0x8a5b48 / 0xa5319a) | **OPEN** (each needs a server message or a visual-change attach this round did not reach) | -- |
+| 7 | Hit point on the body; PARAM_CURE_ALL Scale | not reached | **OPEN** | -- |
+
+### 1. The fireworks (`server/internal/session/firework.go`, `client/scripts/effects/firework.gd`; `docs/protocol/item_use_effects.md` "The fireworks")
+
+- **Server (READ).** DoJob's TypeID3 6 case accepts any 3/3/6 but TypeID4 2 (the fortress shock bomb,
+  slot 0x524 -- refused here), after UseByKind's logout test (no logout state here), and its tail spends
+  one; the handler's reuse delay applies only to a COOLTIME row (MEASURED: none). OpenSRO answered
+  "that cannot be used" to all of them. Now: spent, 0xB04C, and the 0x305C round 859 sends for every use.
+  MEASURED: SPIN and SPRAY carry no CanUse bit (refused 0x183e before DoJob, here too) and no
+  skilleffect rows -- the retail client would read a null record for them.
+- **Client (READ, CIParticleObj).** The item's drop model (ref +0x140, itemdata column 53, the field a
+  ground item draws; `item\etc\firework_*.bsr`) stands where the user stood, turned as the user; its
+  record is skilleffect.txt's rows by the item's code name; the bursts are the first ACT_S row's
+  CreateCnt (column 11 -> row byte +9, c:0xa9d5f8; MEASURED 1, or 8 for the chain bomb and the tadpole),
+  one every 2000 ms (+0x794) from its first frame, each a decoration `FUN_00a53850(0, this, record, 0, 1,
+  0)` started with the height raised by 8.0 (.rdata 0xd89240); AT_STOP rows, so each burst stays 8
+  above the foot. Done and empty, it is deleted at once (no fade). Its bound is raised 500 (.rdata
+  0xdd24b8; nothing to do in Godot).
+- **The delayed sounds (READ, a general fix).** A row whose MovTypeSpeed first number (+0x10) is not 0
+  queues its SndBegin / SndEnd with the body's position of that moment and plays them that many ms later
+  (FUN_00a4fe70's queue, stepped by CIDecoSkill::vslot_014). Round 614 wrote "+0x10 not read; every row
+  at once (OURS)". The rows now keep it (`SkillAudio.parse_effect_sounds`' fifth field) and every item
+  use's sounds honour it (`ItemUseEffect.sound_rows` / `play_sounds`); a skill cast's still play at once
+  (unchanged, OURS). The fireworks' explosions come 1300 ms after the shot (the chain bomb's 600, the
+  cross star's spark 2000), MEASURED.
+
+**QA (real input, lane server 17370, `/var/tmp/r860e/fw860e.sh`):** Qa860 (rendered, real time)
+right-clicks each firework in its bag; Watch860 (headless) stands 10 away. Counted in both logs:
+
+| Use (rbagitem) | User's client | Observer's client | Effect file | Bursts (age ms) | Sounds (delay) |
+|---|---|---|---|---|---|
+| BOOMB_R (63) | model `firework_bomb_r.bsr` + 1 burst | **no body drawn yet** (retail's FindObjectByID returns too, as round 859 saw) | `system\item_firework_bomb_r.efp` | 1 (0) | shot_01 (0), explosion_01 (1300) |
+| STAR_SHOWER (3834) | model + 1 burst, deleted at 5242 ms | the same, 5280 ms | `system\firework_star_shower.efp` | 1 | shot_01, explosion_04 (1300) |
+| CROSS_STAR (3835) | model + 1 burst, 5086 ms | the same, 5099 ms | `system\firework_cross_star.efp` | 1 | shot_01, explosion_01 (1300), spark_03 (2000) |
+| CHAINBOMB (69) | 8 bursts at 0, 2014, 4005, 6020 ... 14000 ms; 16400 ms | 8 at 0, 2033, 4000 ... 14000; 16400 ms | `system\firework_chainbomb.efp` x 8 | 8 | shot_03 + explosion_02 (600) each |
+| TADPOLE (3836) | 8 bursts ... 14021 ms, deleted 17567 ms | 8 | `system\firework_tadpole.efp` x 8 | 8 | shot_05 each |
+| SPIN (67) | refused "that item cannot be used" (CanUse clear) | -- | -- | -- | -- |
+
+AUDIO lines: 31 (user) / 29 (observer; the first bomb's two missing with its body). Base
+(`ca24154b`, same script): every firework refused "that cannot be used", nothing drawn. Frames for a human:
+`/var/tmp/r860e/keep/fw_head_sheet.png` and `fw_base_sheet.png` (the user's view sampled every ~3 s).
+
+### 2. The guild war mark (`client/scripts/effects/guild_war_mark.gd`; server `pcspawn`, `guildplate.go`, `guildwar.go`)
+
+- **The unidentified call** (READ, round 859's OPEN): vtable slot 43 (+0xac) is `c:0x9c7a60`, which
+  returns byte +0x50d -- the job state (4 no job suit). So: in the at-war set, no suit, no fortress war
+  -> on; not in the set -> off; a suit or a fortress war -> left as it was (the original's quirk, kept).
+- **The set** (READ): 0x30EF {u8 op, u32 guild} (op 0 add, 1 remove), the spawn guild block's war
+  flag and 0x30FF's (0 add, 1 remove), 0x3109 with any war (the own guild). "At war" is at war with
+  anyone, not hostile to the viewer: a guild's members wear it for everyone, its own members included
+  (the original; a player may not expect it).
+- **Server bug fixed (READ s:0x4e5e27 / s:0x4ea4db):** the spawn's and 0x30FF's war byte is 1 for a
+  guild with no war and 0 at war; OpenSRO wrote 0 for every guild (rounds 814-859), which the original
+  client would read as every guild at war. The spawn writes flag then fortress role, 0x30FF role then
+  flag (round 814's "membership" byte was the flag). A guildless body writes 1 (INFERRED: the original
+  reads guild +0x44 with no null test). 0x30EF goes to a guild's own members when its war count goes
+  0 -> 1 (s:0x5c8800) and back to 0 (s:0x5c88d0). Golden bytes updated in both the Go fixtures and the
+  GD tests that share them (`user_spawn_test`, `dest_move_net_test`).
+- **The look** (MEASURED): `res\etc\guild_war_mark.bsr` at `*` 0,16,0, kept (AuraModel). `*` (READ) is
+  the body's turn, the offset and 20 x characterInfo Size x 0.5, at the body's scale: 36 above a
+  player's foot (Size 2). AuraModel places `*` that way now (it put it at the skeleton's origin).
+  OURS: the rule is evaluated every 15th frame (the original every frame).
+
+**QA (`/var/tmp/r860e/war860e.sh`, lane server 17372, the farmland 96/168):** QaWin (rendered, real
+clicks through the guild window as round 844's run 6) founds Alpha and proclaims war on Mate's Beta
+(partybot, accepts, proposes the end 5 s later); Cato (Gamma) is the control; Watch860 (headless, no
+guild) arrives after the war began.
+
+| Client | Seen |
+|---|---|
+| QaWin | `guild 3 joins the at-war set (flag 0)` (0x30EF) -> `guild war mark on uid 4 (Player) ... placed 36.00`; at the end (`GuildWar ... Winner[Alpha] why=surrender`) `guild 3 leaves the at-war set (flag 1)` -> `guild war mark off uid 4` |
+| Watch860 | from the spawns: guilds 1 and 3 join -> marks on Mate (uid 1) and QaWin (uid 4), each placed 36.00 above the foot; none on Cato; after the end they stay (no 0x30EF to a non-member: the original's gap, OPEN) |
+| base | the server writes 0 / 0 and the client reads neither byte: no mark |
+
+### 3. The violet orbs and a COS's orbs (`effects/hwan_gauge.gd`, `exp_orbs.gd`; server `berserk`, `rewardnotice.go`, `charmsg`)
+
+- **Server.** `berserk.Tracker.SetNotify`: every change of the count (a kill's gain naming the victim,
+  a potion, a fill, the activation's spend, the GM's /hwan) sends 0x304E {4, count, source} to the
+  player alone (READ s:0x4e4d00 / 0x4e3fb0). The attack result keeps its gauge for older clients.
+- **Client (READ c:0x8a70d0, FUN_009d4ad0).** A rise from a body in view adds violet orbs to the source's
+  pending counts (with the EXP / SP ones, launched at the die clip's end) and holds the gauge; each
+  arrival steps the display (`HwanGauge.arrive`); any other change drops the violet orbs in flight and
+  shows the count (5 -> 0 with 5 shown only FUN_00778ae0(0, 0)). A count told another way (the attack
+  result, the stats) is kept as the real count while orbs fly. Effect Quality below 2: the violet count
+  goes to the gauge at once. 0x30C9 kind 3: `count_for(float(exp / unit[the COS's level]))` orbs to
+  the COS's Bip01 Spine1 (hwan_g, the blue indraft, the chime; no gauge).
+- **QA knob (OURS):** `OPENSRO_QA_HWAN_CERTAIN=1` makes every kill earn (the server logs a warning).
+
+**QA (`/var/tmp/r860e/fight860e.sh`, lane server 17371, the knob on):** Act860 (level 5, wolf flute
+summoned at tick 600) fights Jangan's Mangyangs by the real click path for 130 s; Obs860 beside it.
+Act860's log: 20 kills' orbs launched; 10 hwan rises from a body in view, 10 violet orbs launched and
+10 arrived, the gauge lagging the count until each lands ("shows 1 of 2", "2 of 2", "3 of 4", "4 of 5",
+"5 of 5"); the GM's /hwan 0 "shown now"; 18 COS EXP orb gains from the wolf's kills shares, 18 COS
+orbs launched; 68 orbs absorbed in all. Obs860 got its own kind 4s only (the player alone).
+
+### 4. A set's look (`effects/set_item_fx.gd`)
+
+READ as in the table; the flags' setter is `InstallEquipVisual` (round 859 named FUN_0095d950, which is
+the itemeffect lookup). Built: per 0x3038 / 0x3039, the itemeffect.txt put-on / take-off row (state 0
+/ 1; the Nasrun avatars', which nothing played before) or, when the item's set became complete,
+ITEM_SETITEM_ACTIVE + snd_setitem_active, or broken, _DEACTIVE + snd_setitem_deactive, on that body,
+own or another's. INFERRED: a set's size by its code name (_ACCESSORY 3, _WEAPON / _SHIELD 1, else 6;
+the 42 sets' MEASURED shapes, `equipment/itemset.go`) -- refsetitemgroup's mask column is OPEN. OPEN:
+the full-set model switch. Not checked live (no set gear in the QA kits): `set_item_fx860_test`.
+
+### 6. Every CIFButton clicks
+
+`UiSounds.hook_cif_button` is the one place: UiBuilder's CIFButtons and the code-made ones the original
+also makes as CIFButtons (READ, the sites pushing CIFButton's class link 0xee9828): a framed window's
+own close button (CIFMainFrame c:0x817028), the world map's teleport choice rows (c:0x631dfe), the
+page numbers (FUN_00648a80 c:0x648b85: the stall network, the mall's lists), the radio dots
+(IFRadioButton c:0x657d71: party settings, party match), the quick party lock (c:0x6db2d6). None of the
+sites sets style 0x20 (INFERRED: style 0, they click). Scroll arrows (CIFScrollBar) and 2dt buttons
+(CNIFButton) are not CIFButtons and stay silent. UI only.
+
+### Tests and gates
+
+- Go: `TestFireworkIsUsedAndAnnounced`, `TestCountChangesAreAnnounced`, `TestHwanGoldenBytes`,
+  `TestRound844WarFlow` (+0x30EF at the first war and the last end, the 0x30FF flag both ways), the
+  spawn and 0x30FF goldens; `go build ./...`, `go test ./...` all pass (the metrics table regenerated for
+  0x30EF).
+- Client: `firework860_test`, `hwan_gauge860_test`, `guild_war_mark860_test`, `set_item_fx860_test`,
+  `cif_button860_test` (new); `item_use_effect859_test`, `skill_audio_test`, `user_spawn_test`,
+  `dest_move_net_test` pass. `remote_godot.sh check` ALL LOAD, `tests` "ran 427 suite(s), 0 failing"
+  (RENDER_DIR /var/tmp/opensro-r860e).
+- Perf gate (`--base ca24154b --sites jangan --frames 24000`):
+
+```
+perf gate: base ca24154b (forward_plus) vs head 62da97fa+docs (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 1.00  head 0.96  (-0.0)  SAME
+jangan  entry ms   base 9108  head 9126  (+18.0)  SAME
+jangan  freeze ms  base 2930  head 2899  (-31.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+(the first attempt failed on an empty ssh answer -- a renderer of '' -- and was run again whole.)
+
+### OPEN
+
+The full-set model switch and refsetitemgroup's mask column; the helper mark, the Nasrun run effects,
+the rogue key mark (READ, TODO has them); a hit effect's point on the body; PARAM_CURE_ALL's Scale; a
+non-member learns of a guild's war only at the next spawn or 0x30FF (the original's gap); the fortress
+war test (c:0x939a60) is always false here; a skill cast's delayed row sounds still play at once.
+
 ## Eight-hundred-and-sixtieth round, lane H: the white horse was a capsule -- a type-6 body is drawn from its model
 
 Seen in rounds 856 and 859 (lane A): "the ridden horse draws as a white body in both base and head";

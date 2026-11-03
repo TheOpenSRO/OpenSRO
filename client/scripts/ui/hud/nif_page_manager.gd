@@ -92,6 +92,9 @@ func _init(builder = null) -> void:
 		cap.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 		b.add_child(cap)
 		b.pressed.connect(press_index.bind(i))
+		# Round 860: the page numbers are CIFButtons made in code (FUN_00648a80,
+		# c:0x648b85, ids 0x32 + i).
+		UiSounds.hook_cif_button(b, b.name)
 		b.visible = false
 		add_child(b)
 		_buttons.append(b)

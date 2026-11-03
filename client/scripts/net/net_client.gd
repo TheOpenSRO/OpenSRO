@@ -203,6 +203,8 @@ signal level_up(new_level: int, stat_points: int)
 signal exp_gained(gain: RewardNoticeNet.ExpGain)
 ## Round 716: retail 0x304E kind 1, the character's new gold total.
 signal gold_total(total: int, show: bool)
+## Round 860: 0x304E kind 4, the berserk count and the source it rose from.
+signal hwan_count(count: int, source: int)
 signal learn_skill_result(ok: bool, reason: String)
 ## The same answer with the skill it was for (round 639): the result names no
 ## skill, so the ids are queued as the requests go out and matched in order
@@ -296,6 +298,28 @@ var user_guilds := {}
 var own_guild_line := {}
 ## A character's guild line changed (uid; World3D re-draws its line).
 signal guild_line_changed(uid: int)
+## Round 860: the client's "at war" guild set (0xeedc04, READ: c:0x9dd8a0
+## tests it), guild id -> true -- the guild war mark's (GuildWarMark).
+var war_guilds := {}
+signal war_guilds_changed
+## 0x30EF {u8 op, u32 guild}: op 0 adds the guild to the set, 1 takes it out
+## (READ c:0x88a770; the server sends it to a guild's own members on its
+## first war's start and its last war's end, s:0x5c8800 / s:0x5c88d0).
+const OP_GUILD_WAR_STATE := 0x30EF
+
+## Round 860: a war flag as the spawn's guild block and 0x30FF carry it
+## (0 at war -> in the set, 1 -> out; READ c:0x9de046).
+func note_war_flag(guild_id: int, flag: int) -> void:
+	if guild_id == 0 or flag < 0:
+		return
+	var had := war_guilds.has(guild_id)
+	if flag == 0:
+		war_guilds[guild_id] = true
+	else:
+		war_guilds.erase(guild_id)
+	if had != war_guilds.has(guild_id):
+		print("NetClient: guild %d %s the at-war set (flag %d)" % [guild_id, "joins" if flag == 0 else "leaves", flag])
+		war_guilds_changed.emit()
 ## 0xB256: {ok, code, guild_id, target, nickname} (GuildPlateNet).
 signal guild_grant_result(d: Dictionary)
 ## Round 800: 0x3041 type 2 sub 2 / 0x3042 -- a job suit's 10 seconds starting
@@ -997,6 +1021,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	npc_roster.clear()
 	user_roster.clear()
 	user_guilds.clear()
+	war_guilds.clear()
 	character_states.clear()
 	_zone_arrivals.clear()
 	zone_departures.clear()
@@ -1097,6 +1122,7 @@ func disconnect_from_server() -> void:
 	npc_roster.clear()
 	user_roster.clear()
 	user_guilds.clear()
+	war_guilds.clear()
 	character_states.clear()
 	_zone_arrivals.clear()
 	zone_departures.clear()
@@ -1871,6 +1897,11 @@ func _init() -> void:
 		register_handler(op, func(data: PackedByteArray) -> void: guild_part2.handle(op, data))
 	# The block's vote tail follows each parse; a vote ended clears it.
 	guild_data.changed.connect(func() -> void: guild_part2.set_from_block(guild_data.votes))
+	# Round 860 (READ c:0x99ac71): a hostile list with any war puts this
+	# player's own guild in the "at war" set.
+	guild_data.hostile.changed.connect(func() -> void:
+		if guild_data.in_guild and guild_data.guild_id != 0 and guild_data.hostile.count() > 0:
+			note_war_flag(guild_data.guild_id, 0))
 	guild_part2.vote_changed.connect(func() -> void:
 		if guild_part2.vote_id == 0:
 			guild_data.votes = [])
@@ -2549,6 +2580,7 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	# Round 814: its guild line as the record carries it.
 	user_guilds[rec.uid] = {"guild_id": rec.guild_id, "guild_name": rec.guild_name, "nickname": rec.nickname, "name": rec.name,
 		"crest_rev": rec.crest_rev, "union_id": rec.union_id}
+	note_war_flag(rec.guild_id, rec.guild_war_flag)
 	# Round 838: its title as the record carries it (slot 27 -> FUN_009ca930).
 	titles.note_level(rec.uid, rec.hwan_level, false)
 	crest_cache.note_guild(rec.guild_name, rec.guild_id, rec.crest_rev)
@@ -2601,6 +2633,7 @@ func _guild_line_update(d: Dictionary) -> void:
 		"crest_rev": int(d.get("crest_rev", 0)), "union_id": int(d.get("union_id", 0))}
 	crest_cache.note_guild(String(d["guild_name"]), int(d["guild_id"]), int(d.get("crest_rev", 0)))
 	crest_cache.note_union(String(d["guild_name"]), int(d.get("union_id", 0)), int(d.get("union_crest_rev", 0)))
+	note_war_flag(int(d["guild_id"]), int(d.get("war_flag", -1)))
 	if own_character_id >= 0 and uid == (own_character_id & 0xffffffff):
 		own_guild_line = line
 	elif user_roster.has(uid):
@@ -3271,6 +3304,9 @@ func _dispatch(p: Packet) -> void:
 			var gold := RewardNoticeNet.decode_gold(p.data)
 			if not gold.is_empty():
 				gold_total.emit(gold[0], gold[1])
+			var hwan := RewardNoticeNet.decode_hwan(p.data)
+			if not hwan.is_empty():
+				hwan_count.emit(hwan[0], hwan[1])
 		GuildNet.OP_CREATE_RESULT:
 			var r := GuildNet.decode_result(p.data)
 			_keep_guild(r)
@@ -3294,6 +3330,9 @@ func _dispatch(p: Packet) -> void:
 			guild_level_result.emit(GuildNet.decode_level_result(p.data))
 		GuildPlateNet.OP_ENTITY_GUILD:
 			_guild_line_update(GuildPlateNet.decode_entity(p.data))
+		OP_GUILD_WAR_STATE:
+			if p.data.size() >= 5:
+				note_war_flag(p.data.decode_u32(1), 0 if p.data.decode_u8(0) == 0 else 1)
 		GuildPlateNet.OP_GUILD_LEFT:
 			if p.data.size() >= 4:
 				_guild_line_update({"uid": p.data.decode_u32(0), "guild_id": 0, "guild_name": "", "nickname": ""})

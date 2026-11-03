@@ -1893,6 +1893,14 @@ func main() {
 	manaTracker := mana.NewTracker()
 
 	hub := world.NewHub()
+	// Round 860: every change of a character's berserk count is told to its
+	// client as 0x304E kind 4 (retail's AddHwanCount), so a kill's rise flies
+	// as violet orbs out of the victim.
+	zerkTracker.SetNotify(session.HwanCountNotifier(hub))
+	if os.Getenv("OPENSRO_QA_HWAN_CERTAIN") != "" {
+		berserk.ForceGainForQA()
+		slog.Warn("OPENSRO_QA_HWAN_CERTAIN: every kill earns its berserk orbs (QA only)")
+	}
 	// The avatar inventory (round 789): the spawn record's avatar block, the
 	// stats, the world entry's integrity check and the expiry notices read it.
 	session.SetAvatarStore(avatars, inv, refItems, hub)

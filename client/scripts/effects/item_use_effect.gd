@@ -155,15 +155,50 @@ static func knows(effect: String) -> bool:
 ## The SndBegin then SndEnd paths of an effect id's ACT_S and ACT_L rows, in
 ## row order (IDecoSkill::FUN_00a4fe70, READ: both at the start).
 static func sounds_of(effect: String) -> PackedStringArray:
-	SkillAudio.warm()
 	var out := PackedStringArray()
+	for s in sound_rows(effect):
+		out.append(String(s["path"]))
+	return out
+
+## Round 860: the same sounds with each row's delay -- {path, delay_ms}. READ
+## (FUN_00a4fe70, c:0xa4fe7a): a row whose +0x10 (MovTypeSpeed's first
+## number) is 0 plays both at once at the body; otherwise both are queued on
+## the decoration with the body's position of that moment and played that many
+## ms later (CIDecoSkill::vslot_014, c:0xa50420). The fireworks' explosion
+## rows wait 1300 / 600 / 2000 ms (MEASURED).
+static func sound_rows(effect: String) -> Array:
+	SkillAudio.warm()
+	var out: Array = []
 	for row in SkillAudio._effects.get(effect, []):
 		var ani := int(row[0])
 		if ani != SkillAudio.ACT_S and ani != SkillAudio.ACT_L:
 			continue
+		var delay: int = int(row[4]) if (row as Array).size() > 4 else 0
 		for i in [2, 3]:
 			if String(row[i]) != "":
-				out.append(String(row[i]))
+				out.append({"path": String(row[i]), "delay_ms": delay})
+	return out
+
+## Plays sound_rows' sounds at `pos` (the point is taken now, as the queue
+## takes it), each after its delay. `alive`, when given, is asked at the
+## delay's end: a decoration freed by then plays nothing (READ: the queue is
+## the decoration's, emptied by its destructor c:0xa53ece). Returns the
+## paths, the delayed ones too.
+static func play_sounds(rows: Array, pos: Vector3, tree: SceneTree, label: String, alive: Callable = Callable()) -> PackedStringArray:
+	var out := PackedStringArray()
+	for r in rows:
+		var path := String(r["path"])
+		var delay := int(r["delay_ms"])
+		out.append(path)
+		if delay <= 0 or tree == null:
+			SoundTable.play_file(path, pos)
+			AudioLog.line("itemuse:%s:%s" % [label, path], "AUDIO item use %s: %s at %s" % [label, path, pos])
+			continue
+		tree.create_timer(delay / 1000.0, false).timeout.connect(func() -> void:
+			if not alive.is_null() and (not alive.is_valid() or not bool(alive.call())):
+				return
+			SoundTable.play_file(path, pos)
+			AudioLog.line("itemuse:%s:%s:%d" % [label, path, delay], "AUDIO item use %s: %s at %s after %d ms" % [label, path, pos, delay]))
 	return out
 
 ## Starts `effect` on `host` as FUN_00a54020(..., 0, 1, 0) does: the ACT_S and
@@ -180,8 +215,8 @@ static func play(effect: String, host: Node3D, what: String = "") -> Dictionary:
 	for fx in fxs:
 		if is_instance_valid(fx):
 			(fx as EfpEffect).release()
-	sounds = sounds_of(effect)
-	for p in sounds:
-		SoundTable.play_file(p, host.global_position if host.is_inside_tree() else null)
-		AudioLog.line("itemuse:%s:%s" % [effect, p], "AUDIO item use %s: %s at %s (%s)" % [effect, p, host.name, what])
+	if host.is_inside_tree():
+		sounds = play_sounds(sound_rows(effect), host.global_position, host.get_tree(), "%s (%s)" % [effect, what])
+	else:
+		sounds = sounds_of(effect)
 	return {"fx": fxs, "sounds": sounds}

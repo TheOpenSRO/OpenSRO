@@ -442,6 +442,32 @@ func set_hwan_count(charges: int) -> void:
 ## NOTHING (round 629's review). So a berserk display, once started, is ended
 ## only by its own drain or by reset_hwan_display (death, zone reset).
 func set_hwan(charges: int, starts: bool) -> void:
+	# Round 860 (HwanGauge has the READ): while violet orbs are on their way
+	# the display moves only as they arrive -- a count told another way (an
+	# attack result, the stats) is kept as the real count and shown later.
+	if not starts and not hwan_gauge.told(charges):
+		return
+	if starts:
+		hwan_gauge.told(charges)
+		hwan_gauge.reset()
+	_set_hwan_display(charges, starts)
+
+## Round 860: the original's count while violet orbs fly (HwanGauge).
+var hwan_gauge := HwanGauge.new()
+
+## 0x304E kind 4 (c:0x8a70d0): the new count and whether its source is a
+## body in view. Returns HwanGauge.on_count's answer (the orbs to fly).
+func hwan_count_told(count: int, source_in_view: bool) -> Dictionary:
+	var r := hwan_gauge.on_count(count, source_in_view)
+	if bool(r["show"]):
+		_set_hwan_display(hwan_gauge.display, false)
+	return r
+
+## A violet orb arrived (FUN_009d4ad0(1)).
+func hwan_orb_arrived() -> void:
+	_set_hwan_display(hwan_gauge.arrive(1), false)
+
+func _set_hwan_display(charges: int, starts: bool) -> void:
 	_hwan_known = true
 	_hwan_charges = clampi(charges, 0, BERSERK_ORBS)
 	if starts:

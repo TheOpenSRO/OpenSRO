@@ -65,3 +65,22 @@ func tellGold(ctx context.Context, chars character.Store, hub *world.Hub, charac
 		slog.Debug("gold share: send failed", "character_id", characterID, "err", err)
 	}
 }
+
+// HwanCountNotifier is the berserk tracker's announcer (round 860,
+// berserk.Tracker.SetNotify): each change of a character's count goes to that
+// character's own client as 0x304E kind 4 {count, source} -- retail's
+// AddHwanCount (s:0x4e4d00 -> GObjPC::FUN_004e3fb0, READ), the player alone.
+func HwanCountNotifier(hub *world.Hub) func(characterID int64, count int, source uint32) {
+	return func(characterID int64, count int, source uint32) {
+		e, ok := entityOf(hub, characterID)
+		if !ok || e.Session == nil {
+			return
+		}
+		if count < 0 {
+			count = 0
+		}
+		if err := e.Session.Send(&proto.Packet{Opcode: charmsg.OpCharInfo, Data: charmsg.EncodeHwan(uint8(count), source)}); err != nil {
+			slog.Debug("hwan count: send failed", "character_id", characterID, "err", err)
+		}
+	}
+}
