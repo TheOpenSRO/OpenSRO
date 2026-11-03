@@ -405,6 +405,7 @@ func distributeKill(ctx context.Context, d combatDeps, killer int64, m combat.Mo
 			continue
 		}
 		if p.levelUp != nil {
+			announceLevelUp(d.hub, id)
 			e.Session.Send(&proto.Packet{Opcode: OpLevelUp, Data: p.levelUp.Encode()})
 		}
 		sendExpGainTo(e.Session, expGainFor(m, p))

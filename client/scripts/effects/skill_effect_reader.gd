@@ -166,6 +166,11 @@ const A_GROUP := 6
 const A_READY := 7
 const A_WAIT := 8
 const A_SHOT := 9
+## Round 859 (READ, the loader c:0x00a9c470's last two tokens): column 25
+## ("공격스킬여부", is an attack) at the record's +0xf9 and column 26 ("피
+## 나올래?", blood?) at +0xfa, each stored as `!= 0`. FUN_00a4bdd0 hands +0xfa
+## to the hit's apply as its blood argument (SystemEffects.blood_plays).
+const A_BLOOD := 26
 
 const ANI_TYPES := {
 	"ANI_POSE": 60, "ANI_STAND1": 0, "ANI_STAND2": 122, "ANI_STAND3": 61, "ANI_STAND4": 81,
@@ -247,6 +252,10 @@ static func _aniset_row(cols: PackedStringArray, section: String, sets: Dictiona
 		var defense := cols[A_DEFENSE_EFP + shift].strip_edges()
 		if defense.to_lower().ends_with(".efp"):
 			row["defense"] = defense
+	if cols.size() > A_BLOOD + shift:
+		var blood := cols[A_BLOOD + shift].strip_edges()
+		if blood.is_valid_int():
+			row["blood"] = int(blood) != 0
 	(row["ready"] as Array).append_array(_ani_list(cols[A_READY + shift]))
 	(row["wait"] as Array).append_array(_ani_list(cols[A_WAIT + shift]))
 	(row["shot"] as Array).append_array(_ani_list(cols[A_SHOT + shift]))
@@ -272,6 +281,12 @@ static func aniset_for(sets: Dictionary, basic_code: String) -> Dictionary:
 	if us > 0 and code.substr(us + 1).is_valid_int():
 		code = code.substr(0, us)
 	return sets.get(code, {})
+
+## Round 859: whether a skill's hit draws its target's blood (the row's
+## column 26; READ, FUN_00a4bdd0: 1 when the skill has no row). OURS: a row
+## whose column 26 is not a number (118 rows of the older layout) asks for it.
+static func blood_for(sets: Dictionary, basic_code: String) -> bool:
+	return bool(aniset_for(sets, basic_code).get("blood", true))
 
 ## The DefenseEfp a body holding buffs of `basic_codes` shows when it is hit
 ## (round 640): the one of the highest Priority among the rows that name one,

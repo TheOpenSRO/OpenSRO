@@ -810,6 +810,7 @@ func (s *statusRuntime) settleKill(ctx context.Context, d combatDeps, k statusKi
 	}
 	s.tracef("status: monster %d killed by a tick, credited to character %d (exp %d, gold %d)", k.monster.ID, k.killer, result.ExpGained, gold)
 	if levelUp != nil {
+		announceLevelUp(d.hub, k.killer)
 		sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: levelUp.Encode()})
 	}
 	if result.expGain != nil {

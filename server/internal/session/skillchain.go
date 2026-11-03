@@ -278,6 +278,7 @@ func playLink(sess *gateway.Session, d combatDeps, casterID, target int64, link 
 	sendAboutOwner(view, casterID, OpSkillCast, msg.Encode())
 	if sess != nil {
 		for _, lu := range levelUps {
+			announceLevelUp(d.hub, casterID)
 			_ = sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()})
 		}
 		for _, k := range kills {

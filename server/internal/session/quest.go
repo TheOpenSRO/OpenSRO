@@ -1046,6 +1046,7 @@ func (rt *questRuntime) payExp(ctx context.Context, sess *gateway.Session, e wor
 	unlock()
 	g := charmsg.ExpGain{Exp: exp, SkillExp: sp}
 	if lu != nil {
+		announceLevelUp(rt.deps.Hub, e.CharacterID)
 		sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()})
 		g.LevelUp = true
 		g.StatPoints = uint16(lu.StatPoints)

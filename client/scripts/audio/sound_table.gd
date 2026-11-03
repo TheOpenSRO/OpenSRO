@@ -281,6 +281,10 @@ class CharacterInfo:
 	var die_bsr := ""
 	var die_effect := ""
 	var dead_effect := DEAD_EFFECT_NONE
+	## Round 859: the record's +0x1c, `hiteffect\<BloodType>.efp` (column 9,
+	## READ the parser FUN_00a9ae80; "" for none) -- the blood a hit draws on
+	## this body (SystemEffects.blood_for).
+	var blood := ""
 
 const RIDE_NONE := 0
 const RIDE_FIXED := 1
@@ -307,6 +311,7 @@ static func character_record(fields: PackedStringArray) -> CharacterInfo:
 	r.die_bsr = _path_cell(cell.call(5))
 	r.die_effect = _path_cell(cell.call(6))
 	r.dead_effect = DEAD_EFFECT_FLASH if String(cell.call(10)) == "DEFFECT_FLASH" else DEAD_EFFECT_NONE
+	r.blood = SystemEffects.blood_path_of(String(cell.call(9)))
 	return r
 
 static func _path_cell(v: String) -> String:

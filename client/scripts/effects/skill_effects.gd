@@ -1425,6 +1425,23 @@ static func play_named(effect_id: String, ani_type: int, host: Node3D, owner_key
 			", colour %s -> %s every %d ms" % [mat["c1"], mat["c2"], mat["ms"]] if not mat.is_empty() else ""])
 	return started
 
+## Round 859 (lane B): a system decoration started with its end flag set
+## (READ, FUN_00a53850's fifth argument: the level-up c:0x8a7020, the pet's
+## level-up and summon c:0x9c5d20 pass 1): its ACT_S rows, then its ACT_L
+## rows, play on `host`, and the decoration ends at once (c:0x00a53c03 ->
+## FUN_00a53120), so a kept (AT_LOOP) row is let go there and plays its last
+## cycle out, faded over its row's Fade (_end_kept). Returns the effects.
+static func play_system(effect_id: String, host: Node3D) -> Array:
+	var started := play_named(effect_id, SkillAudio.ACT_S, host)
+	started.append_array(play_named(effect_id, SkillAudio.ACT_L, host))
+	var kept: Array = []
+	for fx in started:
+		if is_instance_valid(fx) and (fx as EfpEffect).loop:
+			kept.append(fx)
+	if not kept.is_empty():
+		_end_kept(kept)
+	return started
+
 ## Whether buff `token`'s aura is live on `host`: held, of `skill_id`, with at
 ## least one of its effects still drawing under that body (round 646).
 static func has_aura_on(owner_key: String, token: int, skill_id: int, host: Node3D) -> bool:
