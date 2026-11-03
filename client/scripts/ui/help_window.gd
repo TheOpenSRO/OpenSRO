@@ -75,7 +75,12 @@ func setup(builder: UiBuilder, docs: Array, is_gm: bool) -> bool:
 		_build_fallback_frame()
 	else:
 		_frame.centre()
-	_frame.closed.connect(func() -> void: hide())
+	# The authored frame's X (CIFMainFrame's close button -> vslot_043,
+	# CIFGameGuide 0x765680 -> 0x79b140(0)) closes the whole window: the frame
+	# has already hidden itself, and the Help root must follow, or the next
+	# open() would show an empty root over a hidden frame (round 858: "the
+	# help menu will pop up once and then you can't bring it up again").
+	_frame.closed.connect(close)
 
 	_build_body()
 	_populate_list()
@@ -109,10 +114,10 @@ func _build_fallback_frame() -> void:
 	close_def.name = "Close"
 	close_def.type = "CIFCloseButton"
 	close_def.rect = Rect2i(int(_frame.size.x) - 26, 10, 16, 16)
-	var close := _builder.build_control(close_def) as BaseButton if _builder != null else null
-	if close != null:
-		close.pressed.connect(func() -> void: hide())
-		_frame.add_child(close)
+	var close_btn := _builder.build_control(close_def) as BaseButton if _builder != null else null
+	if close_btn != null:
+		close_btn.pressed.connect(close)
+		_frame.add_child(close_btn)
 	add_child(_frame)
 	_frame.centre()
 
@@ -161,6 +166,7 @@ func _build_body() -> void:
 			inside.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			frame.add_child(inside)
 			UiBuilder.settle_authored_rects(inside)
+		_build_tabs(frame, menu.position)
 	_list = Control.new()
 	_list.name = "DocList"
 	_list.position = list_rect.position
@@ -182,6 +188,99 @@ func _build_body() -> void:
 		_content.setup(_builder.font_at(0) if _builder != null else null, UiBuilder.FONT_SIZES[0], Color.WHITE)
 	_content.mouse_filter = Control.MOUSE_FILTER_STOP
 	_link_scroll()
+
+## CIFGGMenu's three tabs, READ from its Create (CIFGGMenu::vslot_010,
+## c:0x7685a0): after loading ifggmenu.txt (0x7685d9) it makes three children
+## with the window factory 0xba20b0 (0x7686c9), class 0xee96c0
+## (CIFSelectableArea, the same tab class as the stall window's), IDs 0x64 +
+## i, at (i * 62 + 14, 12) 60 x 24 relative to the menu (0x76867a..0x7686c1:
+## x = (i * 31) * 2 + 0xe, y 0xc, w 0x3c, h 0x18); font 0 (0xba5460(0));
+## art `com_tab_on.ddj` / `com_tab_off.ddj` (0x768767 / 0x76878c, 0x64ce30);
+## tab 0 selected (0x64cc30(1) at 0x7687c8, the others 0); captions
+## UIIT_STT_GAMEGUIDE, UIIT_STT_GAMEEVENTGUIDE, UIIT_STT_QUESTGUIDE1
+## (0x7687cd, 0x768813, 0x76884c; "Help", "Guide", "Quest" in the archive's
+## English). A press on another tab (0x7688b0) moves the selection and
+## refills the menu's list for it (0x768290). Without these the menu's top
+## was see-through above its list (round 858: the user's "small box").
+## The caption's colour and centring are the bag tabs' (INFERRED, white,
+## centred both ways). What the lists hold is OURS: this project's documents
+## under the first tab; the second and third tabs' lists (the original's game
+## guide data, 0x767730 / 0x7678d0) are empty here (OPEN).
+const TAB_COUNT := 3
+const TAB_ORIGIN := Vector2(14, 12)
+const TAB_PITCH := 62.0
+const TAB_SIZE := Vector2(60, 24)
+const TAB_ON_DDJ := "interface\\ifcommon\\com_tab_on.ddj"
+const TAB_OFF_DDJ := "interface\\ifcommon\\com_tab_off.ddj"
+const TAB_KEYS := ["UIIT_STT_GAMEGUIDE", "UIIT_STT_GAMEEVENTGUIDE", "UIIT_STT_QUESTGUIDE1"]
+const TAB_FALLBACK := ["Help", "Guide", "Quest"]
+const TABS_NODE := "GGMenuTabs"
+
+var _tabs: Control
+var _tab := 0
+
+static func tab_rect(i: int) -> Rect2:
+	return Rect2(TAB_ORIGIN + Vector2(TAB_PITCH * i, 0), TAB_SIZE)
+
+func _build_tabs(frame: Control, origin: Vector2) -> void:
+	_tabs = Control.new()
+	_tabs.name = TABS_NODE
+	_tabs.position = origin
+	_tabs.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(_tabs)
+	for i in TAB_COUNT:
+		var tab := TextureButton.new()
+		tab.name = "Tab%d" % i
+		tab.set_meta("tex_on", _builder.load_texture(TAB_ON_DDJ) if _builder != null else null)
+		tab.set_meta("tex_off", _builder.load_texture(TAB_OFF_DDJ) if _builder != null else null)
+		tab.ignore_texture_size = true
+		tab.stretch_mode = TextureButton.STRETCH_SCALE
+		tab.focus_mode = Control.FOCUS_NONE
+		# CIFSelectableArea acts on the press (0x64cb80, WM_LBUTTONDOWN).
+		tab.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+		var r := tab_rect(i)
+		tab.position = r.position
+		tab.size = r.size
+		tab.custom_minimum_size = r.size
+		tab.pressed.connect(select_tab.bind(i))
+		var caption := Label.new()
+		caption.name = "Text"
+		var key: String = TAB_KEYS[i]
+		var text := _builder.resolve_text(key) if _builder != null else key
+		caption.text = TAB_FALLBACK[i] if text == "" or text == key else text
+		caption.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if _builder != null and _builder.font_at(0) != null:
+			caption.add_theme_font_override("font", _builder.font_at(0))
+		caption.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		tab.add_child(caption)
+		_tabs.add_child(tab)
+	_paint_tabs()
+
+func _paint_tabs() -> void:
+	if _tabs == null:
+		return
+	for i in _tabs.get_child_count():
+		var tab := _tabs.get_child(i) as TextureButton
+		if tab != null:
+			tab.texture_normal = tab.get_meta("tex_on" if i == _tab else "tex_off", null)
+
+## Selects a menu tab (0x7688b0): its art on, the others off, the list
+## refilled. Only the first tab lists documents here (see TAB_KEYS).
+func select_tab(i: int) -> void:
+	if i < 0 or i >= TAB_COUNT:
+		return
+	var changed := i != _tab
+	_tab = i
+	_paint_tabs()
+	if changed and _list != null:
+		_populate_list()
+
+## The selected menu tab.
+func selected_tab() -> int:
+	return _tab
 
 ## The record's CIFVerticalScroll, drawn as the quest detail's (QuestHud).
 func _link_scroll() -> void:
@@ -206,6 +305,8 @@ func _populate_list() -> void:
 	for c in _list.get_children():
 		_list.remove_child(c)
 		c.queue_free()
+	if _tab != 0:
+		return
 	for i in _docs.size():
 		var row := TextureButton.new()
 		row.name = "Doc%d" % i
@@ -285,10 +386,62 @@ static func _strip_gm_sections(text: String) -> String:
 		text = text.substr(0, start) + text.substr(end + GM_SECTION_CLOSE.length())
 	return text
 
+## Opens the window (the H key, System > Help, the console's /help). READ
+## (c:0x79f690 -> 0x79b140(1)): the original makes GDR_GAMEGUIDE afresh on
+## every open (0x8b5580 builds the "GameGuide" registry section, then the
+## window is shown and handed to the helper 0x79a7e0: snd_window_open) and
+## destroys it on every close (0x79b140(0): hidden, the helper, then
+## 0x8b59f0). So each open starts as a new window does: the first tab, the
+## first document at its top, the window at its place (here centred, OURS).
+## This one is built once and hidden instead; an open of a shown window only
+## raises it.
 func open() -> void:
+	var was_open := is_open()
 	show()
 	if _frame != null:
+		_frame.show()
+		if not was_open:
+			_fresh()
 		_frame.move_to_front()
+	if not was_open:
+		_sound(true)
+
+## Closes the window: the X (vslot_043, CIFGameGuide 0x765680 -> 0x79b140(0)),
+## the H key (0x79f690) and Escape (0x79d620, the guide after the System
+## window, c:0x79d744) all end here. 0x79b140(0) hides it and runs the helper
+## (snd_window_close).
+func close() -> void:
+	# The root's flag, not is_open(): the X has hidden the frame already.
+	var was_open := visible
+	if _frame != null:
+		_frame.hide()
+	hide()
+	if was_open:
+		_sound(false)
+
+## Whether the window is on screen: the root and its frame both shown.
+func is_open() -> bool:
+	return visible and (_frame == null or _frame.visible)
+
+## The H key (0x79f690): shown -> closed, else opened.
+func toggle() -> void:
+	if is_open():
+		close()
+	else:
+		open()
+
+## The state a newly made window starts in (see open): the first tab, the
+## first document, scrolled to the top, centred.
+func _fresh() -> void:
+	select_tab(0)
+	if not _docs.is_empty():
+		_show_doc(0)
+	if _frame != null:
+		_frame.centre()
+
+func _sound(shown: bool) -> void:
+	var parent := get_parent() as CanvasItem
+	UiSounds.window_toggled(shown, parent == null or parent.is_visible_in_tree(), "help window")
 
 ## Whether the authored ifgameguide frame built (false = the plain fallback).
 func has_authored_frame() -> bool:

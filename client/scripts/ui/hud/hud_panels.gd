@@ -5446,9 +5446,9 @@ func close_topmost() -> bool:
 ## 0x79d785..0x79d7c2 and then 0x79ab80) the list has an interface mode
 ## (+0x50c, 0x777e70), **GDR_SYSTEM** (ID 0x62, hidden at 0x79d657..0x79d698),
 ## a +0x748 list gated on the item mall (0xa7), an interface child with id 38
-## (0x7993f0) and GDR_GAMEGUIDE (help, 0x79d744). This client builds none of
-## those but the System window, and World3D's help window is not closed by
-## Escape here (open). After the map, the list goes on (read, 0x79d7d9..
+## (0x7993f0) and GDR_GAMEGUIDE (help, 0x79d744). This client builds the
+## System window and the help window (World3D's HelpWindow, `help_window`,
+## closed here since round 858) of those. After the map, the list goes on (read, 0x79d7d9..
 ## 0x79d99b): GDR_SKILLWITHDRAWAL (0x2b) and the item mall (0xa7); then, when
 ## the interface's +0x7b4 flag is set, GDR_STORAGEROOM (0x13) is closed with
 ## 0x7058c0 run on GDR_NPCWINDOW (0x79d837..0x79d85d); the guild storage
@@ -5472,6 +5472,10 @@ func close_topmost() -> bool:
 ## _wire_close_sound); the exchange's is not traced, so it is silent. The
 ## main popup is hidden and handed to the helper (0x79db29). With nothing
 ## open, the System window is shown and handed to the helper: the open.
+## World3D's Help window (HelpWindow), closed by Escape after the System
+## window (round 858). Untyped: HudPanels is built without World3D in tests.
+var help_window: Control = null
+
 func _escape_close() -> bool:
 	# Ours: the Option window takes Escape first -- its own key handler
 	# (0x5f6470, character 0x1b) closes it -- and it closes silently.
@@ -5482,6 +5486,12 @@ func _escape_close() -> bool:
 	if system != null and system.visible:
 		system.hide()
 		UiSounds.window_toggled(false, _interface_shown(), "Escape: system")
+		return true
+	# Round 858: GDR_GAMEGUIDE (ID 0x20) after the System window and before
+	# the world map (READ c:0x79d744..0x79d77f: shown -> its vslot_043,
+	# 0x765680 -> 0x79b140(0), which hides it and sounds the close).
+	if help_window != null and is_instance_valid(help_window) and bool(help_window.call("is_open")):
+		help_window.call("close")
 		return true
 	if world_map != null and is_instance_valid(world_map) and world_map.visible:
 		world_map.hide()

@@ -26832,6 +26832,10 @@ func _setup_console_and_help() -> void:
 	_help_window.name = "HelpWindow"
 	ui_control.add_child(_help_window)
 	_help_window.setup(_ui_builder, _help_documents(), _is_gm)
+	# Escape closes it in the original's order (0x79d620: after the System
+	# window, before the world map; round 858).
+	if _hud_panels != null:
+		_hud_panels.help_window = _help_window
 
 	_console = Console.new(_console_host())
 	NetClient.gm_command_result.connect(_on_gm_command_result)
@@ -34913,11 +34917,11 @@ func _run_key_action(action: String, arg: int) -> String:
 		"help":
 			if _help_window == null:
 				return "no help window"
-			if _help_window.visible:
-				_help_window.hide()
-				return "help closed"
-			_help_window.open()
-			return "help opened"
+			# 0x79f690 (READ): shown -> closed, else opened. Round 858: asked of
+			# the window itself (root and frame), not the root's flag, which the
+			# frame's X used to leave out of step.
+			_help_window.toggle()
+			return "help opened" if _help_window.is_open() else "help closed"
 		"mouse_slot":
 			if _hud_underbar == null:
 				return "no hotbar"
