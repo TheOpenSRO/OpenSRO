@@ -7483,6 +7483,128 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-first round: the ride camels and the mule were white blobs -- their models are not in this archive; drawn from the trade twins (OURS)
+
+The user: "the camel mounts are still white blobs" (after v0.1.627, round 860 lane H's horses).
+Labels: READ (`c:` sro_client.exe; `/var/tmp/decomp_client` and an objdump of the exe on the box),
+MEASURED, INFERRED, OURS, OPEN. Base `ba51c71a` (v0.1.627). Client-only; no server change.
+
+- **What was drawn (MEASURED).** Not round 860's type-6 refusal: the model itself is missing.
+  COS_C_CAMEL1..3 (2194-2196) and COS_C_DONKEY (2190, "Mule") name `cos\c_camel1..3.bsr` and
+  `cos\c_donkey.bsr` (characterdata column 52). The box's Data.pk2 has no such file. It has only
+  the trade transports' `Res\COS\t_camel1..3.bsr` (+ `t_camel1_2011`) and `t_donkey.bsr`
+  (+ `_2011`), their meshes under `Prim\Mesh\COS\` and `...\cart\`, and their skeletons. Media.pk2
+  has no `icon\cos\cos_c_camel1..3.ddj` / `cos_c_donkey.ddj` either. So `_cos_build_body` got no
+  model and hung its untextured `CapsuleMesh` (state line `draw [@MeshInstance3D:CapsuleMesh{none}]`).
+- **In service? (MEASURED, the box's Media.pk2 and server DB).** Yes. The rows and their scrolls
+  (ITEM_COS_C_DONKEY 2136, ITEM_COS_C_CAMEL1..3 2140-2142) are in characterdata/itemdata, which
+  hold only Service-1 rows (33,915 and 27,859 rows, all 1). The server's `_RefObjCommon` has them
+  at Service 1 too. **But nothing in the original's data hands the scrolls out.** refshopgoods,
+  refpackageitem and refscrapofpackageitem name only PACKAGE_ITEM_COS_C_HORSE1..3 (the five
+  stables). No row of the server's drop tables (`_RefDropItemAssign`, `_RefDropItemGroup`,
+  `_RefMonster_AssignedItemDrop`) names 2136 or 2140-2142. So this version's original never puts a
+  ride camel or mule in the world (INFERRED: rows ahead of their models). OpenSRO hands them out
+  only through its own Test Items NPC (round 783, OURS: the "Horses" tab's
+  `^ITEM_COS_C_(DONKEY|HORSE[0-9]|CAMEL[0-9]|DHORSE[0-9])$`) and the GM `/give`. The rows are in
+  service, so the server is unchanged; whether the test NPC should keep listing them is the user's
+  call (OPEN below).
+- **What the original does with a missing model (READ).**
+  - The pick: a COS takes its row's model, or its Org row's when the row has none
+    (CICCos::vslot_025 c:0x9c60b0), and loads it with GlobalDataManager::FUN_009c4ec0. That draws
+    `res\mob\china\mangnyang.bsr` (c:0xde1f90) only when no model came back; an empty path loads
+    nothing (CCObjAnimation::FUN_00a5b4b0). COS_C_CAMEL1's Org is `xxx`, so there is no Org model.
+  - A named `.bsr` that is missing goes through Map::FUN_009fe760's `r` case, then
+    CResourceMgr::vslot_004 (c:0xbedc40), then ResourceMgr::FUN_00bedba0. It is looked up in the
+    cache (FUN_00beacc0), then loaded (FUN_00bed8d0). When the file does not open, the loader
+    returns 0, and FUN_00bedba0 asserts `"%s Loading Failed."` (ResourceMgr.h line 0x7d) for every
+    type but 5 (the item type returns 0 quietly).
+  - The assert is fatal in this build. Without a debugger its flags are 0x501 (0x52a in the
+    `DAT_00eecc14` mode); both are set by FUN_0049e450 at c:0x8328c0. Assert_FileLineExpression
+    (c:0x49e490) then calls its logger at c:0x830da0, which logs and then executes
+    `mov byte [0], 0` (c:0x830dda): an access violation that goes to the crash handler (c:0x832110).
+    Had it returned, bits 2 and 4 clear take `ExitProcess(0)` (c:0x49e7b3). Every assert returns
+    AL = 0 (c:0x49e7bb), and the caller's `int3` follows. 0x52a throws a C++ exception at the top.
+  - No step tries another name: no `_2011` variant, no `Org` path for a non-empty cell, no other
+    directory, no trade model. The original client, given a ride camel from this archive, stops.
+  - OPEN: the very first load of a name runs through a callback FUN_009ef120 reads at run time,
+    `[0x1103d87+0x1c]`. Its object sits in .bss and is referenced only by the three `mov ecx,
+    0x1103d87` in FUN_009ef0c0/FUN_009ef2f0, so the setter was not found. Map::FUN_009fe760 is the
+    builder for every later instance (round 756's chain).
+- **Census (MEASURED, every characterdata row, the client's own pick: column 52 piece 0, else the
+  Org row's, `res\` prefixed, against the 73,139-file Data.pk2 listing).**
+
+  | kind | model present | model MISSING | `.cpd` present | no model |
+  |---|---|---|---|---|
+  | COS | 5,166 | **4** (COS_C_CAMEL1..3, COS_C_DONKEY) | 2 | 2,100 (guild soldiers, own branch) |
+  | monster | 1,999 | 0 | 5 | 5,600 (thief/hunter list) |
+  | NPC | 342 | 0 | 1 | 0 |
+  | siege | 2,526 | 0 | 0 | 0 |
+  | structure | 46 | **25** | 0 | 0 |
+  | player | 52 | 0 | 0 | 0 |
+
+  The 25 structures are guild fortress pieces whose paths this archive does not hold:
+  - `STRUCTURE_BIG_GATE_HT_01..04` name `Bldg\guild\ht\big_gate_ht.bsr`; the archive has
+    `Bldg\guild\hotang\big_gate_ht.bsr`.
+  - `STRUCTURE_SMALL_GATE_BJ_01..04` and `STRUCTURE_FORT_STONE_BJ_01..04` have no file.
+  - `STRUCTURE_SMALL_{GUARD,LIGHTNING,BLAZE,FREEZING,DARK}_TOWER_*` (13 rows) have no file.
+
+  They are not COS or monsters and spawn only in a fortress war (not built). Round 860 left
+  skeleton-less structures as capsules anyway (its OPEN 1), so they stay OPEN. Round 853's "18
+  in-service rows" counted the `.cpd` compounds and guild rows with these.
+- **Built (OURS, labelled in code).**
+  - `CosModelFallback` (`client/scripts/world/cos_model_fallback.gd`) picks the model to draw: the
+    row's own when the archive holds it. Else the same name's trade twin (`c_` -> `t_`:
+    `cos\c_camel1.bsr` -> `cos\t_camel1.bsr`, `c_donkey` -> `t_donkey`). Else the original's
+    stand-in for a body with no model, the Mangyang. Else nothing at all.
+  - `World3D._cos_model_of(row)` decides once per named model and logs once what it picked, e.g.
+    `COS COS_C_CAMEL1: cos\c_camel1.bsr is not in the archive -- drawn from its trade twin
+    cos\t_camel1.bsr (OURS, round 861)`. `_cos_build_body` and `MallModels.build_cos` both use it.
+  - **`_cos_build_body` no longer hangs a capsule on any COS.** A body that cannot be drawn keeps its
+    collider and plates, draws nothing, and says so once per row (`push_warning`).
+  - The COS status and pet info icons take the same twin (`HudCos._icon_of`:
+    `icon\cos\cos_c_camel1.ddj` -> `cos_t_camel1.ddj`).
+  - Each trade camel names its own material, so the three ride camels differ: `t_camel2.bsr` ->
+    `prim\mtrl\cos\cart\t_camel2.bmt`, `t_camel3` -> `t_camel3.bmt`, all on `t_camel1.bsk`
+    (MEASURED). They carry the `saddle` the rider is seated on (round 809).
+  - The original's difference, to report: retail of this version would not draw these rides at
+    all; it would stop on the assert.
+- **QA (box, `/var/tmp/r861/run861.sh`, lane server 17400 with the navmesh, real input).** The user
+  (Qa861, level 110) right-clicks each scroll in the bag (2140, 2141, 2142, 2136), rides at once,
+  and presses Home (the ride is deleted). Rendered own view with a headless observer (Watch861),
+  and the reverse. Base = ba51c71a. From the `QA COS state` lines (`_qa_draw_census`):
+
+  | | base, own | head, own | base, observer | head, observer |
+  |---|---|---|---|---|
+  | COS_C_CAMEL1 | `CapsuleMesh{none}`, clip - | `t_camel1_part1`, `_part2`: `ArrayMesh/skin{ShaderMaterial albedo_texture 512x256}`, clip `stand`, box 15.7 x 27.5 x 35.1 | capsule | the same two, `stand` |
+  | COS_C_CAMEL2 / 3 | capsule | the same meshes, `t_camel2` / `t_camel3` materials, `stand` | capsule | the same |
+  | COS_C_DONKEY | capsule | `trade_cart_donkey_part1/2`, skinned 512x256, `stand01`, box 12.2 x 19.0 x 32.2, plate 26.1 | capsule | the same |
+  | ridden | rider over a capsule | `riders { 2: <uid> }`, speeds 70 / 75 / 80 / 70 (the rows' run) | - | - |
+
+  No `SCRIPT ERROR` in any run. The COS status icon shows the camel's head (frame only).
+  - Frames for a human: `/var/tmp/r861/keep/own_before_after.png` (camel1, camel2, camel3, mule
+    ridden; base row over head) and `obs_before_after.png` (the observer's).
+  - Logs: `keep/{h,b}_{own,obs}.godot.log`, `.second.log`, `.server.log`.
+- **Test.** `world/cos_model_fallback861_test.gd` (synthetic data):
+  - the twin rule, case kept, icons;
+  - the resolve order (own, twin, Mangyang, none);
+  - `_cos_model_of` and `_cos_build_body` on an archive holding only `t_synth.bsr`: a skinned body
+    from the twin, no capsule;
+  - a row with nothing to draw: no mesh, no capsule, plate kept.
+
+  Negative: with base's `World3D.gd` it fails 5 checks.
+- **Perf gate skipped:** only the model choice changed, plus the removal of a capsule no COS in the
+  gate's views reaches (they hold no COS). The resolver is one archive lookup per distinct COS model
+  per session.
+- **Gates:** `remote_godot.sh check` ALL LOAD (1137 scripts, 9 scenes); `remote_godot.sh tests`
+  "ran 431 suite(s), 0 failing" (RENDER_DIR /var/tmp/opensro-r861).
+- **OPEN.**
+  1. The setter of FUN_009ef120's first-load callback (`[0x1103d87+0x1c]`).
+  2. Whether the Test Items NPC should keep listing the ride camel and mule scrolls, which the
+     original's data never hands out (the user's call; it is OURS either way).
+  3. The 25 fortress structure rows with missing paths, among them the `ht` -> `hotang` directory.
+  4. The 2,100 guild soldiers' own model branch (CICCos, TypeID4 5) is not built; they are not
+     spawned.
+
 ## Eight-hundred-and-sixtieth round, lane T: a long line in an edit, drawn where the original draws it
 
 The user asked for round 859 lane C's remaining open text item: "the original's long-text rule in

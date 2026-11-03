@@ -39343,9 +39343,33 @@ func _cos_summon_fx(uid: int) -> void:
 	_cos_summon_pending.erase(uid)
 	_play_system_fx(SystemEffects.PET_APPEAR, body, "COS %d summoned" % uid)
 
+## Round 861: the model a COS row is drawn from (CosModelFallback): its own
+## when the archive holds it, else its trade twin (OURS), else the original's
+## Mangyang stand-in, else "" (nothing drawn). Decided once per named model;
+## the world says once what it picked when it is not the row's own.
+var _cos_model_picked := {}
+## Row codes whose body could not be drawn, said once (round 861).
+var _cos_undrawn_logged := {}
+func _cos_model_of(row: CosTable.Row) -> String:
+	if row == null or row.model == "":
+		return ""
+	if _cos_model_picked.has(row.model):
+		return String(_cos_model_picked[row.model])
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		return row.model
+	var has := func(p: String) -> bool:
+		return ObjectLoader.find_file(archive, p) != null or ObjectLoader.find_file(archive, "res\\" + p) != null
+	var picked := CosModelFallback.resolve(row.model, has)
+	_cos_model_picked[row.model] = String(picked.path)
+	var line := CosModelFallback.describe(row.code, row.model, picked)
+	if line != "":
+		print("World3D: " + line)
+	return String(picked.path)
+
 func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	var row := _cos_table.row(rec.ref_id) if _cos_table != null else null
-	var model := row.model if row != null else ""
+	var model := _cos_model_of(row)
 	# Round 809: its material slot, by the COS rule (NpcTableReader.texture_slot).
 	if model != "":
 		_monster_model_path("", "")
@@ -39377,14 +39401,13 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 			body.add_child(skel)
 			_animate(assembled)
 			_body_fx_attach(skel, assembled.parsed, model)
-	if skel == null:
-		var mesh := MeshInstance3D.new()
-		var capsule := CapsuleMesh.new()
-		capsule.radius = 0.4 * PLAYER_SCALE_RATIO
-		capsule.height = 1.0 * PLAYER_SCALE_RATIO
-		mesh.mesh = capsule
-		mesh.position.y = 0.5 * PLAYER_SCALE_RATIO
-		body.add_child(mesh)
+	# Round 861: no white capsule for a COS (it had no material and drew
+	# white; the user's "white blobs"). A body that cannot be drawn keeps its
+	# collider and plates and draws nothing; the world says so once per row.
+	if skel == null and row != null and not _cos_undrawn_logged.has(row.code):
+		_cos_undrawn_logged[row.code] = true
+		push_warning("World3D: COS %s (%s): no model could be drawn (%s) -- nothing drawn" % [
+			row.code, row.model, model if model != "" else "no file"])
 	body.set_meta("cos_uid", rec.uid)
 	body.set_meta("cos_rec", rec)
 	body.set_meta("cos_height", height)
@@ -39416,7 +39439,7 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 		_cos_start_leg(rec.uid, Vector3(d.x, d.y, d.z), rec.run if rec.run_flag != 0 else rec.walk)
 	print("World3D: COS %d %s (%s, TypeID4 %d) at (%.0f, %.0f) owner %s -- %s" % [rec.uid,
 		_cos_display_name(rec), row.code if row != null else "?", rec.kind, at.x, at.z,
-		rec.owner_name if rec.owner_name != "" else "-", "model " + model if skel != null else "no model: a capsule"])
+		rec.owner_name if rec.owner_name != "" else "-", "model " + model if skel != null else "no model: nothing drawn"])
 
 ## The two lines over a COS: its name in pale yellow, the owner's line above
 ## it in the owner's name colour (white when the owner is out of view).
