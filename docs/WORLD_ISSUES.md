@@ -7483,6 +7483,82 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixtieth round, lane S: return scrolls hold you in place again, as the original's server does
+
+The user: "new bug that was reintroduced and needs be fixed before anything with its own release.
+Return scrolls and similar items don't lock you from moving and they should". Labels as before.
+
+**What the original does (READ, SR_GameServer.exe; `server/internal/session/scrollhold.go` and
+`docs/protocol/return_scroll_cast.md` section 4, "The hold", have every address).** The PC's
+message pump `GObjPC::FUN_004a8ad0` (from `CMainProcess::FUN_00413b30`) asks CGObjPC vtable slot
+0x610 (`GObjPC::FUN_004aa310`, vtable 0xaf59fc) before slot 0x5e0 (`CGObjPC::DispatchClientMessage`
+0x50eee0) runs any client message's handler. Slot 0x610 is the message filter `GObjPC::FUN_004296a0`
+over the tables `RegisterValueListFilters` (0x427d90) builds: 17 groups (0xcc3fe4, 0x1c bytes each),
+one per character state, each holding an allow list (kind 0) or a deny list (kind 1) of opcodes
+per state value. The scroll state (`GetTeleportState`, chardata +0x10, 0x30BF kind 0xb) is group 11
+(0xcc4118; 0x429814..0x429834), and its one record is **value 1, an allow list of 0x7025 (chat),
+0x704C (item use), 0x705B (the cast's cancel), 0x7005 and 0x34BF** (0x429337..0x4293ab). So while a
+return scroll, a reverse return scroll or the skin change casts, the move 0x7021, the arrow keys'
+0x7023 / 0x7024, the action 0x7074 (attacks, skills, pick-ups, the trace) and everything else are
+refused before their handlers: the moves silently, 0x7074 with 0xB074 {3, 0x4004} (`CGObjPC::
+vslot_358` 0x4ecbc0 -> `HandleCharacterActionRequest_7074` with its refused flag). The thief-den
+scrolls' value 2 has no record: not held. The client holds nothing itself -- the 0x30BF value it
+stores (+0x7c0) has no reader (its getter 0x9db0a0 has no caller or pointer, MEASURED), and the
+delay board's busy byte is not set for kind 0 (0x7b16d4, re-read) -- it walks only on its move's
+echo, which never comes.
+
+**What removed it.** Nothing in OpenSRO's history ever held a caster (searched: every commit and
+WORLD_ISSUES round naming the scroll, rounds 778-859). The user asked for the lock in round 779
+("During that progress bar you can't move or cast anything unless you cancel"); round 779 read the
+0x7021 and 0x7074 handlers, found that neither asks the state, and concluded the original has no
+lock -- an absence claim that stopped at the handlers and missed the filter in front of them. So the
+lock the user remembers from the original was never built; this round builds it.
+
+**OpenSRO.**
+- Server (`scrollhold.go`, `scrollHolds`): while the session's cast has value 1, refused are 0x7021
+  and a rider's 0x70C5 move (`moveByRequest`), 0x7023 / 0x7024 and a rider's commands 3 / 4
+  (`arrowStop` / `arrowTurn`), OpMove's walked positions and stops (`handleMove`; a relocation
+  passes), 0x7074 ({3, 0x4004}, `ActionHandler`), and OpenSRO's own OpAttack / OpUseSkill (the
+  silent end, the 0x4004's equivalent). OURS: a refused move is answered with 0xB023 to the mover at
+  the server's position (retail answers nothing; OpenSRO's client walks a click at once). The hold
+  ends with the cast: its end (before the warp), the cancel 0x705B, a death.
+- Client (`ScrollHold`, `World3D._scroll_hold`, OURS where the retail client relies on the server):
+  this player's own 0x30BF kind 0xb value 1 shuts the move gate (`_own_move_blocked`: the ground
+  click, the sky run, the trace walk), the arrow keys (`_arrow_send_allowed`, and a turn does not
+  turn the body), the physics walk (an approach, a pick-up walk), attacks and skills
+  (`_attack_monster`, `_attack_pvp`, `_cast_skill`, `_cast_on_character`). The state's 0, a zone
+  change and a death release it. `partybot -watch` prints others' moves, stops, turns and scroll
+  states (QA).
+- OPEN: the rest of retail's allow list -- NPC talk, inventory moves, exchange, stall, pick-up within
+  reach and pet commands are not held yet.
+
+**Verification.**
+- Server: `go test ./...` passes (one unrelated timing flake, `TestMonsterSpawnPushOffIsTheOldWire`,
+  passed alone 3/3 and in the full re-run). `scroll860_test.go`: during a return scroll's cast a
+  click, an arrow turn and stop, a walked position, a stop report and a 0x7074 are refused, each
+  move answered with 0xB023 and the server's position unchanged with no leg, 0x7074 {3, 0x4004},
+  the cast still running; after the cancel a click walks; the reverse scroll holds until its end;
+  only value 1 holds. NEGATIVE: with `scrollHolds` forced false the suite fails.
+- Client: `scroll_hold860_test.gd` 14/14 through World3D's own `_unhandled_input` (held: a ground
+  click walks nowhere, arrows send and turn nothing, an attack neither walks nor waits, a sky run is
+  ignored; released by the 0; state 2 holds nothing). `remote_godot.sh check` ALL LOAD (1124
+  scripts); `tests` "ran 423 suite(s), 0 failing" on the final tree (an earlier run had
+  `seated_spawn_test.gd` fail once under the 16-way load; it passed alone and in the re-run).
+- Live (MEASURED, render box, `/var/tmp/r860s/qa860.sh q1`: the lane server on 17390 in memory with
+  `-navmesh-dir`, no trusted positions; the client in `/var/tmp/opensro-r860s` driven by its own
+  input -- a right-click on the bag cell, ground clicks, the arrow keys, the bar's cancel button;
+  partybot Obs860 -watch beside it). The return scroll (30 s): the client at (-9.00, 790.00) before,
+  and after the use, two ground clicks, Up held and released, Left held and released: still
+  (-9.00, 790.00), facing unchanged, no 0x7021 / 0x7023 / 0x7024 sent (no MOVE send line), the server
+  logged no leg, and the observer saw the scroll state 1 and no move, stop or turn. The cancel
+  button: state 0 for both, then one click walked to (31.00, 791.00) (server leg -9,790 -> 31,791,
+  the observer's WATCH move). The instant return scroll (5 s): a ground click and Up during it moved
+  nothing; at its end the zone change put the client at the return point (9.00, -409.00) (the
+  server's relocated claim taken there), and a click walked from it. Frames for a human:
+  `/var/tmp/r860s/q1/snap/{held,moved,arrived}.png`; logs `q1.client.log`, `q1.server.log`,
+  `q1.obs.log`.
+- No perf gate: no world drawing changed (input gates and a server filter).
+
 ## Eight-hundred-and-fifty-ninth round, lane C: the chat caret, and every text box and caption, where the original draws them
 
 The user: "looks like the cursor in the chat input field is too far to the left now. Can you please

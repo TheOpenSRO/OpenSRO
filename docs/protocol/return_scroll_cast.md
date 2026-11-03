@@ -120,11 +120,13 @@ and this player's death (`FUN_0077b000`, 0x30BF kind 0 value 2) clear the whole 
 (`FUN_007b1300`) silently. The 0xB05B handler (`FUN_008727a0`) shows the same text on a result 1
 -- which this server never sends -- and nothing for a refusal.
 
-**Input (a negative).** The busy byte the action senders and the key handler ask
+**Input.** The busy byte the action senders and the key handler ask
 (`FUN_0077c8e0`, called from `SendMagicStateMsg_074` and `GInterfaceSend::FUN_00793b00`) is not set
-for kind 0; the use-item sender's own test (0x796752) reads the same byte. Nothing else found
-consults the bar or the state for the player's own input. **So a return scroll's bar refuses no
-movement, skill or attack on the client.**
+for kind 0; the use-item sender's own test (0x796752) reads the same byte. The 0x30BF value stored
+on the object (+0x7c0) is read by nothing: its only getter, 0x9db0a0, has no caller and no pointer
+to it (round 860, MEASURED over the whole binary). So the client itself refuses nothing during a
+return scroll's bar -- it sends the click and the keys as ever. **The server refuses them** (section
+4, "The hold", round 860), and the retail client walks only on its move's echo, so nothing moves.
 
 ## 4. The server (READ)
 
@@ -154,9 +156,25 @@ movement, skill or attack on the client.**
   (`FUN_0050eff0`, 0x802 -- that the client's text for it is
   `UIIT_MSG_LOGOUT_ERR_CANT_LOGOUT_WHILE_TELEPORT_WORKING` is INFERRED); a guild summon; a thief's
   pick-up of a special good (`FUN_00526090`, 0x186e, only for job state 2 and a trade good); some
-  quest scripts. **Not** the movement request (`GObjPC::FUN_004b0ea0`), the action request
-  (0x4acc40) or `Skill_CheckUseConditions` (it asks job 1, not 0xb). So retail lets a character
-  walk and fight on after the stop; the cast still moves it when it runs out.
+  quest scripts. The movement request (`GObjPC::FUN_004b0ea0`), the action request (0x4acc40)
+  and `Skill_CheckUseConditions` do not ask it themselves -- **but they never see the request**
+  (next item). Round 779 stopped at the handlers and concluded "no lock"; that was wrong.
+- **The hold (READ, round 860).** The PC's message pump `GObjPC::FUN_004a8ad0` (from
+  `CMainProcess::FUN_00413b30`) asks CGObjPC vtable slot 0x610 (`GObjPC::FUN_004aa310`, vtable
+  0xaf59fc + 0x610) before slot 0x5e0 (`CGObjPC::DispatchClientMessage` 0x50eee0) runs a message's
+  handler; a refused message goes to slot 0x598 (`CGObjPC::vslot_358` 0x4ecbc0). Slot 0x610 is the
+  filter `GObjPC::FUN_004296a0` over the tables `RegisterValueListFilters` (0x427d90) builds at
+  0xcc3fe4: 17 groups of 0x1c bytes, one per state, each a vector of records by the state's value,
+  a record an allow list (kind 0, `ValueIsInList`) or a deny list (kind 1, `ValueIsNotInList`) of
+  opcodes; no record passes. The scroll state is group 11 (0xcc4118; the filter's `call
+  [edx+0x120]` then `lea edi,[ebp+0x138]` at 0x429814..0x429834). It has 4 values and **one record:
+  value 1, an allow list of 0x7025 (chat), 0x704C (item use), 0x705B (the cancel), 0x7005 and
+  0x34BF** (0x429337..0x4293ab). So while the state is 1 the move 0x7021, the arrow keys' 0x7023 /
+  0x7024, the action 0x7074 (attacks, skills, pick-ups, the trace), 0x70C5, NPC talk, inventory and
+  exchange requests are all refused. Values 2 (the thief-den scrolls) and 3 have no record: not
+  held. The refusal (vslot_358): 0x7074 runs its handler with the refused flag, answering **0xB074
+  {3, 0x4004}** (silent on the client); 0x7034 answers 0x181d, 0x7045 0x6006, 0x7046 0x1c0b; the
+  moves get **no answer**.
 - **The thief-den scrolls.** `FUN_004a0380` compares Param3's descriptor with "RESURRECT" /
   "THIEFDEN" (0xaeb294 / 0xaeb2a0; neither -> 2); a THIEFDEN row needs job state 2 (vslot 0x11c,
   chardata +0xf) or answers **0x186a** `UIIT_MSG_STRGERR_ONLY_ROBBER_CAN_USE_THIS_ITEM`, then takes a
@@ -174,7 +192,14 @@ movement, skill or attack on the client.**
 - OURS: the thief-den rows are told by their code name (the export has no descriptor column);
   every character is refused 0x186a (no job system).
 - Not modelled (nothing to refuse): pets, logout, guild summon, thieves' goods, quests.
-- Not done because retail does not: movement, skills and attacks stay allowed during the cast.
+- Round 860, the hold (`session/scrollhold.go`, READ above): while the state is 1 the server refuses
+  0x7021 (and a rider's 0x70C5 move), 0x7023, 0x7024, OpMove's walked positions and stops (OURS'
+  stream; a relocation passes), 0x7074 ({3, 0x4004}) and OpenSRO's own OpAttack / OpUseSkill (the
+  silent end). OURS: a refused move is answered with 0xB023 to the mover at the server's position
+  (retail answers nothing; OpenSRO's client walks a click at once). The client (`ScrollHold`,
+  `World3D._scroll_hold`) sends none of them while its own state is 1: no click walk, sky run, arrow
+  key, walk into reach, attack or skill. OPEN: the rest of the allow list (NPC, inventory, exchange,
+  stall, pick-up and pet requests) is not held yet.
 
 ## 6. Verification
 
@@ -186,4 +211,8 @@ movement, skill or attack on the client.**
 - Client: `scripts/ui/hud/return_scroll_cast779_test.gd` (the window and its rects, the fill and
   its 3000 ms cap, staying full, the cancel signal, the screen position at three sizes, the wire,
   the two codes' names).
+- Round 860: `go test ./internal/session -run Round860` (`scroll860_test.go`: a click, an arrow turn
+  and stop, a walked position, a stop report and 0x7074 refused while held, nothing moves, the
+  cancel releases; the reverse scroll holds until its end; only value 1 holds) and
+  `scripts/world/scroll_hold860_test.gd` (World3D's gates).
 - Live on the render box: `/var/tmp/r779-cast/cast_shot.sh` (round 779's WORLD_ISSUES part).
