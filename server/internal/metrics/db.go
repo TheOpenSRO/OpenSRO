@@ -60,9 +60,9 @@ func (c *connector) Driver() driver.Driver { return c.inner.Driver() }
 
 // queryInfo is a statement's pre-resolved children.
 type queryInfo struct {
-	count   prometheus.Counter
-	errs    prometheus.Counter
-	seconds prometheus.Observer
+	count           prometheus.Counter
+	pool, op, table string // the error counter is resolved on the first error, so a statement that never fails exports no zero series
+	seconds         prometheus.Observer
 }
 
 var (
@@ -107,6 +107,8 @@ func QueryLabels(query string) (op, table string) {
 		op = v
 	case "create", "alter", "drop", "truncate":
 		op = "ddl"
+	case "savepoint", "release", "rollback":
+		op = "savepoint" // txn's nested steps (txn.Runner)
 	default:
 		op = "other"
 	}
@@ -131,8 +133,8 @@ func infoFor(pool, query string) *queryInfo {
 	}
 	op, table := QueryLabels(query)
 	qi := &queryInfo{
-		count:   dbQueries.WithLabelValues(pool, op, table),
-		errs:    dbErrors.WithLabelValues(pool, op, table),
+		count: dbQueries.WithLabelValues(pool, op, table),
+		pool:  pool, op: op, table: table,
 		seconds: dbSeconds.WithLabelValues(pool, op),
 	}
 	if queryCacheSize.Load() < maxCachedQueries {
@@ -151,7 +153,7 @@ func observe(pool, query string, start time.Time, err error) {
 	qi.count.Inc()
 	qi.seconds.Observe(time.Since(start).Seconds())
 	if err != nil && !errors.Is(err, driver.ErrBadConn) {
-		qi.errs.Inc()
+		dbErrors.WithLabelValues(qi.pool, qi.op, qi.table).Inc()
 	}
 }
 

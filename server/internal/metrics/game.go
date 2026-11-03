@@ -206,6 +206,18 @@ var (
 
 func Panic(where string) { panics.WithLabelValues(where).Inc() }
 
+var gmCommands = factory.counterVec("gm_commands_total",
+	"GM console commands run, by verb (the console's own command list, else unknown) and result (ok, refused).", "verb", "result")
+
+// GMCommand counts one GM console command.
+func GMCommand(verb string, refused bool) {
+	r := "ok"
+	if refused {
+		r = "refused"
+	}
+	gmCommands.WithLabelValues(verb, r).Inc()
+}
+
 // World state read at scrape time (WorldSource): nothing is counted on the
 // hot path for these.
 var (

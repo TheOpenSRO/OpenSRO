@@ -47,6 +47,9 @@ var knownOrphans = map[string]string{
 	// prometheus.Collector; the registry calls these at every scrape.
 	"Collect":  "round 858: prometheus.Collector, called by the metrics registry at scrape time (internal/metrics/game.go).",
 	"Describe": "round 858: prometheus.Collector, called by the metrics registry at registration (internal/metrics/game.go).",
+	// Round 858: cmd/server opens its pools named (txn.OpenNamedPool); the
+	// unnamed OpenPool is the tests' (pool "db").
+	"OpenPool": "round 858: the store tests' pool; cmd/server uses OpenNamedPool for the metrics' pool label.",
 	// Round 838: the stall decorations (session/stalldeco.go). The premium
 	// packages' BFI1 entry reaches the stall through 0x7160's override
 	// (round 839 reads it at the open); GrantStallDecoration is kept for a

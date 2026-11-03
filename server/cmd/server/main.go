@@ -1450,8 +1450,16 @@ func main() {
 		os.Exit(1)
 	}
 	if _, err := metrics.Serve(ctx, *observe.metricsAddr, logger); err != nil {
-		logger.Error("metrics listener (-metrics-addr / OPENSRO_METRICS_ADDR)", "addr", *observe.metricsAddr, "err", err)
-		os.Exit(1)
+		// A port the operator named must be served; the default one may be
+		// taken by another server on the same host (a second instance, a QA
+		// lane), which then runs without metrics rather than not at all.
+		if !observe.metricsAddrExplicit() {
+			logger.Warn("metrics off: the default -metrics-addr is taken (another server on this host?); set -metrics-addr",
+				"addr", *observe.metricsAddr, "err", err)
+		} else {
+			logger.Error("metrics listener (-metrics-addr / OPENSRO_METRICS_ADDR)", "addr", *observe.metricsAddr, "err", err)
+			os.Exit(1)
+		}
 	}
 
 	// The stores are held as interfaces so the in-memory and PostgreSQL
@@ -1605,13 +1613,13 @@ func main() {
 		// meanwhile never wait on that pool. Before, ten pools opened
 		// uncapped.
 		storeConns, refConns := txn.PoolSizes()
-		storePool, err := txn.OpenPool(*postgresDSN, storeConns)
+		storePool, err := txn.OpenNamedPool(*postgresDSN, storeConns, "stores")
 		if err != nil {
 			logger.Error("opening the postgres pool", "err", err)
 			os.Exit(1)
 		}
 		defer storePool.Close()
-		refPool, err := txn.OpenPool(*postgresDSN, refConns)
+		refPool, err := txn.OpenNamedPool(*postgresDSN, refConns, "refdata")
 		if err != nil {
 			logger.Error("opening the reference-data pool", "err", err)
 			os.Exit(1)

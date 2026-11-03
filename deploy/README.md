@@ -2417,3 +2417,10 @@ curl 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2' > stacks.txt        #
 Delete the line and kickstart again to turn it off. Line a `swarm probe` `SPIKE` up with the
 `runtime stats` line of the same half minute, and with a goroutine dump or a trace taken while
 it happens.
+
+## Metrics, logs and their rotation (round 858)
+
+The server serves Prometheus metrics on `127.0.0.1:9469` by default (`-metrics-addr`) and, with
+`-log-file` (env `OPENSRO_LOG_FILE`), writes and rotates its own log. Grafana Alloy on the host
+feeds both to the monitoring stack (CT 111, `192.168.10.86`). What runs where, the metric list,
+the dashboards, the alert rules and what to set on the Mac mini: `deploy/observability/README.md`.

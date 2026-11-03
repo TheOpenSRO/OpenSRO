@@ -2,6 +2,7 @@ package session
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
@@ -102,6 +103,27 @@ func MetricsSource(hub *world.Hub, monsters *combat.Hub, ground *grounditem.Hub,
 		}
 		return s
 	}
+}
+
+// gmMetricVerbs are the GM console's commands (gm.Deps.Run's cases): a
+// command's label is its verb when it is one of these, else "unknown".
+var gmMetricVerbs = func() map[string]bool {
+	m := map[string]bool{}
+	for _, v := range strings.Fields("tp goto give item avatar gold level heal spawn kill spawnunique damage durability sp hwan " +
+		"notice invsize speed hurt afflict hour ban block unblock blockinfo chatban unchatban tradeban untradeban questblock " +
+		"jobexp jobweek guildlevel guildperm guildabsent guildgp union guildwar silk lottery plus adv") {
+		m[v] = true
+	}
+	return m
+}()
+
+// gmMetricVerb is a GM line's bounded verb label.
+func gmMetricVerb(line string) string {
+	v := strings.TrimPrefix(gmVerb(line), "/")
+	if gmMetricVerbs[v] {
+		return v
+	}
+	return "unknown"
 }
 
 // The server loops' metrics (metrics.Loop): one per ticker, named in

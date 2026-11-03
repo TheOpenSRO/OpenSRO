@@ -72,6 +72,21 @@ func registerObserveFlags() observeFlags {
 	}
 }
 
+// metricsAddrExplicit reports whether the operator named the metrics address
+// (the flag or OPENSRO_METRICS_ADDR) rather than taking the default.
+func (f observeFlags) metricsAddrExplicit() bool {
+	if _, ok := os.LookupEnv("OPENSRO_METRICS_ADDR"); ok {
+		return true
+	}
+	set := false
+	flag.Visit(func(fl *flag.Flag) {
+		if fl.Name == "metrics-addr" {
+			set = true
+		}
+	})
+	return set
+}
+
 // parseLevel reads a -log-level value.
 func parseLevel(s string) (slog.Level, error) {
 	var l slog.Level
