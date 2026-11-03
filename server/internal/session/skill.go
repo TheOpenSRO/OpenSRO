@@ -710,6 +710,11 @@ func useSkillHandler(
 		if deadBySession(hub, sess) {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: deadRefusal}).Encode()})
 		}
+		// Round 860 (scrollhold.go): held by the scroll state -- retail's
+		// 0x7074 refused {3, 0x4004}, silent; here the silent end.
+		if scrollHolds(sess) {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: silentRefusal}).Encode()})
+		}
 		// Round 786 (arrival.go): no skill while untouchable. READ on the
 		// client (FUN_0081ba10 refuses every skill in body mode 2 with
 		// 0x3020, 0x81ba58) and for the server's attack check

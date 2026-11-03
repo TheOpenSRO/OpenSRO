@@ -1126,6 +1126,11 @@ func combatHandler(
 			if deadBySession(hub, sess) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 			}
+			// Round 860 (scrollhold.go): held by the scroll state -- retail's
+			// 0x7074 refused {3, 0x4004}, silent; here the silent end.
+			if scrollHolds(sess) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: silentRefusal, MonsterID: req.TargetMonsterID}).Encode()})
+			}
 			// Round 832: the attack is pushed, and Push drops a running trace
 			// for it, silently (trace.go).
 			dropTraceFor(characterID)

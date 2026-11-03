@@ -259,6 +259,13 @@ func ActionHandler(hub *world.Hub) gateway.Handler {
 		if !ok || e.Life != world.LifeAlive {
 			return nil
 		}
+		// Round 860 (scrollhold.go, READ): the scroll state 1 refuses every
+		// 0x7074 -- s:0x4ecbc0 runs the handler with its refused flag, which
+		// answers {3, 0x4004} (0x4acc40).
+		if scrollHolds(sess) {
+			sendActionResult(sess, ActionResultError, 0, ActionErrRefused)
+			return nil
+		}
 		switch p.Data[0] {
 		case actionCancel:
 			traces.end(e.CharacterID)
