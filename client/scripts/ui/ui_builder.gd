@@ -1035,6 +1035,10 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 	# on every resize (VAlign 0, the archive's usual, is the top, not
 	# LineEdit's centre).
 	if def.rect.size.y > 0:
+		# The rect the margins are worked out for (CifEdit.layout_height),
+		# before Godot's minimum can hold the edit taller (build_control
+		# records the same rect).
+		edit.set_meta(AUTHORED_RECT_META, Rect2(Vector2(def.rect.position), Vector2(def.rect.size)))
 		edit.size = Vector2(def.rect.size)
 	edit.lay_out(cr, def.halign, def.valign)
 	return edit
@@ -1302,6 +1306,13 @@ func _build_spin(def: UiLayoutParser.ControlDef) -> Control:
 	# user's "numbers ... too low" under party matching. Centred, the line
 	# now overruns the rect evenly, as the client's centred text does.
 	label.set_meta(AUTHORED_RECT_META, SPIN_LABEL_RECT)
+	# Round 859: and kept there by the settling pass, which lays only
+	# STATIC_TEXT labels by place_label -- without the mark it set the label
+	# straight to 18x12 again, the Label grew down, and the page number was
+	# drawn 1 px low (MEASURED, the text census: storage, guild storage,
+	# store and party match pages).
+	label.set_meta(STATIC_TEXT_META, true)
+	label.set_meta(CLIENT_RECT_META, Rect2i())
 	place_label(label, SPIN_LABEL_RECT)
 	_relay(label)
 	ctrl.add_child(label)

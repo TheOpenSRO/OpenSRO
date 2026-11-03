@@ -221,8 +221,12 @@ const _OWN_BOX_META := &"cif_edit_own"
 func _apply_margins() -> void:
 	if not _laid or _margins_busy:
 		return
+	var fh := ceilf(font_height())
+	if fh <= 1.0:
+		# The face is not resolved yet (outside the tree): wait for it.
+		return
 	_margins_busy = true
-	var m := TextLayout.line_edit_margins(layout_height(), _client, _halign, _valign, ceilf(font_height()))
+	var m := TextLayout.line_edit_margins(layout_height(), _client, _halign, _valign, fh)
 	for st in _STYLES:
 		var sb: StyleBox = get_theme_stylebox(st) if has_theme_stylebox_override(st) else null
 		if sb == null or not sb.has_meta(_OWN_BOX_META):
