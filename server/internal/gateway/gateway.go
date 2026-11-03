@@ -105,6 +105,8 @@ type Session struct {
 	// deadline and budget, round 662's queue limit): every later Send returns
 	// ErrSendStalled at once.
 	stalled atomic.Bool
+	// tap is the observer Tap installed (round 859), or nil.
+	tap atomic.Pointer[sendTap]
 	// blocked is the writer's blocking debt (SendBlockBudget): the time its
 	// writes have spent on the socket, less SendBlockBudget per
 	// SendBlockWindow since, as of blockedAt. Only the writer touches them.
@@ -354,6 +356,25 @@ func (s *Session) SendFrames(fs ...*Frame) error {
 	return s.enqueue(nil, fs)
 }
 
+// sendTap is one Tap's observer.
+type sendTap struct {
+	fn func(opcode uint16, payload []byte)
+}
+
+// Tap (round 859) calls fn with the opcode and payload of every packet queued
+// for this session through Send, SendBatch or SendFrames while it is
+// installed, in the sender's goroutine, after the frame is accepted and before
+// Send returns; fn must not keep the payload or send to this session. The
+// returned func removes it. One tap at a time: a later Tap replaces it until
+// that one's removal. Sends from other goroutines are seen too, so an observer
+// filters by opcode. The use-item handler taps its own reply to know a use
+// succeeded (session.UseItemHandler: retail's 0x305C after a good 0xB04C).
+func (s *Session) Tap(fn func(opcode uint16, payload []byte)) (untap func()) {
+	t := &sendTap{fn: fn}
+	s.tap.Store(t)
+	return func() { s.tap.CompareAndSwap(t, nil) }
+}
+
 // enqueue is SendBatch and SendFrames: ps then fs, as one batch.
 func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 	for _, p := range ps {
@@ -361,6 +382,20 @@ func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 			return fmt.Errorf("proto: payload of %d bytes too large for a single frame", len(p.Data))
 		}
 	}
+	err := s.enqueueFrames(ps, fs)
+	if t := s.tap.Load(); t != nil && err == nil {
+		for _, p := range ps {
+			t.fn(p.Opcode, p.Data)
+		}
+		for _, f := range fs {
+			t.fn(f.p.Opcode, f.p.Data)
+		}
+	}
+	return err
+}
+
+// enqueueFrames is enqueue past its size check.
+func (s *Session) enqueueFrames(ps []*proto.Packet, fs []*Frame) error {
 	if s.stalled.Load() {
 		return ErrSendStalled
 	}
