@@ -7483,6 +7483,88 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-ninth round, lane A: using an item shows its effect -- potions, pills, scrolls, pet potions
+
+The user: "can you finally add all remaining effects? Especially potions and pills. When you use
+them they make a noise and you see a red/blue spiral or kind of like a green halo for pills as just
+an example." Lane A is every item-use effect and sound; lane B every other effect. Before: a use
+played snd_potion for the user (round 615) and nothing was drawn, for anyone. The whole reading is
+`docs/protocol/item_use_effects.md`.
+
+- **Who is told (READ, server).** `Item_HandleUseItem` (s:0x510980) sends, after every accepted
+  0xB04C, **0x305C {u32 the user's uid, u32 the RefItemID}** (s:0x5110a0) through
+  `GObjPC::FUN_00484d90`: the 3 x 3, the user included. Not gated by kind. A pet potion from the bag
+  is the same handler, so its 0x305C names the PLAYER -- the original draws a pet potion's effect on
+  the player, not the pet (built that way; a difference a player may not expect).
+- **Which effect (READ, client 0x8735d0).** ITEM_ETC_AUTOMOB (`DAT_00eeeb7c`, c:0x83b197) and an
+  unknown uid: nothing. Then itemeffect.txt's use rows (state 2) by code name; then by type: 3/3/3
+  (every scroll) SYSTEM_RETURNSCROLL, 3/3/1/1..5,9 SYSTEM_HPPOTION / MPPOTION / LIFE /
+  COS_HPPOTION / COS_MPPOTION / COS_HGPPOTION, 3/3/2/1 and /6 PARAM_CURE_ALL, /7 STATUS_CURE_COS
+  (ids from the table at 0x00ec73f8); 3/3/6 a firework object; otherwise the item's own code name.
+- **How it plays (READ).** `FUN_00a54020(0, obj, key, 0, 1, 0)` -> `FUN_00a53850`: the ACT_S and
+  ACT_L rows start, `snd_activate` with the negative key (no row), and the fifth argument 1 ends the
+  decoration at once (c:0xa53bfb -> `FUN_00a53120`): the return scroll's AT_LOOP ring is let go and
+  plays one cycle. The rows' SndBegin plays at the body (only the hwan and Nasrun rows have one).
+- **The noise (READ, unchanged).** snd_potion (`ui\itpotiondrink.wav`, MEASURED) is the 0xB04C
+  reply's, for 3/3/1 and 3/3/2, the user's client only: observers hear nothing for a potion.
+- **Census (MEASURED, Media.pk2, 15,338 rows):** HP 19, MP 19, vigor 20, pet HP 3, HGP 1 potions;
+  purification 6, universal 6, pet 2 pills; 146 scrolls + AUTOMOB; 3 berserk potions and 4 hwan
+  scrolls by their code rows (item_qt_hwan.efp + UI\HyanGet.wav); 11 Nasrun use rows; SYSTEM_COS_MPPOTION
+  has no rows (no item is 3/3/1/5); 3,657 other 3/3/x items draw nothing.
+- **Server (OURS).** `useitem_effect.go`: the use handler taps its own reply (`gateway.Session.Tap`,
+  a new minimal observer) and sends 0x305C after an accepted `OpUseItemResult` to `equipObservers`
+  (the 3 x 3, the user included) -- every kind's path, none left out.
+- **Client.** `ItemUseEffect` (the handler's steps, `parse_use_rows`, `play`), `UseItemNet.
+  decode_use_effect`, `NetClient.item_use_effect`, `World3D._on_item_use_effect` (`ITEMUSE` lines).
+  Through SkillEffects.play_named only (fog, view depth, quality option as every effect).
+
+**QA (real input, lane server 17330, box `/var/tmp/r859a/run859a.sh`):** Qa859 right-clicks each
+item in the bag (I, `rbagitem`), uses an HP potion by its hotbar key (1), and lets the auto potion
+drink after a `/hurt`; Watch859 stands 10 units away. Measured in both clients' logs:
+
+| Use (input) | Effect (file @ bone) | User's client | Observer's client | Observer lifetime (real time) | snd_potion (user) |
+|---|---|---|---|---|---|
+| HP potion (right-click) | item_hpotion.efp @ none | yes | yes | 1.53 s | yes |
+| MP potion | item_mpotion.efp @ none | yes | yes | 1.53 s | yes |
+| vigor potion | item_life.efp @ none | yes | yes | 1.53 s | yes |
+| universal pill | water_cure_effect_a.efp @ Bip01 | yes | yes | 3.78 s | yes |
+| purification pill | water_cure_effect_a.efp @ Bip01 | yes | yes | 3.84 s | yes |
+| hwan potion (24331) | item_qt_hwan.efp @ none + ui\hyanget.wav at the body | yes | yes (+ the sound) | 4.37 s | yes |
+| horse scroll (2137, 3/3/3) | item_returnscroll.efp @ none, let go | yes | yes | 5.01 s | no (READ) |
+| pet HP potion (on the horse) | item_hpotion.efp on the player | yes | yes | 1.53 s | yes |
+| pet pill | water_cure_effect_a.efp @ none, on the player | yes | yes | 3.84 s | yes |
+| HP potion, hotbar key 1 | item_hpotion.efp | yes | yes | 1.53 s | yes |
+| auto potion (6 drinks after /hurt) | item_hpotion.efp each | 6 | 6 | 1.53 s | 6 |
+| return scroll (61) | item_returnscroll.efp, let go | yes | yes | 5.07 s | no |
+
+Base (deb95be4, same run): 0 effects in either client, snd_potion 15 times. Frames for a human:
+`/var/tmp/r859a/keep/obs_sheet.png` (the observer's view, each kind), `own_head_sheet.png`,
+`own_base_sheet.png`. In the observer view the first HP potion found no body (the user had not
+been drawn yet; retail's FindObjectByID returns the same way).
+
+Tests: `item_use_effect859_test.gd` (every branch, the payload, the play), server
+`TestItemUseEffectGoldenBytes`, `TestAcceptedUseIsBroadcastAsItemUseEffect`, gateway
+`TestTapSeesQueuedPacketsUntilRemoved`; the potion fixture steps over 0x305C.
+
+Perf gate (`--base deb95be4 --head bfc75545 --sites jangan --frames 24000`, Forward+, median of 3;
+the gate's views use no item, so it measures the added code at rest):
+
+```
+jangan  frame ms   base 0.90  head 0.91  (+0.0)  SAME
+jangan  entry ms   base 8741  head 8844  (+103.0)  SAME
+jangan  freeze ms  base 2784  head 2803  (+19.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+**Gates:** `cd server && go build ./... && go test ./...` all pass; `remote_godot.sh check` ALL LOAD
+(1114 scripts), `remote_godot.sh tests` "ran 420 suite(s), 0 failing" (RENDER_DIR
+/var/tmp/opensro-r859a).
+
+**OPEN:** the Scale column (MOB_BASE on PARAM_CURE_ALL) is parsed and applied nowhere (lane B's
+pipeline); fireworks (3/3/6) are refused by the server; a COS's own use (0xB0C5,
+`GObjPC::COS__UseItem`'s 0x305C) does not exist here. Seen, not this round's: the ridden horse
+draws as a white body in both builds (`own_base_sheet.png`).
+
 ## Eight-hundred-and-fifty-eighth round, lane O: the server's metrics and logs, for Grafana
 
 The user: "setup a grafana/prom container on the .10.100 proxmox? Then let's add a bunch of

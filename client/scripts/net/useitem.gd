@@ -15,6 +15,10 @@ class_name UseItemNet
 ## both.
 const OP_USE_ITEM := 0x008a   # client -> server
 const OP_RESULT := 0x008b     # server -> client
+## Round 859: retail's 0x305C, an accepted use told to the user and the
+## players around (server session/useitem_effect.go; READ s:0x5110a0,
+## c:0x8735d0): {u32 the user's uid, u32 the item's RefItemID}.
+const OP_USE_EFFECT := 0x305C
 
 ## What the item did. hp/mp are the values *after* using it, so both bars can
 ## be redrawn without asking for stats again.
@@ -182,6 +186,12 @@ static func encode_use_crest(character_name: String, inventory_slot: int, pixels
 	out.append(OPTION_CREST)
 	out.append_array(pixels)
 	return out
+
+## A 0x305C payload as {"uid", "ref"}, or {} when it is short.
+static func decode_use_effect(data: PackedByteArray) -> Dictionary:
+	if data.size() < 8:
+		return {}
+	return {"uid": int(data.decode_u32(0)), "ref": int(data.decode_u32(4))}
 
 static func decode_result(data: PackedByteArray) -> Result:
 	var res := Result.new()

@@ -1062,7 +1062,9 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 	if potions == nil {
 		potions = NewPotionQueue()
 	}
-	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+	// Round 859 (useitem_effect.go): an accepted use is told to the players around
+	// the user, the user included -- retail's 0x305C after its 0xB04C.
+	return announceUses(hub, func(ctx context.Context, sess *gateway.Session, p *proto.Packet, note *useNote) error {
 		// The casting bar's cancel (round 779, scroll.go): retail's 0x705B.
 		if p.Opcode == OpScrollCancel && scrolls != nil {
 			return scrolls.cancelRequest(sess)
@@ -1134,6 +1136,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if !it.CanUse {
 			return fail("that item cannot be used")
 		}
+		note.characterID, note.refItemID = characterID, it.ID
 		// Round 838 (servicescroll.go, OURS): the private server's service
 		// scrolls, by code name -- before the COS, composite and return
 		// scroll kinds, since eight of them are typed 3/3/3/1 and were cast
@@ -1361,7 +1364,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			RestoredHP: int32(gotHP), RestoredMP: int32(gotMP),
 			Remaining: int32(remaining),
 		}).Encode()})
-	}
+	})
 }
 
 // errStorageExpansionRefused is the expansion item's refusal: the engine's
