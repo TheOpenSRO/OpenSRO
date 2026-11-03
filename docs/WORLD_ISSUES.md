@@ -7483,6 +7483,94 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixtieth round, lane H: the white horse was a capsule -- a type-6 body is drawn from its model
+
+Seen in rounds 856 and 859 (lane A): "the ridden horse draws as a white body in both base and head";
+the user asked for it fixed. Labels: READ (`c:` sro_client.exe, `/var/tmp/decomp_client` on the box),
+MEASURED, INFERRED, OURS.
+
+- **What was drawn (MEASURED).** Not a material or texture fault: no horse model at all. The base
+  client logs `ERROR: SkinnedBsrAssembler: cos\c_horse1.bsr is not a character .bsr (type 6)` and
+  `COS ... Red Horse (COS_C_HORSE1, TypeID4 1) ... -- no model: a capsule`, and the COS state line
+  (round 860's `draw [...]` census, below) names what is bound: `@MeshInstance3D:CapsuleMesh{none}`
+  -- `_cos_build_body`'s fallback `CapsuleMesh` with no material, which Godot draws white. The same
+  at summon, mounted, unmounted, in the owner's view and an observer's, for the ride horse and the
+  trade horse (`cos\t_horse1.bsr`). None of the suspects (TextureType skin, BodyMirror,
+  CharacterLook, BodyPulse, ObjectLight, crowd instancing, fade twins) was involved: the body never
+  had a mesh to act on.
+- **Why (MEASURED).** `BsrReader` marks a file a character only for object types 0 and 1, and
+  `SkinnedBsrAssembler` refused anything else unless asked (`skinned_object`, round 838, used only by
+  NPCs). The horse's `.bsr` writes **type 6**: one `.bmt` (slot 0), two skinned `.bms`, the
+  `c_horse.bsk` skeleton (33 bones, with `saddle`) and six clips in `default`. Census of all 8,539
+  `.bsr` in Data.pk2 (skeleton / none): type 0 167/7, 1 819/19, 2 90/2502, 3 20/337, 4 44/902,
+  5 874/2547, 6 77/128, 8193 0/6. Joined against the tables: **10 COS rows** have a skeletal type-6
+  model -- `COS_C_HORSE1..3`, `COS_C_DHORSE2`, `COS_C_UNICORN`, `COS_T_HORSE1/2`, `COS_T_CAMEL1..3`
+  (every other COS is type 0 or 1; no pet is affected) -- and **70 monster rows** a skeletal type 3
+  or 6 (44 the fortress hearts and tower-defence towers, 26 the treasure boxes and
+  `MOB_EVENT_PANDORA`), all drawn as capsules too.
+- **The original (READ).** The resource factory `ResourceMgr::FUN_00be9250` (c:0xbe9250) is a switch
+  on the type word: 0 -> `FUN_00be8d50` (ResChar), **1, 2, 3, 4, 6 and 7 -> one constructor
+  `FUN_00be8dc0`** (vtable 0xe0b670), 5 -> `FUN_00be8e20` (the item). The compound factory
+  `FUN_00be92b0` puts 1, 3, 4, 5 and 6 in one class too. That object's loader
+  `ResObject::FUN_00be41d0` reads the sound section through `FUN_00c0b740` whatever the type, and a
+  compound animates whenever its resource has a skeleton and clips (`CCompChar::FUN_00c2b930`,
+  BSR_FORMAT.md). So to the original a type-6 horse is a type-1 monster.
+- **The fix.** `World3D._assemble_monster_model` -- the one assembler of monster, COS, monster-ride
+  and mall-model templates (`MonsterDraw.Templates`, `MallModels`) -- passes `skinned_object`, so
+  any `.bsr` with a skeleton is a skinned body; a skeleton-less one is still refused (OPEN below).
+  `BsrReader` keeps a skeletal body's sound sets whatever its type (items excepted, as before). The
+  type word itself is unchanged (`is_character` stays 0/1), so the player-body, select-screen and
+  scenery paths are untouched. Rounds 795/796 (seat on `saddle`, the cart group, facing), 809 (its
+  material slot: `material_for_slot`), 828 (`BodyMirror.apply` in `_cos_build_body`), 847 and 855
+  run as they do for a type-1 COS.
+- **QA (box, `/var/tmp/r860h/run860h.sh`, lane server 17360 with the navmesh; real input).** The
+  user joins the traders at the doctor (round 805's steps), right-clicks the horse scroll (2137) in
+  the bag, rides, presses Home (the ride is deleted), wears the trader suit (the QA equip hook: a
+  right-click on a suit does not wear it), right-clicks the trade-horse scroll (2130), rides, Home
+  (it stays). Rendered own view with a headless observer, and the reverse; base = ca24154b plus the
+  QA census only.
+
+  | | base, own | head, own | base, observer | head, observer |
+  |---|---|---|---|---|
+  | ride horse summoned | capsule | `model cos\c_horse1.bsr` | capsule | model |
+  | its pieces (state line) | `CapsuleMesh{none}` | `c_horse_part1`, `_part2`: `ArrayMesh/skin{ShaderMaterial albedo_texture 512x256}` | `CapsuleMesh{none}` | the same two |
+  | mounted: clip, box | -, 6.4 x 8.0 x 6.4 | `c_horse_stand01`, 7.6 x 25.3 x 25.5 | -, capsule | `c_horse_stand01`, 7.6 x 25.3 x 25.5 |
+  | trade horse | capsule | `t_horse1_part1/2`, skinned, 512x256 each, `stand01` | capsule | the same |
+  | unridden trade horse | capsule, plate `< Horse >` `*Merchy` | the model, the same plates | capsule | the model |
+
+  No `SCRIPT ERROR` in any run. Frames for a human: `/var/tmp/r860h/keep/own_before_after.png`
+  (ridden, ridden, transport ridden, transport unridden; base row over head) and
+  `obs_before_after.png` (the observer's); logs `keep/{h,b}_{own,obs}.godot.log`, `.second.log`,
+  `.server.log`; the census `keep/census.tsv` (paths, type, skeleton and clip counts; no game data).
+  In the observer's head frames the horse fades in (the appear fade, round 847's) -- not a fault.
+- **Test.** `world/ride_body860_test.gd` (synthetic data): a type-6 body parses with its skeleton,
+  clips and sound sets (and a type-3 one; an item and a skeleton-less type 6 read none); the
+  assembler takes it as a skinned object; the world's `_assemble_monster_model` assembles it and
+  `_cos_build_body` hangs a skinned model, no capsule, under the COS body. Negatives checked: with
+  base's `World3D.gd` and `bsr_reader.gd` the suite fails 5 checks.
+- **Perf gate** (`perf_gate.sh --base ca24154b --head 39bfc4d0 --sites jangan --frames 24000`):
+
+  ```
+  jangan  frame ms   base 0.96  head 0.95  (-0.0)  SAME
+  jangan  entry ms   base 9078  head 8992  (-86.0)  SAME
+  jangan  freeze ms  base 2887  head 2866  (-21.0)  SAME
+  jangan  hitches    base 5  head 5  (+0.0)  SAME
+  ```
+
+  The gate's views hold no COS; it measures the changed assembler and parser at rest. A first try
+  failed one base run on a missing renderer banner while another lane's gate shared the box; the
+  rerun is the table.
+
+- **Gates:** `remote_godot.sh check` ALL LOAD (1123 scripts, 9 scenes); `remote_godot.sh tests`
+  "ran 423 suite(s), 0 failing" (RENDER_DIR /var/tmp/opensro-r860h). Client-only: no server change.
+- **OPEN.** (1) Skeleton-less monster bodies are still capsules: 142 type-2 `STRUCTURE_*` rows, 42
+  type-3 towers (`MOB_RED_TOWER`...), 7 type-6 god pillars (`MOB_GOD_PILLAR_*`); the original draws
+  them through the same object class (READ above), so they need a static-mesh body path. (2) The
+  unicorn, the dark horses and the camels are the same code path but were not driven live. (3) A
+  COS registers no clip sounds (`_cos_build_body` never calls `_anim_sounds.register`), so the
+  horse's hooves are silent; the sets are now parsed. (4) The fortress hearts and treasure boxes now
+  draw their models instead of a dark-red capsule; not driven live.
+
 ## Eight-hundred-and-fifty-ninth round, lane C: the chat caret, and every text box and caption, where the original draws them
 
 The user: "looks like the cursor in the chat input field is too far to the left now. Can you please
