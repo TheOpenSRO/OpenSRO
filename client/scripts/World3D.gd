@@ -30641,8 +30641,15 @@ func _assemble_monster_model(model: String) -> SkinnedBsrAssembler.AssembledChar
 	if _data_pk2 == null:
 		return null
 	# Round 809: a key may carry a material slot (MonsterDraw.template_key).
+	# Round 860: any skeletal .bsr, whatever its type word (skinned_object).
+	# The original's resource factory builds one class for types 1, 2, 3, 4,
+	# 6 and 7 (READ, ResourceMgr::FUN_00be9250: all to FUN_00be8dc0, vtable
+	# 0xe0b670), and a body animates whenever its resource has a skeleton and
+	# clips (CCompChar::FUN_00c2b930). The horses, the unicorn and the trade
+	# horses and camels are type 6 (cos\c_horse1.bsr: a .bsk, two .bms, six
+	# clips; MEASURED), and were refused here and drawn as a capsule.
 	return SkinnedBsrAssembler.assemble_from_archive(_data_pk2, MonsterDraw.model_of_key(model), true, false,
-		MonsterDraw.slot_of_key(model))
+		MonsterDraw.slot_of_key(model), true)
 
 ## Round 809: a body's own particle effects (BodyFx).
 var _body_fx := BodyFx.new()
