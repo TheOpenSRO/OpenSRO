@@ -43,7 +43,7 @@ looks up by name at `c:0x83b0f5..0x83b197`: `ITEM_ETC_AUTOMOB` -- or the uid nam
    0x80000023, /4 5 -> 0x80000024, /4 9 -> 0x80000025; `FUN_00666e10` 3/3/2 with /4 1 or 6 ->
    the name `PARAM_CURE_ALL`, /4 7 -> `STATUS_CURE_COS` (`FUN_00a950a0`).
 3. `FUN_00666ce0` 3/3/6 (fireworks): `FUN_00ba36d0(&DAT_00eef6d0, {ref, obj})` makes a
-   firework object -- no body effect. OpenSRO's server does not use fireworks (OPEN).
+   firework object (CIParticleObj) -- no body effect. Built in round 860: see "The fireworks".
 4. Otherwise, when step 2 started nothing (the decoration's `+0x60` empty, c:0x8737c8): the
    item's own code name as an effect id (`FUN_00a950a0(code)`); a name with no rows starts
    nothing.
@@ -93,7 +93,7 @@ client only (round 615; `UiSounds.use_replied`). MEASURED: its effectsound row i
 | pet pills 3/3/2/7 | 2 | STATUS_CURE_COS | `skill\china\water_cure_effect_a.efp` | none, on the player | snd_potion | everyone |
 | pill bags 3/3/2/8 | 4 | none | -- | -- | snd_potion | -- |
 | every scroll 3/3/3 (return, reverse, COS summons, global chat, booths, ...) | 146 + ITEM_ETC_AUTOMOB | SYSTEM_RETURNSCROLL (ITEM_ETC_AUTOMOB, ref 3664, nothing) | `system\item_returnscroll.efp` ACT_S **AT_LOOP**, let go at once | none | none | everyone |
-| fireworks 3/3/6 | 11 | the firework object | -- (OPEN) | -- | -- | -- |
+| fireworks 3/3/6/1 | 10 (+ the fortress shock bomb 3/3/6/2) | the firework object (round 860) | `system\firework_*.efp` / `item_firework_bomb_*.efp`, AT_STOP, 8 above the item's drop model | none | `firework\firework_shot_0n.wav` at once, the explosion 600 / 1300 ms later | everyone in the 3 x 3 |
 | hwan scrolls 3/3/13 | 4 | by code | `system\item_qt_hwan.efp` | none | `UI\HyanGet.wav` | everyone |
 | devil's spirits 3/1/14 (Nasrun), the extension 3/3/13 | 10 + 1 | itemeffect.txt use rows: ITEMSKILL_*_NASRUN_AWAKE / _EXTENSION_USE | `system\avatar_nasrun01_awake01.efp` | Bip01 Spine1 | `Avatar\Avatar_Nasrun1_Awake1.wav` | everyone |
 | every other 3/3/x (speed scrolls 3/3/13/1, elixirs, stones, ...) | 3,657 | none (a speed scroll's buff draws its own aura, round 796) | -- | -- | -- | -- |
@@ -105,5 +105,34 @@ is in the box's Particles.pk2 (the run's own log shows each one built).
 
 - The Scale column (`MOB_BASE` on PARAM_CURE_ALL) is parsed by SkillEffects and not applied to
   any effect (lane B's general effect pipeline).
-- Fireworks (3/3/6): the object `FUN_00ba36d0` makes; OpenSRO's server refuses fireworks.
 - `GObjPC::COS__UseItem`'s 0x305C (a COS's own use): OpenSRO has no 0xB0C5 use.
+
+## The fireworks (round 860, lane E)
+
+READ unless marked; code `server/internal/session/firework.go`, `client/scripts/effects/firework.gd`.
+
+- **Server.** `Item_HandleUseItem` calls the item's slot 0x4c8 (s:0x510f55 / 0x510f68): for every
+  CGItemExpendable `CGItemExpendable::DoJob` (s:0x49aca0; vtable s:0xaeb2b4, slot 306 at s:0xaeb77c).
+  Its TypeID3 switch (byte table s:0x49af98) sends 6 to s:0x49ae83: TypeID4 2 (ITEM_FORT_SHOCK_BOMB) to
+  slot 0x524 (fortress, not modelled: refused here); anything else answers 1 after UseByKind's logout
+  test (`[owner+0x30]+0x11 == 1`, 0x186b otherwise; no logout state here), and DoJob's tail spends one.
+  The generic reuse delay (s:0x510d78, ref+0x524) applies; MEASURED no firework row has a COOLTIME.
+  So: accept, spend one, 0xB04C, then 0x305C to the 3 x 3. MEASURED: SPIN and SPRAY have the CanUse
+  bit clear (refused 0x183e before DoJob) and no skilleffect rows.
+- **Client, the object** (`CIParticleObj`, class link 0xeef6d0, `CIParticleObj::vslot_000` c:0x9c5090,
+  0x79c bytes). Set-up `vslot_007` c:0x9c5340: copies the user's +0x74, +0x6b4 and position;
+  record +0x798 = `g_sSkillEffMapStr[code name]` (FUN_00a95f10, map 0x110abe0); model
+  `FUN_009c4ec0(ref + 0x140)` -- the drop model, itemdata column 53, as a ground CIItem (c:0x9e1492);
+  bound top +0xb0 += 500.0 (.rdata 0xdd24b8); bursts +0x790 = byte +9 of the first ACT_S row
+  (column 11 CreateCnt, the row parser's c:0xa9d5f8); +0x794 = 2000 ms. Frame `vslot_009` c:0x9c5460:
+  while fired < count and fired x 2000 <= its age (+0x3c, the entity manager's sum of frame ms,
+  c:0xba35a1): a decoration `FUN_00a53850(0, this, record, 0, 1, 0)` with the height +0x94 raised by
+  8.0 (.rdata 0xd89240), attached; once done and its decoration list empty, deleted at once
+  (`FUN_00ba3770`).
+- **The rows' delayed sounds.** `IDecoSkill::FUN_00a4fe70` (c:0xa4fe7a): a row whose +0x10
+  (MovTypeSpeed's first number) is not 0 queues its SndBegin / SndEnd on the decoration (+0xac) with the
+  body's position then; `CIDecoSkill::vslot_014` (c:0xa50420) plays them when the frame ms add up. The
+  fireworks' explosions wait 1300 ms (the chain bomb 600, the cross star's spark 2000), MEASURED.
+  `ItemUseEffect.sound_rows` / `play_sounds` honour it for every item use now.
+- MEASURED bursts: 1 for the four bombs, the star shower and the cross star, 8 for the chain bomb and
+  the tadpole.

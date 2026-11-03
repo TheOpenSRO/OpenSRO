@@ -318,6 +318,7 @@ func note_war_flag(guild_id: int, flag: int) -> void:
 	else:
 		war_guilds.erase(guild_id)
 	if had != war_guilds.has(guild_id):
+		print("NetClient: guild %d %s the at-war set (flag %d)" % [guild_id, "joins" if flag == 0 else "leaves", flag])
 		war_guilds_changed.emit()
 ## 0xB256: {ok, code, guild_id, target, nickname} (GuildPlateNet).
 signal guild_grant_result(d: Dictionary)

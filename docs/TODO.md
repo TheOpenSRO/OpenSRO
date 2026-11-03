@@ -11,31 +11,39 @@ the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff cov
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
 
-## Round 859 lane B follow-ups (effects and sounds; WORLD_ISSUES round 859 lane B has the census)
+## Round 859 lane B follow-ups (effects and sounds; WORLD_ISSUES round 859 lane B has the census, round 860 lane E what was built since)
 
-Built: the kill orbs (EXP / SP), the hit's blood and a plain swing's DamageEfp, 0x3054 for every
-level-up (everyone in view sees it; a COS's too), the pet's summon effect and sound, snd_quest,
-snd_button_click on every CIFButton. Left, most seen first:
+Built in round 859: the kill orbs (EXP / SP), the hit's blood, 0x3054 for every level-up, the pet's
+summon, snd_quest, snd_button_click on UiBuilder's CIFButtons. Built in round 860 (lane E): the
+fireworks (server and client), the guild war mark, the violet hwan orbs (0x304E kind 4), a COS's EXP
+orbs, a set of gear's effect and sound (and the itemeffect put-on / take-off rows), the code-made
+CIFButtons' click. Left:
 
-- [ ] **The guild war mark** over a hostile guild's members (`SYSTEM_GUILD_WAR_MARK`,
-      `res\etc\guild_war_mark.bsr`; `CICUser::vslot_009` -> `FUN_009ddb00` bit 4): READ that it needs
-      the character's guild in the hostile map, not a town, and a virtual on the body returning 4,
-      which was not identified.
-- [ ] **The violet hwan orbs** (0x304E kind 4 `c:0x8a70d0`: the count's rise flies from the
-      source monster and each arrival adds one to the gauge's display): OpenSRO's gauge comes on the
-      attack result, not 0x304E kind 4 with a source id.
-- [ ] **A COS's EXP orbs** (0x30C9 `c:0x8aa340`, kind 3 to the COS).
-- [ ] **A set of gear's full-set effect and sound** (0x3038 / 0x3039, `ITEM_SETITEM_ACTIVE` /
-      `_DEACTIVE` and snd_setitem_*): the flag at the body's +0x27*4 +0x1a1 / +0x1a2 is set on a
-      path not traced (`FUN_0095d950`).
-- [ ] **The helper mark** (`SYSTEM_HELPERMARK`, bit 2 of +0x7b5; its setter not traced),
-      the Nasrun avatar's run effects (`FUN_009db9e0`), the rogue's key mark (0x80000029).
-- [ ] **snd_warp** (`CGInterface::Create` with argument 2: the caller that passes it not traced).
-- [ ] **Code-made buttons** (Godot Buttons a window builds itself rather than through UiBuilder)
-      do not click; the original's CIFButtons made in code do.
-- [ ] **Where a hit's effects sit**: the DamageEfp and the blood at the decoration's or the target's
-      +0x90 (`FUN_00a4bdd0`) or `FUN_009cf6f0`'s DamagePos point (the end-of-cast apply); here the
-      body's mid-height (OURS, as since round 620).
+- [ ] **The full-set model switch** (FUN_00a60c60: armour slots with two models switch to the
+      `_fullset.bsr` while the set is complete) -- SetItemFx knows when; CharacterLook does not switch.
+      And refsetitemgroup's mask column (setdef +0xa4) is not read (sizes by code name, INFERRED).
+- [ ] **The helper mark** (`SYSTEM_HELPERMARK`, `res\etc\helpermark.bsr` at `*` 0,13,0): READ (round 860
+      lane E's fork): flags bit 2 (c:0x9db970); from spawn field 5 (`_CHAR.AutoInvestExp`, c:0x9dbca2 /
+      0x9de594), the own character data (c:0x9d5b30 / 0x9d9eb8), and 0xB402 {u32 uid, u8 flags}
+      (c:0x8a5230) that the server sends to the view on 0x7402 [u8 flags] (s:0x518b80, action 1011,
+      bit 0 refused at level 20+, cleared on reaching 20, s:0x4e4f19). Needs the server's 0x7402 /
+      0xB402, the byte in spawn and character data, the client's action 1011; GuildWarMark's `*`
+      placement is ready for it.
+- [ ] **The Nasrun run effects** (`EFFECT_NASRUN_RUN_01/02`): READ `c:0x9db9e0` / `c:0x9db180` -- a body
+      with a run kind (charactervisualchange.txt ConditionID 3 rows' Pram2, c:0x4eb5d0: 2 RUN_01 while
+      running, 3 RUN_01 running and RUN_02 walking) gets the kept effect when it starts moving and loses
+      it when it stops. Client only (CharacterVisualChange does not attach ConditionID 3 rows yet).
+- [ ] **The rogue key mark** (0x80000029): READ c:0x8a59e0 / 0x8a5b48 -- 0xB0BD carries the caster's id
+      for a skill whose client record +0xa4 is set; the buffed player sees `UIIT_MSG_SKILL_EXECUTE` and the
+      key over the caster until the decoration ends (c:0xa5319a). Needs the server's buff start to carry
+      the caster; the record column of +0xa4 is OPEN.
+- [ ] **Where a hit's effects sit** (`FUN_00a4bdd0`'s +0x90 / `FUN_009cf6f0`'s DamagePos) and
+      PARAM_CURE_ALL's Scale column (MOB_BASE, parsed, applied nowhere): not reached in round 860.
+- [x] **snd_warp**: nothing to build -- READ `CGInterface::Create` c:0x78c910 plays it only for argument
+      2 (c:0x78cef1), its only caller found passes 0 (c:0xba2261), and effectsound.txt's SND_WARP row is
+      commented out (MEASURED): the original is silent.
+- [ ] Guild war mark: players outside a guild learn that it went to war only at the next spawn or
+      0x30FF (the original's gap too); the fortress-war test (c:0x939a60) is always false here.
 
 ## Server collision (round 812) -- **built: the server walks every mover on the game's navigation mesh; these are left**
 

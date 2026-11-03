@@ -38731,6 +38731,9 @@ func _update_war_marks() -> void:
 			return
 		AuraModel.star_height_of = func(host: Node3D) -> float: return _star_height_of(host)
 	var seen := {}
+	# The model's archive (Data.pk2), as a cast's .bsr objects open it.
+	if BsrEffect.archive == null:
+		_deco_archive()
 	if player != null and is_instance_valid(player) and NetClient.own_character_id >= 0:
 		var own_uid := NetClient.own_character_id & 0xffffffff
 		var gid := int(NetClient.guild_data.guild_id) if NetClient.guild_data.in_guild else int(NetClient.own_guild_line.get("guild_id", 0))
@@ -38762,8 +38765,9 @@ func _war_mark_on(uid: int, body: Node3D, what: int) -> void:
 		if m != null:
 			m.name = "GuildWarMark"
 			_war_marks[uid] = m
-			print("World3D: guild war mark on uid %d (%s), %.1f above its foot" % [uid, body.name,
-				_star_height_of(body) + float((_war_mark_row["offset"] as Vector3).y)])
+			print("World3D: guild war mark on uid %d (%s), %.1f above its foot (placed %.2f)" % [uid, body.name,
+				_star_height_of(body) + float((_war_mark_row["offset"] as Vector3).y),
+				m.global_position.y - body.global_position.y if m.is_inside_tree() else -1.0])
 	elif what == GuildWarMark.OFF and had != null:
 		had.release()
 		_war_marks.erase(uid)
