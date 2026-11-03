@@ -10,7 +10,8 @@ extends SceneTree
 ## - I (a hotkey) opens the main popup and sounds the window-open row once;
 ##   I again closes it and sounds the window-close row once;
 ## - a key that switches the popup's tab sounds the open again (0x79b062);
-## - a plain button (the equipment pane's avatar switch) is silent;
+## - a plain button (the equipment pane's avatar switch) clicks (round 859:
+##   CIFButton's slot 17 plays snd_button_click, READ c:0x656160);
 ## - Q (the quest window, 0x7990e0) is silent;
 ## - the level-up plays UI:snd_levup:-:CHINESS:-:-;
 ## - the equip-token, drop-token and durability rules on synthetic type ids;
@@ -275,7 +276,7 @@ func _run() -> void:
 	_check(_playing("UI:snd_window_open:-:-:-:-") == 1, "I (hotkey) sounds snd_window_open once (%d)" % _playing("UI:snd_window_open:-:-:-:-"))
 	_check(_playing("UI:snd_window_close:-:-:-:-") == 0, "and no snd_window_close")
 
-	# (2) A plain button inside the window is silent.
+	# (2) A plain button inside the window clicks (round 859), nothing else.
 	_stop_all()
 	var popup_window := panels.find_child("Window_mainpopup", true, false) as Control
 	var avatar_btn: Control = popup_window.find_child("GDR_EQ_BTN_CHANGE_AVATAR_SLOT", true, false) if popup_window != null else null
@@ -284,7 +285,9 @@ func _run() -> void:
 	_check(avatar_btn != null and avatar_btn.is_visible_in_tree(), "the probe: an ordinary button of the equipment pane is on screen")
 	_click(_centre(avatar_btn))
 	await _frames()
-	_check(_any_playing() == 0, "a plain button click is silent (%d sounds)" % _any_playing())
+	_check(_playing("UI:snd_button_click:-:-:-:-") == 1 and _any_playing() == 1,
+		"a plain button click sounds snd_button_click once, nothing else (%d, %d sounds)" % [
+		_playing("UI:snd_button_click:-:-:-:-"), _any_playing()])
 
 	# (3) S switches the tab of the popup already up: the open again.
 	_stop_all()

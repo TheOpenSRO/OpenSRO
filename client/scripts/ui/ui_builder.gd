@@ -610,7 +610,21 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 	# colour it had. A TextureButton redraws when its disabled flag changes,
 	# so the caption follows on `draw`.
 	btn.draw.connect(func() -> void: sync_disabled_caption(btn))
+	# Round 859 (READ, CIFButton's message handler -- vtable slot 17
+	# c:0x656160, shared by CIFCloseButton and CIFButtonTree): a left button
+	# released inside the button it was pressed on sends the click and plays
+	# snd_button_click, unless the button's style has 0x20 (+0x38c, INFERRED
+	# the layout's Style; such a button clicks on the press, repeating, and
+	# is silent). MEASURED: none of the 529 CIFButtons in the resinfo
+	# layouts sets 0x20. Godot's `pressed` is that release inside, enabled.
+	if (def.style & BUTTON_STYLE_REPEAT) == 0:
+		var what := def.name
+		btn.pressed.connect(func() -> void: UiSounds.button_clicked(what))
 	return btn
+
+## Round 859: the CIFButton style bit that makes it click on the press and
+## stay silent (READ, c:0x656160's `FUN_00655fb0(0x20)` tests).
+const BUTTON_STYLE_REPEAT := 0x20
 
 ## READ (above): CIFButton's disabled caption colour.
 const DISABLED_CAPTION := Color8(0xe6, 0xe6, 0xe6, 0xff)

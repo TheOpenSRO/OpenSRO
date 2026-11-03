@@ -9186,7 +9186,11 @@ func connect_net() -> void:
 		if ok and quest_hud != null and quest_hud.detail != null and is_instance_valid(quest_hud.detail):
 			quest_hud.detail.hide())
 	NetClient.quest.claim_result.connect(func(ok: bool, id: int, error: int) -> void:
-		print("HudPanels: claim quest %d: %s" % [id, "ok" if ok else "refused %d" % error]))
+		print("HudPanels: claim quest %d: %s" % [id, "ok" if ok else "refused %d" % error])
+		# Round 859 (READ, 0xB0D8's handler c:0x881450): a result of 1 plays
+		# snd_quest (`UI SND_QUEST ... ui\ QuestOpen.wav`, MEASURED).
+		if ok:
+			UiSounds.play(UiSounds.KEY_QUEST, "quest %d claimed" % id))
 	# Round 834: the friend list (0x3305 and the 0x3B07 pushes) fills the
 	# community view's friend rows (GuildWindow.fill_friends).
 	NetClient.friend_list_changed.connect(_on_friend_list_changed)

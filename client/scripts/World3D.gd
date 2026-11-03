@@ -32682,8 +32682,15 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 				# (DamageText, READ: no "miss" and no zero). From a server
 				# that sends no block, the result's sum as one number.
 				_swing_numbers(hit_body, monster, result, swing_hit_offsets)
-				if skill_hit_code != "":
-					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), skill_hit_code))
+				# Round 859: a plain swing is its weapon's base attack skill
+				# (SKILL_CH_SWORD_BASE...), whose skillaniset2 row names a
+				# DamageEfp (hit_3_normal, hit_3_bow; MEASURED) and blood, as
+				# a cast's does (READ, FUN_00a4bdd0 for any decoration); until
+				# this round it drew none. OURS: once a blow, not per entry.
+				var hit_code := skill_hit_code if skill_hit_code != "" else \
+					String(SkillAudio.context_for(blow_skill).get("code", ""))
+				if hit_code != "" and hit_code != SkillAudio.NONE:
+					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), hit_code))
 	# The monster strikes back as the player's blow lands -- from the zone's
 	# OpMonsterAttacked when a server sends one, else from this result
 	# (_draw_counter_at_landing, round 540). Only the monster that took the
@@ -36713,7 +36720,10 @@ func _orb_launch(monster_id: int) -> void:
 	if _exp_orbs.parent == null:
 		_exp_orbs.parent = self
 		_exp_orbs.factory = func(path: String) -> EfpEffect: return EfpEffect.create(path, _open_particles_pk2_if_set())
-		_exp_orbs.sound = func(path: String, at: Vector3) -> void: SoundTable.play_file(path, at)
+		_exp_orbs.sound = func(path: String, at: Vector3) -> void:
+			SoundTable.play_file(path, at)
+			print("World3D: kill orb absorbed (%d of %d) -- %s at %s" % [_exp_orbs.absorbed, _exp_orbs.launched,
+				path, at.snapped(Vector3(0.1, 0.1, 0.1))])
 	var skel := SkillEffects.skeleton_of(body)
 	var start: Vector3 = (body as Node3D).global_position
 	if skel != null and skel.is_inside_tree() and skel.find_bone(ExpOrbs.SOURCE_BONE) >= 0:

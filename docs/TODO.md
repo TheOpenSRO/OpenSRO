@@ -11,6 +11,32 @@ the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff cov
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
 
+## Round 859 lane B follow-ups (effects and sounds; WORLD_ISSUES round 859 lane B has the census)
+
+Built: the kill orbs (EXP / SP), the hit's blood and a plain swing's DamageEfp, 0x3054 for every
+level-up (everyone in view sees it; a COS's too), the pet's summon effect and sound, snd_quest,
+snd_button_click on every CIFButton. Left, most seen first:
+
+- [ ] **The guild war mark** over a hostile guild's members (`SYSTEM_GUILD_WAR_MARK`,
+      `res\etc\guild_war_mark.bsr`; `CICUser::vslot_009` -> `FUN_009ddb00` bit 4): READ that it needs
+      the character's guild in the hostile map, not a town, and a virtual on the body returning 4,
+      which was not identified.
+- [ ] **The violet hwan orbs** (0x304E kind 4 `c:0x8a70d0`: the count's rise flies from the
+      source monster and each arrival adds one to the gauge's display): OpenSRO's gauge comes on the
+      attack result, not 0x304E kind 4 with a source id.
+- [ ] **A COS's EXP orbs** (0x30C9 `c:0x8aa340`, kind 3 to the COS).
+- [ ] **A set of gear's full-set effect and sound** (0x3038 / 0x3039, `ITEM_SETITEM_ACTIVE` /
+      `_DEACTIVE` and snd_setitem_*): the flag at the body's +0x27*4 +0x1a1 / +0x1a2 is set on a
+      path not traced (`FUN_0095d950`).
+- [ ] **The helper mark** (`SYSTEM_HELPERMARK`, bit 2 of +0x7b5; its setter not traced),
+      the Nasrun avatar's run effects (`FUN_009db9e0`), the rogue's key mark (0x80000029).
+- [ ] **snd_warp** (`CGInterface::Create` with argument 2: the caller that passes it not traced).
+- [ ] **Code-made buttons** (Godot Buttons a window builds itself rather than through UiBuilder)
+      do not click; the original's CIFButtons made in code do.
+- [ ] **Where a hit's effects sit**: the DamageEfp and the blood at the decoration's or the target's
+      +0x90 (`FUN_00a4bdd0`) or `FUN_009cf6f0`'s DamagePos point (the end-of-cast apply); here the
+      body's mid-height (OURS, as since round 620).
+
 ## Server collision (round 812) -- **built: the server walks every mover on the game's navigation mesh; these are left**
 
 `server/internal/navmesh` is a port of the client's `NavGraph` (the field walk; parity: 395 of 400
