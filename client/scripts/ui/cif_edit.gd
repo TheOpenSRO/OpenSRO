@@ -88,8 +88,25 @@ class_name CifEdit
 ## the edit's CETime (`+0x388`, set to 5 per second by 0x637b3c ->
 ## 0xba9aa0(5): 1000 / 5 = 200 ms) ticks (0x635530). So the caret is 2 pixels
 ## wide, the text's colour, and blinks 200 ms on, 200 ms off. Its height is
-## the font's tmHeight + 2.0 from the text's top; Godot draws its caret the
-## line's height (ascent + descent) -- OPEN, measured in the round's frames.
+## the font's tmHeight + 2.0 from the text's top.
+##
+## **Where the text and the caret go (READ, round 859; TextLayout has the
+## formulas).** The text rect is the edit's rect less its ClientRect
+## (0x652800); HAlign 0 / 1 / 2 put the text at its left, centre, or 2.0
+## short of its right; VAlign 0 / 1 / 2 at its top, centre or bottom; the
+## caret at the text's left + the advances before it, from the text's top,
+## tmHeight + 2 tall. Round 848's chat line was a second edit laid over the
+## authored one with no insets at all, so its text and caret sat 5 px left of
+## the original's (ClientRect 5,4,0,0) and its text was centred in the 20 px
+## (VAlign 0 is the top). `lay_out` gives every edit the rule: the ClientRect
+## and HAlign as LineEdit's content margins and alignment, VAlign by the top
+## and bottom margins (LineEdit only centres; a top-aligned text gets the
+## room below it as margin, kept on every resize and font change), and the
+## caret is drawn here (`_draw`) by the original's quad -- Godot's own caret
+## is the line's height, starts its blink shown and is switched off
+## (transparent). The caret's x is Godot's own shaping of the shown text
+## (TextServer's caret at the column, the same buffer LineEdit draws), so it
+## stays on the glyph boundary LineEdit draws at every UI scale.
 ##
 ## **Not built (OPEN):** the IME composition underline the draw adds
 ## (0x637b70, `0x468` / DAT_0110f9c8: dotted 0xff969696 or solid white); Godot
@@ -105,6 +122,20 @@ const MARK_COLOUR := Color8(0x3b, 0x45, 0x7a)
 const DEFAULT_CHAR_LIMIT := 0x200
 
 var _colour := Color.WHITE
+## The layout the text follows (lay_out): the ClientRect insets (left, top,
+## right, bottom as x, y, w, h), HAlign and VAlign. Unset (`_laid` false), the
+## edit keeps whatever margins its maker gave it and LineEdit's centring.
+var _client := Rect2i()
+var _halign := 0
+var _valign := 1
+var _laid := false
+var _margins_busy := false
+## The drawn caret's blink: shown half, 200 ms each, starting hidden when the
+## edit takes the keyboard (READ 0x637b50 clears the flag).
+var _blink_on := false
+var _blink_t := 0.0
+## A caret drawn regardless of the blink and the focus (the census's probe).
+var caret_probe := false
 
 func _init() -> void:
 	text_changed.connect(_hold_byte_limit)
@@ -120,6 +151,12 @@ func _init() -> void:
 	add_theme_constant_override("caret_width", CARET_WIDTH)
 	add_theme_color_override("selection_color", MARK_COLOUR)
 	set_colour(_colour)
+	set_process(false)
+	# CIFEdit draws no box of its own (its art, if any, is the layout's,
+	# which the maker sets as a texture box): no Godot LineEdit box, whose
+	# 4 px margins would also hold the edit taller than its rect.
+	for st in _STYLES:
+		add_theme_stylebox_override(st, StyleBoxEmpty.new())
 
 ## The edit's FontColor: its text, its caret and its marked text. Also the
 ## colour of an edit that does not take input (INFERRED: CIFEdit's draw has
@@ -129,13 +166,188 @@ func _init() -> void:
 func set_colour(colour: Color) -> void:
 	_colour = colour
 	add_theme_color_override("font_color", colour)
-	add_theme_color_override("caret_color", colour)
+	# Godot's caret is not drawn: _draw draws the original's (round 859).
+	add_theme_color_override("caret_color", Color(colour, 0.0))
 	add_theme_color_override("font_selected_color", colour)
 	add_theme_color_override("font_uneditable_color", colour)
 	add_theme_color_override("font_placeholder_color", colour)
 
 func colour() -> Color:
 	return _colour
+
+## Lays the text out by the original's rule (the header; TextLayout): the
+## text rect is the edit less `client` (ClientRect left, top, right, bottom
+## as a Rect2i's x, y, w, h), placed by `halign` / `valign` (the layout's 0 /
+## 1 / 2). Applied now and on every resize or font change.
+func lay_out(client: Rect2i, halign: int, valign: int) -> void:
+	_client = client
+	_halign = halign
+	_valign = valign
+	_laid = true
+	match halign:
+		1: alignment = HORIZONTAL_ALIGNMENT_CENTER
+		2: alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_: alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_apply_margins()
+
+## The same layout as `other` (an edit laid over an authored one, as the chat
+## line is over GDR_CHAT_INPUTBOX).
+func lay_out_as(other: CifEdit) -> void:
+	if other != null and other._laid:
+		lay_out(other._client, other._halign, other._valign)
+
+func is_laid_out() -> bool:
+	return _laid
+
+func layout_client() -> Rect2i:
+	return _client
+
+func layout_halign() -> int:
+	return _halign
+
+func layout_valign() -> int:
+	return _valign
+
+## The face's height at the edit's size: the tmHeight stand-in (GDI's
+## tmHeight is tmAscent + tmDescent; Godot's height is ascent + descent of
+## the same face -- INFERRED equivalent).
+func font_height() -> float:
+	var font := get_theme_font(&"font")
+	return font.get_height(get_theme_font_size(&"font_size")) if font != null else 0.0
+
+const _STYLES := [&"normal", &"focus", &"read_only"]
+const _OWN_BOX_META := &"cif_edit_own"
+
+func _apply_margins() -> void:
+	if not _laid or _margins_busy:
+		return
+	_margins_busy = true
+	var m := TextLayout.line_edit_margins(layout_height(), _client, _halign, _valign, ceilf(font_height()))
+	for st in _STYLES:
+		var sb: StyleBox = get_theme_stylebox(st) if has_theme_stylebox_override(st) else null
+		if sb == null or not sb.has_meta(_OWN_BOX_META):
+			# A box of its own, so a box shared with another edit (or a
+			# caller's) is not changed under it.
+			sb = sb.duplicate() if sb != null else StyleBoxEmpty.new()
+			sb.set_meta(_OWN_BOX_META, true)
+			_set_margins(sb, m)
+			add_theme_stylebox_override(st, sb)
+		else:
+			_set_margins(sb, m)
+	_margins_busy = false
+
+## The height the margins are worked out for: the layout's own (the rect the
+## builder recorded) when there is one -- Godot holds a Control at least as
+## tall as its minimum, so a size read back after a taller minimum would keep
+## the edit that tall -- else the edit's height now.
+func layout_height() -> float:
+	if has_meta(UiBuilder.AUTHORED_RECT_META):
+		var r: Rect2 = get_meta(UiBuilder.AUTHORED_RECT_META)
+		if r.size.y > 0.0:
+			return r.size.y
+	return size.y
+
+static func _set_margins(sb: StyleBox, m: PackedFloat32Array) -> void:
+	if sb.content_margin_left != m[0]:
+		sb.content_margin_left = m[0]
+	if sb.content_margin_top != m[1]:
+		sb.content_margin_top = m[1]
+	if sb.content_margin_right != m[2]:
+		sb.content_margin_right = m[2]
+	if sb.content_margin_bottom != m[3]:
+		sb.content_margin_bottom = m[3]
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_RESIZED, NOTIFICATION_THEME_CHANGED, NOTIFICATION_ENTER_TREE:
+			_apply_margins()
+		NOTIFICATION_FOCUS_ENTER:
+			_blink_on = false
+			_blink_t = 0.0
+			set_process(true)
+			queue_redraw()
+		NOTIFICATION_FOCUS_EXIT:
+			set_process(false)
+			_blink_on = false
+			queue_redraw()
+
+func _process(delta: float) -> void:
+	_blink_t += delta
+	while _blink_t >= CARET_BLINK_SEC:
+		_blink_t -= CARET_BLINK_SEC
+		_blink_on = not _blink_on
+		queue_redraw()
+
+## The original's caret, drawn over LineEdit's own drawing (READ 0x637b70:
+## while the blink flag is set and the edit has the keyboard).
+func _draw() -> void:
+	if not caret_probe and not (_blink_on and caret_shown()):
+		return
+	var r := caret_rect()
+	if r.size.x > 0.0:
+		draw_rect(r, _colour)
+
+## Whether the caret is drawn at all now (the blink aside): the edit has the
+## keyboard and takes input.
+func caret_shown() -> bool:
+	if not has_focus() or not editable:
+		return false
+	if has_method("is_editing") and not bool(call("is_editing")):
+		return false
+	return true
+
+## Where the caret goes, in the edit's own coordinates (READ, the header):
+## x at the text's left + the advance before the caret column, 2 wide; from
+## the text's top, tmHeight + 2 tall. The text's left is where LineEdit draws
+## it (its alignment and scroll on the content margins lay_out set).
+func caret_rect() -> Rect2:
+	var font := get_theme_font(&"font")
+	if font == null:
+		return Rect2()
+	var fs := get_theme_font_size(&"font_size")
+	var sb := get_theme_stylebox(&"normal" if editable else &"read_only")
+	var ml := sb.get_margin(SIDE_LEFT)
+	var mr := sb.get_margin(SIDE_RIGHT)
+	var mt := sb.get_margin(SIDE_TOP)
+	var y_area := int(size.y - sb.get_minimum_size().y)
+	var fh := font_height()
+	var shown := text
+	if secret and shown != "":
+		shown = (secret_character if secret_character != "" else "*").left(1).repeat(shown.length())
+	if shown == "":
+		# No text: the empty caret (LineEdit's x per alignment; the
+		# original's VAlign 1 / 2 tops, 0x637e3d..0x637e7c).
+		var ex := ml
+		match alignment:
+			HORIZONTAL_ALIGNMENT_CENTER:
+				ex = ml + maxi(0, int(size.x - ml - mr) / 2)
+			HORIZONTAL_ALIGNMENT_RIGHT:
+				ex = size.x - mr
+		var ey := mt + int((y_area - ceilf(fh)) / 2.0)
+		if _laid:
+			ey = TextLayout.edit_origin(Rect2(Vector2.ZERO, size), _client, 0, _valign, Vector2.ZERO, fh).y
+		return Rect2(Vector2(floorf(ex), floorf(ey)), Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
+	var line := TextLine.new()
+	line.add_string(shown, font, fs, language)
+	var ts := TextServerManager.get_primary_interface()
+	var tw := line.get_size().x
+	var th := line.get_size().y
+	var x_ofs := ml
+	match alignment:
+		HORIZONTAL_ALIGNMENT_CENTER:
+			if is_zero_approx(get_scroll_offset()):
+				x_ofs = ml + maxi(0, int(size.x - ml - mr - tw) / 2)
+		HORIZONTAL_ALIGNMENT_RIGHT:
+			x_ofs = maxf(ml, int(size.x - ceilf(mr + tw)))
+	var carets: Dictionary = ts.shaped_text_get_carets(line.get_rid(), caret_column)
+	var lead: Rect2 = carets.get("leading_rect", Rect2())
+	var trail: Rect2 = carets.get("trailing_rect", Rect2())
+	var adv := lead.position.x if lead != Rect2() else trail.position.x
+	if lead == Rect2() and trail == Rect2():
+		adv = tw if caret_column >= shown.length() else 0.0
+	var y_ofs := mt + int((y_area - th) / 2.0)
+	return Rect2(Vector2(x_ofs + get_scroll_offset() + adv, y_ofs),
+		Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
 
 ## Whether the player's Windows code page is a double-byte one (INFERRED from
 ## the OS locale's language: Korean, Chinese, Japanese).

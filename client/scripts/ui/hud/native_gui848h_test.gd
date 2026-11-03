@@ -197,7 +197,10 @@ func _cif_edit() -> void:
 		"no context menu, no Godot shortcuts, no middle-button paste")
 	_check(e.get_theme_constant("caret_width") == 2 and is_equal_approx(e.caret_blink_interval, 0.2) and e.caret_blink,
 		"the caret 2 wide, blinking every 200 ms (0xe1b898, CETime at 5 Hz)")
-	_check(e.get_theme_color("caret_color") == Color8(250, 240, 200) and e.get_theme_color("font_color") == Color8(250, 240, 200)
+	# Round 859: Godot's caret is transparent; CifEdit draws the original's
+	# quad (caret_rect) in the FontColor (colour()).
+	_check(e.get_theme_color("caret_color").a == 0.0 and e.colour() == Color8(250, 240, 200)
+		and e.get_theme_color("font_color") == Color8(250, 240, 200)
 		and e.get_theme_color("font_uneditable_color") == Color8(250, 240, 200), "the caret and the text in the FontColor")
 	_check(e.get_theme_color("selection_color") == CifEdit.MARK_COLOUR, "the mark's background 0xff3b457a")
 	e.text = "abcdef"

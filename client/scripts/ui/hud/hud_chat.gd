@@ -577,6 +577,12 @@ func _install_input() -> void:
 	if _font != null:
 		_input.add_theme_font_override("font", _font)
 	_input.add_theme_font_size_override("font_size", _font_size)
+	# Round 859: the authored box's text layout -- its ClientRect 5,4,0,0,
+	# HAlign 0, VAlign 0 (ifchatviewer.txt) -- as CIFEInputChatBox draws its
+	# own text (0x637b70 through 0x652800). Round 848's line had none: text
+	# and caret 5 px left of the original's, the text centred in the 20 px.
+	if box is CifEdit:
+		_input.lay_out_as(box as CifEdit)
 	_input.text_submitted.connect(_on_submitted)
 	box.add_child(_input)
 

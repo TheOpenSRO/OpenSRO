@@ -1023,22 +1023,24 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 			sb = tsb
 		else:
 			sb = StyleBoxEmpty.new()
-		sb.content_margin_left = cr.position.x
-		sb.content_margin_top = cr.position.y
-		sb.content_margin_right = cr.size.x + (EDIT_RIGHT_INSET if def.halign == 2 else 0.0)
-		sb.content_margin_bottom = cr.size.y
 		edit.add_theme_stylebox_override(style, sb)
-	edit.alignment = _map_halign(def.halign)
 	var font := font_at(def.font_index)
 	if font != null:
 		edit.add_theme_font_override("font", font)
 	var size: int = FONT_SIZES[def.font_index] if def.font_index >= 0 and def.font_index < FONT_SIZES.size() else FONT_SIZE_FALLBACK
 	edit.add_theme_font_size_override("font_size", size)
 	edit.set_colour(def.font_color)
+	# Round 859: the text in the ClientRect by HAlign and VAlign, as CIFEdit's
+	# draw (0x637b70) lays it -- the margins come from CifEdit.lay_out, kept
+	# on every resize (VAlign 0, the archive's usual, is the top, not
+	# LineEdit's centre).
+	if def.rect.size.y > 0:
+		edit.size = Vector2(def.rect.size)
+	edit.lay_out(cr, def.halign, def.valign)
 	return edit
 
-## CIFEdit's right inset for HAlign 2: 2.0 (`0xe1b898`, READ).
-const EDIT_RIGHT_INSET := 2.0
+## CIFEdit's right inset for HAlign 2: 2.0 (`0xe1b898`, READ; TextLayout).
+const EDIT_RIGHT_INSET := TextLayout.EDIT_RIGHT_INSET
 
 ## The artwork a list row draws itself with, and the one it uses when it is
 ## the selected row.
