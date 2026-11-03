@@ -129,6 +129,8 @@ const ALLOWED := [
 	["scripts/ui/hud/hud_window.gd", "LineEdit", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hud/hud_window.gd", "Panel", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hole_census.gd", "Panel", 1, "references only: the round 858 hole census counts a Panel as drawn; creates none"],
+	["scripts/ui/text_align_census.gd", "Button", 3, "references only: the round 859 text census lists a Button's text as unmeasured; creates none"],
+	["scripts/ui/text_align_census.gd", "LineEdit", 23, "references only: the round 859 text census measures LineEdits' text and caret; creates none"],
 	["scripts/ui/hud/hud_window.gd", "PanelContainer", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hud/hud_window.gd", "TextEdit", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hud/hud_worldmap.gd", "tooltip_text", 4, LT + "the world map's signs and buttons"],
