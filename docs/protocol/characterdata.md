@@ -59,6 +59,20 @@ row's own Org is never consulted). An Org that is `xxx`, missing or has no model
 nothing, and the client then draws a Mangyang. Everything else, the scale included, still comes
 from the row itself.
 
+**A named file that is not in the archive is not this case (round 861, READ).** The Mangyang
+covers an empty path only. A non-empty `.bsr` that does not open goes on to the resource
+manager: Map::FUN_009fe760's `r` case calls CResourceMgr::vslot_004 (0xbedc40), which calls
+ResourceMgr::FUN_00bedba0. When FUN_00bed8d0 cannot open the file, that function asserts
+`"%s Loading Failed."` (ResourceMgr.h line 0x7d) for every type but 5. In this build the
+assert is fatal. Without a debugger its flags are 0x501 (set at 0x8328c0), so
+Assert_FileLineExpression (0x49e490) calls its logger at 0x830da0, and the logger writes to
+address 0; if it returned, ExitProcess(0) would follow. No other name is tried: no `_2011`
+variant, no other directory, no trade model. OPEN: the first load of a name goes through a
+callback that FUN_009ef120 reads at run time (`[0x1103d87+0x1c]`); its setter was not found.
+On the box's archive the only in-service character rows that hit this are COS_C_CAMEL1..3,
+COS_C_DONKEY and 25 fortress `STRUCTURE_*` rows (MEASURED). OpenSRO draws those four COS from
+their trade twin (`c_` -> `t_`, OURS: `CosModelFallback`).
+
 Not covered by this rule: CICMonster rows with TypeID 1/2/1/2 (thieves) and 1/2/1/3 (hunters)
 pick their model from a list (`ICMonster::FUN_009d3470`), with no Org fallback, and CICCos has its
 own branch for TypeID3 = 3, TypeID4 = 5.
