@@ -878,6 +878,23 @@ remote_godot.sh script res://tools/census_unskinned_pieces.gd -- --pk2=$PK2/Data
 remote_godot.sh script res://tools/audit_input_bleed.gd -- --pk2=$PK2/Media.pk2 --wheel=1 [--panel=guild] [--step=4]
 ```
 
+`window_hole_census.gd` (round 858) opens every HUD window and box, one at a time, and measures
+where each lets the world show through (`HoleCensus`, `scripts/ui/hole_census.gd`: a magenta and a
+green ground straight behind the window, the pixels that differ inside its drawn area). It prints
+`HOLES <window> full <n> part <n>` and a `PIECE` line per hole, naming what is drawn there:
+`UNCOVERED` (nothing -- a missing piece) or the topmost art and its texel alpha (the art's own
+transparency, which the original draws too). A real renderer is needed (the frame is read back):
+
+```
+su - ghidra -c "flock <lock> <dir>/tools/xwl_run.sh -s 1920x1080 <godot> --rendering-method forward_plus \
+  --rendering-driver vulkan --resolution 1920x1080 --path <dir> --script res://tools/window_hole_census.gd \
+  -- --pk2=$PK2/Media.pk2 [--panel=help ...] [--out=<dir for the magenta frames>]"
+```
+
+In a real client run the same measure is `OPENSRO_QA_HOLES=LoginWindow,...` (node names, measured
+`OPENSRO_QA_HOLES_AT` seconds after the scene's `_ready`; Login, CharacterSelect, CharacterCreate,
+Boot and World3D) or the QA input step `holes:<name>` in the world.
+
 `OPENSRO_QA_NOWATER=1` builds no block water, for a pixel diff that measures what the water draws
 (round 648's water-on/off diff). A lane that must not stop other lanes' renders runs its client with
 `xvfb-run -a ... --write-movie` under its own lock instead of `qa_shot.sh`, whose start-up reap
