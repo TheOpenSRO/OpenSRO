@@ -222,6 +222,9 @@ func _text(n: Node) -> String:
 func _test_real() -> void:
 	if not FileAccess.file_exists(MEDIA):
 		print("SKIP the real-archive part (no %s)" % MEDIA)
+		# A skip is this part's end (CI has no archives, docs/LEGAL.md); without
+		# this the end count read 2 of 3 on every CI run since round 844.
+		_ends += 1
 		return
 	var pk2 := Pk2Reader.open(MEDIA)
 	_check(pk2 != null, "Media.pk2 opens")
