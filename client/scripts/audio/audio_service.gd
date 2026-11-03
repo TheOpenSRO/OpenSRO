@@ -170,7 +170,9 @@ func set_listener(node: Node3D, facing: Node3D = null) -> void:
 ## SoundTable.play_key's body (FUN_00a6f7f0's order, READ): cull, look up,
 ## pick, blank counter, volume, play.
 func play_key(key: String, pos = null, obj = null) -> void:
-	if options.effect_muted:
+	# Round 859: a service whose options are not loaded yet (its _ready has
+	# not run -- a headless suite's autoload) plays nothing, as muted.
+	if options == null or options.effect_muted:
 		return
 	var where = _position_of(pos, obj)
 	if where != null and _listener_valid():
@@ -189,7 +191,7 @@ func play_key(key: String, pos = null, obj = null) -> void:
 
 ## SoundTable.play_file's body: a path at row volume 1.0.
 func play_file(path: String, pos = null) -> void:
-	if options.effect_muted:
+	if options == null or options.effect_muted:
 		return
 	var where = _position_of(pos, null)
 	if where != null and _listener_valid():

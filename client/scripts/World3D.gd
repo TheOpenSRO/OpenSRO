@@ -8023,10 +8023,6 @@ func _exit_tree() -> void:
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
-	# Round 859: the kill orbs in flight.
-	_exp_orbs.clear()
-	_orb_pending.clear()
-	_orb_death_passed.clear()
 	# Round 809: the cast objects' templates (and any assembly still out).
 	BsrEffect.reset()
 	BsrEffect.archive = null
@@ -8038,6 +8034,10 @@ func _exit_tree() -> void:
 	AuraModel.reset()
 	BerserkLook.clear()
 	StateLook.clear()
+	# Round 859: the kill orbs in flight.
+	_exp_orbs.clear()
+	_orb_pending.clear()
+	_orb_death_passed.clear()
 	_fx_owner_buffs.clear()
 	# Round 796: the statics round 795 bound to this world (_cos_bind_table,
 	# _hud_cos_setup) let go now. They are lambdas over this node and its
