@@ -176,7 +176,10 @@ func _place() -> void:
 		else:
 			global_transform = g * Transform3D(Basis.IDENTITY, offset)
 	elif host.is_inside_tree():
-		global_transform = host.global_transform * Transform3D(Basis.IDENTITY, offset)
+		var lift := Vector3.ZERO
+		if bone == "*" and star_height_of.is_valid():
+			lift = Vector3(0, float(star_height_of.call(host)), 0)
+		global_transform = host.global_transform * Transform3D(Basis.IDENTITY, offset + lift)
 
 ## The buff ended: the model goes.
 func release() -> void:

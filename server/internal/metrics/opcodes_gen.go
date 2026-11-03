@@ -232,6 +232,7 @@ var knownOpcodes = map[uint16]string{
 	0x30E7: "economy",
 	0x30E8: "economy",
 	0x30EC: "quest",
+	0x30EF: "guild",
 	0x30FF: "guild",
 	0x3100: "guild",
 	0x3101: "guild",
