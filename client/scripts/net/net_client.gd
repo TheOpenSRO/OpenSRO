@@ -597,6 +597,9 @@ signal friend_failed(failure: FriendNet.Failure)
 signal friend_delete_result(ok: bool, value: int)
 ## Using a consumable: what it restored, and how many are left.
 signal use_item_result(result: UseItemNet.Result)
+## Round 859: retail's 0x305C -- the player of `uid` (the low 32 bits of
+## its character id) used item `ref_id`, accepted; sent to the user too.
+signal item_use_effect(uid: int, ref_id: int)
 ## Round 838: the special reverse return scroll's saved locations
 ## (UseItemNet.decode_reverse_saved).
 signal reverse_saved_result(result: Dictionary)
@@ -2964,6 +2967,10 @@ func _dispatch(p: Packet) -> void:
 			buyback_failed.emit(int(f.get("code", 0)))
 		UseItemNet.OP_RESULT:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
+		UseItemNet.OP_USE_EFFECT:
+			var ue := UseItemNet.decode_use_effect(p.data)
+			if not ue.is_empty():
+				item_use_effect.emit(int(ue["uid"]), int(ue["ref"]))
 		MallNet.OP_OPEN_RESULT:
 			mall_open_result.emit(MallNet.decode_open_result(p.data))
 		MallNet.OP_SILK:

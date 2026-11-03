@@ -2664,6 +2664,8 @@ func _try_initialize_pk2_ui() -> void:
 	# Using a potion returns the new HP/MP directly, so the bars redraw
 	# without a follow-up stats round trip, and the bag count is refreshed.
 	NetClient.use_item_result.connect(_on_use_item_result)
+	# Round 859: retail's 0x305C, an accepted use's effect on the user's body.
+	NetClient.item_use_effect.connect(_on_item_use_effect)
 	# Round 838 (OURS): the service scrolls' lines and the plate colours.
 	NetClient.service.line.connect(func(text: String) -> void:
 		print("World3D: service line: %s" % text)
@@ -38349,6 +38351,51 @@ func _on_use_item_result(result) -> void:
 	# The stack shrank, so redraw the bag.
 	if NetClient.current_character_name != "":
 		NetClient.list_inventory(NetClient.current_character_name)
+
+## Round 859: retail's 0x305C (NetClient.item_use_effect): a player in view --
+## this one too, the server tells the user -- used an item, accepted. The
+## item's use effect plays on that body as 0x305C's handler (c:0x8735d0)
+## plays it (ItemUseEffect: which effect, how it plays; READ).
+func _on_item_use_effect(uid: int, ref_id: int) -> void:
+	var body: Node3D = null
+	var who := "uid %d (not drawn)" % uid
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		body = player
+		who = "self"
+	else:
+		var id := _other_by_uid(uid)
+		if id >= 0:
+			body = _fx_owner_body(id, SkillNet.OWNER_CHARACTER)
+			who = "character:%d" % id
+	var row: ItemTableReader.Item = _item_rows.get(ref_id)
+	var types := row.type_ids if row != null else PackedInt32Array()
+	var code := row.code_name if row != null else ""
+	if _automob_ref == -2:
+		_automob_ref = -1
+		for id in _item_rows:
+			if (_item_rows[id] as ItemTableReader.Item).code_name == ItemUseEffect.AUTOMOB_CODE:
+				_automob_ref = int(id)
+				break
+	var effect := ItemUseEffect.effect_id(types, code, ref_id, _automob_ref, ItemUseEffect.use_rows(), ItemUseEffect.knows)
+	if body == null or not is_instance_valid(body):
+		print("ITEMUSE uid %d item %d %s %s: %s, no body drawn" % [uid, ref_id, code, str(types), effect if effect != "" else "no effect"])
+		return
+	var got := ItemUseEffect.play(effect, body, "%s used %s" % [who, code])
+	var parts := PackedStringArray()
+	var started := Time.get_ticks_msec()
+	for fx in got["fx"]:
+		var e := fx as EfpEffect
+		parts.append("%s@%s" % [e.path, e._follow_bone_name if e._follow_bone_name != "" else "none"])
+		# QA: each effect's lifetime, from its start to its end.
+		e.effect_finished.connect(func() -> void:
+			print("ITEMUSE effect %s on %s ended after %d ms" % [e.path, who, Time.get_ticks_msec() - started]), CONNECT_ONE_SHOT)
+	print("ITEMUSE uid %d item %d %s %s on %s: effect %s, %d effect(s) [%s], sound(s) [%s] (frame %d)" % [uid, ref_id, code,
+		str(types), who, effect if effect != "" else "none", (got["fx"] as Array).size(), ", ".join(parts),
+		", ".join(got["sounds"]), Engine.get_frames_drawn()])
+
+## ITEM_ETC_AUTOMOB's ref (ItemUseEffect.AUTOMOB_CODE): -2 not looked up yet,
+## -1 not in the table.
+var _automob_ref := -2
 
 ## The reverse return scroll's choice (round 778): the use with its option
 ## and, for the map option, the refoptionalteleport id.
