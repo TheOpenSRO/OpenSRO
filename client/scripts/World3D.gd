@@ -7555,6 +7555,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		# with no message (round 779).
 		if _hud_panels != null and _hud_panels.close_cast_bar():
 			print("CASTBAR closed by the zone change")
+		# Round 860: and the scroll state with it (a new object, state 0).
+		_own_teleport_state = 0
 	if not result.ok:
 		# An accepted teleport whose move failed (warpTo's "not in the world";
 		# the server refunds the fee): the request is over, so a destination
@@ -14328,6 +14330,12 @@ func _qa_learn(spec: String) -> void:
 ##   refused, as before.
 ## The server applies the skill's real cooldown and damage.
 func _cast_skill(skill_id: int, basic_code: String) -> void:
+	# Round 860: the scroll's hold refuses every action (_scroll_hold; READ:
+	# the server answers 0x7074 {3, 0x4004}, which the client shows nothing
+	# for, 0x7baf0d), so none is sent.
+	if _scroll_hold():
+		print("SCROLLHOLD: skill %d not sent -- the scroll holds the player" % skill_id)
+		return
 	var left := _skill_cooldown_left(skill_id)
 	if left > 0:
 		print("World3D: skill %d is still re-using for %d ms -- refused here (0x3005), nothing sent" % [skill_id, left])
@@ -14839,6 +14847,9 @@ func _pvp_band(kind: int, id: int, skill_id: int) -> Vector2:
 ## Attacks a player or a COS: walks into reach, then sends the plain swing
 ## (skill 0) or the cast.
 func _attack_pvp(kind: int, id: int, skill_id: int = 0, basic_code: String = "", retries: int = 0) -> void:
+	if _scroll_hold():
+		print("SCROLLHOLD: attack on %d not sent -- the scroll holds the player" % id)
+		return
 	if _player_dead:
 		print("World3D: attack on %s %d while dead -- not sent" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id])
 		return
@@ -15153,6 +15164,9 @@ func _friend_band(skill_id: int) -> Dictionary:
 ## phase 1 walk (MoveTowardObject), done here because OpenSRO's server does
 ## not walk players, as for a monster (_attack_monster) -- then sends it.
 func _cast_on_character(skill_id: int, basic_code: String, character_id: int) -> void:
+	if _scroll_hold():
+		print("SCROLLHOLD: skill %d at %d not sent -- the scroll holds the player" % [skill_id, character_id])
+		return
 	if _player_dead:
 		print("World3D: skill %d at player %d while dead -- not sent" % [skill_id, character_id])
 		return
@@ -15843,6 +15857,9 @@ var _ground_landing: GhostWalk.Landing = null
 ## the catalog does not know, no archive at all -- the request goes out at once
 ## and the server judges the distance, as before; the log says which.
 func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = "") -> void:
+	if _scroll_hold():
+		print("SCROLLHOLD: attack on monster %d not sent -- the scroll holds the player" % monster_id)
+		return
 	if _player_dead:
 		# Dead (round 548): no swing, no cast, no walk into reach. A world
 		# click and a quickslot are stopped before this; the QA attack loop
@@ -19240,6 +19257,12 @@ func _qa_input_step() -> void:
 				for ch in n.get_children():
 					stack.append(ch)
 			_qa_input_report = "%s takers=%s" % [action, str(takers)]
+		"where":
+			# Round 860: where this player stands, whether it walks, and its
+			# scroll state -- the hold's measurement.
+			_qa_input_report = "%s at (%.2f, %.2f, %.2f) yaw %.4f walking=%s state=%d held=%s" % [action,
+				player.global_position.x, player.global_position.y, player.global_position.z, player.rotation.y,
+				str(_has_move_target), _own_teleport_state, str(_scroll_hold())]
 		"wmquest":
 			# Round 850: the world map's quest marks and shown map, for the QA
 			# log (HudWorldmap.quest_report: the layers' child counts, auto-move,
@@ -23157,12 +23180,16 @@ func _physics_step(delta: float) -> void:
 	# already under way when the wall went up stops, as the server drops its
 	# moves.
 	var locked := typing or _player_dead or _motion_locked() or seated_walk or (_has_move_target and _wall_root() != 0) \
-		or _own_slide_active()
+		or _own_slide_active() or _scroll_hold()
 	if locked:
 		_has_move_target = false
 		_pending_attack = {}
 		_released_attack = {}
 		_pending_friend_cast = {}
+	# Round 860: held by the scroll, nothing walks into reach either.
+	if _scroll_hold():
+		_pending_pvp = {}
+		_pending_pickup_id = -1
 	# A talk approach's arrival (round 701): the walk ended last tick.
 	_step_talk_approach(locked)
 	# Round 832: the trace's walker, every 100 ms.
@@ -29452,6 +29479,23 @@ func _move_click_refused(point: Vector3) -> bool:
 	return q != Vector3.INF and _move_sync.dest != Vector3.INF \
 		and Vector2(q.x - _move_sync.dest.x, q.z - _move_sync.dest.z).length() <= MoveOrderSync.NEAR_DESTINATION
 
+## Round 860: this player's own scroll state, 0x30BF kind 0xb (the
+## _on_teleport_state handler; 0 again on the state's end, a zone change, a
+## death).
+var _own_teleport_state := 0
+
+## Round 860: whether the scroll state holds this player. READ (server,
+## scrollhold.go): the PC's message filter s:0x4296a0 lets only chat, item
+## use, the cancel 0x705B and two more through while the state
+## (GetTeleportState) is 1 -- group 11 of RegisterValueListFilters has one
+## record, value 1 (ScrollHold.HOLD_VALUE). The move, the arrow keys and the
+## action request are dropped there; the retail client walks only on its
+## move's echo, so nothing moves. OURS: this client walks its click at once
+## (MoveOrderSync), so it sends none of them while held instead of walking
+## and being put back.
+func _scroll_hold() -> bool:
+	return ScrollHold.holds(_own_teleport_state)
+
 ## The abnormal states that refuse a move: freeze, sleep, root (0xc1) and stun
 ## (0x4000). READ: the server's 0x7021 handler (GObjPC::FUN_004b0ea0, `test
 ## al,0xc1` 0x4b0fa6, `test eax,0x4000` 0x4b0fae; statuseffect.Holder.CanMove).
@@ -29464,6 +29508,9 @@ const MOVE_BLOCKING_STATES := 0xc1 | 0x4000
 ## filters it is not read.
 func _own_move_blocked() -> bool:
 	if _trade_established:
+		return true
+	# Round 860: the scroll's hold (_scroll_hold).
+	if _scroll_hold():
 		return true
 	# Round 839: c:0x77c8e0 -- no walk while a stall window is shown (the
 	# server drops a move at INTERACTMODE 2 and 4 too, s:0x4b0ea0).
@@ -29620,8 +29667,9 @@ func _arrow_facing() -> float:
 ## The move gate the arrows' sends pass (FUN_009eb140's states: dead, sitting
 ## or getting up, acting, picking up; the +0x48 block).
 func _arrow_send_allowed() -> bool:
+	# Round 860: and not while the scroll holds (_scroll_hold).
 	return not _player_dead and not _sit.sitting and not _motion_locked() and _move_send_block_ms <= 0.0 \
-		and _player_pickup_clip == null and NetClient.is_connected_to_server()
+		and _player_pickup_clip == null and not _scroll_hold() and NetClient.is_connected_to_server()
 
 ## Round 846: the Up key's stop. READ (sro_client.exe): the press only sends
 ## (c:FUN_009ebec0 -> FUN_009ebd10 builds the heading form; the run starts on
@@ -29754,6 +29802,11 @@ func _arrow_turn(bit: int, down: bool) -> String:
 		_arrow_cancel_action()
 		if _has_move_target and not _move_heading_run:
 			return "ignored (a click walk is in progress)"
+		# Round 860 (OURS on this client, _scroll_hold): the server drops the
+		# 0x7024, so the body does not turn here either -- the others see it
+		# facing as it stood.
+		if _scroll_hold():
+			return "refused (the scroll holds the player)"
 		var sent := _send_turn_if(_arrow_facing(), TURN_SEND_COARSE)
 		_turn_keys |= bit
 		return "turning (%s)" % sent
@@ -33087,6 +33140,8 @@ func _enter_dead_state(exp_lost: int) -> void:
 	# ... and FUN_007b1300: the casting bar goes, silently (round 779).
 	if _hud_panels != null and _hud_panels.close_cast_bar():
 		print("CASTBAR closed by the death")
+	# Round 860: a death cancels the cast (s:0x529be9), so the hold goes.
+	_own_teleport_state = 0
 	_drop_pending_attack()
 	_cancel_talk_approach("death")
 	# A cast running on this player ends (round 785's client review, finding
@@ -38592,6 +38647,13 @@ func _on_teleport_state(change: WorldNet.StateChange) -> void:
 	if own < 0 or change.object_id != (own & 0xffffffff):
 		return
 	print("CASTBAR teleport state %d" % change.value)
+	_own_teleport_state = change.value
+	if _scroll_hold():
+		# Round 860: held from here (_scroll_hold): what was walking into
+		# reach or toward a drop goes, and the walk stops on this tick.
+		_drop_pending_attack()
+		_pending_pickup_id = -1
+		print("SCROLLHOLD on: no move, turn, attack or skill until the state's 0")
 	if change.value != 0 or _hud_panels == null:
 		return
 	if _hud_panels.close_cast_bar():

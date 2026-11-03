@@ -111,13 +111,16 @@ package session
 //     logout (FUN_0050eff0 answers 0x802; that the client's text for it is
 //     UIIT_MSG_LOGOUT_ERR_CANT_LOGOUT_WHILE_TELEPORT_WORKING is INFERRED),
 //     a guild summon, a thief's pick-up of a special
-//     good (0x186e) and some quest scripts. NOT movement: the 0x7021
-//     handler (0x4b0ea0) never asks; nor a skill or an attack (the 0x7074
-//     handler and Skill_CheckUseConditions never ask, and the client's busy
-//     flag, the delay board's +0x36c, is not set for a return scroll's bar).
-//     So a character may walk on after the stop, and the cast still moves it
-//     when it runs out. OpenSRO models the scroll, the NPC teleport and the
-//     walk-in refusals; it has no pets, logout, guild summon or thieves.
+//     good (0x186e) and some quest scripts. OpenSRO models the scroll, the
+//     NPC teleport and the walk-in refusals; it has no pets, logout, guild
+//     summon or thieves.
+//   - Round 860 corrects round 779 here: the handlers above are not the
+//     whole story. The PC's message filter (GObjPC::FUN_004296a0, slot
+//     0x610, run before every client message's handler) holds a character
+//     whose state is 1 -- no move, arrow key, attack or skill; only chat,
+//     item use, the cancel and two more pass. Round 779 read the 0x7021 and
+//     0x7074 handlers, which indeed never ask, and missed the filter in
+//     front of them. scrollhold.go has the reading and the hold.
 import (
 	"context"
 	"errors"

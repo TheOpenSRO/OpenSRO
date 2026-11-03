@@ -123,7 +123,9 @@ func newScrollRig(t *testing.T, level int) *scrollRig {
 	}
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(rig.chars, eq, rig.hub),
 		TeleportHandler(rig.chars, eq, rig.hub, tab, gm.ParseAccounts(""), false, nil, nil),
-		UseItemHandler(rig.chars, rig.inv, items, nil, nil, nil, rig.hub, nil, nil, nil, rig.caster))
+		UseItemHandler(rig.chars, rig.inv, items, nil, nil, nil, rig.hub, nil, nil, nil, rig.caster),
+		// Round 860: the action request, which the scroll's hold refuses.
+		ActionHandler(rig.hub))
 	t.Cleanup(func() { InstallDungeonEntries(nil) })
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)

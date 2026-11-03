@@ -2021,6 +2021,13 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	if deadBySession(hub, sess) {
 		return nil
 	}
+	// Round 860 (scrollhold.go): held by the scroll state, a walked position
+	// or a stop is refused and the mover told where it stands; a placement
+	// (relocated) passes, as the server named it.
+	if !req.Relocated && scrollHolds(sess) {
+		scrollHoldAnswer(sess, hub)
+		return nil
+	}
 	// A move in the sit/stand transition is refused, as the retail movement
 	// handler refuses MOTIONSTATE_CHANGEMOTION (0x4b0f83); a move while
 	// sitting is accepted and stands the character at once, as its

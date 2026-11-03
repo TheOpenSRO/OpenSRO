@@ -184,6 +184,26 @@ func (b *bot) note(p *proto.Packet) {
 	case session.OpStateChange:
 		if s, ok := session.DecodeStateChange(p.Data); ok && watchViews && s.Kind == session.StateKindBodyMode {
 			fmt.Printf("%s [%s] WATCH body mode uid %d = %d\n", time.Now().Format("15:04:05.000"), b.name, s.ObjectID, s.Value)
+		} else if ok && watchViews && s.Kind == session.StateKindTeleport {
+			// Round 860: another player's scroll state (its hold).
+			fmt.Printf("%s [%s] WATCH scroll state uid %d = %d\n", time.Now().Format("15:04:05.000"), b.name, s.ObjectID, s.Value)
+		}
+	// Round 860 (-watch): another player's moves as this window sees them --
+	// a held character sends none, so none should come.
+	case proto.OpMovementResponse:
+		if e, ok := session.DecodeMoveEcho(p.Data); ok && watchViews && e.UID != uint32(b.id) {
+			fmt.Printf("%s [%s] WATCH move uid %d kind %d region %d to (%d, %d)\n", time.Now().Format("15:04:05.000"), b.name,
+				e.UID, e.Move.Kind, e.Move.Region, e.Move.LocalX, e.Move.LocalZ)
+		}
+	case session.OpMovementStop:
+		if s, ok := session.DecodeMoveStop(p.Data); ok && watchViews && s.UID != uint32(b.id) {
+			fmt.Printf("%s [%s] WATCH stop uid %d region %d at (%.1f, %.1f, %.1f)\n", time.Now().Format("15:04:05.000"), b.name,
+				s.UID, s.Region, s.X, s.Y, s.Z)
+		}
+	case session.OpMovementTurn:
+		if watchViews && len(p.Data) >= 6 && binary.LittleEndian.Uint32(p.Data) != uint32(b.id) {
+			fmt.Printf("%s [%s] WATCH turn uid %d angle %d\n", time.Now().Format("15:04:05.000"), b.name,
+				binary.LittleEndian.Uint32(p.Data), binary.LittleEndian.Uint16(p.Data[4:]))
 		}
 	case session.OpEnterWorldResult:
 		if r, err := session.DecodeEnterWorldResult(p.Data); err == nil {

@@ -277,6 +277,12 @@ func riderMove(sess *gateway.Session, data []byte, hub *world.Hub, chars charact
 
 // moveByRequest is a 0x7021 body's move of sess's character.
 func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars character.Store) error {
+	// Round 860: the scroll state 1 holds every move (scrollhold.go, READ
+	// s:0x4296a0 group 11); OURS, the mover is told where it stands.
+	if scrollHolds(sess) {
+		scrollHoldAnswer(sess, hub)
+		return nil
+	}
 	// Round 749's review, F8 (OURS: retail's handler has no rate gate): a
 	// click beyond the session's bucket is dropped, silently as every refusal
 	// (its client takes a missing echo as a refusal: MoveOrderSync).
@@ -437,6 +443,10 @@ func arrowStop(sess *gateway.Session, data []byte, hub *world.Hub) error {
 	if len(data) < 2 {
 		return nil
 	}
+	if scrollHolds(sess) { // round 860, scrollhold.go
+		scrollHoldAnswer(sess, hub)
+		return nil
+	}
 	e, ok := hub.EntityBySession(sess.ID())
 	if !ok || e.Life == world.LifeDead {
 		return nil
@@ -470,6 +480,10 @@ func handleMovementTurnRequest(sess *gateway.Session, p *proto.Packet, hub *worl
 // arrowTurn is a turn request's body (u16 angle) for sess's character.
 func arrowTurn(sess *gateway.Session, data []byte, hub *world.Hub) error {
 	if len(data) < 2 {
+		return nil
+	}
+	if scrollHolds(sess) { // round 860, scrollhold.go
+		scrollHoldAnswer(sess, hub)
 		return nil
 	}
 	e, ok := hub.EntityBySession(sess.ID())
