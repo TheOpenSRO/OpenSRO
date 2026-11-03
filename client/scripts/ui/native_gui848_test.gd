@@ -128,6 +128,7 @@ const ALLOWED := [
 	["scripts/ui/hud/hud_window.gd", "ItemList", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hud/hud_window.gd", "LineEdit", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hud/hud_window.gd", "Panel", 1, "references only: the hit-test filter; creates none"],
+	["scripts/ui/hole_census.gd", "Panel", 1, "references only: the round 858 hole census counts a Panel as drawn; creates none"],
 	["scripts/ui/hud/hud_window.gd", "PanelContainer", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hud/hud_window.gd", "TextEdit", 1, "references only: the hit-test filter; creates none"],
 	["scripts/ui/hud/hud_worldmap.gd", "tooltip_text", 4, LT + "the world map's signs and buttons"],

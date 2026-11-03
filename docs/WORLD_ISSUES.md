@@ -7483,6 +7483,121 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-eighth round: the Help window opens again after its X; see-through holes in windows
+
+The user: "there's a bug where the help menu will pop up once and then you can't bring it up again",
+and "can you fix some of the transparency in the help and other menus? You fixed most of it when
+removing native guis but it shows up here and maybe other places", with a screenshot of the Help
+window over the ground (a box of world at the top-left of the side panel, above "Playing / Debug
+tools / Release notes"). Labels: READ (`c:` sro_client.exe; `/var/tmp/decomp_client` and
+`/var/tmp/sro_client.asm` on the box; layouts from Media.pk2 there), MEASURED, INFERRED, OURS, OPEN.
+UI-only round (no world drawing changed): no perf gate.
+
+**Why Help would not come back (MEASURED, base 09763587).** HelpWindow is a full-rect root with the
+authored frame (`HelpFrame`, a HudWindow) inside. The frame's X runs `HudWindow._on_close_pressed`,
+which hides the **frame** and emits `closed`; Help then hid its root. Every opener (H through
+`_run_key_action("help")`, System > Help, the console's `/help`) called `open()`, which showed only
+the **root**: the frame stayed hidden, so the second open drew nothing while the key log said "help
+opened". The real client against the lane server (`/var/tmp/r858/qa858.sh before`, Help858, real
+H and a real click on the X at (672, 62)): H opened it (frame 348), the X closed it, H then logged
+`H -> help 9: help opened` and frame 548 shows no window; after Escape (System menu) H "opened" it
+again and nothing showed.
+
+**What the original does (READ).**
+- H: `0x79f690` -- if child 0x20 (GDR_GAMEGUIDE) exists, `0x79b140(0)` and the helper `0x79a7e0`
+  on the System window 0x62; else `0x79b140(1)` and the helper on the guide.
+- `0x79b140(1)`: when the guide does not exist, builds the "GameGuide" registry section
+  (`0x425ae0("GameGuide")`, `0x8b5580`), calls its slot 0x98, shows it (slot 0x5c) and runs the
+  helper (snd_window_open); `0x79b140(0)`: hides it, the helper (snd_window_close), and **destroys
+  it** (`0x8b59f0`). So every open makes the window afresh.
+- The X: CIFMainFrame's close button -> vslot_043; `CIFGameGuide::vslot_043` (`0x765680`) is
+  `0x79b140(0)`.
+- Escape: `0x79d620` checks, after the System window and before the world map, whether the guide
+  exists and is shown (`0x79d744..0x79d77f`: `0x8b51f0(0x20,1)`, `0xb8f530`) and calls its
+  vslot_043, then the helper on 0x62. The base did not close Help on Escape (the hud_panels comment
+  said so, "open").
+
+**The fix (help_window.gd, World3D, hud_panels).** `open()` shows root and frame together, raises,
+and -- when it was closed -- starts as a new window (the first tab, the first document at its top,
+centred: OURS place, the original's is the registry rect) and sounds snd_window_open; `close()`
+hides both and sounds snd_window_close; `is_open()` / `toggle()`. The X, H (`toggle`), Escape
+(`HudPanels._escape_close`, after System and before the world map, through `help_window`) and
+System > Help all go through them. Live after (`qa858.sh after`, the same steps plus `helpstate`):
+open by H -> X (root false, frame false) -> **H reopens** (root true, frame true) -> tab 2 ->
+Escape closes -> H reopens on tab 0, document 0 -> H closes -> Escape raises System -> its Help
+button opens it. Frames: `/var/tmp/r858/evidence/qa_after/` (a_open1 .. g_system_help) and
+`qa_before/`.
+
+**The box at the side panel's top-left (READ).** The side panel is GDR_GUIDE_MENU, a CIFGGMenu.
+Its Create (`CIFGGMenu::vslot_010`, `0x7685a0`) loads `resinfo\ifggmenu.txt` (`0x7685d9`/`0x7685fd`:
+the scroll manager, TILE_2 and TILE_1 at 69,16 128x128), then makes **three tabs** with the window
+factory (`0x7686c9`): class `0xee96c0` (CIFSelectableArea, the stall window's tab class), IDs
+0x64 + i, at x = (i * 31) * 2 + 0xe, y 0xc, 0x3c x 0x18 -- (14 + 62 i, 12) 60 x 24 --, font 0,
+art `com_tab_on.ddj` / `com_tab_off.ddj` (`0x768767`/`0x76878c`), tab 0 on (`0x64cc30(1)`),
+captions UIIT_STT_GAMEGUIDE / UIIT_STT_GAMEEVENTGUIDE / UIIT_STT_QUESTGUIDE1 (`0x7687cd`,
+`0x768813`, `0x76884c`; "Help", "Guide", "Quest" in the archive's English). A press on another tab
+(`0x7688b0`) moves the selection and refills the list (`0x768290` -> `0x7675a0` / `0x767730` /
+`0x7678d0`). The base built ifggmenu.txt but not the tabs, so (16..69, 16..34) of the menu -- under
+tab 0, left of TILE_1 -- had nothing drawn: the user's box (954 px MEASURED). Built now
+(`HelpWindow._build_tabs`); captions white and centred as the bag tabs (INFERRED); our documents
+are listed under the first tab (OURS), the other two tabs' lists (the original's guide data) are
+empty here (OPEN).
+
+**The other places the user pointed at (MEASURED + READ).** The main window's top-left and top-right
+corners (41 + 28 px) are `mframe_wnd_left_up` / `_right_up`'s own chamfer: texel alpha 0.00 there.
+The original draws the same art with the stage alpha = texture alpha x the window's
+(`c:0x655ca0`: ALPHAOP MODULATE, TFACTOR x TEXTURE), so the cut corners are the original's -- every
+main window has them. The joins between the side panel and the main window: only
+`gd_side_tab.ddj`'s own alpha-0 corners (6 + 41 px); the menu overlaps the main window by 7 px and
+nothing else shows through.
+
+**The census: every window (MEASURED).** `client/tools/window_hole_census.gd` (new) opens every HUD
+window and box one at a time (60 scenarios, 1920x1080, Forward+ on the box) and measures each with
+`HoleCensus` (`scripts/ui/hole_census.gd`, new): a magenta and a green ground straight behind the
+window, the pixels that differ inside its drawn area (its rect, every picture and every built
+frame's inside; text not counted), grouped into pieces, each named by what is drawn over it --
+UNCOVERED, or the topmost art and its texel alpha. Base `09763587` + the tool against this branch,
+`/var/tmp/r858/evidence/census/{before,after}_log.txt`:
+
+| Window | Holes before (px) | After | Cause |
+|---|---|---|---|
+| Help | 1070 | 116 | 954: CIFGGMenu's tabs not built (fixed, READ above); left: mframe chamfers 69 + gd_side_tab corners 47 (art alpha 0, original) |
+| Exchange (portraits on, OURS layout) | 1144 | 72 | the OURS widened subframes uncovered a strip retail's narrower ones draw over: the lattice outline's alpha-0 right column (2 x 165), a 1-px column between the line and the portrait (2 x 89), the corner under the gold strip (2 x 117) and the gap between the subframes past retail's 174-wide `NORMALTILE_BG` (333). Fixed OURS: `NORMALTILE_BG` widened to 40,179,284,3 (31 in from the widened sides, as retail's is), and two com_bg_tile_a backings behind the portrait column (229,61 / 229,205, 18x116). Left: chamfers + 3 single px |
+| Exchange (portraits off, retail layout) | 69 | 69 | chamfers only |
+| Composite item | 739 | 69 | 670: FUN_007af830's resize not built (round 632 left it OPEN). READ now (`0x7af937..0x7afa15`, `0x7afb8d..0x7afbcc`): heights start 0xf / 0x46 / 0 and grow per button (count + 1) by 0x22 / 0x24 / 0x14, then SetSize (vslot 0x54, widths kept, `0xb8f480` = +0x48/+0x4c) gives GDR_COMPOSITE_FRAME (ID 6, +0x7c4, `0x7af7c7`) 0xf + 0x22n, the window 0x46 + 0x24n and GDR_COMPOSITE_BGTILE (ID 5, +0x7c0) 0x14n. Built (`CompositeItemWindow.fit_to_buttons`): two items + Cancel = 117 / 178 / 60 |
+| Guild GP history | 533 | 69 | placed at y + 0.5 (`(view - size) / 2.0` with an odd 311 height): the top row half-covered and the whole window between pixels. Rounded, as `HudWindow.centre()` does |
+| Inventory, character, skill, action, party, academy, quest, storage, guild storage, store, system, auto potion, NPC talk, option, world map, stall network, GP history, composite | 69 each | 69 | mframe chamfers (art) |
+| Party matching | 72 | 72 | chamfers + 3 single px |
+| Guild, community, alchemy | 500 | 500 | chamfers + the side tabs' own art (`alcm_menu_bg`, `alcm_menu_button*`: alpha-0 rounded ends) |
+| Grant, every message box (guild boxes 0x0F / 0x1d / leave / name / crest, recall, stall title / avatar, exchange gold, hammer, reverse return, custom title, friend add / delete, network notice, notice write, donate, level up, master leave, vote, event, recall, revive, use-on, Magic POP choose, whole chat, buff cancel, party settings) | 14 each | 14 | `msgbox2_window` corners (3x3 art alpha 0) |
+| Item mall | 29 full, 65417 translucent | same | the art: `mall_wnd_*` alpha 0.70, `mall_sub_wnd04_*` 0.75, `mall_back_wnd` 0.89; nothing else in the layout under it. Kept (original's art) |
+| Silk history (Buying list) | 55292 translucent | same | `mall_ms_wnd_*` alpha 0.86, `mall_sub_wnd04_*` 0.75, `com_bg_tile_p` 0.75. Kept |
+| Cast bar | 16 full, 3434 translucent | same | `com_casting_window.ddj`'s own alpha (0 / 0.5). Kept |
+| Stall | 99233 in a first run | 69 | not a game hole: the census opened the window without its first draw (the slots' art comes with the stall's state, `StallWindowView.draw`); with it, chamfers only |
+
+Front end (real client, `OPENSRO_QA_HOLES`, `/var/tmp/r858/fe858*.sh`): the login window (`LoginWindow`, measured once the intro handed over, a realtime run) 1408 px, all the window art's own shaped edge (`login_window` texel alpha 0.00: the 3-px notches at mid-top, mid-bottom and the sides, `/var/tmp/r858/fe/login2/snaps`) -- the original's art, kept; character create's `CreateFrame` is the full-screen chrome over the 3D stage (the stage is meant to show), its two panels translucent by their art (alpha 0.75..0.95) over the backdrop, kept. Not measured: the server list (the box has no `setting/config.yaml` servers for `OPENSRO_QA_SERVER_LIST`), the PIN pad, the update prompt and character select's boxes (OPEN; the same CIFButton / msgbox frame code as above).
+
+**Tests.** `help_window858_test.gd` (new, synthetic ifgameguide / ifggmenu / GameGuide entry): open,
+X closes root and frame and sounds once, **open after the X shows the frame** (the bug), H toggles,
+X then H three times, the three tabs at (14 + 62i, 12) 60x24 with their keys, tab 2's empty list, a
+row press, a reopen starts at tab 0 / document 0, the plain fallback, Escape through
+`HudPanels._escape_close` (closes, reopens, a second Escape closes, a third takes nothing). The
+census is the tool above and the QA step `holes:<name>`; `native_gui848_test.gd` passes (the
+census's `Panel` reference allowlisted: it creates none).
+
+**Gates.** `remote_godot.sh check` ALL LOAD; `tests` "ran 419 suite(s), 0 failing". The server is
+untouched (the lane server is a build of this tree's). UI-only: no perf gate.
+
+**OPEN.**
+- The Guide and Quest tabs' lists (the original's game guide data, `0x767730` / `0x7678d0`, and the
+  list rows CIFGGMenu draws) are not built; the tabs select but list nothing.
+- Help opens centred (OURS); the original remakes it at the registry rect (100, 100).
+- The second half of H's close (`0x79a7e0` on the System window) is not built.
+- The item mall's and silk history's translucent bodies are the art's alpha with nothing under them
+  in the layouts; whether code-made children of CIFItemMall cover them is not read.
+- `World3D._step_body_fidgets` logs "no meta opensro_fidget" every frame in a server run (base;
+  not this round's).
+
 ## Eight-hundred-and-fifty-seventh round: walking into a rock or a building no longer lets you in
 
 The user: "something is up with the collision and I can sometimes clip into buildings and other parts

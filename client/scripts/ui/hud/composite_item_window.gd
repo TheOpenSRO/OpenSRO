@@ -63,7 +63,60 @@ func show_entries(entries: Array) -> void:
 		cancel_text if cancel_text != "" and cancel_text != "UIIT_CTL_CANCEL" else "UIIT_CTL_CANCEL", entries.size())
 	if cancel != null:
 		cancel.pressed.connect(func() -> void: hide())
+	fit_to_buttons(entries.size() + 1)
 	print("CompositeItemWindow: %d button(s): %s" % [entries.size(), ", ".join(_buttons.map(func(b): return button_text(b)))])
+
+## Round 858: the resize FUN_007af830 does after its buttons (READ, c:0x7af937..
+## 0x7afa15 and 0x7afb8d..0x7afbcc; the round 632 review left it open). Three
+## heights start at 0xf, 0x46 and 0 and grow per button (count + 1, the
+## Cancel too) by 0x22, 0x24 and 0x14; then SetSize (vslot 0x54) keeps each
+## control's width (0xb8f480, +0x48) and gives GDR_COMPOSITE_FRAME (ID 6,
+## +0x7c4) 0xf + 0x22 n, the window 0x46 + 0x24 n, and GDR_COMPOSITE_BGTILE
+## (ID 5, +0x7c0) 0x14 n. Without it the layout's 185-tall frame and
+## 110-tall tile left a strip of the frame's inside bare under the tile with
+## two items (the hole census: 134 x 5 px of the world showing through).
+const FIT_FRAME := [0xf, 0x22]
+const FIT_WINDOW := [0x46, 0x24]
+const FIT_TILE := [0, 0x14]
+
+## The three heights for `n` buttons (Cancel included): [frame, window, tile].
+static func fit_heights(n: int) -> Array:
+	return [FIT_FRAME[0] + FIT_FRAME[1] * n, FIT_WINDOW[0] + FIT_WINDOW[1] * n, FIT_TILE[0] + FIT_TILE[1] * n]
+
+func fit_to_buttons(n: int) -> void:
+	var h := fit_heights(n)
+	if registry_def != null:
+		set_registry_size(Vector2(size.x, h[1]))
+	else:
+		custom_minimum_size = Vector2(size.x, h[1])
+		size = custom_minimum_size
+	var tile := node("GDR_COMPOSITE_BGTILE") as Control
+	if tile != null:
+		_resize_authored(tile, float(h[2]))
+	var frame := node("GDR_COMPOSITE_FRAME") as Control
+	if frame != null and _builder != null:
+		var layout := _builder.load_layout(LAYOUT)
+		var sec := layout.get_section("Create") if layout != null else null
+		var def: UiLayoutParser.ControlDef = sec.control_by_name.get("GDR_COMPOSITE_FRAME") if sec != null else null
+		if def != null:
+			var rect := Rect2i(def.rect.position, Vector2i(def.rect.size.x, int(h[0])))
+			var rebuilt := _builder.build_control(def.with_rect(rect))
+			if rebuilt != null:
+				var parent := frame.get_parent()
+				var at := frame.get_index()
+				rebuilt.name = frame.name
+				parent.remove_child(frame)
+				frame.queue_free()
+				parent.add_child(rebuilt)
+				parent.move_child(rebuilt, at)
+				rebuilt.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(rect))
+				UiBuilder.settle_authored_rects(rebuilt)
+
+static func _resize_authored(c: Control, height: float) -> void:
+	var r: Rect2 = c.get_meta(UiBuilder.AUTHORED_RECT_META, Rect2(c.position, c.size))
+	r.size.y = height
+	c.set_meta(UiBuilder.AUTHORED_RECT_META, r)
+	c.size = r.size
 
 ## Round 848: one of FUN_007af830's buttons as a CIFButton -- the client's own
 ## art with its _focus / _press / _disable files (UiBuilder's rule 6), where

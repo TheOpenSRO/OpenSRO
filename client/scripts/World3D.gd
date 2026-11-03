@@ -18112,6 +18112,12 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       its X; gsreport prints its kept list (round 844)
 #   actionslot:<id>     right click the action window's button (round 839)
 #   stallclose          left click the stall window's X (round 839)
+#   helpclose / helptab:<i> / helpstate  left click the Help window's X or
+#                       its menu's tab i; report root, frame, tab, document
+#                       (round 858)
+#   holes:<name>        the hole census (HoleCensus) of the first shown
+#                       Control of that name: HOLES / PIECE lines (round 858)
+#   snap:<name>         this frame into OPENSRO_QA_SNAP_DIR/<name>.png (858)
 #   netnode:<id>[,..] / netbox:<id> / underbar:<id>[,..]  left click a control
 #                       of the stall network window, its buy box or the
 #                       underbar by GetChild path (round 840)
@@ -19309,6 +19315,38 @@ func _qa_input_step() -> void:
 			if ws.size() == 2:
 				get_window().size = Vector2i(int(ws[0]), int(ws[1]))
 			_qa_input_report = "%s -> window %s" % [action, str(get_window().size)]
+		"snap":
+			# Round 858: this frame into OPENSRO_QA_SNAP_DIR as <arg>.png.
+			var sd := OS.get_environment("OPENSRO_QA_SNAP_DIR")
+			if sd != "":
+				DirAccess.make_dir_recursive_absolute(sd)
+				get_viewport().get_texture().get_image().save_png("%s/%s.png" % [sd, arg])
+				_qa_input_report = "%s -> %s/%s.png" % [action, sd, arg]
+		"holes":
+			# Round 858: the hole census (HoleCensus) of a shown Control by
+			# name, in this real frame; prints HOLES / PIECE lines.
+			var hn := _qa_find_visible(ui_control, arg)
+			if hn == null:
+				_qa_input_report = action + " (not shown)"
+			else:
+				HoleCensus.measure(hn, "qa_" + arg, OS.get_environment("OPENSRO_QA_HOLES_OUT"))
+		"helpclose", "helptab", "helpstate":
+			# Round 858: left click the Help window's X or a menu tab; report
+			# its state (root, frame, tab, document).
+			var hf := _help_window.get_node_or_null("HelpFrame") as Control if _help_window != null else null
+			var target: Control = null
+			if hf != null and kind == "helpclose":
+				target = hf.get_node_or_null("CloseButton") as Control
+			elif hf != null and kind == "helptab":
+				target = hf.find_child("Tab%d" % int(arg), true, false) as Control
+			if target != null and target.is_visible_in_tree():
+				_qa_push_click(target.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			_qa_input_report = "%s%s -> help root %s frame %s open %s tab %d doc %d" % [action,
+				(" at %s" % target.get_global_rect().get_center()) if target != null else "",
+				str(_help_window.visible) if _help_window != null else "-", str(hf.visible) if hf != null else "-",
+				str(_help_window.is_open()) if _help_window != null else "-",
+				_help_window.selected_tab() if _help_window != null else -1,
+				_help_window.selected() if _help_window != null else -1]
 		"stallclose":
 			# Round 839: left click the stall window's X.
 			var sw: HudWindow = _hud_panels._windows.get(StallController.WINDOW) if _hud_panels != null else null
@@ -26832,6 +26870,12 @@ func _setup_console_and_help() -> void:
 	_help_window.name = "HelpWindow"
 	ui_control.add_child(_help_window)
 	_help_window.setup(_ui_builder, _help_documents(), _is_gm)
+	# Escape closes it in the original's order (0x79d620: after the System
+	# window, before the world map; round 858).
+	if _hud_panels != null:
+		_hud_panels.help_window = _help_window
+	# Round 858: the window hole census in a real run (OPENSRO_QA_HOLES).
+	HoleCensus.qa_hook(self)
 
 	_console = Console.new(_console_host())
 	NetClient.gm_command_result.connect(_on_gm_command_result)
@@ -34913,11 +34957,11 @@ func _run_key_action(action: String, arg: int) -> String:
 		"help":
 			if _help_window == null:
 				return "no help window"
-			if _help_window.visible:
-				_help_window.hide()
-				return "help closed"
-			_help_window.open()
-			return "help opened"
+			# 0x79f690 (READ): shown -> closed, else opened. Round 858: asked of
+			# the window itself (root and frame), not the root's flag, which the
+			# frame's X used to leave out of step.
+			_help_window.toggle()
+			return "help opened" if _help_window.is_open() else "help closed"
 		"mouse_slot":
 			if _hud_underbar == null:
 				return "no hotbar"

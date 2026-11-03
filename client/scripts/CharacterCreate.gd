@@ -157,6 +157,8 @@ var _scene_ready := false
 const QA_SHOT_SETTLE_S := 2.5
 
 func _ready() -> void:
+	# Round 858: the window hole census in a real run (OPENSRO_QA_HOLES; HoleCensus).
+	HoleCensus.qa_hook(self)
 	_started_ms = Time.get_ticks_msec()
 	_print_memory("open #%d" % (_qa_opens + 1))
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
