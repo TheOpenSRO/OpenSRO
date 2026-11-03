@@ -75,7 +75,6 @@ local.file_match "opensro_logs" {
     {"__path__" = "/Users/gaigelama/opensro/logs/opensro.log", "job" = "opensro-server"},
     // launchd's stdout/stderr: only a crash's Go stack lands here now.
     {"__path__" = "/Users/gaigelama/opensro/logs/server.log", "job" = "opensro-stderr"},
-    {"__path__" = "/Users/gaigelama/opensro/logs/ping-to-swarm.log", "job" = "ping-to-swarm"},
   ]
   sync_period = "10s"
 }
