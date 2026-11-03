@@ -1503,11 +1503,13 @@ func performAttack(
 	// attacker, so the client can play the effect and refresh the character
 	// window.
 	if levelUp != nil {
+		announceLevelUp(hub, characterID)
 		if err := sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: levelUp.Encode()}); err != nil {
 			return err
 		}
 	}
 	for _, lu := range extraLevelUps {
+		announceLevelUp(hub, characterID)
 		if err := sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()}); err != nil {
 			return err
 		}

@@ -8036,6 +8036,10 @@ func _exit_tree() -> void:
 	AuraModel.reset()
 	BerserkLook.clear()
 	StateLook.clear()
+	# Round 859: the kill orbs in flight.
+	_exp_orbs.clear()
+	_orb_pending.clear()
+	_orb_death_passed.clear()
 	_fx_owner_buffs.clear()
 	# Round 796: the statics round 795 bound to this world (_cos_bind_table,
 	# _hud_cos_setup) let go now. They are lambdas over this node and its
@@ -16360,7 +16364,7 @@ func _land_skill_hit(t: SkillHits.Target, hit: SkillHits.Hit, h: int, hits: Skil
 	if not blow.is_empty():
 		_own_blow_shake(hit.critical())
 	if hit.hurts() or hit.kind == SkillHits.KIND_WALL:
-		_play_skill_hit_effect_on(body, height, code)
+		_play_skill_hit_effect_on(body, height, code, hit.kind == SkillHits.KIND_WALL)
 		# The hit sound at the attacker (CombatAudio's header) -- this
 		# player's blows only (OURS: another caster's hit sound is not played).
 		if t.id_kind == SkillNet.OWNER_MONSTER and not blow.is_empty():
@@ -22900,6 +22904,7 @@ func _physics_process(delta: float) -> void:
 		_qa_split.on_step(Engine.get_frames_drawn())
 	var fs_t := Time.get_ticks_usec() if FrameSplit.on else 0
 	SkillEffects.tick(delta)
+	_exp_orbs.tick(delta)
 	_tick_decos(delta)
 	_tick_skill_slides(delta)
 	_tick_skill_cooldowns(delta)
@@ -31253,6 +31258,11 @@ func _monster_cells_changed() -> void:
 ## _fade_out_body instead of freeing it: it fades over 1.5 s and frees
 ## itself, no longer this monster's body.
 func _free_monster_body(monster_id: int, keep_buffs: bool = false, fade: bool = false) -> void:
+	# Round 859 (READ, CICharactor's destructor GlobalDataManager::FUN_009d2900
+	# runs FUN_009cb7c0): orbs still waiting leave as the body goes.
+	if _orb_pending.has(monster_id):
+		_orb_launch(monster_id)
+	_orb_death_passed.erase(monster_id)
 	var body = _monster_bodies.get(monster_id)
 	# Its look (round 785's client review, finding 6): the pulse, the clip
 	# speed (keyed by its skeleton, which goes) and the look's book; a body
@@ -32674,8 +32684,15 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 				# (DamageText, READ: no "miss" and no zero). From a server
 				# that sends no block, the result's sum as one number.
 				_swing_numbers(hit_body, monster, result, swing_hit_offsets)
-				if skill_hit_code != "":
-					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), skill_hit_code))
+				# Round 859: a plain swing is its weapon's base attack skill
+				# (SKILL_CH_SWORD_BASE...), whose skillaniset2 row names a
+				# DamageEfp (hit_3_normal, hit_3_bow; MEASURED) and blood, as
+				# a cast's does (READ, FUN_00a4bdd0 for any decoration); until
+				# this round it drew none. OURS: once a blow, not per entry.
+				var hit_code := skill_hit_code if skill_hit_code != "" else \
+					String(SkillAudio.context_for(blow_skill).get("code", ""))
+				if hit_code != "" and hit_code != SkillAudio.NONE:
+					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), hit_code))
 	# The monster strikes back as the player's blow lands -- from the zone's
 	# OpMonsterAttacked when a server sends one, else from this result
 	# (_draw_counter_at_landing, round 540). Only the monster that took the
@@ -36205,6 +36222,7 @@ func _begin_monster_death(monster_id: int) -> void:
 	_swap_to_die_model(monster_id)
 	_schedule_death_effects(monster_id)
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
+	_orb_schedule_death(monster_id, seconds)
 	# The corpse lies for its species' DecayTime from the death, then fades
 	# out (round 677, _monster_corpse_seconds); with no DecayTime known, for
 	# its die clip, as before.
@@ -36410,8 +36428,11 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 	else:
 		_log_system(msg)
 	# 0x3054's handler 0x8a7020: snd_levup, 2-D (read; UiSounds.level_up).
-	UiSounds.level_up("level up to %d" % new_level)
-	_play_level_up_effect()
+	# Round 859: the effect and the sound are 0x3054's, which this round's
+	# server sends to everyone in view; from an older server OpLevelUp alone
+	# plays them (SystemEffects.OWN_LEVEL_UP_DEDUPE_MS, OURS).
+	_orb_level = new_level
+	_own_level_up_fx("OpLevelUp, level %d" % new_level)
 	# The quest guide icon's count (round 785, QuestHud.on_level_up).
 	if _hud_panels != null:
 		_hud_panels.quest_level_up(new_level)
@@ -36532,6 +36553,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if _hud_target != null:
 		_hud_target.set_player_level(stats.level)
 	_player_level = stats.level
+	_orb_level = stats.level
 	if _hud_panels != null:
 		# Round 837: the item mall's info block shows it.
 		_hud_panels.player_level = stats.level
@@ -36624,7 +36646,93 @@ func _on_exp_gained(g: RewardNoticeNet.ExpGain) -> void:
 		_log_system(line, HudSystemMessage.TYPE_GAIN)
 	print("World3D: 0x3056 from %d: EXP %d, skill EXP %d%s" % [g.source, g.exp, g.skill_exp,
 		(", level up, %d stat points" % g.stat_points) if g.level_up else ""])
+	_orb_gain(g.source, g.exp, g.skill_exp)
 	_request_world_stats()
+
+# --- Round 859: the kill orbs (ExpOrbs has the READ) ---------------------------
+
+var _exp_orbs := ExpOrbs.new()
+## monster id -> [exp, sp] orbs waiting for its die clip's type-100 key.
+var _orb_pending := {}
+## monster ids whose type-100 key has passed: a gain told later goes at once.
+var _orb_death_passed := {}
+## The level the orbs' exp unit is read for (the last level-up, else the
+## stats' level), and the unit table (LevelDataReader.parse_exp_unit).
+var _orb_level := 0
+var _exp_units = null
+
+## 0x3056's orbs (READ, Client_ApplyExpAndLevelUp): counted against the
+## level's exp unit and SP's 100, added to the source's count, and launched
+## now when its type-100 key has passed, else when it comes or the body goes.
+## OURS: only a monster source is drawn (a player or COS source -- job PvP,
+## a COS's gain -- is not).
+func _orb_gain(source: int, exp_gain: int, sp_gain: int) -> void:
+	var body = _monster_bodies.get(source)
+	if source == 0 or body == null or not is_instance_valid(body):
+		return
+	var level := _orb_level if _orb_level > 0 else _player_level
+	var counts := ExpOrbs.gain_counts(exp_gain, sp_gain, _exp_unit_of(level))
+	if int(counts[0]) + int(counts[1]) == 0:
+		return
+	var had: Array = _orb_pending.get(source, [0, 0])
+	_orb_pending[source] = [int(had[0]) + int(counts[0]), int(had[1]) + int(counts[1])]
+	print("World3D: kill orbs from monster %d: +%d EXP, +%d SP (level %d unit %d)%s" % [source,
+		counts[0], counts[1], level, _exp_unit_of(level), ", now" if _orb_death_passed.has(source) else ", at its die clip's end"])
+	if _orb_death_passed.has(source):
+		_orb_launch(source)
+
+func _exp_unit_of(level: int) -> int:
+	if _exp_units == null:
+		_exp_units = {}
+		if _media_pk2 != null:
+			var e := ObjectLoader.find_file(_media_pk2, LevelDataReader.TABLE_PATH)
+			if e != null:
+				_exp_units = LevelDataReader.parse_exp_unit(_media_pk2.read_file(e))
+	return int((_exp_units as Dictionary).get(level, 0))
+
+## The DEAD state's event 100 (READ c:0xa59e30) is the die clip's end
+## (ExpOrbs.DEATH_EVENT): scheduled as the clip starts, `seconds` long; no
+## clip leaves the orbs to the body's removal.
+func _orb_schedule_death(monster_id: int, seconds: float) -> void:
+	if seconds <= 0.0:
+		return
+	if not is_inside_tree():
+		_orb_death_event(monster_id)
+	else:
+		get_tree().create_timer(seconds).timeout.connect(_orb_death_event.bind(monster_id))
+
+func _orb_death_event(monster_id: int) -> void:
+	_orb_death_passed[monster_id] = true
+	_orb_launch(monster_id)
+
+## FUN_009cb7c0 (READ): from the monster's Bip01 (its position without one)
+## to this player; dropped below Effect Quality 2.
+func _orb_launch(monster_id: int) -> void:
+	var counts: Array = _orb_pending.get(monster_id, [])
+	_orb_pending.erase(monster_id)
+	var body = _monster_bodies.get(monster_id)
+	if counts.is_empty() or body == null or not is_instance_valid(body) or player == null:
+		return
+	if SkillEffects.quality < ExpOrbs.QUALITY_NEEDED:
+		print("World3D: kill orbs of monster %d dropped (Effect Quality %d)" % [monster_id, SkillEffects.quality])
+		return
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return
+	if _exp_orbs.parent == null:
+		_exp_orbs.parent = self
+		_exp_orbs.factory = func(path: String) -> EfpEffect: return EfpEffect.create(path, _open_particles_pk2_if_set())
+		_exp_orbs.sound = func(path: String, at: Vector3) -> void:
+			SoundTable.play_file(path, at)
+			print("World3D: kill orb absorbed (%d of %d) -- %s at %s" % [_exp_orbs.absorbed, _exp_orbs.launched,
+				path, at.snapped(Vector3(0.1, 0.1, 0.1))])
+	var skel := SkillEffects.skeleton_of(body)
+	var start: Vector3 = (body as Node3D).global_position
+	if skel != null and skel.is_inside_tree() and skel.find_bone(ExpOrbs.SOURCE_BONE) >= 0:
+		start = SkillEffects.bone_point(body, ExpOrbs.SOURCE_BONE, Vector3.ZERO)
+	var n := _exp_orbs.launch(start, [int(counts[0]), int(counts[1]), 0, 0], player)
+	print("World3D: kill orbs launched from monster %d: %d EXP + %d SP = %d in flight" % [monster_id,
+		counts[0], counts[1], n])
 
 ## Round 716: retail 0x304E kind 1, the new gold total (c:0x8a70d0): a shown
 ## update prints UIIT_MSG_STATE_GAIN_GOLD with the rise over the last total
@@ -36677,13 +36785,56 @@ func _play_level_up_effect() -> void:
 ## Plays a specific skill's own hit effect on a body: looks up the skill's hit
 ## `.efp` in skilleffect.txt (by Basic_Code) and plays it, falling back to the
 ## generic critical-hit burst if the skill has no mapped effect.
-func _play_skill_hit_effect_on(body: Node3D, world_height: float, basic_code: String) -> void:
+func _play_skill_hit_effect_on(body: Node3D, world_height: float, basic_code: String, wall := false) -> void:
 	if body == null or not is_instance_valid(body):
 		return
 	var particles := _open_particles_pk2_if_set()
 	if particles == null:
 		return
-	_play_hit_efp_on(body, world_height, SkillEffectReader.hit_efp_for(_skill_effects(), basic_code))
+	var efp := SkillEffectReader.hit_efp_for(_skill_effects(), basic_code)
+	_play_hit_efp_on(body, world_height, efp)
+	# Round 859 (READ, FUN_00a49290; SystemEffects has the rule): the struck
+	# body's blood -- its characterInfo BloodType, stone chips on a golem,
+	# splinters on a tree -- with the DamageEfp, where it is drawn.
+	var blood := SystemEffects.blood_for(_blood_of_body(body), _die_model_option)
+	if blood != "" and SystemEffects.blood_plays(SkillEffects.quality, efp != "",
+			SkillEffectReader.blood_for(_skill_anisets(), basic_code), wall):
+		_play_blood_on(body, world_height, blood)
+
+## Round 859: the struck body's characterInfo blood (+0x1c): a monster's by
+## its code (its OrgCodeName's, else the table's first row, READ
+## FUN_00a95d30), a player's by its body code; "" for none.
+func _blood_of_body(body: Node3D) -> String:
+	var rec: SoundTable.CharacterInfo = null
+	if body.has_meta("monster_id"):
+		rec = _monster_char_record(_monster_code_of(int(body.get_meta("monster_id"))))
+	else:
+		var code := _player_body if body == player else String(body.get_meta("body", ""))
+		var svc := AudioService.instance()
+		if svc != null and code != "":
+			rec = svc.character_record(code)
+	return rec.blood if rec != null else ""
+
+## Hits drawn with blood (QA, the log).
+var _blood_hits := 0
+## Round 859: the blood effect at the DamageEfp's own placement (READ: the
+## same transform, FUN_00a49290 reuses it), which here is the body's
+## mid-height (OURS, as _play_hit_efp_on's). A file that does not draw shows
+## nothing (no stand-in).
+func _play_blood_on(body: Node3D, world_height: float, path: String) -> void:
+	var fx := EfpEffect.create(path, _open_particles_pk2_if_set())
+	if fx == null:
+		return
+	if fx.draw_count() == 0:
+		fx.free()
+		return
+	var skel := SkillEffects.skeleton_of(body)
+	var sy: float = absf(skel.global_transform.basis.get_scale().y) if skel != null else 1.0
+	fx.reserved = body == player
+	SkillEffects.attach(fx, body, "none", Vector3(0, world_height * 0.5 / maxf(sy, 0.0001), 0))
+	_blood_hits += 1
+	if _blood_hits <= 20 or _blood_hits % 50 == 0:
+		print("World3D: blood %s on %s (%d so far)" % [path, body.name, _blood_hits])
 
 ## A hit effect `efp` on `body` (round 640: split out of
 ## _play_skill_hit_effect_on, so a wall's DefenseEfp plays the same way); ""
@@ -38821,6 +38972,12 @@ func _on_cos_spawned(rec: CosSpawnNet.Record) -> void:
 	var at := NetClient.spawn_world(rec.region, rec.local_position)
 	var old: Node3D = _cos_bodies.get(rec.uid)
 	_cos_recs[rec.uid] = rec
+	# Round 859 (READ, CICCos::vslot_026 c:0x9c5d20): a pet called out (the
+	# spawn's type byte 1) plays SYSTEM_PET_APPEAR on its body and
+	# snd_cos_summon -- here as soon as its body stands (_cos_summon_fx).
+	if SystemEffects.pet_summon_plays(rec.kind, rec.spawn_type):
+		UiSounds.play(SystemEffects.KEY_COS_SUMMON, "COS %d summoned" % rec.uid)
+		_cos_summon_pending[rec.uid] = true
 	if old != null and is_instance_valid(old):
 		# Spawned again (a summon's re-spawn, a death, a level's new row): a
 		# new model is built anew, the same one is updated in place.
@@ -38838,9 +38995,21 @@ func _on_cos_spawned(rec: CosSpawnNet.Record) -> void:
 				_cos_end_leg(rec.uid)
 			if rec.life == 2:
 				_cos_play(rec.uid, BsrReader.AnimationEntry.TYPE_DIE, true)
+			_cos_summon_fx(rec.uid)
 			return
 		_cos_free_body(rec.uid)
 	_cos_build_body(rec, at)
+
+## Round 859: COS uids whose summon effect waits for their body.
+var _cos_summon_pending := {}
+func _cos_summon_fx(uid: int) -> void:
+	if not _cos_summon_pending.has(uid):
+		return
+	var body = _cos_bodies.get(uid)
+	if body == null or not is_instance_valid(body):
+		return
+	_cos_summon_pending.erase(uid)
+	_play_system_fx(SystemEffects.PET_APPEAR, body, "COS %d summoned" % uid)
 
 func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	var row := _cos_table.row(rec.ref_id) if _cos_table != null else null
@@ -38907,6 +39076,7 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	CharacterBlobs.register(body, float(row.bc) if row != null else 0.0)
 	_light_character(body)
 	_appear_fades.start(body)
+	_cos_summon_fx(rec.uid)
 	if rec.life == 2:
 		_cos_play(rec.uid, BsrReader.AnimationEntry.TYPE_DIE, true)
 	elif rec.has_dest:
@@ -39780,9 +39950,54 @@ func _on_cos_hp(uid: int, hp: int) -> void:
 	if NetClient.cos_own.has(uid):
 		print("World3D: own COS %d HP %d" % [uid, hp])
 
-## 0x3054 on a COS: its level-up effect.
+## 0x3054 (round 859, READ c:0x8a7020): u32 an object in view has levelled.
+## A COS plays SYSTEM_PET_LEVEL_UP (snd_levup when it is this player's own),
+## anything else SYSTEM_LEVELUP (snd_levup when it is this player);
+## SystemEffects has the rules. NetClient names the signal cos_level_up: the
+## opcode was first met as the pet's.
 func _on_cos_level_up(uid: int) -> void:
-	print("World3D: COS %d levelled up" % uid)
+	var cos_body = _cos_bodies.get(uid)
+	if cos_body != null and is_instance_valid(cos_body):
+		var own_cos := NetClient.cos_own.has(uid)
+		print("World3D: COS %d levelled up%s" % [uid, " (this player's)" if own_cos else ""])
+		_play_system_fx(SystemEffects.level_up_effect(true), cos_body, "0x3054 COS %d" % uid)
+		if SystemEffects.level_up_sounds(true, false, own_cos):
+			UiSounds.level_up("COS %d level up" % uid)
+		return
+	if uid == (_own_id() & 0xffffffff):
+		_own_level_up_fx("0x3054")
+		return
+	var id := _other_by_uid(uid)
+	var body = _other_bodies.get(id) if id >= 0 else null
+	if body == null or not is_instance_valid(body):
+		print("World3D: 0x3054 for %d: not in view -- nothing plays" % uid)
+		return
+	print("World3D: 0x3054: player %d levelled up -- %s" % [id, SystemEffects.LEVELUP])
+	_crowd_wake_node(body)
+	_play_system_fx(SystemEffects.LEVELUP, body, "0x3054 player %d" % id)
+
+## Round 859: this player's level-up effect and snd_levup, once for a level-up
+## told by both OpLevelUp and 0x3054.
+var _own_level_up_ms := -1
+func _own_level_up_fx(why: String) -> void:
+	var now := Time.get_ticks_msec()
+	if not SystemEffects.own_level_up_is_new(_own_level_up_ms, now):
+		print("World3D: level-up (%s) already shown %d ms ago" % [why, now - _own_level_up_ms])
+		return
+	_own_level_up_ms = now
+	UiSounds.level_up("level up (%s)" % why)
+	_play_level_up_effect()
+
+## Round 859: a system decoration on `body` (SkillEffects.play_system): its
+## rows' effects, one-shot. The Particles archive is opened first.
+func _play_system_fx(effect_id: String, body: Node3D, why: String) -> int:
+	if body == null or not is_instance_valid(body):
+		return 0
+	if _open_particles_pk2_if_set() == null:
+		return 0
+	var n := SkillEffects.play_system(effect_id, body).size()
+	print("World3D: %s plays %s: %d effect(s)" % [why, effect_id, n])
+	return n
 
 ## A two-field COS reply's refusal (0xB0C6, 0xB116, 0xB117): category 0xc.
 func _on_cos_reply(op: int, d: Dictionary) -> void:
@@ -39803,6 +40018,7 @@ func _cos_clear() -> void:
 		_cos_free_body(int(uid))
 	_cos_recs.clear()
 	_cos_waiting.clear()
+	_cos_summon_pending.clear()
 	_cos_ground_pending.clear()
 	EfpEffect.mounts.clear()
 

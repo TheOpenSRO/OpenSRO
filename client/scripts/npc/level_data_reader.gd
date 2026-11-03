@@ -58,6 +58,27 @@ static func parse_mastery_costs(data: PackedByteArray) -> Dictionary:
 ## column the server's `cmd/export-leveldata` reads as colExpNext = 1.
 const COL_EXP := 1
 
+## Round 859: column 5, the exp unit (`GUST_Mob_Exp`), {level: unit}. READ:
+## RefParse_leveldata c:0x97aab0 stores the sixth token at the object's +0x30,
+## and FUN_00937f20's record is the object + 8, so the record's +0x28 -- the
+## divisor of the kill orbs' count (ExpOrbs) -- is this column.
+const COL_EXP_UNIT := 5
+
+static func parse_exp_unit(data: PackedByteArray) -> Dictionary:
+	var out := {}
+	for line in _lines(data):
+		if line.begins_with("//"):
+			continue
+		var cols := line.split("\t")
+		if cols.size() <= COL_EXP_UNIT:
+			continue
+		var level_text := cols[COL_LEVEL].strip_edges()
+		var unit_text := cols[COL_EXP_UNIT].strip_edges()
+		if not level_text.is_valid_int() or not unit_text.is_valid_int():
+			continue
+		out[int(level_text)] = int(unit_text)
+	return out
+
 ## Columns 6, 7, 8: the job exp a trader, thief and hunter need at a job level,
 ## {level: [trader, thief, hunter]} (round 799; JobText's header has the
 ## reading). -1 is kept as -1.

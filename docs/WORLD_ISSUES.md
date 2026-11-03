@@ -7483,6 +7483,227 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-ninth round, lane B: the kill orbs, the hit's blood, everyone's level-up, the pet's summon, the button click
+
+The user: "can you finally add all remaining effects? Especially potions and pills. When you use them
+they make a noise and you see a red/blue spiral or kind of like a green halo for pills as just an
+example. Please add those and any other missing effects." Lane A took the item-use effects (potions,
+pills, scrolls, pet potions); this lane every other effect and sound the original plays and OpenSRO
+did not. Labels: READ (`c:` sro_client.exe, `s:` SR_GameServer.exe), MEASURED, INFERRED, OURS, OPEN.
+
+### The census (READ unless marked)
+
+How it was taken: every caller of the decoration starter `FUN_00a54020` (19 functions) and of the act
+`FUN_00a53850`, every `.efp` / `.wav` path and every `L"snd_..."` literal in the decompiled client
+(`/var/tmp/decomp_client`), the system-effect name table at `c:0x00ec73f8` (37 `{name, id}` pairs,
+id 0x80000000 + n), the opcode registrations in `c:0x86fbb0`, and the data the code reads
+(skilleffect.txt's characterInfo / skillaniset2 / skilleffectset, effectsound.txt, leveldata.txt).
+
+**System decorations (the name table).**
+
+| id | name -> file | who starts it (READ) | before | now |
+|---|---|---|---|---|
+| 0x80000000 | SYSTEM_CH_HWANMODE -> system_hwan_* | SetBodyMode `FUN_009dd620` | built (r651 BerserkLook) | = |
+| 0x80000001/2/3 | HP/MP potion, LIFE -> item_hpotion/mpotion/life | item use `FUN_008735d0` | missing | lane A |
+| 0x80000004/5 | RETURNSCROLL / RESULT | item use | missing | lane A |
+| 0x80000006 | SYSTEM_LEVELUP -> system_levelup.efp | 0x3054 `c:0x8a7020`, everyone in view | own only (OpLevelUp) | **everyone (server sends 0x3054)** |
+| 0x80000007 | SYSTEM_APPEAR -> system_apear.efp | no code pushes the id or looks the name up (only the table holds it) | - | not built (unused, INFERRED) |
+| 0x80000018 | SYSTEM_UNTOUCHABLE -> system_untouchable.efp | the same: no reference | - | not built (round 786: the protection has no look) |
+| 0x8000001a/b/c, 0x27 | quest marks over NPCs | 0x30D6 `FUN_009c75e0` | built (r785) | = |
+| 0x8000001d | SYSTEM_KNOCKBACK | hit kind 5 `FUN_00a49290` | slide built | = (MEASURED: its skilleffectset row is commented out, `//넉빽`) |
+| 0x8000001f | SYSTEM_QUEST_MARK (monster) | `CICMonster::vslot_025` on characterdata col 102 | - | never: 0 of 17,868 rows set (round 698, MEASURED) |
+| 0x8000001e / 0x28 | HELPERMARK / GUILD_WAR_MARK | `CICUser::vslot_009` -> `FUN_009ddb00`, bits 2 / 4 of +0x7b5 | missing | **OPEN** (ranked below) |
+| 0x8000002c..35 | FREEPVP marks | `FUN_009ddb00`, `FUN_008822c0` | - | n/a (no free-PvP vouchers here) |
+| 0x80000020, SYSTEM_TRAP, _MONSTER_CAPTURE | capture | 0x330F `FUN_008a4a30` | - | n/a (no capture system) |
+| 0x80000021 | SYSTEM_PET_APPEAR -> item_returnscroll.efp | `CICCos::vslot_026` `c:0x9c5d20`: 0x3015's type byte 1 on a growth/ability pet | missing (the byte was read, nothing played) | **built** |
+| 0x80000022 | SYSTEM_PET_LEVEL_UP -> system_levelup.efp | 0x3054 on a COS | a log line | **built** |
+| 0x80000023..26 | COS potions, STATUS_CURE_COS | item use | missing | lane A |
+| 0x80000029 | ROG_STEALTHA_CHANGE_A | `FUN_00a53120` | missing | OPEN (ranked) |
+| 0x8000002a/2b | EFFECT_NASRUN_RUN_01/02 | `FUN_009db9e0` | missing | OPEN (ranked) |
+
+**Effects the code makes itself, and data-driven ones.**
+
+| trigger | file | READ | before | now |
+|---|---|---|---|---|
+| a kill's EXP / SP | battle\hwan_g / hwan_y fly, hwn_blue / hwn_red_indraft + prim\snd\ui\hyanget.wav | 0x3056 -> `FUN_009cb7c0` -> `ICPlayer::FUN_009d9400`, `CICPlayer::FUN_009d8820` | missing | **built** (ExpOrbs) |
+| the hwan count's rise | battle\hwan_v -> hwn_violet_indraft | 0x304E kind 4 `c:0x8a70d0` | missing | OPEN: OpenSRO's gauge comes on the attack result, not 0x304E kind 4 |
+| a COS's EXP | hwan_g -> blue, to the COS | 0x30C9 `c:0x8aa340` | missing | OPEN (ranked) |
+| any skill hit with a DamageEfp | the target's characterInfo BloodType (hit_2_redblood, _stone, _wood, _ice, _metal ...) | `FUN_00a49290` (+0x1c / +0x20 of the record, the aniset row's +0xfa) | missing | **built** |
+| a plain swing | its base attack skill's DamageEfp (hit_3_normal / hit_3_bow) | `FUN_00a4bdd0` for any decoration | missing | **built** |
+| the die clip | characterInfo Die Effect / Dead Effect | `c:0xa59e30` | built (r809) | = |
+| an object's arrival | CIDecoAppear fade | `GlobalDataManager::FUN_009d17e0` | built (AppearFade) | = |
+| a set of gear completed / broken | avatar_nasrun01_(un)equip01.efp + snd_setitem_(de)active | 0x3038 / 0x3039 `c:0x8a9260` / `0x8a9560` | missing | OPEN (ranked) |
+| the pierce mover's critical | hiteffect\hit_1_pierce_critical.efp | `IDecoSkill::FUN_00a51bc0` | missing | OPEN (round 785's MOV_PIERCE) |
+
+**Sounds (`L"snd_..."` in code; effectsound.txt rows MEASURED).**
+
+| key | site (READ) | before | now |
+|---|---|---|---|
+| snd_window_open / close, snd_equip, snd_quest_end, snd_error, snd_elixir_*, snd_repair, snd_revive, snd_eqbreak / eqdanger, snd_dmg / ddmg / cridmg, snd_blocking, snd_activate, snd_dropitem, snd_pickup | (rounds 611-829) | built | = |
+| snd_levup | 0x3054 (own body / own COS only) | from OpLevelUp | **from 0x3054 too, own COS too** |
+| snd_button_click | CIFButton's message handler, vtable slot 17 `c:0x656160` (shared by CIFCloseButton, CIFButtonTree): a release inside the pressed button, style without 0x20 | **missing -- round 615 read this site as the item mall's (its module tag) and wrote "retail buttons are silent"** | **built** (every CIFButton UiBuilder makes) |
+| snd_cos_summon | `c:0x9c5d20` | missing | **built** |
+| snd_quest | 0xB0D8 result 1 `c:0x881450` | missing | **built** |
+| prim\snd\ui\hyanget.wav | each kill orb's arrival, at the point | missing | **built** |
+| snd_setitem_active / deactive | 0x3038 / 0x3039 | missing | OPEN (ranked) |
+| snd_warp | `CGInterface::Create` (vtable slot 10) when its argument is 2 | missing | OPEN: what passes 2 was not traced |
+| snd_socket_punch / setin / remove | UI_SOCKET | - | n/a (no sockets) |
+
+### What was built
+
+**The kill orbs (`client/scripts/effects/exp_orbs.gd`, `ExpOrbs`; READ unless marked).**
+- Who: 0x3056's handler `Client_ApplyExpAndLevelUp` (`c:0x8a97c0`) -- when the source object is in
+  view and a CICharactor (`c:0xef1a5c`) -- adds `count_for(exp / unit)` to its byte +0x759 and
+  `count_for(sp / 100.0)` to +0x75a. The unit is the player's level record's +0x28: RefParse_leveldata
+  (`c:0x97aab0`) stores the sixth token (column 5, the exp unit) at the object's +0x30 and
+  `FUN_00937f20` returns object + 8 (MEASURED 24 at level 1, 47 at 2, 5170 at 80).
+- How many (`FUN_008a65b0`, from its x87 code): f >= 1: 10 at 64 or more, one fewer per halving,
+  4 at [1, 2); below 1: `3 - int((1 - f) * 5.0)`, at least 1; at most 10.
+- When: a CICNPC (`c:0xef1ac4`) launches at once; any other body at its DEAD state's event 100
+  (`c:0xa59e30`), or at its destructor (`GlobalDataManager::FUN_009d2900`). 100 is the animation
+  mixer's clip-end call (READ: `AniMixer::FUN_00c53e80` at `c:0xc53f01` / `0xc5400c` and
+  `CCompChar::FUN_00c53c90` at `c:0xc53d87` call the owner's callback slot 0 with (100, the
+  animation, 0)); that the DEAD state's argument is that one is INFERRED. MEASURED
+  (`client/tools/census_die_events.gd`, 8,309 bodies under res\ in Data.pk2, 583 die clips): no die
+  clip carries a key event of type 100 (2 carry a type 1), so it is no key event. So a monster's
+  orbs leave as its die clip ends.
+- Gate (`FUN_009cb7c0`): the display row's +0xd below 2 drops them (INFERRED Effect Quality, whose
+  "See All Effects" is 2).
+- The flight (`ICPlayer::FUN_009d9400`, `CICPlayer::FUN_009d8820`, the mover `FUN_009eaaa0` /
+  `FUN_009eac50`, all from the x87 code): from the monster's `Bip01` (its position without one) to the
+  player's `Bip01 Spine1` (`c:0xde2d18`; 10 above its feet without one, `c:0xe1b840`), re-aimed every
+  frame; kept fly effects hwan_g (EXP) / hwan_y (SP); an angle of `(rand() % 120 - 60)` degrees; the
+  start velocity away from the player, turned by that angle (its z takes the NEW x -- the original's
+  arithmetic, kept), lifted `rand() % 400 / 1000 + 0.1`, normalised, `rand() % 25 + 50` units a
+  second; a still wait of `rand() % 800` ms; then acceleration `k * 78.4` toward the player until the
+  velocity's cosine to the aim passes `k * 0.5`, then homing at `k * 392` along half velocity, half
+  aim (the aim itself above 0.93), arriving when a step reaches the target; past 2.2 s it homes
+  straight, past 3.5 s it is there. `k = rand() % 400 / 1000 + 0.9`. On arrival the fly effect is
+  freed at once (slot 2), hwn_blue / hwn_red_indraft plays at the point once, and
+  `prim\snd\ui\hyanget.wav` there (the sound manager's +0x30 with 1.0).
+- OURS: only a monster's orbs (a player or COS source is not drawn); the world's z is mirrored at
+  the mover's edges (`to_orig`), so its turns come out as the original's.
+
+**The hit's blood (`SystemEffects.blood_*`, World3D `_play_skill_hit_effect_on`).** READ
+(`FUN_00a49290`'s disassembly, its stack arguments counted): inside the block that draws the skill's
+DamageEfp -- entered when the display row's +0xd is not 0, the decoration has a DamageEfp and an
+attacker -- a second effect is made with the same transform when the blood argument is set (cleared
+for a kind-7 wall entry): the TARGET's characterInfo record +0x1c (`hiteffect\<BloodType>.efp`,
+column 9) or, with the option byte +0x12e clear, +0x20 (`hiteffect\hit_2_greenblood.efp`, which the
+parser `FUN_00a9ae80` fills for every row that names any). The argument is the skillaniset2 row's
++0xfa -- column 26, "피 나올래?" (blood?), stored `!= 0` by the loader `c:0x00a9c470` -- or 1 when the
+decoration has no row (`FUN_00a4bdd0`); the end-of-cast apply (`IDecoSkill::FUN_00a4f720`) passes 1.
+MEASURED: BloodType hit_2_redblood 862 rows, none 262, greenblood 116, stone 114, wood 63, ice 27,
+metal 27, blueblood 6, sand 2, fire 2; the blood column 1 on 3,046 aniset rows, 0 on 76. OpenSRO's
++0x12e is on (`_die_model_option`, round 809), so the row's own blood plays.
+**The plain swing**: its weapon's base attack skill (SKILL_CH_SWORD_BASE ...) has a DamageEfp too
+(hit_3_normal / hit_3_bow, MEASURED), and a retail plain swing is that skill's decoration. OpenSRO
+drew no hit effect for it; now the DamageEfp and the blood (OURS: once a blow, not per hit entry).
+Placement OURS, unchanged: the body's mid-height (READ only that the blood shares the DamageEfp's
+transform).
+
+**0x3054 for every level-up (server `levelupeffect.go`; client `_on_cos_level_up`).** READ
+(`s:0x4e4d90` GObjPC_SetLevel): on a rise, the HP/MP refill, then 0x3054 {u32 the unique id} to the
+region (`FUN_00484d90`). The client (`c:0x8a7020`): a COS plays SYSTEM_PET_LEVEL_UP, anything else
+SYSTEM_LEVELUP; snd_levup only for this player (`FUN_009d4990`) or its own COS (`FUN_009a0b80`).
+OpenSRO told a level-up only to the leveller (its own OpLevelUp). Every OpLevelUp site (kill, kill
+share, skill hit, chain link, periodic blow, status kill, quest, job PvP, GM /level) now sends 0x3054
+first, through `sendAboutOwner` (the view). The client plays this player's effect and sound once for
+the pair (OURS: whichever comes first within 2 s; an older server's OpLevelUp alone still plays
+them).
+
+**The pet's summon (`_on_cos_spawned`, `_cos_summon_fx`).** READ `c:0x9c5d20`: 0x3015's type byte 1
+on a COS whose TypeID4 is 3 or 4 (`FUN_0069a420`) starts SYSTEM_PET_APPEAR with the end flag
+(`item_returnscroll.efp`, an AT_LOOP row let go at once: one cycle) and plays snd_cos_summon (`UI
+SND_COS_SUMMON skill\ csk_heal_ready_a.wav 60`, MEASURED). The server already sent the byte
+(`cosSpawnTypeSummoned`); the client read it and drew nothing. `SkillEffects.play_system` is the
+end-at-once decoration (additive; `FUN_00a53850`'s fifth stack argument, `c:0x00a53bfb` ->
+`FUN_00a53120`). The body may still be loading: the effect waits for it.
+
+**snd_button_click and snd_quest.** The button: `UiBuilder._build_button` connects `pressed`
+(Godot's release inside an enabled button) unless the def's Style has 0x20 (INFERRED that +0x38c is
+the layout's Style; MEASURED that none of the 529 CIFButtons in the resinfo layouts sets 0x20, so
+the inference changes nothing for them). `ui_sounds_test` now expects the equipment pane's button to
+click once and sound nothing else.
+
+### QA (real clients, real input, the lane server)
+
+`/var/tmp/r859b/qa859b.sh` on the box: the lane server (port 17340, in memory, `-navmesh-dir`,
+monsters with AI / aggro / battle / strike push), base `deb95be4` or this branch for both server and
+client. A rendered client (Act859) and a second client (Obs859), both level 1, `/goto mangyang`,
+fighting Jangan's Mangyangs through the real click path (`OPENSRO_QA_FIGHT`), side by side; at tick
+3600 a GM `/level 5`, at 3700 each uses a Rabbit summon scroll (10365, an ability pet) from its bag
+(`OPENSRO_QA_COS`). Real time, 5,400 frames (90 s). Each client's log counted by
+`/var/tmp/r859b/ana859b.py`:
+
+| per client (actor / observer) | base | head (run 1) | head (run 2) |
+|---|---|---|---|
+| monsters seen dying | 33 / 35 | 36 / 36 | 15 / 15 |
+| kill orbs launched (fly effects) | 0 / 0 | 87 / 92 | 49 / 46 |
+| kill orbs absorbed (indraft effect + hyanget.wav each) | 0 / 0 | (not logged) | 47 / 45 |
+| hit blood effects (counter, at least) | 0 / 0 | 50 / 50 | 20 / 20 |
+| own level-up effect + snd_levup | 2 / 2 | 2 / 2 | 2 / 2 |
+| the OTHER player's level-up seen (SYSTEM_LEVELUP played) | **0 / 0** | 1 / 1 (the GM /level sent none yet) | **2 / 2** |
+| pet summon effect (SYSTEM_PET_APPEAR) / snd_cos_summon | 0 / 0 | 1 / 1 | 1 / 1 |
+
+(The summon: one of the two scrolls summoned -- both logs show the same COS uid, played on the owner's
+screen and on the other's. Run 2 fought fewer Mangyangs: the fight walked to farther ones; the frame
+times are the same, p95 2-3 ms in every run.) No new script error: the runs' only repeated errors
+(`_step_body_fidgets`'s missing meta, `anim_sounds.advance`) are base's too (1,244 / 202 lines base,
+835 / 95 head 2).
+
+Frames for a human (illustrative; the table is the measurement), `/var/tmp/r859b/keep/` on the box,
+grabbed from the screen in real time (`QA_SHOT_XCAPTURE`, 960x540): `head_orbs_g0054.png` (a kill's
+cyan EXP and yellow SP orbs curving into the player), `head_levelup_orbs_g0270.png` (the level-up
+beam with orbs arriving), `head_absorb_levelup_g0276.png` (the blue indraft at the chest),
+`head_hit_blood_g0009.png` (a plain swing's hit_3_normal with the Mangyang's red blood);
+`base_hit_g0045.png` the same fight on base, no hit effect, no orbs; `head_sheet0.png` /
+`base_sheet0.png` the first 24 sampled grabs of each.
+
+**Tests.** Client `system_effects859_test.gd` (new, 45 checks: the rules, the three columns, the
+count rule, the mover's wait / turn / arrival / 3.5 s bound, `play_system`'s one-shot end, live orbs
+with synthetic effects -- fly and absorb files, the chime at the chest); `ui_sounds_test.gd` updated
+(the equipment pane's button now clicks once and sounds nothing else). Server
+`TestLevelUpAnnouncedToViewers` (the leveller gets 0x3054 naming it before OpLevelUp; two others in
+view get it; a share that does not level sends none), `TestLevelUpEffectPayload`.
+`client/tools/census_die_events.gd` (new): the die clips' event census.
+
+**Shared changes (lane A, merge):** `SkillEffects.play_system` (new static, additive);
+`UiSounds.KEY_QUEST`, `KEY_BUTTON_CLICK`, `button_clicked` (additive); `AudioService.play_key` /
+`play_file` now play nothing while the service has no options (a headless suite's autoload whose
+`_ready` has not run -- the six suites that clicked a button failed on it); `_play_skill_hit_effect_on`
+gained a `wall := false` argument; `SoundTable.CharacterInfo.blood`; `LevelDataReader.parse_exp_unit`;
+`SkillEffectReader` rows' `blood`. The metrics table regenerated: 0x3054 is grouped `combat`
+(`combat_levelup.go`), not `cos`.
+
+### What is left (OPEN, most seen first)
+
+1. The guild war mark over a hostile guild's members (needs the virtual on the body that must
+   return 4; READ the rest, `FUN_009ddb00`).
+2. The violet hwan orbs (0x304E kind 4 is not OpenSRO's gauge path) and a COS's EXP orbs (0x30C9).
+3. A full gear set's effect and sound (0x3038 / 0x3039: the flag's setter, `FUN_0095d950`, untraced).
+4. snd_warp (`CGInterface::Create`'s argument 2: its caller untraced).
+5. The helper mark, the Nasrun run effects, the rogue key mark; code-made buttons' click.
+6. Where hit effects sit (`FUN_00a4bdd0`'s +0x90 / `FUN_009cf6f0`'s DamagePos): mid-height here.
+These are in `docs/TODO.md`, "Round 859 lane B follow-ups".
+
+**Perf gate** (the effects are drawn in fights; the standing views gate the world code path):
+
+```
+perf gate: base deb95be4 (forward_plus) vs head 798425b2 (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.90  head 0.94  (+0.0)  SAME
+jangan  entry ms   base 8874.00  head 8896  (+22.0)  SAME
+jangan  freeze ms  base 2790.50  head 2807  (+16.5)  SAME
+jangan  hitches    base 5.00  head 5  (+0.0)  SAME
+```
+
+**Gates:** server `go build ./...`, `go test ./...` (the first full run's one failure was the
+metrics table, stale for the new constant -- regenerated; `metrics` and `session` re-run green);
+client `check` ALL LOAD (1,116 scripts), `tests` "ran 420 suite(s), 0 failing" (the first run's six
+failures were the two shared-file fixes above: the headless audio service, and
+`efp_frame_shift_test`'s source check of the teardown, which wants the effects' release within 300
+characters of `SkillEffects.clear_live()` -- the orbs' clear moved below it).
+
 ## Eight-hundred-and-fifty-ninth round, lane A: using an item shows its effect -- potions, pills, scrolls, pet potions
 
 The user: "can you finally add all remaining effects? Especially potions and pills. When you use

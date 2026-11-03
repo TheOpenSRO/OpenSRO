@@ -28,13 +28,15 @@ class_name UiSounds
 ## rule. Which of this client's windows reach it is decided in HudPanels,
 ## window by window, each with its routine's address.
 ##
-## NOT A SOUND (read): retail buttons are silent -- no base class (CIFButton,
-## CGWnd, CIFWnd) plays one. snd_button_click is referenced twice: the item
-## mall (0x656160, not built) and the title screen's server list,
-## GDR_LIST_SERVER (id 51 in resinfo\pstitle.txt), notification 0x806e ->
-## 0x866f80. This client's login screen has no server list, so nothing here
-## plays it. (The spec called that site "the title confirm"; the message map
-## at 0xec36d8 says it is the list's.)
+## BUTTONS (round 859, READ; corrects round 615). snd_button_click is
+## referenced twice. 0x656160 is not the item mall's: its module tag misled
+## round 615 -- the RTTI walk names it CIFButton's vtable slot 17, the message
+## handler CIFCloseButton and CIFButtonTree share. On a left-button release
+## (0x202) over the button it was pressed on, a button whose style (+0x38c)
+## lacks 0x20 sends its click and plays snd_button_click (`button_clicked`;
+## UiBuilder hooks every CIFButton it builds). The other site is the title
+## screen's server list, GDR_LIST_SERVER (id 51 in resinfo\pstitle.txt),
+## notification 0x806e -> 0x866f80.
 
 const KEY_WINDOW_OPEN := "UI:snd_window_open:-:-:-:-"
 const KEY_WINDOW_CLOSE := "UI:snd_window_close:-:-:-:-"
@@ -55,6 +57,10 @@ const KEY_EQDANGER := "UI:snd_eqdanger:-:-:-:-"
 ## Round 819: a quest notice of SN_TALK_COMMON_END (0x30EC's handler
 ## 0x884a30 plays snd_quest_end, READ; effectsound.txt's UI SND_QUEST_END row).
 const KEY_QUEST_END := "UI:snd_quest_end:-:-:-:-"
+## Round 859: the quest reward button's reply 0xB0D8 with result 1 (its
+## handler c:0x881450 reads the u8, then the u32, and plays snd_quest; READ).
+## Its other three sites are the item mall's and the event guide's.
+const KEY_QUEST := "UI:snd_quest:-:-:-:-"
 
 ## A key the log reports at most once a second each (ours): a repair of
 ## eight slots fires eight sounds in one frame, and the log should say so
@@ -109,6 +115,11 @@ static func window_toggled(shown_now: bool, interface_shown: bool, what: String)
 		play(KEY_WINDOW_OPEN, what + " shown")
 	else:
 		play(KEY_WINDOW_CLOSE, what + " hidden")
+
+## Round 859: a CIFButton clicked (the release inside it; see the header).
+const KEY_BUTTON_CLICK := "UI:snd_button_click:-:-:-:-"
+static func button_clicked(what: String) -> void:
+	play(KEY_BUTTON_CLICK, what + " clicked")
 
 ## A routine that plays snd_window_close itself (the storage and store close
 ## handlers, 0x798e20's alchemy close, the message box's hide).

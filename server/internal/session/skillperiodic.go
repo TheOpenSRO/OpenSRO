@@ -193,6 +193,7 @@ func linkedBlowTick(d combatDeps, casterID, monsterID int64, token uint32, ref *
 	// the level-ups were dropped): OpLevelUp, then the 0x3056.
 	if sess != nil {
 		for _, lu := range levelUps {
+			announceLevelUp(d.hub, casterID)
 			_ = sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()})
 		}
 	}

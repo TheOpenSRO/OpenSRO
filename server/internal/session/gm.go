@@ -300,6 +300,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		if out.LevelUp != nil {
 			result.NewLevel = int32(out.LevelUp.NewLevel)
 			result.StatPoints = int32(out.LevelUp.StatPoints)
+			// Round 859: a GM's /level is a SetLevel too -- 0x3054 to the
+			// character's view (combat_levelup.go).
+			announceLevelUp(hub, characterID)
 		}
 		// /kill's Zone is where the monster was, not a place to send the
 		// player; only /tp and /goto move the player. Keep Zone for a move.

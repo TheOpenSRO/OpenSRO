@@ -463,6 +463,7 @@ func performSkillAttack(ctx context.Context, d combatDeps, sess *gateway.Session
 		return err
 	}
 	for _, lu := range levelUps {
+		announceLevelUp(d.hub, characterID)
 		if err := sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()}); err != nil {
 			return err
 		}

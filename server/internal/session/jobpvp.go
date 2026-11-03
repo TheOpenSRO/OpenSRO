@@ -722,6 +722,7 @@ func giveCharacterExp(ctx context.Context, d combatDeps, e world.Entity, exp int
 	}
 	g := charmsg.ExpGain{Exp: exp}
 	if lu != nil {
+		announceLevelUp(d.hub, e.CharacterID)
 		e.Session.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()})
 		g.LevelUp = true
 		g.StatPoints = uint16(lu.StatPoints)
