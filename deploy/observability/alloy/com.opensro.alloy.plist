@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Grafana Alloy for OpenSRO's prod host (round 858). Install to
+     ~/Library/LaunchAgents/com.opensro.alloy.plist, then
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.opensro.alloy.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.opensro.alloy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/alloy</string>
+    <string>run</string>
+    <string>--server.http.listen-addr=127.0.0.1:12345</string>
+    <string>--storage.path=/Users/gaigelama/opensro/observability/data</string>
+    <string>--disable-reporting</string>
+    <string>/Users/gaigelama/opensro/observability/config.alloy</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/gaigelama/opensro/observability/alloy.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gaigelama/opensro/observability/alloy.log</string>
+</dict>
+</plist>

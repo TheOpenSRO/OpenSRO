@@ -1,0 +1,98 @@
+// Grafana Alloy on the prod server's host (the Mac mini, round 858).
+// Installed with Homebrew (`grafana-alloy`), run by the launch agent
+// com.opensro.alloy (alloy/com.opensro.alloy.plist), config and state in
+// ~/opensro/observability. It:
+//   - tails the game server's logs into Loki on the monitoring container;
+//   - scrapes the game server's /metrics on 127.0.0.1:9469 (the server's
+//     -metrics-addr, local only) and this host's own metrics;
+//   - remote-writes every metric to Prometheus on the monitoring container.
+
+// --- Where things go -----------------------------------------------------
+
+prometheus.remote_write "monitoring" {
+  endpoint {
+    url = "http://192.168.10.86:9090/api/v1/write"
+  }
+  external_labels = {
+    instance = "prod",
+  }
+}
+
+loki.write "monitoring" {
+  endpoint {
+    url = "http://192.168.10.86:3100/loki/api/v1/push"
+  }
+  external_labels = {
+    instance = "prod",
+  }
+}
+
+// --- Metrics -------------------------------------------------------------
+
+// The game server's own metrics (the -metrics-addr endpoint).
+prometheus.scrape "opensro_server" {
+  targets         = [{"__address__" = "127.0.0.1:9469"}]
+  job_name        = "opensro-server"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.monitoring.receiver]
+}
+
+// This host: CPU, memory, disk, network, load (the macOS collectors).
+prometheus.exporter.unix "host" { }
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  job_name        = "prod-host"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.monitoring.receiver]
+}
+
+// Alloy's own health.
+prometheus.exporter.self "alloy" { }
+
+prometheus.scrape "alloy" {
+  targets    = prometheus.exporter.self.alloy.targets
+  job_name   = "alloy"
+  forward_to = [prometheus.remote_write.monitoring.receiver]
+}
+
+// --- Logs ----------------------------------------------------------------
+
+local.file_match "opensro_logs" {
+  path_targets = [
+    // The server's own rotating log (-log-file, round 858 lane O).
+    {"__path__" = "/Users/gaigelama/opensro/logs/opensro.log", "job" = "opensro-server"},
+    // launchd's stdout/stderr: only a crash's Go stack lands here now.
+    {"__path__" = "/Users/gaigelama/opensro/logs/server.log", "job" = "opensro-stderr"},
+    {"__path__" = "/Users/gaigelama/opensro/logs/ping-to-swarm.log", "job" = "ping-to-swarm"},
+  ]
+  sync_period = "10s"
+}
+
+loki.source.file "opensro_logs" {
+  targets       = local.file_match.opensro_logs.targets
+  forward_to    = [loki.process.opensro.receiver]
+  // Start at the end on the first run: the existing files are hundreds of MB.
+  tail_from_end = true
+}
+
+// The server logs slog text (logfmt): time=... level=... msg=... key=value.
+// level becomes a label (a handful of values); the time is the line's own.
+loki.process "opensro" {
+  stage.logfmt {
+    mapping = {
+      "ts"    = "time",
+      "level" = "level",
+    }
+  }
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+  forward_to = [loki.write.monitoring.receiver]
+}
