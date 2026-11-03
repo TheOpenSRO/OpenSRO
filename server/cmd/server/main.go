@@ -40,6 +40,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
@@ -1314,9 +1315,17 @@ func main() {
 			"it serves stacks and the command line. See deploy/README.md, \"Profiling a lagging server\".")
 	// The original client's gateway and agent (round 788, retail.go).
 	retailOpts := registerRetailFlags()
+	// The log's destination and level, and /metrics (round 858, observe.go).
+	observe := registerObserveFlags()
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger, closeLog, err := newLogger(observe)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "opensro server:", err)
+		os.Exit(2)
+	}
+	defer closeLog()
+	logger.Info("OpenSRO server starting", "version", version, "pid", os.Getpid())
 	if maxPlayersEnvErr != nil {
 		logger.Warn("OPENSRO_MAX_PLAYERS is not a number; the capacity keeps its default unless -max-players is given",
 			"err", maxPlayersEnvErr, "default", defaultMaxPlayers)
@@ -1418,13 +1427,13 @@ func main() {
 	if *leveldataCSV != "" {
 		f, err := os.Open(*leveldataCSV)
 		if err != nil {
-			logger.Error("opening leveldata CSV", "path", *leveldataCSV, "error", err)
+			logger.Error("opening leveldata CSV", "path", *leveldataCSV, "err", err)
 			os.Exit(1)
 		}
 		table, err := leveldata.ParseCSV(f)
 		f.Close()
 		if err != nil {
-			logger.Error("parsing leveldata CSV", "path", *leveldataCSV, "error", err)
+			logger.Error("parsing leveldata CSV", "path", *leveldataCSV, "err", err)
 			os.Exit(1)
 		}
 		levelTable = table
@@ -1438,6 +1447,10 @@ func main() {
 	defer stop()
 	if err := startDebug(ctx, *pprofAddr, logger); err != nil {
 		logger.Error("pprof listener (-pprof-addr / OPENSRO_PPROF_ADDR)", "addr", *pprofAddr, "err", err)
+		os.Exit(1)
+	}
+	if _, err := metrics.Serve(ctx, *observe.metricsAddr, logger); err != nil {
+		logger.Error("metrics listener (-metrics-addr / OPENSRO_METRICS_ADDR)", "addr", *observe.metricsAddr, "err", err)
 		os.Exit(1)
 	}
 
@@ -1500,17 +1513,17 @@ func main() {
 		if *skillsCSV != "" {
 			f, err := os.Open(*skillsCSV)
 			if err != nil {
-				logger.Error("opening skills CSV", "error", err)
+				logger.Error("opening skills CSV", "err", err)
 				os.Exit(1)
 			}
 			sk, err := refdata.LoadSkillsCSV(f)
 			f.Close()
 			if err != nil {
-				logger.Error("parsing skills CSV", "error", err)
+				logger.Error("parsing skills CSV", "err", err)
 				os.Exit(1)
 			}
 			if err := memRef.ImportSkills(context.Background(), sk); err != nil {
-				logger.Error("importing skills", "error", err)
+				logger.Error("importing skills", "err", err)
 				os.Exit(1)
 			}
 			logger.Info("loaded skill refdata for learning", "skills", len(sk))
@@ -1518,17 +1531,17 @@ func main() {
 		if *itemsCSV != "" {
 			f, err := os.Open(*itemsCSV)
 			if err != nil {
-				logger.Error("opening items CSV", "error", err)
+				logger.Error("opening items CSV", "err", err)
 				os.Exit(1)
 			}
 			it, err := refdata.LoadItemsCSV(f)
 			f.Close()
 			if err != nil {
-				logger.Error("parsing items CSV", "error", err)
+				logger.Error("parsing items CSV", "err", err)
 				os.Exit(1)
 			}
 			if err := memRef.ImportItems(context.Background(), it); err != nil {
-				logger.Error("importing items", "error", err)
+				logger.Error("importing items", "err", err)
 				os.Exit(1)
 			}
 			logger.Info("loaded item refdata for the shop", "items", len(it))
@@ -1583,7 +1596,7 @@ func main() {
 		}
 	} else {
 		if err := waitForDatabase(pingPostgres(*postgresDSN), *postgresWait, time.Second, time.Sleep, logger); err != nil {
-			logger.Error("opening account store", "error", err)
+			logger.Error("opening account store", "err", err)
 			os.Exit(1)
 		}
 		// ONE capped pool for the stores and a small one for the reference
@@ -1594,13 +1607,13 @@ func main() {
 		storeConns, refConns := txn.PoolSizes()
 		storePool, err := txn.OpenPool(*postgresDSN, storeConns)
 		if err != nil {
-			logger.Error("opening the postgres pool", "error", err)
+			logger.Error("opening the postgres pool", "err", err)
 			os.Exit(1)
 		}
 		defer storePool.Close()
 		refPool, err := txn.OpenPool(*postgresDSN, refConns)
 		if err != nil {
-			logger.Error("opening the reference-data pool", "error", err)
+			logger.Error("opening the reference-data pool", "err", err)
 			os.Exit(1)
 		}
 		defer refPool.Close()
@@ -1609,13 +1622,13 @@ func main() {
 
 		sqlAccounts, err := account.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening account store", "error", err)
+			logger.Error("opening account store", "err", err)
 			os.Exit(1)
 		}
 
 		sqlChars, err := character.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening character store", "error", err)
+			logger.Error("opening character store", "err", err)
 			os.Exit(1)
 		}
 		// The economy ledger keeps a day (txn.PruneLedger): long past any
@@ -1625,7 +1638,7 @@ func main() {
 			defer t.Stop()
 			for {
 				if n, err := txn.PruneLedger(ctx, storePool, 24*time.Hour); err != nil {
-					logger.Warn("pruning the economy ledger", "error", err)
+					logger.Warn("pruning the economy ledger", "err", err)
 				} else if n > 0 {
 					logger.Info("pruned the economy ledger", "rows", n)
 				}
@@ -1639,7 +1652,7 @@ func main() {
 
 		sqlRef, err := refdata.NewSQLStore(refPool)
 		if err != nil {
-			logger.Error("opening refdata store", "error", err)
+			logger.Error("opening refdata store", "err", err)
 			os.Exit(1)
 		}
 
@@ -1673,7 +1686,7 @@ func main() {
 
 		sqlInv, err := inventory.NewSQLStoreOwned(storePool, sqlRef, inventory.DefaultTable, inventory.DefaultOwnerColumn)
 		if err != nil {
-			logger.Error("opening inventory store", "error", err)
+			logger.Error("opening inventory store", "err", err)
 			os.Exit(1)
 		}
 		sqlInv.SetDurabilityLookup(sqlRef)
@@ -1684,7 +1697,7 @@ func main() {
 		// server is moved over once, losslessly, before anything opens it.
 		sqlWarehouse, err := inventory.NewSQLStoreOwned(storePool, sqlRef, inventory.WarehouseTable, inventory.WarehouseOwnerColumn)
 		if err != nil {
-			logger.Error("opening warehouse store", "error", err)
+			logger.Error("opening warehouse store", "err", err)
 			os.Exit(1)
 		}
 		sqlWarehouse.SetDurabilityLookup(sqlRef)
@@ -1694,7 +1707,7 @@ func main() {
 		storageGold = sqlAccounts
 		chestSizes = sqlAccounts
 		if moved, err := storage.MigrateToAccounts(ctx, sqlWarehouse.DB(), logger); err != nil {
-			logger.Error("moving the warehouse to accounts", "error", err)
+			logger.Error("moving the warehouse to accounts", "err", err)
 			os.Exit(1)
 		} else if moved.Applied {
 			logger.Info("warehouse moved from characters to accounts",
@@ -1704,7 +1717,7 @@ func main() {
 
 		sqlEq, err := equipment.NewSQLStore(storePool, sqlInv)
 		if err != nil {
-			logger.Error("opening equipment store", "error", err)
+			logger.Error("opening equipment store", "err", err)
 			os.Exit(1)
 		}
 		// Worn rows written before durability existed get their instance on
@@ -1716,7 +1729,7 @@ func main() {
 		// The avatar inventory (round 789): its table migrates itself.
 		sqlAvatars, err := avatar.OpenSQL(storePool, sqlRef)
 		if err != nil {
-			logger.Error("opening avatar store", "error", err)
+			logger.Error("opening avatar store", "err", err)
 			os.Exit(1)
 		}
 		avatars = sqlAvatars
@@ -1725,13 +1738,13 @@ func main() {
 		// themselves.
 		sqlCOS, err := cos.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening COS store", "error", err)
+			logger.Error("opening COS store", "err", err)
 			os.Exit(1)
 		}
 		cosStore = sqlCOS
 		sqlBags, err := inventory.NewSQLStoreOwned(storePool, sqlRef, "cos_inventory", "cos_id")
 		if err != nil {
-			logger.Error("opening COS bag store", "error", err)
+			logger.Error("opening COS bag store", "err", err)
 			os.Exit(1)
 		}
 		sqlBags.SetCapacity(cos.AbilityPetSlots)
@@ -1741,7 +1754,7 @@ func main() {
 		// The timed jobs (round 838): their table migrates itself.
 		sqlTimed, err := timedjob.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening timed job store", "error", err)
+			logger.Error("opening timed job store", "err", err)
 			os.Exit(1)
 		}
 		timedJobs = sqlTimed
@@ -1749,32 +1762,32 @@ func main() {
 		// The job records (round 799): their tables migrate themselves.
 		sqlJobs, err := jobs.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening job store", "error", err)
+			logger.Error("opening job store", "err", err)
 			os.Exit(1)
 		}
 		jobStore = sqlJobs
 
 		sqlSkills, err := skill.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening skill store", "error", err)
+			logger.Error("opening skill store", "err", err)
 			os.Exit(1)
 		}
 
 		sqlGuilds, err := guild.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening guild store", "error", err)
+			logger.Error("opening guild store", "err", err)
 			os.Exit(1)
 		}
 
 		sqlQuests, err := quest.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening quest store", "error", err)
+			logger.Error("opening quest store", "err", err)
 			os.Exit(1)
 		}
 
 		sqlFriends, err := friend.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening friend store", "error", err)
+			logger.Error("opening friend store", "err", err)
 			os.Exit(1)
 		}
 
@@ -1782,7 +1795,7 @@ func main() {
 		// themselves.
 		sqlMall, err := mall.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening mall store", "error", err)
+			logger.Error("opening mall store", "err", err)
 			os.Exit(1)
 		}
 		mallStore = sqlMall
@@ -1791,7 +1804,7 @@ func main() {
 		// transaction.
 		sqlStallSales, err := stall.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening stall sale store", "error", err)
+			logger.Error("opening stall sale store", "err", err)
 			os.Exit(1)
 		}
 		stallSales = sqlStallSales
@@ -1800,7 +1813,7 @@ func main() {
 		// mall visual's or a scroll's buff outlives a restart too.
 		sqlSkillJobs, err := skilljob.NewSQLStore(storePool)
 		if err != nil {
-			logger.Error("opening skill job store", "error", err)
+			logger.Error("opening skill job store", "err", err)
 			os.Exit(1)
 		}
 		session.SetSkillJobStore(sqlSkillJobs)
@@ -1811,13 +1824,13 @@ func main() {
 		warehouse = sqlWarehouse
 		sqlGuildChest, err := inventory.NewSQLStoreOwned(storePool, sqlRef, guildstorage.ChestTable, guildstorage.ChestOwner)
 		if err != nil {
-			logger.Error("opening guild storage store", "error", err)
+			logger.Error("opening guild storage store", "err", err)
 			os.Exit(1)
 		}
 		sqlGuildChest.SetDurabilityLookup(sqlRef)
 		sqlGuildGold, err := guildstorage.NewSQLGold(storePool)
 		if err != nil {
-			logger.Error("opening guild storage gold", "error", err)
+			logger.Error("opening guild storage gold", "err", err)
 			os.Exit(1)
 		}
 		guildChest, guildGold = sqlGuildChest, sqlGuildGold
@@ -1961,7 +1974,7 @@ func main() {
 	ground.SetSerialSource(func() int64 {
 		v, err := serials.Next(ctx)
 		if err != nil {
-			logger.Warn("numbering a ground item", "error", err)
+			logger.Warn("numbering a ground item", "err", err)
 			return 0
 		}
 		return v
@@ -2406,7 +2419,7 @@ func main() {
 	session.SetUniqueNoticeOff(*uniqueNoticeOff)
 	if uniqueOffEnvErr != nil {
 		logger.Warn("OPENSRO_UNIQUE_NOTICE_OFF is not a boolean; the unique notices stay on unless -unique-notice-off is given",
-			"error", uniqueOffEnvErr)
+			"err", uniqueOffEnvErr)
 	}
 	if *uniqueNoticeOff {
 		logger.Info("unique notices off (-unique-notice-off): no nest-hatch or kill notice is sent; a GM spawn is still announced")
@@ -2673,6 +2686,10 @@ func main() {
 	session.SetGuildRecallWarp(eq, zerkTracker)
 	compositeKeeper.SetScrolls(scrollCaster)
 	session.StartGoldTime(ctx, timedJobs, refItems, hub)
+	// The players' stalls (round 839), held here so the metrics can count them.
+	stalls := stall.NewHub()
+	// The scrape's view of the world (round 858, opensro_players_online & co.).
+	metrics.SetWorldSource(session.MetricsSource(hub, monsters, ground, stalls, loginService))
 	handle := gateway.Chain(
 		// The COS requests (round 795, internal/session/coscommand.go).
 		session.COSHandler(hub, chars),
@@ -2799,7 +2816,7 @@ func main() {
 		// their 0x30B7/0x30B8/0x30B9/0x30BB broadcasts, and the stalls'
 		// INTERACTMODE in the trade hub's gates.
 		session.StallHandler(session.StallDeps{Chars: chars, Inv: inv, Items: refItems, Hub: hub,
-			Stalls: stall.NewHub(), Trades: trades, Parties: parties, Sales: stallSales}),
+			Stalls: stalls, Trades: trades, Parties: parties, Sales: stallSales}),
 		// The stall network (round 840, stallnet.go): 0x7461..0x7463, the
 		// search and the remote buy, on the stalls above.
 		session.StallNetHandler(),
@@ -2867,7 +2884,7 @@ func main() {
 		}
 		cert, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
 		if err != nil {
-			logger.Error("loading TLS certificate", "error", err)
+			logger.Error("loading TLS certificate", "err", err)
 			os.Exit(1)
 		}
 		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
@@ -2878,11 +2895,16 @@ func main() {
 		Logger:    logger,
 		TLSConfig: tlsConfig,
 		Handle: func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
-			lvl := slog.LevelInfo
+			// DEBUG since round 858: every packet at INFO made the prod log
+			// 847 MB; the per-opcode counts are opensro_gateway_packets_total.
+			// The status and theme questions sit below DEBUG.
+			lvl := slog.LevelDebug
 			if quietQuery(p.Opcode) {
-				lvl = slog.LevelDebug
+				lvl = slog.LevelDebug - 4
 			}
-			logger.Log(ctx, lvl, "packet received", "addr", sess.RemoteAddr(), "opcode", p.Opcode, "size", len(p.Data))
+			if logger.Enabled(ctx, lvl) {
+				logger.Log(ctx, lvl, "packet received", "addr", sess.RemoteAddr(), "opcode", fmt.Sprintf("0x%04x", p.Opcode), "size", len(p.Data))
+			}
 			return handle(ctx, sess, p)
 		},
 		// The unauthenticated one-question connections (round 679's review):
@@ -2899,6 +2921,7 @@ func main() {
 			step := func(name string, f func()) {
 				defer func() {
 					if r := recover(); r != nil {
+						metrics.Panic("disconnect_hook")
 						logger.Error("disconnect hook panicked", "hook", name, "panic", r, "stack", string(debug.Stack()))
 					}
 				}()
@@ -2936,7 +2959,7 @@ func main() {
 	startRetail(ctx, retailOpts, retailDeps{login: loginService, lobby: retailLobby, status: serverStatus, onDisconnect: srv.OnDisconnect}, logger)
 
 	if err := srv.ListenAndServe(ctx); err != nil {
-		logger.Error("gateway server exited", "error", err)
+		logger.Error("gateway server exited", "err", err)
 		os.Exit(1)
 	}
 

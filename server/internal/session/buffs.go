@@ -580,7 +580,9 @@ func RunBuffTicker(ctx context.Context, hub *world.Hub, logger *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
+			start := time.Now()
 			expireBuffs(hub, now)
+			loopBuffs.Tick(start)
 		}
 	}
 }

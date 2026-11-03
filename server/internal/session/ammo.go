@@ -173,7 +173,7 @@ func spendAmmo(ctx context.Context, sess *gateway.Session, chars character.Store
 func reloadAmmo(ctx context.Context, sess *gateway.Session, ammo equipment.AmmoStore, eq equipment.Store, inv inventory.Store,
 	items ItemLookup, characterID int64, spent *refdata.Item) {
 	if err := ammo.DiscardWorn(ctx, characterID, equipment.SlotShield); err != nil {
-		slog.Error("ammunition: clearing the spent stack failed", "character_id", characterID, "error", err)
+		slog.Error("ammunition: clearing the spent stack failed", "character_id", characterID, "err", err)
 	}
 	if inv != nil && spent != nil {
 		if slots, err := inv.List(ctx, characterID); err == nil {
@@ -191,7 +191,7 @@ func reloadAmmo(ctx context.Context, sess *gateway.Session, ammo equipment.AmmoS
 			}
 			if best >= 0 {
 				if err := eq.Equip(ctx, characterID, equipment.SlotShield, best); err != nil {
-					slog.Error("ammunition: the reload failed", "character_id", characterID, "bag_slot", best, "error", err)
+					slog.Error("ammunition: the reload failed", "character_id", characterID, "bag_slot", best, "err", err)
 				}
 			}
 		}

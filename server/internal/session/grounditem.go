@@ -16,6 +16,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
@@ -613,6 +614,7 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 				pickedQty = int32(shares[0].amount)
 			}
 			ground.Remove(it.ID)
+			metrics.ItemPicked("player", it.Gold)
 			// The picker hears the result before the zone hears the removal,
 			// so its own reply is never preceded by the broadcast.
 			if err := reply(&PickUpResult{GroundItemID: it.ID, ItemID: it.ItemID, Quantity: pickedQty, Gold: it.Gold}); err != nil {
@@ -786,6 +788,7 @@ func RunGroundItemSweep(ctx context.Context, ground *grounditem.Hub, hub *world.
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			start := time.Now()
 			for _, it := range ground.ReleaseOwnerships() {
 				pkt := &proto.Packet{Opcode: OpGroundItemOwnerReleased, Data: (&GroundItemOwnerReleased{ID: it.ID}).Encode()}
 				for _, e := range hub.EntitiesInZone(it.Zone) {
@@ -798,6 +801,7 @@ func RunGroundItemSweep(ctx context.Context, ground *grounditem.Hub, hub *world.
 					e.Session.Send(pkt)
 				}
 			}
+			loopGroundItems.Tick(start)
 		}
 	}
 }

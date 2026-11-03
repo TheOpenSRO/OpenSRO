@@ -148,12 +148,12 @@ func useCOSItem(ctx context.Context, sess *gateway.Session, inv inventory.Store,
 		}
 		id, err := d.store.Create(ctx, rec)
 		if err != nil {
-			d.logger.Warn("cos: creating a pet", "character", characterID, "err", err)
+			d.logger.Warn("cos: creating a pet", "character_id", characterID, "err", err)
 			return cosRefusal(sess, cos.ErrCannotBeUsed, "the pet could not be made")
 		}
 		rec.ID = id
 		if err := inv.SetDurability(ctx, characterID, held.Index, int(id)); err != nil {
-			d.logger.Warn("cos: linking a pet to its item", "character", characterID, "err", err)
+			d.logger.Warn("cos: linking a pet to its item", "character_id", characterID, "err", err)
 		}
 		if err := sendUseOK(sess, have, it.ID); err != nil {
 			return err
@@ -264,7 +264,7 @@ func useRideScroll(ctx context.Context, sess *gateway.Session, d cosDeps, inv in
 		HGP: cos.HGPFull, State: cos.StateAlive | cos.StateSummoned}
 	id, err := d.store.Create(ctx, rec)
 	if err != nil {
-		d.logger.Warn("cos: creating a vehicle", "character", owner.CharacterID, "err", err)
+		d.logger.Warn("cos: creating a vehicle", "character_id", owner.CharacterID, "err", err)
 		return cosRefusal(sess, cos.ErrCannotBeUsed, "the vehicle could not be made")
 	}
 	rec.ID = id
@@ -277,7 +277,7 @@ func useRideScroll(ctx context.Context, sess *gateway.Session, d cosDeps, inv in
 		return err
 	}
 	o := spawnCOS(owner, rec, row, 0, -1, cosSpawnTypeSummoned, now)
-	d.logger.Info("cos: vehicle summoned", "character", owner.CharacterID, "scroll", it.ID, "row", row.CodeName,
+	d.logger.Info("cos: vehicle summoned", "character_id", owner.CharacterID, "scroll", it.ID, "row", row.CodeName,
 		"owner_level", level, "hp", rec.HP, "inv_size", o.rec.InvSize)
 	// Every ride and transport row can be ridden (col 66, MEASURED): the
 	// owner mounts at once when nothing refuses (s:0x4fb3cc..0x4fb3f0).

@@ -339,7 +339,7 @@ func usePetComposite(ctx context.Context, sess *gateway.Session, inv inventory.S
 		expPct := int(p.ref.Runs().Value("expi", 1))
 		b := petBuffs.add(rec, petBuff{skillID: p.ref.ID, expPct: expPct, start: now, until: now.Add(p.lasts)}, p.lasts)
 		sendAboutCOS(o, OpBuffStart, petBuffStartPacket(uid, b, now))
-		slog.Info("pet composite: PSU1 skill job", "item", it.ID, "character", characterID, "cos", rec, "uid", uid,
+		slog.Info("pet composite: PSU1 skill job", "item", it.ID, "character_id", characterID, "cos", rec, "uid", uid,
 			"skill", p.ref.ID, "seconds", int64(p.lasts/time.Second), "exp_percent", expPct)
 	}
 	if len(other) > 0 {

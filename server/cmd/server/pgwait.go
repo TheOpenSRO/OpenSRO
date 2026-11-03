@@ -34,7 +34,7 @@ func waitForDatabase(ping func() error, wait, interval time.Duration, sleep func
 		if waited >= deadline {
 			return fmt.Errorf("postgres not reachable after %s (%d tries): %w", waited, try, err)
 		}
-		logger.Warn("waiting for postgres", "try", try, "error", err)
+		logger.Warn("waiting for postgres", "try", try, "err", err)
 		sleep(interval)
 		waited += interval
 	}

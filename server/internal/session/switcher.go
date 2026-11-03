@@ -531,13 +531,13 @@ func useSwitchTool(ctx context.Context, sess *gateway.Session, inv inventory.Sto
 		return inv.RemoveItem(ctx, characterID, held.Index, 1)
 	})
 	if err != nil {
-		slog.Warn("switch: the use failed", "character", characterID, "tool", tool.CodeName, "err", err)
+		slog.Warn("switch: the use failed", "character_id", characterID, "tool", tool.CodeName, "err", err)
 		return refuse(0, "using failed")
 	}
 	if refused != nil {
 		return refuse(refused.code, refused.why)
 	}
-	slog.Info("switch: item changed", "character", characterID, "tool", tool.CodeName, "slot", idx,
+	slog.Info("switch: item changed", "character_id", characterID, "tool", tool.CodeName, "slot", idx,
 		"from", before, "to", plan.newItem, "model", plan.inst.Model, "what", plan.what)
 	if plan.newItem != before {
 		_ = sess.Send(&proto.Packet{Opcode: cos.OpItemState, Data: ItemRefField(idx, uint32(plan.newItem))})

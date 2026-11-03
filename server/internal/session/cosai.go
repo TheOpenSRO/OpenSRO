@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/cos"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
@@ -74,9 +76,13 @@ func RunCOS(ctx context.Context, logger *slog.Logger) {
 			return
 		case now := <-t.C:
 			func() {
+				defer loopCOS.Tick(time.Now())
 				defer func() {
-					if r := recover(); r != nil && logger != nil {
-						logger.Error("cos: tick panicked", "panic", r)
+					if r := recover(); r != nil {
+						metrics.Panic("cos_tick")
+						if logger != nil {
+							logger.Error("cos: tick panicked", "panic", r, "stack", string(debug.Stack()))
+						}
 					}
 				}()
 				cosWorld.tick(ctx, now)
@@ -530,6 +536,7 @@ func cosPick(ctx context.Context, cd combatDeps, o *cosObj, itemUID uint32, now 
 		return
 	}
 	cd.ground.Remove(it.ID)
+	metrics.ItemPicked("pet", it.Gold)
 	e, inWorld := cosOwnerEntity(owner)
 	if toOwner {
 		if inWorld && e.Session != nil {

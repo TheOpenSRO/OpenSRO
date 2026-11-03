@@ -99,7 +99,7 @@ func wearOneSlot(ctx context.Context, eq equipment.Store, characterID int64, slo
 		if broke {
 			character.InvalidateBonus(characterID) // round 769: a broken piece counts nothing
 		}
-		slog.Info("durability lost", "character", characterID, "slot", int(slot), "durability", next, "broke", broke)
+		slog.Info("durability lost", "character_id", characterID, "slot", int(slot), "durability", next, "broke", broke)
 		notifyDurability(characterID, int(slot), next)
 		return broke
 	}

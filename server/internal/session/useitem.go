@@ -901,7 +901,9 @@ func RunPotionQueue(ctx context.Context, hub *world.Hub, chars character.Store, 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			start := time.Now()
 			potionQueueTick(ctx, hub, chars, q, deps, logger)
+			loopPotions.Tick(start)
 		}
 	}
 }
@@ -943,7 +945,7 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 		c, changed, err := q.step(ctx, chars, deps.Mana, id)
 		if err != nil {
 			if logger != nil {
-				logger.Warn("potion queue: step failed", "character", id, "err", err)
+				logger.Warn("potion queue: step failed", "character_id", id, "err", err)
 			}
 			continue
 		}

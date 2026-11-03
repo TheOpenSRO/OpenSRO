@@ -526,6 +526,10 @@ func (h *Hub) AllEntities() []Entity {
 	return out
 }
 
+// LastPassHold is how long the last mover pass held the write lock
+// (opensro_world_mover_lock_hold_seconds).
+func (h *Hub) LastPassHold() time.Duration { return time.Duration(h.passHold.Load()) }
+
 // Count returns how many characters are in the world now, in any zone: the
 // "current users" the server list reports (round 679, session.ServerStatus).
 func (h *Hub) Count() int {

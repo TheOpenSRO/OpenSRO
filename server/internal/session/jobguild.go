@@ -110,7 +110,7 @@ func jobRecord(ctx context.Context, characterID int64) jobs.Record {
 	}
 	r, err := d.store.Get(ctx, characterID)
 	if err != nil {
-		d.logger.Warn("jobs: reading a record failed", "character", characterID, "err", err)
+		d.logger.Warn("jobs: reading a record failed", "character_id", characterID, "err", err)
 		return jobs.NewRecord(characterID)
 	}
 	jobRecs.Store(characterID, r)
@@ -268,7 +268,7 @@ func jobCharge(ctx context.Context, d jobDeps, characterID, fee, have int64) {
 	}
 	if fee > 0 {
 		if err := d.chars.DeductGold(ctx, characterID, fee); err != nil {
-			d.logger.Warn("jobs: charging a fee failed", "character", characterID, "fee", fee, "err", err)
+			d.logger.Warn("jobs: charging a fee failed", "character_id", characterID, "fee", fee, "err", err)
 			return
 		}
 	}
@@ -317,14 +317,14 @@ func jobJoin(ctx context.Context, sess *gateway.Session, d jobDeps, e world.Enti
 	}
 	rec.Kind, rec.Level, rec.Exp = req.Kind, level, exp
 	if err := saveJobRecord(ctx, d, rec); err != nil {
-		d.logger.Warn("jobs: saving a join failed", "character", e.CharacterID, "err", err)
+		d.logger.Warn("jobs: saving a join failed", "character_id", e.CharacterID, "err", err)
 		return jobs.Fail(jobs.ErrDB)
 	}
 	jobCharge(ctx, d, e.CharacterID, fee, c.Gold)
 	if err := d.store.DeleteOldJob(ctx, e.CharacterID); err != nil {
-		d.logger.Warn("jobs: deleting the old job failed", "character", e.CharacterID, "err", err)
+		d.logger.Warn("jobs: deleting the old job failed", "character_id", e.CharacterID, "err", err)
 	}
-	d.logger.Info("jobs: joined", "character", e.CharacterID, "kind", req.Kind.Name(), "fee", fee)
+	d.logger.Info("jobs: joined", "character_id", e.CharacterID, "kind", req.Kind.Name(), "fee", fee)
 	return jobs.JoinOK(rec.Kind, rec.Level, rec.Exp)
 }
 
@@ -355,13 +355,13 @@ func jobWithdrawNPC(ctx context.Context, sess *gateway.Session, d jobDeps, e wor
 	rec = jobs.NewRecord(e.CharacterID)
 	rec.PenaltyUntil = now.Add(jobs.PenaltySeconds * time.Second)
 	if err := saveJobRecord(ctx, d, rec); err != nil {
-		d.logger.Warn("jobs: saving a withdrawal failed", "character", e.CharacterID, "err", err)
+		d.logger.Warn("jobs: saving a withdrawal failed", "character_id", e.CharacterID, "err", err)
 		return jobs.Fail(jobs.ErrDB)
 	}
 	if err := setJobAlias(ctx, d, e.CharacterID, ""); err != nil {
-		d.logger.Warn("jobs: clearing the alias failed", "character", e.CharacterID, "err", err)
+		d.logger.Warn("jobs: clearing the alias failed", "character_id", e.CharacterID, "err", err)
 	}
-	d.logger.Info("jobs: withdrew", "character", e.CharacterID, "alias", old.Alias, "kind", old.Kind.Name(),
+	d.logger.Info("jobs: withdrew", "character_id", e.CharacterID, "alias", old.Alias, "kind", old.Kind.Name(),
 		"level", old.Level, "exp", old.Exp, "contribution", old.Contribution)
 	return jobs.WithdrawOK()
 }
@@ -419,7 +419,7 @@ func jobAlias(ctx context.Context, sess *gateway.Session, d jobDeps, e world.Ent
 			return fail(jobs.ErrDB)
 		}
 		jobCharge(ctx, d, e.CharacterID, fee, c.Gold)
-		d.logger.Info("jobs: alias", "character", e.CharacterID, "from", rec.Alias, "to", req.Alias, "fee", fee)
+		d.logger.Info("jobs: alias", "character_id", e.CharacterID, "from", rec.Alias, "to", req.Alias, "fee", fee)
 		return jobs.AliasOK(1, req.Alias)
 	}
 	return fail(jobs.ErrJobGuildNotFound)
@@ -482,10 +482,10 @@ func jobReward(ctx context.Context, sess *gateway.Session, d jobDeps, e world.En
 		return jobs.RewardFail(jobs.ErrDB, req.Op)
 	}
 	if err := d.chars.AddGold(ctx, e.CharacterID, paid); err != nil {
-		d.logger.Warn("jobs: paying a reward failed", "character", e.CharacterID, "gold", paid, "err", err)
+		d.logger.Warn("jobs: paying a reward failed", "character_id", e.CharacterID, "gold", paid, "err", err)
 	}
 	tellGold(ctx, d.chars, d.hub, e.CharacterID, false)
-	d.logger.Info("jobs: reward paid", "character", e.CharacterID, "gold", paid)
+	d.logger.Info("jobs: reward paid", "character_id", e.CharacterID, "gold", paid)
 	return jobs.RewardOK(1, paid)
 }
 
@@ -525,7 +525,7 @@ func gainJobExp(ctx context.Context, characterID int64, amount int64) {
 	changed := jobs.GainExp(&rec, amount, jobNeed)
 	if changed {
 		if err := saveJobRecord(ctx, d, rec); err != nil {
-			d.logger.Warn("jobs: saving job exp failed", "character", characterID, "err", err)
+			d.logger.Warn("jobs: saving job exp failed", "character_id", characterID, "err", err)
 		}
 	}
 	lk.Unlock()

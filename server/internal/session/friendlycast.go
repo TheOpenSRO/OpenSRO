@@ -20,6 +20,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
@@ -132,6 +133,7 @@ func castAction(b []byte) *ActionBlock {
 var castIDs atomic.Uint32
 
 func nextCastID() uint32 {
+	metrics.SkillCast() // every announced player cast draws one
 	for {
 		if id := castIDs.Add(1); id != 0 {
 			return id

@@ -256,7 +256,7 @@ func (u serviceUse) randomWing(ctx context.Context) error {
 	if err := u.accepted("A random wing has been placed in your Item Chest."); err != nil {
 		return err
 	}
-	u.d.logger().Info("random wing", "character", u.cid, "wing", pick.CodeName)
+	u.d.logger().Info("random wing", "character_id", u.cid, "wing", pick.CodeName)
 	sendTo(u.sess, mall.OpChestReceived, mall.EncodeChestReceived(e.ItemID, e.Quantity))
 	return nil
 }
@@ -326,7 +326,7 @@ func titleAtEntry(ctx context.Context, chars character.Store, characterID int64)
 	}
 	level, custom, err := st.Title(ctx, characterID)
 	if err != nil {
-		slog.Warn("title: reading at entry failed", "character", characterID, "err", err)
+		slog.Warn("title: reading at entry failed", "character_id", characterID, "err", err)
 		return
 	}
 	noteTitle(characterID, level, custom)

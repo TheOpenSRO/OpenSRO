@@ -801,7 +801,7 @@ func saleRewards(ctx context.Context, characterID int64, state, scale byte, gold
 		jobs.AddTraderContribution(&rec, share)
 		if rec.Contribution != before {
 			if err := saveJobRecord(ctx, d, rec); err != nil {
-				d.logger.Warn("jobs: saving a contribution failed", "character", characterID, "err", err)
+				d.logger.Warn("jobs: saving a contribution failed", "character_id", characterID, "err", err)
 			}
 		}
 		lk.Unlock()

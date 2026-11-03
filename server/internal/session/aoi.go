@@ -203,7 +203,9 @@ func RunMonsterAOI(ctx context.Context, hub *world.Hub, monsters *combat.Hub, lo
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				start := time.Now()
 				v.reconcile()
+				loopAOI.Tick(start)
 			}
 		}
 	}()
@@ -340,7 +342,7 @@ func (v *monsterAOI) reconcile() {
 		view.markPending(ev.enters)
 		ev.leaves = v.monsters.IDsInCells(nil, lost)
 		if v.logger != nil {
-			v.logger.Info("aoi: view moved", "character", e.CharacterID, "zone", cell.Zone,
+			v.logger.Info("aoi: view moved", "character_id", e.CharacterID, "zone", cell.Zone,
 				"from", fmt.Sprintf("%d,%d", old.X, old.Z), "to", fmt.Sprintf("%d,%d", cell.X, cell.Z),
 				"entering", len(ev.enters), "leaving", len(ev.leaves))
 		}

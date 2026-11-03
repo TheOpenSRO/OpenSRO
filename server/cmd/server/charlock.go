@@ -33,7 +33,7 @@ func characterLock(accounts account.Store, logger *slog.Logger) *charlock.Servic
 	if t, ok := accounts.(txn.TxDBer); ok && t.TxDB() != nil {
 		s, err := charlock.NewSQLStore(t.TxDB())
 		if err != nil {
-			logger.Error("opening the account PIN store", "error", err)
+			logger.Error("opening the account PIN store", "err", err)
 			os.Exit(1)
 		}
 		store = s

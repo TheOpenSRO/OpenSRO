@@ -58,6 +58,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gacha"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
@@ -240,6 +241,7 @@ func (d GachaDeps) play(ctx context.Context, sess *gateway.Session, data []byte,
 	if out.Win {
 		win = 1
 	}
+	metrics.GachaDraw()
 	d.log("gacha draw", "character_id", cid, "npc", pl.npc.Code, "gacha_id", req.GachaID, "win", out.Win,
 		"prize", out.Row.RefItemID, "count", out.Row.Count, "coupon", coupon.CodeName, "slot", bag)
 	if out.Win && out.Row.Visible && d.Hub != nil {

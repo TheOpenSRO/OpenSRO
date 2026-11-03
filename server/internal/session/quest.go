@@ -358,7 +358,7 @@ func (rt *questRuntime) persistLocked(ctx context.Context, characterID int64, ql
 		err = rt.deps.Store.Delete(ctx, characterID, id)
 	}
 	if err != nil {
-		rt.deps.Logger.Warn("quest: saving state failed", "character", characterID, "quest", id, "err", err)
+		rt.deps.Logger.Warn("quest: saving state failed", "character_id", characterID, "quest", id, "err", err)
 	}
 	return st, err
 }
@@ -371,7 +371,7 @@ func questAfterEnter(ctx context.Context, sess *gateway.Session, owned *characte
 	}
 	ql, err := rt.logOf(ctx, owned.ID)
 	if err != nil {
-		rt.deps.Logger.Warn("quest: loading the log failed", "character", owned.ID, "err", err)
+		rt.deps.Logger.Warn("quest: loading the log failed", "character_id", owned.ID, "err", err)
 		return
 	}
 	ql.mu.Lock()
@@ -762,7 +762,7 @@ func (rt *questRuntime) accept(ctx context.Context, sess *gateway.Session, e wor
 	ql.mu.Lock()
 	if r := rt.cat.CanStart(p, ql.log, q, t.npc); r != quest.OK {
 		ql.mu.Unlock()
-		rt.deps.Logger.Info("quest: refused", "character", e.CharacterID, "quest", q.Code, "why", r.String())
+		rt.deps.Logger.Info("quest: refused", "character_id", e.CharacterID, "quest", q.Code, "why", r.String())
 		okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_DENY"))
 		return
 	}
@@ -773,7 +773,7 @@ func (rt *questRuntime) accept(ctx context.Context, sess *gateway.Session, e wor
 		rt.addItem(ctx, e.CharacterID, it.Code, max(it.Count, 1))
 	}
 	_, _ = rt.persist(ctx, e.CharacterID, ql, q.ID)
-	rt.deps.Logger.Info("quest: accepted", "character", e.CharacterID, "quest", q.Code, "id", q.ID, "npc", t.npc)
+	rt.deps.Logger.Info("quest: accepted", "character_id", e.CharacterID, "quest", q.Code, "id", q.ID, "npc", t.npc)
 	rt.sendUpdate(sess, quest.UpdateAdd, q, &st)
 	t.notice = q.MenuText(t.npc, "BASIC_MENUSTRING_MIDDLE_ACHIEVED")
 	okPage(sess, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_ACCEPT"))
@@ -807,7 +807,7 @@ func (rt *questRuntime) atNPC(ctx context.Context, sess *gateway.Session, e worl
 			}
 			st = ps
 		}
-		rt.deps.Logger.Info("quest: talk mission", "character", e.CharacterID, "quest", pr.Quest.Code, "mission", pr.Mission, "finished", pr.Finished)
+		rt.deps.Logger.Info("quest: talk mission", "character_id", e.CharacterID, "quest", pr.Quest.Code, "mission", pr.Mission, "finished", pr.Finished)
 	}
 	if s == nil {
 		return
@@ -925,7 +925,7 @@ func (rt *questRuntime) takeReward(ctx context.Context, sess *gateway.Session, e
 		ql.log[q.ID] = &prev
 		ql.mu.Unlock()
 		ql.wmu.Unlock()
-		rt.deps.Logger.Warn("quest: reward refused, the paid state was not saved", "character", e.CharacterID, "quest", q.Code)
+		rt.deps.Logger.Warn("quest: reward refused, the paid state was not saved", "character_id", e.CharacterID, "quest", q.Code)
 		fail()
 		return
 	}
@@ -979,7 +979,7 @@ func (rt *questRuntime) pay(ctx context.Context, sess *gateway.Session, e world.
 	log := rt.deps.Logger
 	if r.Gold > 0 && rt.deps.Chars != nil {
 		if err := rt.deps.Chars.AddGold(ctx, id, r.Gold); err != nil {
-			log.Warn("quest: paying gold failed", "character", id, "quest", q.Code, "err", err)
+			log.Warn("quest: paying gold failed", "character_id", id, "quest", q.Code, "err", err)
 		} else {
 			tellGold(ctx, rt.deps.Chars, rt.deps.Hub, id, true)
 		}
@@ -989,7 +989,7 @@ func (rt *questRuntime) pay(ctx context.Context, sess *gateway.Session, e world.
 	}
 	if r.SkillPoint > 0 && rt.deps.Skills != nil {
 		if _, err := rt.deps.Skills.AddSkillPoints(ctx, id, int(r.SkillPoint)); err != nil {
-			log.Warn("quest: paying SP failed", "character", id, "quest", q.Code, "err", err)
+			log.Warn("quest: paying SP failed", "character_id", id, "quest", q.Code, "err", err)
 		}
 	}
 	var given []string
@@ -998,7 +998,7 @@ func (rt *questRuntime) pay(ctx context.Context, sess *gateway.Session, e world.
 			given = append(given, fmt.Sprintf("%s x%d", it.Code, max(it.Count, 1)))
 		}
 	}
-	log.Info("quest: completed and paid", "character", id, "quest", q.Code, "id", q.ID,
+	log.Info("quest: completed and paid", "character_id", id, "quest", q.Code, "id", q.ID,
 		"gold", r.Gold, "exp", r.Exp, "spexp", r.SPExp, "sp", r.SkillPoint, "items", given, "fromTable", r.FromTable)
 }
 
@@ -1009,7 +1009,7 @@ func (rt *questRuntime) payExp(ctx context.Context, sess *gateway.Session, e wor
 	id := e.CharacterID
 	if rt.deps.Skills != nil && sp > 0 {
 		if _, _, err := rt.deps.Skills.AddSkillExp(ctx, id, sp); err != nil {
-			rt.deps.Logger.Warn("quest: paying skill EXP failed", "character", id, "err", err)
+			rt.deps.Logger.Warn("quest: paying skill EXP failed", "character_id", id, "err", err)
 		}
 	}
 	if !levelTable.Loaded() || exp <= 0 {
@@ -1028,7 +1028,7 @@ func (rt *questRuntime) payExp(ctx context.Context, sess *gateway.Session, e wor
 	newInt := char.Int + gained*character.StatGrowthPerLevel
 	if err := rt.deps.Chars.SetLeveling(ctx, id, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
 		unlock()
-		rt.deps.Logger.Warn("quest: paying EXP failed", "character", id, "err", err)
+		rt.deps.Logger.Warn("quest: paying EXP failed", "character_id", id, "err", err)
 		return
 	}
 	var lu *LevelUp
@@ -1086,7 +1086,7 @@ func (rt *questRuntime) abandon(ctx context.Context, sess *gateway.Session, e wo
 		rt.takeItem(ctx, e.CharacterID, it.Code, -1)
 	}
 	_, _ = rt.persist(ctx, e.CharacterID, ql, id)
-	rt.deps.Logger.Info("quest: given up", "character", e.CharacterID, "quest", q.Code)
+	rt.deps.Logger.Info("quest: given up", "character_id", e.CharacterID, "quest", q.Code)
 	sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeOKID(uint32(id))})
 	rt.sendUpdate(sess, quest.UpdateRemove, q, nil)
 	rt.refreshMarks(ctx, sess, e.CharacterID, e.Level)
@@ -1160,7 +1160,7 @@ func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, 
 		}
 		changed[pr.Quest.ID] = pr.Quest
 		finished = finished || pr.Finished
-		rt.deps.Logger.Info("quest: progress", "character", characterID, "quest", pr.Quest.Code, "mission", pr.Mission,
+		rt.deps.Logger.Info("quest: progress", "character_id", characterID, "quest", pr.Quest.Code, "mission", pr.Mission,
 			"count", pr.Count, "of", quest.Required(pr.Quest.Missions[pr.Mission]), "monster", monster.CodeName, "item", pr.Item, "finished", pr.Finished)
 	}
 	ids := make([]int64, 0, len(changed))
@@ -1217,7 +1217,7 @@ func (rt *questRuntime) addItem(ctx context.Context, characterID int64, code str
 		return false
 	}
 	if err := rt.deps.Inv.AddItem(ctx, characterID, id, count); err != nil {
-		rt.deps.Logger.Info("quest: item not given", "character", characterID, "item", code, "err", err)
+		rt.deps.Logger.Info("quest: item not given", "character_id", characterID, "item", code, "err", err)
 		return false
 	}
 	return true

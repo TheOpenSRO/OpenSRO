@@ -1,0 +1,124 @@
+# OpenSRO alert rules (round 858). Rules only: no Alertmanager yet, so a
+# firing alert shows in Prometheus (/alerts) and in Grafana's Alerting >
+# Alert rules list (data source-managed rules), nowhere else.
+#
+# The prod server's series arrive by remote write from Alloy with
+# job="opensro-server", instance="prod" (deploy/observability/README.md).
+groups:
+  - name: opensro-server
+    rules:
+      # Alloy scrapes every 15 s and remote-writes; no fresh sample for two
+      # minutes means the server (or Alloy, or the network) is down.
+      - alert: OpenSROServerDown
+        expr: |
+          absent_over_time(opensro_build_info{job="opensro-server"}[2m])
+            or (time() - max by (instance) (timestamp(opensro_build_info{job="opensro-server"}))) > 120
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "OpenSRO server is not reporting metrics"
+          description: "No opensro_build_info sample from the prod server for 2 minutes: the server, Alloy on the Mac mini, or the link to 192.168.10.86 is down."
+
+      - alert: OpenSROServerRestarted
+        expr: changes(opensro_start_time_seconds{job="opensro-server"}[10m]) > 0
+        labels: {severity: info}
+        annotations:
+          summary: "OpenSRO server restarted"
+          description: "opensro_start_time_seconds moved in the last 10 minutes (a deploy, or a crash and launchd's restart)."
+
+      # A loop whose ticks take longer than its own period is falling behind:
+      # monsters freeze, buffs end late, moves rubber-band.
+      - alert: OpenSROTickOverrun
+        expr: sum by (instance, loop) (rate(opensro_loop_overruns_total{job="opensro-server"}[5m])) > 0.2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Loop {{ $labels.loop }} overrunning its tick"
+          description: "{{ $labels.loop }} took longer than its period {{ $value | humanize }} times a second over 5 minutes."
+
+      # A loop that stops ticking: a deadlock or a dead goroutine. The mover
+      # loop stops on purpose while nobody moves, and nest only runs with the
+      # monster roster, so they are left out.
+      - alert: OpenSROLoopStalled
+        expr: |
+          (time() - opensro_loop_last_tick_timestamp_seconds{job="opensro-server", loop!~"mover|test_loop"}) > 30
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Loop {{ $labels.loop }} stopped ticking"
+          description: "{{ $labels.loop }} has not ticked for {{ $value | humanizeDuration }}: the server is likely stuck (take a goroutine dump: -pprof-addr)."
+
+      - alert: OpenSROTickSlowP99
+        expr: |
+          histogram_quantile(0.99, sum by (instance, loop, le) (rate(opensro_loop_tick_seconds_bucket{job="opensro-server"}[5m]))) > 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Loop {{ $labels.loop }} p99 tick above 100 ms"
+          description: "p99 tick {{ $value | humanizeDuration }} over 10 minutes."
+
+      - alert: OpenSROErrorLogRate
+        expr: sum by (instance) (rate(opensro_log_messages_total{job="opensro-server", level="ERROR"}[5m])) * 60 > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "OpenSRO logging errors"
+          description: "{{ $value | humanize }} ERROR lines a minute over 5 minutes (see the OpenSRO logs dashboard)."
+
+      - alert: OpenSROHandlerErrors
+        expr: sum by (instance, group) (rate(opensro_gateway_handler_errors_total{job="opensro-server"}[5m])) * 60 > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Handler errors in {{ $labels.group }}"
+          description: "{{ $value | humanize }} handler errors or panics a minute in the {{ $labels.group }} handlers; each one closed a player's session."
+
+      - alert: OpenSROPanics
+        expr: sum by (instance, where) (increase(opensro_panics_recovered_total{job="opensro-server"}[10m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Recovered panic in {{ $labels.where }}"
+          description: "{{ $value }} panics recovered in the last 10 minutes; the stack is in the log (msg=\"handler panic, closing session\" and similar)."
+
+      - alert: OpenSRODBErrors
+        expr: sum by (instance, pool) (rate(opensro_db_errors_total{job="opensro-server"}[5m])) * 60 > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Database errors on pool {{ $labels.pool }}"
+          description: "{{ $value | humanize }} failed statements a minute over 5 minutes."
+
+      - alert: OpenSRODBSlow
+        expr: |
+          histogram_quantile(0.99, sum by (instance, pool, le) (rate(opensro_db_query_seconds_bucket{job="opensro-server"}[5m]))) > 0.25
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Database p99 above 250 ms on {{ $labels.pool }}"
+          description: "p99 statement time {{ $value | humanizeDuration }} over 10 minutes."
+
+      - alert: OpenSRODBPoolSaturated
+        expr: |
+          sum by (instance, db_name) (go_sql_in_use_connections{job="opensro-server"})
+            / sum by (instance, db_name) (go_sql_max_open_connections{job="opensro-server"}) > 0.9
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Postgres pool {{ $labels.db_name }} nearly full"
+          description: "More than 90% of the pool's connections in use for 5 minutes; queries are waiting (go_sql_wait_duration_seconds_total)."
+
+      - alert: OpenSROSendStalls
+        expr: sum by (instance) (increase(opensro_gateway_send_stalls_total{job="opensro-server"}[10m])) > 5
+        labels: {severity: info}
+        annotations:
+          summary: "Clients dropped for not reading"
+          description: "{{ $value }} sessions given up for their sends in 10 minutes (lag on the clients' side, or the server writing too much)."
+
+      - alert: OpenSROSchedulerLatency
+        expr: |
+          histogram_quantile(0.99, sum by (instance, le) (rate(go_sched_latencies_seconds_bucket{job="opensro-server"}[5m]))) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Go scheduler latency p99 above 50 ms"
+          description: "Runnable goroutines wait {{ $value | humanizeDuration }} for a thread: the host is CPU-starved."

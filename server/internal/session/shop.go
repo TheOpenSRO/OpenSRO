@@ -345,7 +345,7 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		}
 	}
 	if free {
-		slog.Info("Test Items NPC: free buy (round 783)", "character", characterID, "item", req.ItemID,
+		slog.Info("Test Items NPC: free buy (round 783)", "character_id", characterID, "item", req.ItemID,
 			"quantity", req.Quantity, "ok", result.OK, "reason", result.Reason)
 	}
 	return sess.Send(&proto.Packet{Opcode: OpShopBuyResult, Data: result.Encode()})

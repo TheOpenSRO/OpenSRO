@@ -58,10 +58,10 @@ func tellGold(ctx context.Context, chars character.Store, hub *world.Hub, charac
 	}
 	c, err := chars.GetByID(ctx, characterID)
 	if err != nil {
-		slog.Debug("gold share: reading the member's gold failed", "character", characterID, "err", err)
+		slog.Debug("gold share: reading the member's gold failed", "character_id", characterID, "err", err)
 		return
 	}
 	if err := e.Session.Send(&proto.Packet{Opcode: charmsg.OpCharInfo, Data: charmsg.EncodeGold(c.Gold, show)}); err != nil {
-		slog.Debug("gold share: send failed", "character", characterID, "err", err)
+		slog.Debug("gold share: send failed", "character_id", characterID, "err", err)
 	}
 }

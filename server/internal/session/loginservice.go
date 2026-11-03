@@ -12,6 +12,7 @@ import (
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
@@ -172,8 +173,58 @@ func loginRefusal(code uint8, close bool) LoginOutcome {
 	return LoginOutcome{Ack: LoginAck{Code: code}, Close: close}
 }
 
-// Login decides one attempt.
+// Login decides one attempt, counts it (opensro_logins_total) and logs it:
+// one line per decision, "login" with the account, the client's IP and the
+// result (never the password).
 func (s *LoginService) Login(ctx context.Context, a LoginAttempt) LoginOutcome {
+	out := s.login(ctx, a)
+	result := loginResultLabel(out.Ack)
+	metrics.LoginResult(result)
+	lvl := slog.LevelInfo
+	if !out.Ack.OK && out.Ack.Code == LoginErrFailed {
+		lvl = slog.LevelWarn
+	}
+	s.logger().Log(ctx, lvl, "login", "account", a.Username, "ip", ipOf(a.Remote), "result", result)
+	return out
+}
+
+// loginResultLabel is a decision's result label: "ok" or the refusal.
+func loginResultLabel(ack LoginAck) string {
+	if ack.OK {
+		return "ok"
+	}
+	switch ack.Code {
+	case LoginErrPassword:
+		return "wrong_password"
+	case LoginErrBlocked:
+		switch ack.BlockKind {
+		case LoginBlockInspection:
+			return "inspection"
+		case LoginBlockPunished:
+			return "blocked"
+		}
+		return "blocked_other"
+	case LoginErrAlreadyConnected:
+		return "already_connected"
+	case LoginErrNoShard:
+		return "no_shard"
+	case LoginErrFull:
+		return "full"
+	case LoginErrFailed:
+		return "failed"
+	case LoginErrShardMismatch:
+		return "shard_mismatch"
+	case LoginErrIPLimit:
+		return "ip_limit"
+	case LoginErrBilling:
+		return "billing"
+	case LoginErrAdultOnly:
+		return "adult_only"
+	}
+	return "other"
+}
+
+func (s *LoginService) login(ctx context.Context, a LoginAttempt) LoginOutcome {
 	now := s.now()
 	// A connection that is already logged in (OURS): retail's client leaves
 	// the gateway once its login succeeds, so a second login never reaches
@@ -201,7 +252,7 @@ func (s *LoginService) Login(ctx context.Context, a LoginAttempt) LoginOutcome {
 		return LoginOutcome{Ack: s.blockedAck(be.Punishment)}
 	case err != nil:
 		// READ: a certify query error is job 3 -> [2,6] (0x415f1b, 0x40dc83).
-		s.logger().Warn("login: the account store failed", "account", a.Username, "error", err)
+		s.logger().Warn("login: the account store failed", "account", a.Username, "err", err)
 		return loginRefusal(LoginErrFailed, false)
 	}
 
@@ -317,7 +368,7 @@ func (s *LoginService) punishAutomatically(ctx context.Context, name string, now
 		return
 	}
 	if err != nil {
-		s.logger().Warn("login: the automatic block's account lookup failed", "account", name, "error", err)
+		s.logger().Warn("login: the automatic block's account lookup failed", "account", name, "err", err)
 		return
 	}
 	p, err := store.AddPunishment(ctx, account.Punishment{
@@ -327,7 +378,7 @@ func (s *LoginService) punishAutomatically(ctx context.Context, name string, now
 		BeginAt:     now, EndAt: now.Add(time.Duration(minutes) * time.Minute),
 	})
 	if err != nil {
-		s.logger().Warn("login: raising the automatic block failed", "account", name, "error", err)
+		s.logger().Warn("login: raising the automatic block failed", "account", name, "err", err)
 		return
 	}
 	s.logger().Info("login: automatic block for wrong passwords", "account", name, "serial", p.Serial,

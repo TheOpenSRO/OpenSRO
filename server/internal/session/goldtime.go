@@ -321,7 +321,7 @@ func startGoldTime(ctx context.Context, sess *gateway.Session, characterID int64
 	goldTimes.mu.Unlock()
 	saveGoldTime(ctx, cp)
 	sendGoldTimeState(sess, cp, now)
-	slog.Info("gold time: started", "character", characterID, "item", it.ID, "days", cp.days, "daily_s", cp.daily,
+	slog.Info("gold time: started", "character_id", characterID, "item", it.ID, "days", cp.days, "daily_s", cp.daily,
 		"exp_pct", cp.expPct, "sp_pct", cp.spPct, "death_loss_pct", cp.lossPct)
 }
 
@@ -340,7 +340,7 @@ func saveGoldTime(ctx context.Context, g goldTime) {
 	}
 	if err := d.store.Put(ctx, timedjob.Job{CharID: g.charID, Type: timedjob.TypePremium, Ref: g.refID, Key: g.refID,
 		Start: g.started, V1: int64(g.into)<<8 | int64(g.days), V2: int64(g.prev)<<16 | int64(g.today), V3: paused}); err != nil {
-		slog.Warn("gold time: saving", "character", g.charID, "err", err)
+		slog.Warn("gold time: saving", "character_id", g.charID, "err", err)
 	}
 }
 
@@ -487,7 +487,7 @@ func goldTimeTick(now time.Time) {
 				_ = d.store.Delete(context.Background(), o.g.charID, timedjob.TypePremium, "", o.g.refID)
 			}
 			sendGoldTimeEnd(o.sess, o.g.refID)
-			slog.Info("gold time: ended", "character", o.g.charID, "item", o.g.refID)
+			slog.Info("gold time: ended", "character_id", o.g.charID, "item", o.g.refID)
 			continue
 		}
 		if o.save {
@@ -590,7 +590,7 @@ func GoldTimePauseHandler(hub *world.Hub, scrolls *ScrollCaster) gateway.Handler
 		if refused {
 			return sendGoldTimeRefusal(sess, code, ref)
 		}
-		slog.Info("gold time: pause request", "character", e.CharacterID, "pause", want)
+		slog.Info("gold time: pause request", "character_id", e.CharacterID, "pause", want)
 		return nil
 	}
 }

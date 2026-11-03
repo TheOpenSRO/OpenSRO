@@ -142,7 +142,7 @@ func (k *CompositeKeeper) expireExtra(characterID int64, fourCC string, refID in
 	if fourCC == "BFI1" {
 		sendBuffItemEnd(sess, *ended)
 	}
-	slog.Info("composite: grant ended", "character", characterID, "entry", fourCC, "ref", refID)
+	slog.Info("composite: grant ended", "character_id", characterID, "entry", fourCC, "ref", refID)
 }
 
 // UseQuestGrant spends one of characterID's UQL1 completions of quest
@@ -368,7 +368,7 @@ func useScrollFill(ctx context.Context, sess *gateway.Session, hub *world.Hub, k
 	if code != 0 {
 		return fail(scrollReason(code), req.ItemID)
 	}
-	slog.Info("composite: scroll fill", "character", characterID, "item", fill.ID, "option", req.Option,
+	slog.Info("composite: scroll fill", "character_id", characterID, "item", fill.ID, "option", req.Option,
 		"left", g.remaining-1, "delay", delay)
 	if err := sess.Send(&proto.Packet{Opcode: OpCompositeUseResult, Data: (&CompositeUseResult{
 		ItemID: req.ItemID, Remaining: int32(g.remaining - 1), CastMs: uint32(delay / time.Millisecond)}).Encode()}); err != nil {

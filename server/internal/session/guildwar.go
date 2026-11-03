@@ -307,7 +307,7 @@ func handleWarDeclare(ctx context.Context, sess *gateway.Session, data []byte, d
 	}
 	code, mine, target, tm := d.warDeclareCode(ctx, me, dec)
 	if code != 0 {
-		slog.Info("guild war refused", "character", me.CharacterID, "target", dec.Target, "code", fmt.Sprintf("0x%x", code))
+		slog.Info("guild war refused", "character_id", me.CharacterID, "target", dec.Target, "code", fmt.Sprintf("0x%x", code))
 		sendGuild(sess, guild.OpWarDeclareR, guild.EncodeFail(code))
 		return
 	}
@@ -633,7 +633,7 @@ func handleWarClaimReward(ctx context.Context, sess *gateway.Session, data []byt
 	}
 	// The ShardManager's 0x1e: the gold to the master (reason 0xb).
 	if err := d.chars.AddGold(ctx, me.CharacterID, booty); err != nil {
-		slog.Warn("guild war reward not paid", "character", me.CharacterID, "err", err)
+		slog.Warn("guild war reward not paid", "character_id", me.CharacterID, "err", err)
 	}
 	tellGold(ctx, d.chars, d.hub, me.CharacterID, true)
 	sendGuild(sess, guild.OpWarClaimR, guild.EncodeOK())

@@ -147,7 +147,7 @@ func useCrestItem(ctx context.Context, sess *gateway.Session, inv inventory.Stor
 		return sendUseResult(sess, &UseItemResult{Error: "using failed", Remaining: int32(have)})
 	}
 	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
-		slog.Warn("crest: the item was not taken", "character", characterID, "err", err)
+		slog.Warn("crest: the item was not taken", "character_id", characterID, "err", err)
 	}
 	guildCrestChanged(d.hub, uint32(g.ID), g.Name, rev)
 	return sendUseResult(sess, &UseItemResult{Remaining: int32(have - 1), ItemID: uint32(it.ID)})

@@ -463,7 +463,7 @@ func (u serviceUse) run(ctx context.Context, effect func(ctx context.Context) er
 		return false, u.fail(refused.reason)
 	}
 	if err != nil {
-		u.d.logger().Warn("service scroll failed", "character", u.cid, "item", u.it.CodeName, "err", err)
+		u.d.logger().Warn("service scroll failed", "character_id", u.cid, "item", u.it.CodeName, "err", err)
 		return false, u.fail("using failed")
 	}
 	return true, nil
@@ -476,7 +476,7 @@ func (u serviceUse) accepted(line string) error {
 	if line != "" {
 		serviceLine(u.sess, line)
 	}
-	u.d.logger().Info("service scroll used", "character", u.cid, "item", u.it.CodeName, "line", line)
+	u.d.logger().Info("service scroll used", "character_id", u.cid, "item", u.it.CodeName, "line", line)
 	return err
 }
 
@@ -552,7 +552,7 @@ func (u serviceUse) jobPenalty(ctx context.Context) error {
 func (u serviceUse) giveBack(ctx context.Context) {
 	if err := u.d.Inv.AddItemInstance(ctx, u.cid, u.held.ItemID, 1, u.held.Instance()); err != nil {
 		u.d.logger().Error("service scroll lost: the effect failed and the item could not be returned",
-			"character", u.cid, "item", u.it.CodeName, "err", err)
+			"character_id", u.cid, "item", u.it.CodeName, "err", err)
 	}
 }
 
@@ -913,7 +913,7 @@ func (u serviceUse) skillLeveler(ctx context.Context) error {
 	}
 	plan, err := u.d.skillLevelerPlan(ctx, c)
 	if err != nil {
-		u.d.logger().Warn("skill leveler: planning failed", "character", u.cid, "err", err)
+		u.d.logger().Warn("skill leveler: planning failed", "character_id", u.cid, "err", err)
 		return u.fail("lookup failed")
 	}
 	if len(plan) == 0 {
@@ -1236,7 +1236,7 @@ func serviceAtEntry(ctx context.Context, chars character.Store, owned *character
 	var lines []string
 	if pending&character.ServicePendingStatReset != 0 {
 		if line, err := resetStats(ctx, chars, owned.ID); err != nil {
-			slog.Warn("service: the stat reset failed", "character", owned.ID, "err", err)
+			slog.Warn("service: the stat reset failed", "character_id", owned.ID, "err", err)
 			pending &^= character.ServicePendingStatReset
 		} else {
 			lines = append(lines, line)
@@ -1251,7 +1251,7 @@ func serviceAtEntry(ctx context.Context, chars character.Store, owned *character
 			sp, err = d.resetSkills(ctx, owned.ID, ids, sp)
 			return err
 		}); err != nil {
-			slog.Warn("service: the skill reset failed", "character", owned.ID, "err", err)
+			slog.Warn("service: the skill reset failed", "character_id", owned.ID, "err", err)
 			pending &^= character.ServicePendingSkillReset
 		} else {
 			invalidatePassives(owned.ID)
@@ -1260,7 +1260,7 @@ func serviceAtEntry(ctx context.Context, chars character.Store, owned *character
 	}
 	if pending != 0 {
 		if _, err := st.ClearServicePending(ctx, owned.ID, pending); err != nil {
-			slog.Warn("service: clearing a done reset failed", "character", owned.ID, "err", err)
+			slog.Warn("service: clearing a done reset failed", "character_id", owned.ID, "err", err)
 		}
 	}
 	character.InvalidateBonus(owned.ID)
@@ -1414,23 +1414,23 @@ func (d *ServiceDeps) rename(ctx context.Context, sess *gateway.Session, data []
 		return reply(false, LobbyErrNameExists, "")
 	}
 	if err != nil {
-		d.logger().Warn("rename failed", "character", owned.ID, "err", err)
+		d.logger().Warn("rename failed", "character_id", owned.ID, "err", err)
 		return reply(false, LobbyErrRefused, "")
 	}
 	// The copies of the name (best effort: the rename stands either way).
 	if g := guildOps.Load(); g != nil {
 		if r, ok := g.guilds.(guild.MemberRenamer); ok {
 			if err := r.RenameMember(ctx, owned.ID, req.NewName); err != nil {
-				d.logger().Warn("rename: the guild's member row kept the old name", "character", owned.ID, "err", err)
+				d.logger().Warn("rename: the guild's member row kept the old name", "character_id", owned.ID, "err", err)
 			}
 		}
 	}
 	if r, ok := d.Friends.(friend.Renamer); ok {
 		if err := r.RenameFriend(ctx, owned.ID, req.NewName); err != nil {
-			d.logger().Warn("rename: the friend lists kept the old name", "character", owned.ID, "err", err)
+			d.logger().Warn("rename: the friend lists kept the old name", "character_id", owned.ID, "err", err)
 		}
 	}
-	d.logger().Info("character renamed", "character", owned.ID, "from", owned.Name, "to", req.NewName)
+	d.logger().Info("character renamed", "character_id", owned.ID, "from", owned.Name, "to", req.NewName)
 	return reply(true, 0, req.NewName)
 }
 

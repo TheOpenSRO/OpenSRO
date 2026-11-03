@@ -134,7 +134,7 @@ func applyBuffDamageVs(characterID int64, magical, unique bool, dmg int) int {
 		u := uniqueDamagePercent(characterID)
 		pct += u
 		if umduTrace && u != 0 {
-			slog.Info("combat: umdu against a unique", "character", characterID, "umdu_pct", u, "damage_pct", pct, "blow", dmg)
+			slog.Info("combat: umdu against a unique", "character_id", characterID, "umdu_pct", u, "damage_pct", pct, "blow", dmg)
 		}
 	}
 	f := 1 + pct/100

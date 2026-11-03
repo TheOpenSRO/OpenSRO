@@ -43,6 +43,10 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 858: the metrics package's world collector implements
+	// prometheus.Collector; the registry calls these at every scrape.
+	"Collect":  "round 858: prometheus.Collector, called by the metrics registry at scrape time (internal/metrics/game.go).",
+	"Describe": "round 858: prometheus.Collector, called by the metrics registry at registration (internal/metrics/game.go).",
 	// Round 838: the stall decorations (session/stalldeco.go). The premium
 	// packages' BFI1 entry reaches the stall through 0x7160's override
 	// (round 839 reads it at the open); GrantStallDecoration is kept for a

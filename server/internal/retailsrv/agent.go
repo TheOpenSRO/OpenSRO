@@ -184,7 +184,7 @@ func (c *Config) agentLogin(sess *gateway.Session, data []byte) error {
 	if err := c.Login.AdmitSession(sess, p.acc); err != nil {
 		// Round 788 (lane S): the account came online elsewhere, or the
 		// address filled, since the gateway admitted this login.
-		c.logger().Info("retail agent: refused at admission", "addr", sess.RemoteAddr(), "account", p.acc.Username, "error", err)
+		c.logger().Info("retail agent: refused at admission", "addr", sess.RemoteAddr(), "account", p.acc.Username, "err", err)
 		return agentRefuse(sess, AgentErrRegistration)
 	}
 	sess.Set(agentAuthedKey, true)

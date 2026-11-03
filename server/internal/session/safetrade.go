@@ -80,7 +80,7 @@ func updateSafeTrade(ctx context.Context, characterID int64, f func(s *jobs.Safe
 	}
 	if f(&rec.Safe) {
 		if err := saveJobRecord(ctx, d, rec); err != nil {
-			d.logger.Warn("jobs: saving safe trade failed", "character", characterID, "err", err)
+			d.logger.Warn("jobs: saving safe trade failed", "character_id", characterID, "err", err)
 		}
 	}
 	return rec.Safe, true
