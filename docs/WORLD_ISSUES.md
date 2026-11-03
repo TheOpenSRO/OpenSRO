@@ -7585,8 +7585,8 @@ placement against the alignment the node has, so this change is by the record, n
 200 % (`OPENSRO_QA_UI_SCALE=2`): base every step `TEXT ... dx -5.0 dy -1.0`, `CARET ... dx -5.0 dy -1.0
 dh -2.0` (columns 11, 0, 3, 11, empty 0); this branch `dx +0.0 dy +0.0` and `CARET dx +0.0 dy +0.0 dw
 +0.0 dh +0.0` at every column, both scales. Frames for a human (`snap:`): `/var/tmp/r859c/qa/
-{before,after}{100,200}.snaps/{typed_end,home,right3,empty}.png`, chat crops in
-`/var/tmp/r859c/evidence/`.
+{before100,before200,after100f,after200f}.snaps/{typed_end,home,right3,empty}.png`; the chat line
+cropped, base above and this branch below, `/var/tmp/r859c/evidence/chat_{100,200}_<state>.png`.
 
 **Tests.** `text_layout859_test.gd` (new): TextLayout against known rects and strings (the chat's text
 rect 43,382 355x16, static and edit origins for every alignment, the empty edit, the caret quad, the
