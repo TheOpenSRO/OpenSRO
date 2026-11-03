@@ -48,8 +48,11 @@ class_name SkillAudio
 ##    +0x98/+0x9c are SndBegin/SndEnd (the last two dwords of the 0xa0-byte
 ##    row the loader fills in column order; review of round 614). So SndEnd is
 ##    NOT an "end of phase" sound: it plays with SndBegin, at the same moment.
-##    Which column +0x10 is was not read; this client plays every row at once
-##    (OURS).
+##    Round 860: +0x10 is MovTypeSpeed's first number (the row parser's
+##    write, SkillEffects.parse_mov_delay); the rows keep it (parse_effect_
+##    sounds' fifth field) and the item-use decorations and the fireworks
+##    honour it (ItemUseEffect.play_sounds). A skill cast's rows still play at
+##    once (OURS, unchanged).
 ##    A row counts when EITHER column names a file: 991 rows carry a
 ##    SndBegin, 187 a SndEnd, 150 of them with SndBegin "none" (MEASURED, rows
 ##    of a named AniType). Every one of the 179 distinct SndBegin and 20
@@ -110,6 +113,8 @@ const E_ANI_TYPE := 2
 const E_START_EVENT := 3
 const E_SND_BEGIN := 26
 const E_SND_END := 27
+## Round 860: MovTypeSpeed (its first number the row's delay), re-read from the header.
+const E_MOV := 14
 
 # The tables, loaded once on first use from Media.pk2 (set_tables in tests).
 static var _skills: Dictionary = {}          # id -> PackedStringArray [code, group, original]
@@ -136,13 +141,22 @@ static func parse_skills(bytes: PackedByteArray, into: Dictionary = {}) -> Dicti
 	return into
 
 ## skilleffect.txt bytes -> SkillEffectID -> Array of [ani_type, start_event,
-## SndBegin path, SndEnd path] ("prim\snd\..." lowercased, "" for none), only
-## rows of `#section skilleffectset` where either column names a file.
+## SndBegin path, SndEnd path, delay ms] ("prim\snd\..." lowercased, "" for
+## none), only rows of `#section skilleffectset` where either column names a
+## file. Round 860: the fifth field is the row's +0x10, MovTypeSpeed's first
+## number (SkillEffects.parse_mov_delay): IDecoSkill::FUN_00a4fe70 (READ,
+## c:0xa4fe7a `movzx eax,word [edi+0x10]`) plays both sounds at once when it
+## is 0 and otherwise queues them on the decoration's list (+0xac) with the
+## body's position of that moment, and the decoration's frame
+## (CIDecoSkill::vslot_014, c:0xa50420..0xa5044e) adds each frame's ms
+## (0x110f7f8) and plays them when the delay is reached -- the fireworks'
+## explosions, 1300 ms after the shot.
 static func parse_effect_sounds(bytes: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	var in_section := false
 	var begin_col := E_SND_BEGIN
 	var end_col := E_SND_END
+	var mov_col := E_MOV
 	for raw in _utf16_lines(bytes):
 		var line: String = raw
 		if line.begins_with("#section"):
@@ -158,6 +172,9 @@ static func parse_effect_sounds(bytes: PackedByteArray) -> Dictionary:
 				begin_col = at
 				var at_end := header.find("SndEnd")
 				end_col = at_end if at_end >= 0 else at + 1
+			var at_mov := header.find("MovTypeSpeed")
+			if at_mov >= 0:
+				mov_col = at_mov
 			continue
 		var cols := line.split("\t")
 		if cols.size() <= begin_col:
@@ -172,7 +189,8 @@ static func parse_effect_sounds(bytes: PackedByteArray) -> Dictionary:
 		var start_event := int(start_text) if start_text.is_valid_int() else 0
 		if not out.has(id):
 			out[id] = []
-		(out[id] as Array).append([int(ANI_TYPES[ani]), start_event, begin, end])
+		var delay := SkillEffects.parse_mov_delay(cols[mov_col]) if cols.size() > mov_col else 0
+		(out[id] as Array).append([int(ANI_TYPES[ani]), start_event, begin, end, delay])
 	return out
 
 ## A sound column as a Data.pk2 path, or "" for an empty or "none" cell.

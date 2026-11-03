@@ -38540,6 +38540,9 @@ func _on_item_use_effect(uid: int, ref_id: int) -> void:
 				_automob_ref = int(id)
 				break
 	var effect := ItemUseEffect.effect_id(types, code, ref_id, _automob_ref, ItemUseEffect.use_rows(), ItemUseEffect.knows)
+	if effect == ItemUseEffect.FIREWORK and body != null and is_instance_valid(body):
+		_set_off_firework(ref_id, code, body, who)
+		return
 	if body == null or not is_instance_valid(body):
 		print("ITEMUSE uid %d item %d %s %s: %s, no body drawn" % [uid, ref_id, code, str(types), effect if effect != "" else "no effect"])
 		return
@@ -38557,6 +38560,29 @@ func _on_item_use_effect(uid: int, ref_id: int) -> void:
 	print("ITEMUSE uid %d item %d %s %s on %s: effect %s, %d effect(s) [%s], sound(s) [%s] (frame %d)" % [uid, ref_id, code,
 		str(types), who, effect if effect != "" else "none", (got["fx"] as Array).size(), ", ".join(parts),
 		", ".join(got["sounds"]), Engine.get_frames_drawn()])
+
+## Round 860: a firework (3/3/6) -- the original's CIParticleObj (Firework has
+## the reading): the item's drop model where the user stands, turned as the
+## user is, and its bursts from 8 above it every 2 s.
+func _set_off_firework(ref_id: int, code: String, body: Node3D, who: String) -> void:
+	var path: String = _item_drop_models.get(ref_id, "")
+	var model: Node3D = null
+	var archive := _data_pk2 if _data_pk2 != null else _open_pk2_if_set()
+	if archive != null and path != "":
+		if not path.to_lower().begins_with("res\\"):
+			model = ObjectLoader.load_object(archive, "res\\" + path)
+		if model == null:
+			model = ObjectLoader.load_object(archive, path)
+	var fwd := body.global_transform.basis.z
+	var yaw := atan2(fwd.x, fwd.z) if Vector2(fwd.x, fwd.z).length() > 0.001 else 0.0
+	var fw := Firework.make(code, model, body.global_position, yaw)
+	if fw == null:
+		print("ITEMUSE firework %d %s by %s: no rows, nothing made" % [ref_id, code, who])
+		return
+	var parent: Node = other_entities if other_entities != null else self
+	parent.add_child(fw)
+	print("ITEMUSE firework %d %s by %s: model %s %s at %s" % [ref_id, code, who, path,
+		"drawn" if model != null else "missing", fw.global_position])
 
 ## ITEM_ETC_AUTOMOB's ref (ItemUseEffect.AUTOMOB_CODE): -2 not looked up yet,
 ## -1 not in the table.
