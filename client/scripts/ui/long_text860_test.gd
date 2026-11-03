@@ -235,6 +235,23 @@ func _other_edits() -> void:
 	await process_frame
 	_check(ph.text_left() == 0.0, "a long placeholder starts at the left (%.1f)" % ph.text_left())
 	ph.queue_free()
+	# The ink is the layout's rect (the original's viewport), not the taller
+	# size Godot's minimum holds the edit at: party match's name edit, 81x11.
+	var pm := CifEdit.new()
+	pm.add_theme_font_size_override(&"font_size", 12)
+	pm.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(103, 79, 81, 11))
+	root.add_child(pm)
+	pm.lay_out(Rect2i(), 2, 0)
+	pm.position = Vector2(103, 79)
+	pm.size = Vector2(81, 11)
+	await process_frame
+	var pink: Control = null
+	for ch in pm.get_children(true):
+		if ch.name == "CifEditInk":
+			pink = ch
+	_check(pink != null and pink.size == Vector2(81, 11) and pink.clip_contents,
+		"an 11 px edit held %s tall by Godot: its ink is the authored 81x11 (%s)" % [pm.size.y, pink.size if pink != null else Vector2.ZERO])
+	pm.queue_free()
 	_reached += 1
 
 ## A centred .2dt text wider than its control (TwoDtBuilder's label, grown

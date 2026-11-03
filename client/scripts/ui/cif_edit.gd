@@ -179,7 +179,7 @@ class Ink extends Control:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
 		clip_contents = true
-		set_anchors_preset(Control.PRESET_FULL_RECT)
+		set_anchors_preset(Control.PRESET_TOP_WIDE)
 	func _draw() -> void:
 		if edit != null:
 			edit.call(&"_draw_ink", self)
@@ -242,6 +242,7 @@ func lay_out(client: Rect2i, halign: int, valign: int) -> void:
 		2: alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		_: alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_apply_margins()
+	_fit_ink()
 
 ## The same layout as `other` (an edit laid over an authored one, as the chat
 ## line is over GDR_CHAT_INPUTBOX).
@@ -304,6 +305,19 @@ func layout_height() -> float:
 			return r.size.y
 	return size.y
 
+## The ink is the original's viewport: the edit's rect as the layout gives it
+## (0x6531a0 with the control's `+0x40` rect). Godot can hold the edit taller
+## than that (its minimum: the font's line), so the ink takes the edit's
+## width and the layout's height -- a caret or glyph below the authored rect
+## is cut there, as the original cuts it (the party match name edit, 11 px
+## tall, cuts the 16 px caret to 11).
+func _fit_ink() -> void:
+	if _ink == null:
+		return
+	var h := minf(size.y, layout_height()) if layout_height() > 0.0 else size.y
+	if _ink.offset_bottom != h:
+		_ink.offset_bottom = h
+
 static func _set_margins(sb: StyleBox, m: PackedFloat32Array) -> void:
 	if sb.content_margin_left != m[0]:
 		sb.content_margin_left = m[0]
@@ -318,6 +332,7 @@ func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_RESIZED, NOTIFICATION_THEME_CHANGED, NOTIFICATION_ENTER_TREE:
 			_apply_margins()
+			_fit_ink()
 		NOTIFICATION_FOCUS_ENTER:
 			_blink_on = false
 			_blink_t = 0.0
