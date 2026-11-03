@@ -62,7 +62,7 @@ func TestPlainRecordBytes(t *testing.T) {
 	le(uint32(0))
 	le(uint32(0))
 	le(uint32(0))
-	w.Write([]byte{0, 0}) // membership byte, fortress role
+	w.Write([]byte{1, 0}) // the war flag (round 860: 1, no war), fortress role
 	w.Write([]byte{0, 0xff})
 	if !bytes.Equal(got, w.Bytes()) {
 		t.Fatalf("record\n got % x\nwant % x", got, w.Bytes())
@@ -145,7 +145,7 @@ func TestGuildBlockRoundTrip(t *testing.T) {
 	le(uint32(0))
 	le(uint32(0))
 	le(uint32(0))
-	w.Write([]byte{0, 0, 0, 0xff})
+	w.Write([]byte{1, 0, 0, 0xff}) // round 860: the war flag 1 (no war), the role
 	if !bytes.HasSuffix(buf, w.Bytes()) {
 		t.Fatalf("the guild tail\n got % x\nwant suffix % x", buf, w.Bytes())
 	}

@@ -120,6 +120,13 @@ type Record struct {
 	CrestRev      uint32
 	UnionID       uint32
 	UnionCrestRev uint32
+	// GuildAtWar is the block's war flag (round 860, READ s:0x4e5e27
+	// `cmp byte [guild+0x44],0 ; setbe`: written 1 when the guild has no
+	// war, 0 while it has one), the byte before the fortress role. The
+	// client (c:0x9de046) adds the guild to its "at war" set on 0 -- the
+	// guild war mark over every member -- and takes it out on 1. Rounds
+	// 814-859 wrote 0 for every guild.
+	GuildAtWar bool
 	// JobState is the job state the slot-8 suit gives; the guild block is
 	// written only for JobStateNone. 0, the zero value, is no job state the
 	// engine has and is written as JobStateNone (round 737's review).
@@ -219,7 +226,7 @@ func Append(out []byte, r Record) ([]byte, error) {
 		out = binary.LittleEndian.AppendUint32(out, r.CrestRev)
 		out = binary.LittleEndian.AppendUint32(out, r.UnionID)
 		out = binary.LittleEndian.AppendUint32(out, r.UnionCrestRev)
-		out = append(out, 0, 0)
+		out = append(out, WarFlag(r.GuildAtWar), 0)
 	}
 	if r.InteractMode == 4 {
 		out = appendString(out, r.StallName)
@@ -384,7 +391,8 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 		d.Nickname = r.str()
 		d.CrestRev = r.u32()
 		d.UnionID, d.UnionCrestRev = r.u32(), r.u32()
-		if r.u8() != 0 || r.u8() != 0 {
+		d.GuildAtWar = r.u8() == 0
+		if r.u8() != 0 {
 			if r.err == nil {
 				return d, nil, fmt.Errorf("pcspawn: fortress roles are not OpenSRO's")
 			}
@@ -399,4 +407,14 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 		return d, nil, r.err
 	}
 	return d, r.b, nil
+}
+
+// WarFlag is the guild block's war byte (round 860): 0 while the guild is at
+// war, 1 otherwise (READ, s:0x4e5e27 / s:0x4ea4db `setbe` on the guild's war
+// count).
+func WarFlag(atWar bool) byte {
+	if atWar {
+		return 0
+	}
+	return 1
 }

@@ -8042,6 +8042,12 @@ func _exit_tree() -> void:
 	_orb_pending.clear()
 	_orb_death_passed.clear()
 	_orb_cos_of.clear()
+	for m in _war_marks.values():
+		if is_instance_valid(m):
+			(m as AuraModel).release()
+	_war_marks.clear()
+	_war_mark_row = {}
+	AuraModel.star_height_of = Callable()
 	if _hud_player_info != null:
 		_hud_player_info.hwan_gauge.reset()
 	_fx_owner_buffs.clear()
@@ -22921,6 +22927,10 @@ func _physics_process(delta: float) -> void:
 	var fs_t := Time.get_ticks_usec() if FrameSplit.on else 0
 	SkillEffects.tick(delta)
 	_exp_orbs.tick(delta)
+	# Round 860: the guild war marks (GuildWarMark), every 15th frame (OURS
+	# cadence; the original asks every frame -- a change shows within 0.25 s).
+	if Engine.get_process_frames() % 15 == 0:
+		_update_war_marks()
 	_tick_decos(delta)
 	_tick_skill_slides(delta)
 	_tick_skill_cooldowns(delta)
@@ -38674,6 +38684,70 @@ func _set_off_firework(ref_id: int, code: String, body: Node3D, who: String) -> 
 	parent.add_child(fw)
 	print("ITEMUSE firework %d %s by %s: model %s %s at %s" % [ref_id, code, who, path,
 		"drawn" if model != null else "missing", fw.global_position])
+
+# --- Round 860: the guild war mark (GuildWarMark has the READ) -----------------
+
+## uid -> AuraModel: the marks drawn.
+var _war_marks := {}
+var _war_mark_row := {}
+
+## FUN_009ddb00 over every body this client draws, the own player too.
+func _update_war_marks() -> void:
+	if _war_mark_row.is_empty():
+		_war_mark_row = GuildWarMark.row()
+		if _war_mark_row.is_empty():
+			return
+		AuraModel.star_height_of = func(host: Node3D) -> float: return _star_height_of(host)
+	var seen := {}
+	if player != null and is_instance_valid(player) and NetClient.own_character_id >= 0:
+		var own_uid := NetClient.own_character_id & 0xffffffff
+		var gid := int(NetClient.guild_data.guild_id) if NetClient.guild_data.in_guild else int(NetClient.own_guild_line.get("guild_id", 0))
+		_war_mark_on(own_uid, player, GuildWarMark.decide(gid, NetClient.war_guilds, _own_job_state()))
+		seen[own_uid] = true
+	for id in _other_bodies:
+		var body: Node3D = _other_bodies[id]
+		if body == null or not is_instance_valid(body):
+			continue
+		var uid := int(id) & 0xffffffff
+		var line: Dictionary = NetClient.user_guilds.get(uid, {})
+		var job: Dictionary = NetClient.user_jobs.get(uid, {})
+		_war_mark_on(uid, body, GuildWarMark.decide(int(line.get("guild_id", 0)), NetClient.war_guilds,
+			int(job.get("state", UserSpawnNet.JOB_STATE_NONE))))
+		seen[uid] = true
+	for uid in _war_marks.keys():
+		if not seen.has(uid):
+			_war_mark_on(int(uid), null, GuildWarMark.OFF)
+
+func _war_mark_on(uid: int, body: Node3D, what: int) -> void:
+	var had: AuraModel = _war_marks.get(uid)
+	if had != null and (not is_instance_valid(had) or had.host != body):
+		if is_instance_valid(had):
+			had.release()
+		_war_marks.erase(uid)
+		had = null
+	if what == GuildWarMark.ON and had == null and body != null:
+		var m := AuraModel.spawn(String(_war_mark_row["path"]), body, String(_war_mark_row["bone"]), _war_mark_row["offset"])
+		if m != null:
+			m.name = "GuildWarMark"
+			_war_marks[uid] = m
+			print("World3D: guild war mark on uid %d (%s), %.1f above its foot" % [uid, body.name,
+				_star_height_of(body) + float((_war_mark_row["offset"] as Vector3).y)])
+	elif what == GuildWarMark.OFF and had != null:
+		had.release()
+		_war_marks.erase(uid)
+		print("World3D: guild war mark off uid %d" % uid)
+
+## A body's `*` height (GuildWarMark.star_height of its characterInfo Size).
+func _star_height_of(body: Node3D) -> float:
+	var rec: SoundTable.CharacterInfo = null
+	if body.has_meta("monster_id"):
+		rec = _monster_char_record(_monster_code_of(int(body.get_meta("monster_id"))))
+	else:
+		var code := _player_body if body == player else String(body.get_meta("body", ""))
+		var svc := AudioService.instance()
+		if svc != null and code != "":
+			rec = svc.character_record(code)
+	return GuildWarMark.star_height(rec.size if rec != null else 0.0)
 
 ## ITEM_ETC_AUTOMOB's ref (ItemUseEffect.AUTOMOB_CODE): -2 not looked up yet,
 ## -1 not in the table.

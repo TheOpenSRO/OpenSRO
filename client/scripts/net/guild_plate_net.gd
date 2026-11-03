@@ -69,6 +69,7 @@ static func decode_entity(data: PackedByteArray) -> Dictionary:
 	var crest := 0
 	var union := 0
 	var union_crest := 0
+	var war_flag := -1
 	if name != "":
 		var n = _take_string(data, at)
 		if n == null:
@@ -82,8 +83,13 @@ static func decode_entity(data: PackedByteArray) -> Dictionary:
 		if at[0] + 12 <= data.size():
 			union = data.decode_u32(at[0] + 4)
 			union_crest = data.decode_u32(at[0] + 8)
+		# Round 860: the fortress role, then the war flag (READ s:0x4ea4bb..
+		# 0x4ea4f2 -- the spawn block's two bytes the other way round):
+		# 0 at war, 1 not.
+		if at[0] + 14 <= data.size():
+			war_flag = data.decode_u8(at[0] + 13)
 	return {"uid": data.decode_u32(0), "guild_id": data.decode_u32(4), "guild_name": name, "nickname": nick,
-		"crest_rev": crest, "union_id": union, "union_crest_rev": union_crest}
+		"crest_rev": crest, "union_id": union, "union_crest_rev": union_crest, "war_flag": war_flag}
 
 ## 0x3256 as {guild_id, name, nickname}; {} when malformed.
 static func decode_nickname(data: PackedByteArray) -> Dictionary:

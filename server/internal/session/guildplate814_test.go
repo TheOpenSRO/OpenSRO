@@ -57,7 +57,8 @@ func TestGuildPlateMessagesBytes(t *testing.T) {
 	}
 	eg := (&EntityGuildUpdate{UID: 5, GuildID: 9, GuildName: "Vz", Nickname: "Ro"}).Encode()
 	want := []byte{5, 0, 0, 0, 9, 0, 0, 0, 2, 0, 'V', 'z', 2, 0, 'R', 'o'}
-	want = append(want, make([]byte, 14)...)
+	want = append(want, make([]byte, 13)...)
+	want = append(want, 1) // round 860: the war flag after the fortress role, 1 (no war)
 	if !bytes.Equal(eg, want) {
 		t.Errorf("0x30FF % x\nwant % x", eg, want)
 	}

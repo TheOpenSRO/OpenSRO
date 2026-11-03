@@ -341,6 +341,8 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	r.GuildName, r.GuildID, r.Nickname, r.CrestRev = gp.Name, gp.ID, gp.Nickname, gp.CrestRev
 	// Round 842: and its union's id and crest revision.
 	r.UnionID, r.UnionCrestRev = gp.UnionID, gp.UnionCrestRev
+	// Round 860: and the block's war flag (pcspawn.Record.GuildAtWar).
+	r.GuildAtWar = gp.ID != 0 && guildAtWar(int64(gp.ID))
 	// Round 800: the job (CGObjPC::vslot_293 mode 2, s:0x4e5b00): the job
 	// record's kind and level always; the name is the alias while a suit is
 	// worn (job state != 4), when the character has one.
