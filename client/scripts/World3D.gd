@@ -38383,12 +38383,14 @@ func _on_item_use_effect(uid: int, ref_id: int) -> void:
 	var got := ItemUseEffect.play(effect, body, "%s used %s" % [who, code])
 	var parts := PackedStringArray()
 	var started := Time.get_ticks_msec()
+	var started_frame := Engine.get_frames_drawn()
 	for fx in got["fx"]:
 		var e := fx as EfpEffect
 		parts.append("%s@%s" % [e.path, e._follow_bone_name if e._follow_bone_name != "" else "none"])
 		# QA: each effect's lifetime, from its start to its end.
 		e.effect_finished.connect(func() -> void:
-			print("ITEMUSE effect %s on %s ended after %d ms" % [e.path, who, Time.get_ticks_msec() - started]), CONNECT_ONE_SHOT)
+			print("ITEMUSE effect %s on %s ended after %d ms (%d frames)" % [e.path, who, Time.get_ticks_msec() - started,
+				Engine.get_frames_drawn() - started_frame]), CONNECT_ONE_SHOT)
 	print("ITEMUSE uid %d item %d %s %s on %s: effect %s, %d effect(s) [%s], sound(s) [%s] (frame %d)" % [uid, ref_id, code,
 		str(types), who, effect if effect != "" else "none", (got["fx"] as Array).size(), ", ".join(parts),
 		", ".join(got["sounds"]), Engine.get_frames_drawn()])
