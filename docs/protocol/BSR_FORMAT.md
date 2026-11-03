@@ -71,10 +71,18 @@ sampled files. Sweeping a real `Data.pk2`'s 8,539 `.bsr` files finds **eight** d
 | 2 | 2,592 | Building / static scenery (`cj_monstad_door01`, `cj_monstad_status_l`) |
 | 4 | 946 | Nature (`tre_maple01`, `tre_bank02`) |
 | 1 | 838 | Character — skinned, has a skeleton (`chinaquest_priest`, `mangnyang`) |
-| 3 | 357 | unconfirmed (`npc\npc\gacha_machine` is one) |
-| 6 | 205 | unconfirmed |
+| 3 | 357 | unconfirmed name; 20 carry a skeleton (`npc\npc\gacha_machine`; the fortress hearts and tower-defence towers, 44 monster rows). Loaded as type 1 is (round 860, below) |
+| 6 | 205 | unconfirmed name; 77 carry a skeleton -- among them every ride horse (`cos\c_horse1..3`, `c_dhorse*`), the unicorn and the trade horses and camels (`cos\t_horse*`, `t_camel*`; 10 COS rows), and 26 monster rows (the treasure boxes, `MOB_EVENT_PANDORA`). Loaded as type 1 is (round 860, below) |
 | 0 | 174 | **Player character** — the 26 playable classes `characterdata` names at ids 1907–1932 (`char\china\chinaman_fighter`), same layout as type 1. The client's factory (`FUN_00be9250`) builds a `ResChar` for case 0 |
 | 8193 | 6 | unconfirmed (`0x2001` — the only value above 8 bits) |
+
+**Round 860 (READ, MEASURED).** The resource factory `ResourceMgr::FUN_00be9250` sends types 1, 2, 3, 4, 6
+and 7 to one constructor (`FUN_00be8dc0`, vtable 0xe0b670; the loader `ResObject::FUN_00be41d0` reads
+the sound section through `FUN_00c0b740` for each), type 0 to `ResChar` and type 5 to the item class.
+So a skeletal type-3 or type-6 body is a type-1 body to the original: the horses were drawn as a
+capsule here until the monster/COS assembler took any skeletal `.bsr` (`SkinnedBsrAssembler`'s
+`skinned_object`). Census of the 8,539 files (skeleton / none): type 0 167/7, 1 819/19, 2 90/2502,
+3 20/337, 4 44/902, 5 874/2547, 6 77/128, 8193 0/6.
 
 Types 0 and 1 select the character path; type 5 is read through the section table like the rest
 and its skeleton entry, when it has one, carries the attach bone described below.

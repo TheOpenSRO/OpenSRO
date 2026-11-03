@@ -30694,8 +30694,15 @@ func _assemble_monster_model(model: String) -> SkinnedBsrAssembler.AssembledChar
 	if _data_pk2 == null:
 		return null
 	# Round 809: a key may carry a material slot (MonsterDraw.template_key).
+	# Round 860: any skeletal .bsr, whatever its type word (skinned_object).
+	# The original's resource factory builds one class for types 1, 2, 3, 4,
+	# 6 and 7 (READ, ResourceMgr::FUN_00be9250: all to FUN_00be8dc0, vtable
+	# 0xe0b670), and a body animates whenever its resource has a skeleton and
+	# clips (CCompChar::FUN_00c2b930). The horses, the unicorn and the trade
+	# horses and camels are type 6 (cos\c_horse1.bsr: a .bsk, two .bms, six
+	# clips; MEASURED), and were refused here and drawn as a capsule.
 	return SkinnedBsrAssembler.assemble_from_archive(_data_pk2, MonsterDraw.model_of_key(model), true, false,
-		MonsterDraw.slot_of_key(model))
+		MonsterDraw.slot_of_key(model), true)
 
 ## Round 809: a body's own particle effects (BodyFx).
 var _body_fx := BodyFx.new()
@@ -40122,6 +40129,54 @@ func _qa_cos_first(kinds: Array) -> int:
 			return int(uid)
 	return 0
 
+## QA (round 860): what each MeshInstance3D under `node` draws -- its name,
+## its mesh's class, whether it is skinned, and per surface the material
+## bound (the override, else the surface's) with its textures and colour:
+## `name:ArrayMesh/skin{Standard tex 512x512 col (1,1,1,1)}`. "none" is a
+## surface with no material at all (Godot's default white).
+func _qa_draw_census(node: Node) -> String:
+	var out: Array = []
+	for n in node.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			out.append("%s:no mesh" % mi.name)
+			continue
+		var surfs: Array = []
+		for s in mi.mesh.get_surface_count():
+			var mat: Material = mi.material_override
+			if mat == null:
+				mat = mi.get_surface_override_material(s)
+			if mat == null:
+				mat = mi.mesh.surface_get_material(s)
+			surfs.append(_qa_material_census(mat))
+		out.append("%s:%s%s%s{%s}" % [mi.name, mi.mesh.get_class(), "/skin" if mi.skin != null else "",
+			"" if mi.is_visible_in_tree() else "/hidden", "; ".join(surfs)])
+	return ", ".join(out)
+
+func _qa_material_census(mat: Material) -> String:
+	if mat == null:
+		return "none"
+	var texs: Array = []
+	var col := ""
+	if mat is BaseMaterial3D:
+		var bm := mat as BaseMaterial3D
+		var t := bm.albedo_texture
+		texs.append("albedo " + ("%dx%d" % [t.get_width(), t.get_height()] if t != null else "null"))
+		col = " col %s" % str(bm.albedo_color)
+		if bm.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED:
+			col += " unshaded"
+	elif mat is ShaderMaterial:
+		var sm := mat as ShaderMaterial
+		if sm.shader != null:
+			for u in sm.shader.get_shader_uniform_list():
+				var v = sm.get_shader_parameter(u["name"])
+				if v is Texture2D:
+					texs.append("%s %dx%d" % [u["name"], (v as Texture2D).get_width(), (v as Texture2D).get_height()])
+				elif int(u["type"]) == TYPE_OBJECT and v == null:
+					texs.append("%s null" % u["name"])
+	var next := " +next" if mat.next_pass != null else ""
+	return "%s %s%s%s" % [mat.get_class(), " ".join(texs), col, next]
+
 func _qa_cos_step() -> void:
 	if not NetClient.is_connected_to_server():
 		return
@@ -40164,9 +40219,10 @@ func _qa_cos_step() -> void:
 				for e in _animated:
 					if (e as Array)[0] == asm.skeleton and (e as Array)[1] != null:
 						clip = ((e as Array)[1] as BanReader.ParsedAnimation).animation_name
-			parts.append("%d@(%.2f,%.1f,%.2f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f clip %s" % [int(uid), b.global_position.x, b.global_position.y,
+			parts.append("%d@(%.2f,%.1f,%.2f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f clip %s draw [%s]" % [int(uid), b.global_position.x, b.global_position.y,
 				b.global_position.z, meshes, shown, str(box), fwd, _cos_ground(b.global_position),
-				lbl.text if lbl != null else "-", olbl.text if olbl != null else "-", olbl.offset.y if olbl != null else 0.0, clip])
+				lbl.text if lbl != null else "-", olbl.text if olbl != null else "-", olbl.offset.y if olbl != null else 0.0, clip,
+				_qa_draw_census(b)])
 		var held := ""
 		if _player_skeleton != null:
 			for c in _player_skeleton.get_children():

@@ -641,7 +641,12 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 			built.mesh_groups = sections["mesh_groups"]
 			built.animation_groups = _animation_groups(sections["animation_groups"], built.animation_paths)
 			built.is_character = is_character_type and built.skeleton_path != ""
-			if built.is_character:
+			# Round 860: every skeletal body's sound tracks, not only a type 0
+			# or 1's. The original's object loader (ResObject::FUN_00be41d0,
+			# which the factory FUN_00be9250 uses for types 1-4, 6 and 7) reads
+			# the section through FUN_00c0b740 whatever the type, and a type-6
+			# horse or a type-3 heart animates as a type-1 monster does.
+			if built.is_character or (built.skeleton_path != "" and obj_type != TYPE_ITEM):
 				_attach_sound_sets(built, data)
 			built.header_flags = _le_u32(data, OFF_FLAGS)
 			_fill_mods(built, data)
