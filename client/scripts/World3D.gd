@@ -18117,6 +18117,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       (round 858)
 #   holes:<name>        the hole census (HoleCensus) of the first shown
 #                       Control of that name: HOLES / PIECE lines (round 858)
+#   snap:<name>         this frame into OPENSRO_QA_SNAP_DIR/<name>.png (858)
 #   netnode:<id>[,..] / netbox:<id> / underbar:<id>[,..]  left click a control
 #                       of the stall network window, its buy box or the
 #                       underbar by GetChild path (round 840)
@@ -19314,6 +19315,13 @@ func _qa_input_step() -> void:
 			if ws.size() == 2:
 				get_window().size = Vector2i(int(ws[0]), int(ws[1]))
 			_qa_input_report = "%s -> window %s" % [action, str(get_window().size)]
+		"snap":
+			# Round 858: this frame into OPENSRO_QA_SNAP_DIR as <arg>.png.
+			var sd := OS.get_environment("OPENSRO_QA_SNAP_DIR")
+			if sd != "":
+				DirAccess.make_dir_recursive_absolute(sd)
+				get_viewport().get_texture().get_image().save_png("%s/%s.png" % [sd, arg])
+				_qa_input_report = "%s -> %s/%s.png" % [action, sd, arg]
 		"holes":
 			# Round 858: the hole census (HoleCensus) of a shown Control by
 			# name, in this real frame; prints HOLES / PIECE lines.
