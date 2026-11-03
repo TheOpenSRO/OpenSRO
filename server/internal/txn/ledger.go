@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -14,7 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
+	"github.com/jackc/pgx/v5/stdlib" // also the driver's registration ("pgx")
 )
 
 // Schema is what the economy's transactions need besides the stores' own
@@ -237,12 +239,22 @@ func PoolSizes() (stores, refdata int) {
 	return n - refdata, refdata
 }
 
-// OpenPool opens one capped pool on dsn and checks it answers.
+// OpenPool opens one capped pool on dsn and checks it answers. Its
+// statements are counted under the pool name "db" (OpenNamedPool).
 func OpenPool(dsn string, maxConns int) (*sql.DB, error) {
-	db, err := sql.Open("pgx", dsn)
+	return OpenNamedPool(dsn, maxConns, "db")
+}
+
+// OpenNamedPool is OpenPool with the pool's name for the metrics (round 858):
+// every statement on it is counted and timed (opensro_db_*{pool=name}) by
+// the metrics package's driver wrapper, and its pool stats are exported
+// (go_sql_*{db_name=name}).
+func OpenNamedPool(dsn string, maxConns int, name string) (*sql.DB, error) {
+	connector, err := stdlib.GetDefaultDriver().(driver.DriverContext).OpenConnector(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("txn: opening postgres: %w", err)
 	}
+	db := sql.OpenDB(metrics.WrapConnector(connector, name))
 	db.SetMaxOpenConns(maxConns)
 	idle := maxConns / 2
 	if idle < 2 {
@@ -254,5 +266,6 @@ func OpenPool(dsn string, maxConns int) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("txn: connecting to postgres: %w", err)
 	}
+	metrics.RegisterDBStats(db, name)
 	return db, nil
 }

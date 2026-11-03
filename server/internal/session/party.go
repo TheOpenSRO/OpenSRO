@@ -604,7 +604,7 @@ func (d PartyDeps) sample(ctx context.Context, m party.Member, prev *memberSampl
 			if g, err := d.Guilds.GetByCharacter(ctx, m.CharacterID); err == nil && g != nil {
 				r.Guild = g.Name
 			} else if err != nil && !errors.Is(err, guild.ErrNotInGuild) {
-				d.log().Debug("party record: guild lookup", "character", m.CharacterID, "error", err)
+				d.log().Debug("party record: guild lookup", "character_id", m.CharacterID, "err", err)
 			}
 		}
 		if d.Skills != nil {

@@ -299,6 +299,17 @@ func (h *Hub) Close(owner int64) (Stall, bool) {
 // the hub lives. Safe under or outside the lock.
 func (h *Hub) NextSeq() uint64 { return h.seq.Add(1) }
 
+// Count is how many stalls stand now, open or being set up (round 858's
+// opensro_world_entities{kind="stall"}).
+func (h *Hub) Count() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.byOwner)
+}
+
 // Network is a snapshot of every stall the stall network searches: open and
 // registered (round 840).
 func (h *Hub) Network() []Stall {

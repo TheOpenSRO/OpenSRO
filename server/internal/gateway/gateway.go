@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 )
 
@@ -328,6 +329,7 @@ func NewFrame(p *proto.Packet) (*Frame, error) {
 	b.Grow(6 + len(p.Data))
 	_ = proto.Write(&b, &f.p, nil, nil)
 	f.wire = b.Bytes()
+	metrics.Broadcast()
 	return f, nil
 }
 
@@ -416,7 +418,16 @@ func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 			}
 		}
 		s.out = append(s.out, buf...)
+		countPs, countFs := ps, fs
 		ps, fs = nil, nil
+		defer func() {
+			for _, p := range countPs {
+				metrics.PacketOut(p.Opcode)
+			}
+			for _, f := range countFs {
+				metrics.PacketOut(f.p.Opcode)
+			}
+		}()
 	}
 	w := queueWriter{s}
 	for _, p := range ps {
@@ -447,6 +458,15 @@ func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 	}
 	s.outCond.Signal()
 	s.outMu.Unlock()
+	for _, p := range ps {
+		metrics.PacketOut(p.Opcode)
+	}
+	if len(fs) > 0 {
+		for _, f := range fs {
+			metrics.PacketOut(f.p.Opcode)
+		}
+		metrics.BroadcastDeliveries(len(fs))
+	}
 	return nil
 }
 
@@ -537,6 +557,7 @@ func (s *Session) writeLoop() {
 			s.blocked += took
 		}
 
+		metrics.BytesOut(n)
 		s.outMu.Lock()
 		s.inFlight = 0
 		s.debt = s.blocked
@@ -676,6 +697,9 @@ func (s *Session) stallLocked(reason string) {
 	if s.logger != nil && !s.stalled.Load() {
 		s.logger.Warn("session send stalled, closing", "addr", s.conn.RemoteAddr(), "reason", reason,
 			"debt", s.debt, "budget", s.budget, "queued", len(s.out)+s.inFlight, "limit", s.queueLimit)
+	}
+	if !s.stalled.Load() {
+		metrics.SendStall(reason)
 	}
 	s.stalled.Store(true)
 	s.closing = true
@@ -858,7 +882,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			}
 			var ne net.Error
 			if errors.As(err, &ne) {
-				logger.Warn("accept error, continuing", "error", err)
+				logger.Warn("accept error, continuing", "err", err)
 				continue
 			}
 			return err
@@ -878,11 +902,16 @@ var ErrHandlerPanic = errors.New("gateway: handler panicked")
 // A handler that panicked while holding a lock it takes without defer leaves
 // it held; the hub's locks are all released by defer.
 func (s *Server) dispatch(ctx context.Context, sess *Session, p *proto.Packet, logger *slog.Logger) (err error) {
+	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("handler panic, closing session", "addr", sess.RemoteAddr(), "opcode", fmt.Sprintf("0x%04x", p.Opcode), "panic", r, "stack", string(debug.Stack()))
 			err = ErrHandlerPanic
+			metrics.Panic("handler")
+			metrics.HandlerDone(p.Opcode, start, false, true)
+			return
 		}
+		metrics.HandlerDone(p.Opcode, start, err != nil && !errors.Is(err, ErrEndSession), false)
 	}()
 	return s.Handle(ctx, sess, p)
 }
@@ -891,12 +920,16 @@ func (s *Server) dispatch(ctx context.Context, sess *Session, p *proto.Packet, l
 // disconnect bookkeeping) and lets the rest of the teardown run.
 func recoverSession(logger *slog.Logger, sess *Session, what string) {
 	if r := recover(); r != nil {
+		metrics.Panic("session_" + what)
 		logger.Error("session "+what+" panic", "addr", sess.RemoteAddr(), "panic", r, "stack", string(debug.Stack()))
 	}
 }
 
 func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logger) {
 	sess := &Session{id: nextSessionID.Add(1), conn: conn, logger: logger}
+	metrics.ConnOpened()
+	// Why the session ended, for opensro_gateway_disconnects_total.
+	reason := metrics.DisconnectShutdown
 	if s.Codec != nil {
 		sess.codec = s.Codec()
 	}
@@ -921,6 +954,11 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 	defer func() {
 		announce()
 		sess.closeAfterDrain(SendDrainTimeout)
+		if sess.stalled.Load() {
+			reason = metrics.DisconnectStalled
+		}
+		metrics.Disconnect(reason)
+		metrics.ConnClosed()
 		peak, longest, sent := sess.SendStats()
 		queuePeak, burst := sess.QueueStats()
 		logger.Log(ctx, level(), "session disconnected", "addr", sess.RemoteAddr(),
@@ -934,10 +972,11 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 		}()
 	}
 
-	r := bufio.NewReader(conn)
+	r := bufio.NewReader(countingReader{conn})
 	if sess.codec != nil {
 		if err := sess.codec.Start(sess); err != nil {
-			logger.Warn("session codec start failed", "addr", sess.RemoteAddr(), "error", err)
+			logger.Warn("session codec start failed", "addr", sess.RemoteAddr(), "err", err)
+			reason = metrics.DisconnectCodecStart
 			return
 		}
 	}
@@ -957,11 +996,18 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 			p, err = proto.Read(r, recvRoll, recvSum)
 		}
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				logger.Warn("session read error", "addr", sess.RemoteAddr(), "error", err)
+			if errors.Is(err, io.EOF) {
+				reason = metrics.DisconnectClientClosed
+			} else {
+				reason = metrics.DisconnectReadError
+				if ctx.Err() != nil {
+					reason = metrics.DisconnectShutdown
+				}
+				logger.Warn("session read error", "addr", sess.RemoteAddr(), "err", err)
 			}
 			return
 		}
+		metrics.PacketIn(p.Opcode)
 
 		if !announced {
 			quiet = s.Quiet != nil && s.Quiet(p.Opcode)
@@ -972,11 +1018,26 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 		}
 		if err := s.dispatch(ctx, sess, p, logger); err != nil {
 			if errors.Is(err, ErrEndSession) {
+				reason = metrics.DisconnectEnded
 				logger.Debug("session ended by its handler", "addr", sess.RemoteAddr())
 				return
 			}
-			logger.Warn("handler error, closing session", "addr", sess.RemoteAddr(), "error", err)
+			reason = metrics.DisconnectHandlerError
+			if errors.Is(err, ErrHandlerPanic) {
+				reason = metrics.DisconnectPanic
+			}
+			logger.Warn("handler error, closing session", "addr", sess.RemoteAddr(), "opcode", fmt.Sprintf("0x%04x", p.Opcode), "err", err)
 			return
 		}
 	}
+}
+
+// countingReader counts the bytes a session reads off its socket
+// (opensro_gateway_bytes_total{dir="in"}): one atomic add per read syscall.
+type countingReader struct{ r io.Reader }
+
+func (c countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	metrics.BytesIn(n)
+	return n, err
 }

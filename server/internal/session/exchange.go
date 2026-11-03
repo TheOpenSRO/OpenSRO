@@ -75,6 +75,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
@@ -776,6 +777,7 @@ func (d *ExchangeDeps) approve(ctx context.Context, sess *gateway.Session) {
 		return
 	}
 	code = d.deal(ctx, id, parties)
+	metrics.Exchange(code == ExchangeOK)
 	if code != ExchangeOK {
 		sendExchange(sess, OpExchangeApproveResult, exchangeResult(code))
 		d.close(id, code)
@@ -926,7 +928,7 @@ func (d *ExchangeDeps) deal(ctx context.Context, id uint32, p [2]trade.Party) ui
 		// says which (round 743's review, F2).
 		done, lerr := txn.For(d.Chars, d.Inv).Applied(context.WithoutCancel(ctx), exchangeLedgerKey(id))
 		slog.Warn("exchange: the deal failed", "session", id, "a", p[0].CharacterID, "b", p[1].CharacterID,
-			"applied", lerr == nil && done, "error", err)
+			"applied", lerr == nil && done, "err", err)
 		if lerr == nil && done {
 			return ExchangeOK
 		}

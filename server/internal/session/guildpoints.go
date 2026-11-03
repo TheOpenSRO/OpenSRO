@@ -111,7 +111,7 @@ func (s *GuildPointSkills) AddSkillExp(ctx context.Context, characterID int64, s
 	guildID, gerr := s.guilds.GuildIDOf(ctx, characterID)
 	if gerr != nil {
 		if !errors.Is(gerr, guild.ErrNotInGuild) {
-			slog.Error("guild points: looking up the earner's guild", "character_id", characterID, "error", gerr)
+			slog.Error("guild points: looking up the earner's guild", "character_id", characterID, "err", gerr)
 		}
 		return gained, total, err
 	}
@@ -154,7 +154,7 @@ func (s *GuildPointSkills) FlushPending(ctx context.Context, characterID int64) 
 	guildID, err := s.guilds.GuildIDOf(ctx, characterID)
 	if err != nil {
 		if !errors.Is(err, guild.ErrNotInGuild) {
-			slog.Error("guild points: looking up the leaver's guild", "character_id", characterID, "error", err)
+			slog.Error("guild points: looking up the leaver's guild", "character_id", characterID, "err", err)
 		}
 		return
 	}
@@ -203,7 +203,7 @@ func (s *GuildPointSkills) request(ctx context.Context, guildID, characterID int
 	c, err := s.chars.GetByID(ctx, characterID)
 	if err != nil {
 		slog.Error("guild points not credited: looking up the earner", "character_id", characterID,
-			"guild_id", guildID, "points", points, "error", err)
+			"guild_id", guildID, "points", points, "err", err)
 		return
 	}
 	if c.HP <= 0 {
@@ -215,7 +215,7 @@ func (s *GuildPointSkills) request(ctx context.Context, guildID, characterID int
 	}
 	if err := s.guilds.AddPoints(ctx, guildID, characterID, points); err != nil {
 		slog.Error("guild points not credited", "character_id", characterID,
-			"guild_id", guildID, "points", points, "error", err)
+			"guild_id", guildID, "points", points, "err", err)
 		return
 	}
 	// Round 821: the guild's GP and the member's donation to the members in

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/spawn"
@@ -38,6 +39,9 @@ import (
 // engine's hive tick period is unread; 250 ms keeps a 1-3 s window's hatch
 // within a quarter second of its time. Round 656's loop checked once a second.
 const nestPassPeriod = 250 * time.Millisecond
+
+// loopNest is the nest pass's opensro_loop_* children (round 858).
+var loopNest = metrics.NewLoop("nest", nestPassPeriod)
 
 // nestSummaryPeriod is how often a large scheduler logs its counts. OURS.
 const nestSummaryPeriod = time.Minute
@@ -226,7 +230,9 @@ func (s *respawnScheduler) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			start := time.Now()
 			s.check(now)
+			loopNest.Tick(start)
 			if s.quiet && now.Sub(lastSummary) >= nestSummaryPeriod {
 				lastSummary = now
 				hatched, died := s.sched.Counts()

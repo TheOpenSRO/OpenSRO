@@ -340,7 +340,7 @@ func (a *alchemist) handle(ctx context.Context, sess *gateway.Session, p *proto.
 		return alchemySend(sess, job.op, &AlchemyResult{OK: true, Cancelled: true})
 	}
 	refuse := func(code uint16, why string) error {
-		a.debug("alchemy refused", "character", charID, "op", req.Op, "code", code, "why", why)
+		a.debug("alchemy refused", "character_id", charID, "op", req.Op, "code", code, "why", why)
 		return alchemySend(sess, req.Op, &AlchemyResult{Code: code})
 	}
 	a.mu.Lock()
@@ -349,7 +349,7 @@ func (a *alchemist) handle(ctx context.Context, sess *gateway.Session, p *proto.
 	if busy {
 		// OURS: the client refuses a second start while busy; the server
 		// answers nothing to one that arrives anyway.
-		a.debug("alchemy: a second start while one is pending", "character", charID)
+		a.debug("alchemy: a second start while one is pending", "character_id", charID)
 		return nil
 	}
 	if a.Inv == nil || a.Items == nil {
@@ -525,16 +525,16 @@ func (a *alchemist) run(sess *gateway.Session, charID int64, job *alchemyJob) {
 	// review F3): a logout in the wait must not destroy or spend anything
 	// afterwards. OURS: retail stops the operation with the character.
 	if ent, ok := a.Hub.EntityBySession(sess.ID()); !ok || ent.CharacterID != charID {
-		a.debug("alchemy dropped: the character left the world while it waited", "character", charID)
+		a.debug("alchemy dropped: the character left the world while it waited", "character_id", charID)
 		return
 	}
 	ctx := context.Background()
 	refuse := func(code int, why string) {
-		a.debug("alchemy refused at the attempt", "character", charID, "op", job.op, "code", code, "why", why)
+		a.debug("alchemy refused at the attempt", "character_id", charID, "op", job.op, "code", code, "why", why)
 		_ = alchemySend(sess, job.op, &AlchemyResult{Code: uint16(code)})
 	}
 	cancel := func(why string) {
-		a.debug("alchemy interrupted", "character", charID, "why", why)
+		a.debug("alchemy interrupted", "character_id", charID, "why", why)
 		_ = alchemySend(sess, job.op, &AlchemyResult{OK: true, Cancelled: true})
 	}
 	// The items must still be where they were loaded (OURS: retail holds
@@ -583,7 +583,7 @@ func (a *alchemist) run(sess *gateway.Session, charID int64, job *alchemyJob) {
 		if powder != nil {
 			spend = append(spend, powder)
 		}
-		a.debug("alchemy reinforce", "character", charID, "rate", r.Rate, "success", r.Success, "destroyed", r.Destroyed, "plus", t.OptLevel)
+		a.debug("alchemy reinforce", "character_id", charID, "rate", r.Rate, "success", r.Success, "destroyed", r.Destroyed, "plus", t.OptLevel)
 	case AlchemyOpMagic, AlchemyOpAttr:
 		s := alchemy.Stone{Param1: int(stuff.item.Param1), Rate: int(stuff.item.ReinforceRate3),
 			Desc1: stuff.item.Desc1, Desc4: stuff.item.Desc4, Assimilation: int(stuff.slot.OptLevel)}
@@ -593,7 +593,7 @@ func (a *alchemist) run(sess *gateway.Session, charID int64, job *alchemyJob) {
 		} else {
 			r = alchemy.AttrStone(t, s, 0, a.Options, alchemyRand)
 		}
-		a.debug("alchemy stone", "character", charID, "op", job.op, "rate", r.Rate, "code", r.Code, "before", r.Before, "after", r.After, "assimilated", r.Assimilated)
+		a.debug("alchemy stone", "character_id", charID, "op", job.op, "rate", r.Rate, "code", r.Code, "before", r.Before, "after", r.After, "assimilated", r.Assimilated)
 		if r.Code == alchemy.ErrEnchantFailed {
 			// The lost roll spends the stone and leaves the item.
 			if err := a.spend(ctx, charID, job, []*alchemyLoaded{stuff}); err != nil {

@@ -134,7 +134,7 @@ func startRetail(ctx context.Context, f *retailFlags, d retailDeps, logger *slog
 	for _, s := range []*gateway.Server{gw, ag} {
 		go func(s *gateway.Server) {
 			if err := s.ListenAndServe(ctx); err != nil {
-				fail("retail listener exited", "addr", s.Addr, "error", err)
+				fail("retail listener exited", "addr", s.Addr, "err", err)
 			}
 		}(s)
 	}

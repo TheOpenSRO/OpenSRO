@@ -12,6 +12,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gm"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
@@ -258,6 +259,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 			}
 		}
 		out := deps.Run(ctx, actor, req.Line)
+		// Round 858: every GM command run is counted (gm.Deps.Run logs it,
+		// "gm command" with its verb).
+		metrics.GMCommand(gmMetricVerb(req.Line), out.Refused)
 		if gmAfterRunHook != nil {
 			gmAfterRunHook()
 		}

@@ -16,6 +16,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
@@ -348,6 +349,9 @@ func pvpApply(ctx context.Context, d combatDeps, attacker world.Entity, t pvpTar
 		hp, _, err := d.chars.ApplyDamage(ctx, t.char, out.total)
 		if err == nil {
 			out.hp = hp
+			if out.total > 0 {
+				metrics.Damage("player", "pvp", out.total)
+			}
 		}
 		if c, err := d.chars.GetByID(ctx, t.char); err == nil && c != nil {
 			out.maxHP = c.MaxHP()

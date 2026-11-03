@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
 
@@ -1163,6 +1164,7 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 	h.byID[id] = m
 	h.facing[id] = m.Heading
 	h.fileLocked(m, CellOf(zone, x, z))
+	metrics.MonsterSpawned()
 	return m
 }
 
@@ -1240,6 +1242,13 @@ func (h *Hub) ApplyDamageFrom(id, attacker int64, amount int) (monster Monster, 
 		h.hits[id] = list
 	}
 
+	if amount > 0 {
+		if attacker != 0 {
+			metrics.Damage("monster", "attack", amount)
+		} else {
+			metrics.Damage("monster", "effect", amount)
+		}
+	}
 	m.HP -= amount
 	if m.HP < 0 {
 		m.HP = 0
@@ -1257,6 +1266,7 @@ func (h *Hub) ApplyDamageFrom(id, attacker int64, amount int) (monster Monster, 
 		}
 		hits = h.hits[id]
 		delete(h.hits, id)
+		metrics.MonsterKilled()
 		return result, true, true, hits
 	}
 	return result, false, true, nil
@@ -1292,6 +1302,7 @@ func (h *Hub) Remove(id int64) (Monster, bool) {
 	if h.deathLog {
 		h.deaths = append(h.deaths, id)
 	}
+	metrics.MonsterRemoved()
 	return result, true
 }
 

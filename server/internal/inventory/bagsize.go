@@ -171,7 +171,7 @@ func (h *heldReach) raise(ctx context.Context, store HighestSlotter, owner int64
 	}
 	if _, seen := h.logged.LoadOrStore(key{owner, n, raised}, true); !seen && h.logger != nil {
 		h.logger.Warn("bag size below a held slot: the items past it stay reachable, nothing new is placed there",
-			"character", owner, "size", n, "highestSlot", hi, "reach", raised)
+			"character_id", owner, "size", n, "highestSlot", hi, "reach", raised)
 	}
 	return raised
 }

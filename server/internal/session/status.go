@@ -696,7 +696,7 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 	out, err := finishKill(ctx, d, ct.id, monsterStrikeOutcome{damage: dmg})
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Warn("status: a character's death by a tick", "character", ct.id, "err", err)
+			s.logger.Warn("status: a character's death by a tick", "character_id", ct.id, "err", err)
 		}
 		return true
 	}
@@ -854,7 +854,7 @@ func broadcastStatus(hub *world.Hub, zone string, msg *ObjectStatus) {
 	l := statusFX.logger
 	statusFX.mu.Unlock()
 	if l != nil && msg.OwnerKind == OwnerCharacter {
-		l.Info("status sent", "character", msg.OwnerID, "mask", fmt.Sprintf("%#x", msg.Mask))
+		l.Info("status sent", "character_id", msg.OwnerID, "mask", fmt.Sprintf("%#x", msg.Mask))
 	}
 	if msg.OwnerKind == OwnerCharacter {
 		sendAboutOwner(zoneOf(hub, msg.OwnerID), msg.OwnerID, OpObjectStatus, msg.Encode())
@@ -953,7 +953,9 @@ func RunStatusEffects(ctx context.Context, logger *slog.Logger, deps RegenDeps, 
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
+			start := time.Now()
 			statusFX.step(ctx, now)
+			loopStatus.Tick(start)
 		}
 	}
 }

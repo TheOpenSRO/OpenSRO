@@ -20,6 +20,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/guild"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
@@ -390,6 +391,8 @@ func (d *LobbyDeps) create(ctx context.Context, accountID int64, req *LobbyReque
 	}
 	d.giveDefaults(ctx, created, model.Country)
 	r.OK = true
+	metrics.CharacterOp("create")
+	d.logger().Info("lobby: character created", "character", created.Name, "character_id", created.ID, "account_id", accountID)
 	return r
 }
 
@@ -546,9 +549,12 @@ func (d *LobbyDeps) remove(ctx context.Context, accountID int64, req *LobbyReque
 	case errors.Is(err, character.ErrNotFound):
 		r.Code = LobbyErrNotOnAccount
 	case err != nil:
+		d.logger().Warn("lobby: delete", "character", c.Name, "err", err)
 		r.Code = LobbyErrRefused
 	default:
 		r.OK = true
+		metrics.CharacterOp("delete")
+		d.logger().Info("lobby: character marked for deletion", "character", c.Name, "character_id", c.ID, "account_id", accountID)
 	}
 	return r
 }
@@ -573,9 +579,12 @@ func (d *LobbyDeps) restore(ctx context.Context, accountID int64, req *LobbyRequ
 	case errors.Is(err, character.ErrNotFound):
 		r.Code = LobbyErrNotOnAccount
 	case err != nil:
+		d.logger().Warn("lobby: restore", "character", c.Name, "err", err)
 		r.Code = LobbyErrRefused
 	default:
 		r.OK = true
+		metrics.CharacterOp("restore")
+		d.logger().Info("lobby: character restored", "character", c.Name, "character_id", c.ID, "account_id", accountID)
 	}
 	return r
 }

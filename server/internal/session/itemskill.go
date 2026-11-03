@@ -237,7 +237,7 @@ func useSkillItem(ctx context.Context, sess *gateway.Session, fail func(string) 
 	lasts := usu1Duration(ref.DuraMs)
 	started := startSkillJobLocked(ctx, hub, ref, lasts, characterID, it.ID, now)
 	l.Unlock()
-	slog.Info("skill item: bound skill buff", "item", it.ID, "code", it.CodeName, "character", characterID,
+	slog.Info("skill item: bound skill buff", "item", it.ID, "code", it.CodeName, "character_id", characterID,
 		"skill", ref.ID, "seconds", int64(lasts/time.Second), "started", started)
 	if it.CooltimeMs > 0 {
 		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
@@ -263,7 +263,7 @@ func startSkillJobLocked(ctx context.Context, hub *world.Hub, ref *refdata.Skill
 		pushOwnerStats(characterID)
 	}
 	if err := jobStore().Put(ctx, skilljob.Job{CharacterID: characterID, SkillID: ref.ID, ItemID: itemID, Until: now.Add(lasts)}); err != nil {
-		slog.Warn("skill job: not recorded", "character", characterID, "skill", ref.ID, "err", err)
+		slog.Warn("skill job: not recorded", "character_id", characterID, "skill", ref.ID, "err", err)
 	}
 	return true
 }
@@ -306,13 +306,13 @@ func restoreSkillJobs(ctx context.Context, characterID int64, now time.Time) int
 		// Started where the job's end puts it, so its remaining time is the
 		// job's.
 		if _, _, refused, _ := buffBooks.Start(characterID, spec, j.Until.Add(-full)); refused != buff.NotRefused {
-			slog.Info("skill job: not restored", "character", characterID, "skill", j.SkillID, "refused", refused)
+			slog.Info("skill job: not restored", "character_id", characterID, "skill", j.SkillID, "refused", refused)
 			continue
 		}
 		n++
 	}
 	if n > 0 {
-		slog.Info("skill job: restored at entry", "character", characterID, "buffs", n)
+		slog.Info("skill job: restored at entry", "character_id", characterID, "buffs", n)
 	}
 	return n
 }

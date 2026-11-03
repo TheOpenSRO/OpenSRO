@@ -480,7 +480,7 @@ func recordPoint(ctx context.Context, chars character.Store, hub *world.Hub, cha
 	}
 	p := character.SavedPoint{Region: place.Region, X: place.X, Y: place.Y, Z: place.Z, WorldID: teleport.MainWorld}
 	if err := rs.SetReturnPoint(ctx, characterID, kind, p); err != nil {
-		slog.Error("recording a return point failed", "character_id", characterID, "kind", kind, "error", err)
+		slog.Error("recording a return point failed", "character_id", characterID, "kind", kind, "err", err)
 	}
 }
 

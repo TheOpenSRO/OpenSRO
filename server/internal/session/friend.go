@@ -438,7 +438,7 @@ func friendAfterEnter(ctx context.Context, sess *gateway.Session, owned *charact
 	}
 	list, err := rt.friends.ListFriends(ctx, owned.ID)
 	if err != nil {
-		slog.Warn("friend: loading the list failed", "character", owned.ID, "err", err)
+		slog.Warn("friend: loading the list failed", "character_id", owned.ID, "err", err)
 		return
 	}
 	if len(list) > friend.MaxFriends {

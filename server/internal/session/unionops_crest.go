@@ -59,7 +59,7 @@ func useUnionCrest(ctx context.Context, sess *gateway.Session, inv inventory.Sto
 		return sendUseResult(sess, &UseItemResult{Error: "using failed", Remaining: int32(have)})
 	}
 	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
-		slog.Warn("union crest: the item was not taken", "character", characterID, "err", err)
+		slog.Warn("union crest: the item was not taken", "character_id", characterID, "err", err)
 	}
 	slog.Info("union crest", "union", u.ID, "rev", rev)
 	unionCrestChanged(ctx, d.hub, u, rev)

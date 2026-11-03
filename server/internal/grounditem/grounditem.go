@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 )
 
 // PickRange is how close a player must stand to pick an item up, in world
@@ -347,7 +348,15 @@ func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z
 		X: x, Y: y, Z: z, OwnerID: ownerID, Bound: r.Bound, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(r.DecayTimeMs)),
 		noPick: r.NoPick, ownerOnly: r.OwnerOnly, Expendable: r.Expendable, Serial: serial}
 	h.items[it.ID] = it
+	metrics.ItemDropped(gold)
 	return *it
+}
+
+// Count is how many stacks lie on the ground now (opensro_world_entities).
+func (h *Hub) Count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.items)
 }
 
 // DropInstance is Drop for a stack that carries its instance (round 801: a
@@ -506,6 +515,9 @@ func (h *Hub) Expire() []Item {
 		}
 	}
 	sortByID(out)
+	if len(out) > 0 {
+		metrics.ItemsExpired(len(out))
+	}
 	return out
 }
 

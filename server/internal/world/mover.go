@@ -7,6 +7,7 @@ import (
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 )
 
 // Moving by destination (round 749, docs/protocol/crowd_scale.md C3).
@@ -397,6 +398,7 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 	}
 	if cur := e.Move; cur != nil && !o.Heading && !cur.Heading {
 		if _, arrived := cur.At(now); !arrived && math.Hypot(o.Dest.X-cur.Dest.X, o.Dest.Z-cur.Dest.Z) <= NearDestination {
+			metrics.MoveRefused("near")
 			return MoveResult{}, MoveRefusedNear
 		}
 	}
@@ -432,6 +434,7 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 	var r MoveResult
 	h.refileLocked(e, now, &r)
 	r.Entity = *e
+	metrics.MoveLeg(o.Heading)
 	return r, MoveAccepted
 }
 
@@ -536,6 +539,7 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 		h.settleLocked(e, now)
 		if wall && e.Move == nil {
 			ended = append(ended, e) // stopped at the wall (round 812)
+			metrics.MoveLegEnd("wall")
 		}
 		out.Moved = append(out.Moved, outLocked(e, now))
 		if m := e.Move; m != nil {
@@ -545,6 +549,7 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 			if m.Heading && now.Sub(m.Start) >= HeadingRunLimit {
 				h.endMoveLocked(e)
 				ended = append(ended, e)
+				metrics.MoveLegEnd("run_limit")
 			}
 		}
 		if cell := CellOf(e.Zone, e.Pos); cell != e.Cell {

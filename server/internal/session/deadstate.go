@@ -14,6 +14,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
@@ -379,6 +380,9 @@ func deadCharacter(hub *world.Hub, characterID int64) bool {
 // leveldata.DeathPenaltyExp before the second's compare-and-swap failed here.
 func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 	changed := deps.hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, now)
+	if changed {
+		metrics.PlayerDeath()
+	}
 	if deps.potions != nil {
 		deps.potions.drop(characterID)
 	}
@@ -490,6 +494,7 @@ func reviveWith(ctx context.Context, chars character.Store, mp *mana.Tracker, hu
 		return stillDead(err)
 	}
 	c.HP = hp
+	metrics.PlayerRevive()
 	// GObjPC::Revive stands the character (SetMotionState(STAND) at
 	// 0x4df427; round 607, motion.go).
 	motions.stand(characterID, time.Now())

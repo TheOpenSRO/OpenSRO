@@ -55,7 +55,7 @@ func pruneTakeLog(ctx context.Context, logger *slog.Logger, st mall.Store) {
 	for {
 		before := time.Now().AddDate(0, 0, -mall.TakeLogDays)
 		if n, err := st.PruneTakeLog(ctx, before); err != nil {
-			logger.Warn("pruning the chest's take log", "error", err)
+			logger.Warn("pruning the chest's take log", "err", err)
 		} else if n > 0 {
 			logger.Info("pruned the chest's take log", "rows", n)
 		}

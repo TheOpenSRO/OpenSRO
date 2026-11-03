@@ -11,6 +11,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/duel"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
@@ -432,6 +433,9 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	hp, _, err := chars.ApplyDamage(ctx, opponent.CharacterID, damage)
 	if err != nil {
 		return fmt.Errorf("duel: applying damage: %w", err)
+	}
+	if damage > 0 {
+		metrics.Damage("player", "duel", damage)
 	}
 	// A blow that lands stands a sitting opponent up (round 607, motion.go).
 	standOnHit(hub, opponent.CharacterID, damage)

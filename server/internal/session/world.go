@@ -16,6 +16,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gm"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
@@ -1514,6 +1515,11 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// A character leaving dead is saved at its return point (round 665,
 		// savedPlace).
 		savePosition(chars, sess, savedPlace(chars, sess, left))
+		{
+			username, _ := AuthenticatedUsername(sess)
+			slog.Info("left world", "character", left.Name, "character_id", left.CharacterID, "account", username,
+				"zone", zoneLabelOf(left))
+		}
 		// The players in view drop it: retail's 0x3016 (round 737,
 		// playerview.go; CMsgBlock slot 3 -> FUN_00534050), where OpenSRO
 		// sent its own OpEntityLeft.
@@ -1636,7 +1642,7 @@ func handleStart(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Character, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) error {
 	if onEnter != nil {
 		if err := onEnter(ctx, owned); err != nil {
-			log.Printf("session: enter hook for %q: %v", owned.Name, err)
+			slog.Warn("enter hook failed", "character", owned.Name, "err", err)
 		}
 	}
 	// Round 838 (servicescroll.go, OURS): the plate colours cached, and a
@@ -1808,6 +1814,10 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	serviceAfterEnter(sess, owned)
 	// Round 838: its own title (retail's 0x3013 HwanLevel; OURS 0x30DF).
 	titleAfterEnter(sess, owned.ID)
+	metrics.WorldEntry()
+	username, _ := AuthenticatedUsername(sess)
+	slog.Info("entered world", "character", owned.Name, "character_id", owned.ID, "account", username,
+		"zone", zoneLabelOf(arrived), "level", owned.Level)
 	return nil
 }
 
@@ -1834,18 +1844,22 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	username, _ := AuthenticatedUsername(sess)
 	if !zoneChangeAllowed(username) {
 		slog.Warn("zone change refused: not a GM account", "account", username, "bytes", len(p.Data))
+		metrics.ZoneChangeRefused("not_gm")
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: zoneChangeRefusal}).Encode()})
 	}
 	req, err := DecodeChangeZoneRequest(p.Data)
 	if err != nil {
+		metrics.ZoneChangeRefused("malformed")
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "malformed request"}).Encode()})
 	}
 	if req.Zone == "" {
+		metrics.ZoneChangeRefused("malformed")
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "zone required"}).Encode()})
 	}
 
 	current, ok := hub.EntityBySession(sess.ID())
 	if !ok {
+		metrics.ZoneChangeRefused("not_in_world")
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
 	// A dead character does not change zone (round 549, deadstate.go). OWN
@@ -1855,10 +1869,12 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// would put a held die pose at the new zone's spawn. Refusing keeps the
 	// two in step until the revive.
 	if current.Life == world.LifeDead {
+		metrics.ZoneChangeRefused("dead")
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: deadRefusal}).Encode()})
 	}
 	bucket, pos, frame, oneWorld := arrival(req.Zone)
 	if !oneWorld && req.Zone == current.Zone {
+		metrics.ZoneChangeRefused("same_zone")
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
 	pos = changeZoneLanding(req, pos, zoneSpotGM(username))
@@ -1951,6 +1967,12 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 	data, _ := result.EncodeFitting()
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data}); err != nil {
 		return true, err
+	}
+	metrics.Teleport(via)
+	{
+		username, _ := AuthenticatedUsername(sess)
+		slog.Info("warp", "character", old.Name, "character_id", old.CharacterID, "account", username,
+			"via", via, "kind", metrics.TeleportKind(via), "from", zoneLabelOf(old), "zone", zone)
 	}
 
 	// The window it left drops it (0x3016), even a window it lands in view
@@ -2061,6 +2083,7 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// or in an established trade, may not move by claims either (as by
 	// 0x7021, destmove.go); its client is put back where the server has it.
 	if !trustPositions.Load() && (!statusFX.characterCanMove(self.CharacterID) || tradeEstablishedOn(hub, self.CharacterID)) {
+		metrics.MoveClaim("refused_state")
 		correctMover(sess, hub)
 		return nil
 	}
@@ -2070,12 +2093,18 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}
-	traceMove("move: claim", "character", self.CharacterID, "stopped", req.Stopped, "relocated", req.Relocated,
+	traceMove("move: claim", "character_id", self.CharacterID, "stopped", req.Stopped, "relocated", req.Relocated,
 		"x", pos.X, "y", pos.Y, "z", pos.Z, "taken", admitted, "server_x", moved.Entity.Pos.X, "server_z", moved.Entity.Pos.Z)
 	if !admitted {
+		if bound.Unreached {
+			metrics.MoveClaim("refused_wall")
+		} else {
+			metrics.MoveClaim("refused")
+		}
 		correctMover(sess, hub)
 		return nil
 	}
+	metrics.MoveClaim("taken")
 	entity := moved.Entity
 	motions.walking(entity.CharacterID, now)
 	// An older client's walked position is the player's own move, and cancels

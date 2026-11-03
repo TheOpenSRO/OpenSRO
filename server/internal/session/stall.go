@@ -65,6 +65,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
@@ -415,7 +416,8 @@ func (d *StallDeps) open(ctx context.Context, sess *gateway.Session, data []byte
 	}
 	sendAboutPlayerPacket(d.Hub, me.CharacterID, true, OpStallAppear, EncodeStallAppear(uint32(me.CharacterID), name, uint32(deco)))
 	fail(1)
-	slog.Info("stall: opened", "character", me.CharacterID, "name", name, "decoration", deco)
+	metrics.StallEvent("opened")
+	slog.Info("stall: opened", "character_id", me.CharacterID, "name", name, "decoration", deco)
 }
 
 // closeReq is 0x70B2 (s:0x516130).
@@ -449,7 +451,8 @@ func (d *StallDeps) closeStall(owner int64, reason uint16) {
 			sendStall(v.Session, OpStallGone, EncodeStallGone(uint32(owner), reason))
 		}
 	}
-	slog.Info("stall: closed", "character", owner, "reason", fmt.Sprintf("0x%x", reason), "visitors", len(s.Visitors))
+	metrics.StallEvent("closed")
+	slog.Info("stall: closed", "character_id", owner, "reason", fmt.Sprintf("0x%x", reason), "visitors", len(s.Visitors))
 }
 
 // stallEnd is the close paths of a leaving character (s:0x4def00 warp,
@@ -543,7 +546,7 @@ func (d *StallDeps) leaveReq(sess *gateway.Session) {
 	}
 	if d.Stalls.Mode(me.CharacterID) != stall.ModeVisitor {
 		sendStall(sess, OpStallLeaveResult, stallResult(StallErrNotVisitor))
-		slog.Warn("stall: a leave outside a stall; disconnecting, as the original does", "character", me.CharacterID)
+		slog.Warn("stall: a leave outside a stall; disconnecting, as the original does", "character_id", me.CharacterID)
 		go func() {
 			time.Sleep(200 * time.Millisecond)
 			_ = sess.Close()
@@ -842,6 +845,7 @@ func (d *StallDeps) buy(ctx context.Context, sess *gateway.Session, data []byte)
 		members = append(members, stall.Member{CharacterID: me.CharacterID, Session: sess})
 	}
 	toMembers(members, OpStallEvent, EncodeStallSold(ctx, d.Items, slot, d.buyerName(ctx, me), after))
+	metrics.StallEvent("sold")
 	slog.Info("stall: sold", "owner", owner, "buyer", me.CharacterID, "slot", slot, "item", l.ItemID,
 		"count", l.Quantity, "price", l.Price, "to", toSlot)
 }
@@ -964,8 +968,9 @@ func (d *StallDeps) sellFor(ctx context.Context, owner, buyer int64, slot int, l
 	}
 	if err != nil {
 		done, lerr := txn.For(d.Chars, d.Inv, d.Sales).Applied(context.WithoutCancel(ctx), key)
+		metrics.StallEvent("sale_failed")
 		slog.Warn("stall: the sale failed", "owner", owner, "buyer", buyer, "slot", slot,
-			"applied", lerr == nil && done, "error", err)
+			"applied", lerr == nil && done, "err", err)
 		if lerr == nil && done {
 			return 1, toSlot
 		}

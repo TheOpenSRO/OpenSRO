@@ -288,7 +288,7 @@ func returnPointFor(ctx context.Context, chars character.Store, characterID int6
 		c, err = chars.GetByID(ctx, characterID)
 		if err != nil || c == nil {
 			slog.Error("return point: reading the character failed; its race is unknown",
-				"character_id", characterID, "error", err)
+				"character_id", characterID, "err", err)
 		} else {
 			readable = true
 		}
@@ -301,7 +301,7 @@ func returnPointFor(ctx context.Context, chars character.Store, characterID int6
 			switch {
 			case err != nil:
 				slog.Error("return point: reading the designated gate failed",
-					"character_id", characterID, "error", err)
+					"character_id", characterID, "err", err)
 			case id != 0:
 				p, ok := network.PointByObject(int(id))
 				if ok {

@@ -67,7 +67,7 @@ func AutoPotionHandler(store character.AutoPotionStore, hub *world.Hub, logger *
 		}
 		settings := append([]byte(nil), p.Data[1:1+character.AutoPotionSize]...)
 		if err := store.SetAutoPotion(ctx, e.CharacterID, settings); err != nil && logger != nil {
-			logger.Warn("auto potion: saving the settings failed", "character", e.CharacterID, "err", err)
+			logger.Warn("auto potion: saving the settings failed", "character_id", e.CharacterID, "err", err)
 		}
 		return nil
 	}

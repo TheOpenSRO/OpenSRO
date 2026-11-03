@@ -673,18 +673,18 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	}
 	for _, x := range plan.extras {
 		keeper.putExtra(characterID, x, now, true)
-		slog.Info("composite: grant", "item", it.ID, "character", characterID, "entry", x.fourCC, "ref", x.refID,
+		slog.Info("composite: grant", "item", it.ID, "character_id", characterID, "entry", x.fourCC, "ref", x.refID,
 			"seconds", int64(x.until.Sub(now)/time.Second), "count", x.max)
 	}
 	// USU1: the skill job's buff, started on the user's own book and told to
 	// its zone as any buff is (round 638 review).
 	for i, ref := range plan.skills {
 		started := startUsu1Buff(ctx, hub, ref, plan.skillFor[i], characterID, it.ID, now)
-		slog.Info("composite: USU1 skill buff", "item", it.ID, "character", characterID, "skill", ref.ID,
+		slog.Info("composite: USU1 skill buff", "item", it.ID, "character_id", characterID, "skill", ref.ID,
 			"seconds", int64(plan.skillFor[i]/time.Second), "started", started)
 	}
 	if len(plan.skipped) > 0 {
-		slog.Info("composite: entries not modelled, skipped", "item", it.ID, "character", characterID, "entries", plan.skipped)
+		slog.Info("composite: entries not modelled, skipped", "item", it.ID, "character_id", characterID, "entries", plan.skipped)
 	}
 	if cooltime {
 		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)

@@ -38,7 +38,9 @@ func RunRegen(ctx context.Context, hub *world.Hub, chars character.Store, deps R
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			start := time.Now()
 			regenPass(ctx, hub, chars, deps, logger, now, false)
+			loopRegen.Tick(start)
 		}
 	}
 }
@@ -175,7 +177,7 @@ func regenApply(ctx context.Context, hub *world.Hub, e world.Entity, chars chara
 	if hp > 0 && c.HP > 0 && c.HP < maxHP {
 		if newHP, err = chars.Heal(ctx, c.ID, hp, maxHP); err != nil {
 			if logger != nil {
-				logger.Warn("regen: healing failed", "character", c.ID, "err", err)
+				logger.Warn("regen: healing failed", "character_id", c.ID, "err", err)
 			}
 			return nil
 		}
@@ -186,7 +188,7 @@ func regenApply(ctx context.Context, hub *world.Hub, e world.Entity, chars chara
 		changed = true
 	}
 	if logger != nil {
-		logger.Debug("regen", "character", c.ID, "rate", rate, "hp", newHP, "maxHP", maxHP, "mp", newMP, "maxMP", maxMP)
+		logger.Debug("regen", "character_id", c.ID, "rate", rate, "hp", newHP, "maxHP", maxHP, "mp", newMP, "maxMP", maxMP)
 	}
 	if !changed {
 		return nil

@@ -677,18 +677,18 @@ func (d *StallDeps) netBuy(ctx context.Context, sess *gateway.Session, data []by
 func (d *StallDeps) netEventItem(ctx context.Context, characterID int64) {
 	ref, err := gachaItemByCode(ctx, d.Items, StallNetEventItem)
 	if err != nil || ref == nil {
-		slog.Info("stall network: the event item is not in the item table", "character", characterID, "err", err)
+		slog.Info("stall network: the event item is not in the item table", "character_id", characterID, "err", err)
 		return
 	}
 	if len(stallEmptySlots(ctx, d.Inv, characterID)) == 0 {
-		slog.Info("stall network: the event item not given, the bag is full", "character", characterID)
+		slog.Info("stall network: the event item not given, the bag is full", "character_id", characterID)
 		return
 	}
 	if err := d.Inv.AddItem(ctx, characterID, ref.ID, 1); err != nil {
-		slog.Info("stall network: the event item not given", "character", characterID, "err", err)
+		slog.Info("stall network: the event item not given", "character_id", characterID, "err", err)
 		return
 	}
-	slog.Info("stall network: the event item given", "character", characterID)
+	slog.Info("stall network: the event item given", "character_id", characterID)
 	if e, ok := d.Hub.EntityByCharacterID(characterID); ok && e.Session != nil {
 		if slots, err := d.Inv.List(ctx, characterID); err == nil {
 			sendStall(e.Session, OpInventoryListResult, bagListResult(ctx, d.Inv, characterID, slots, d.Items).Encode())

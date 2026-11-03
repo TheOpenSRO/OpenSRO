@@ -1,0 +1,760 @@
+{
+  "uid": "opensro-logs",
+  "title": "OpenSRO logs",
+  "description": "The game server's log in Loki (round 858): error and warning rates by message, the live log filtered by character, account and zone, logins, warps and GM commands.",
+  "tags": [
+    "opensro"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "selector",
+        "label": "Stream",
+        "type": "textbox",
+        "query": "{job=\"opensro-server\"}",
+        "description": "The Loki stream selector Alloy's labels match.",
+        "current": {
+          "text": "{job=\"opensro-server\"}",
+          "value": "{job=\"opensro-server\"}"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "{job=\"opensro-server\"}",
+            "value": "{job=\"opensro-server\"}"
+          }
+        ]
+      },
+      {
+        "name": "character",
+        "label": "Character",
+        "type": "textbox",
+        "query": ".*",
+        "description": "A regex on the character= key (the name).",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ]
+      },
+      {
+        "name": "account",
+        "label": "Account",
+        "type": "textbox",
+        "query": ".*",
+        "description": "A regex on the account= key.",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ]
+      },
+      {
+        "name": "zone",
+        "label": "Zone",
+        "type": "textbox",
+        "query": ".*",
+        "description": "A regex on the zone= key.",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ]
+      },
+      {
+        "name": "level",
+        "label": "Level",
+        "type": "custom",
+        "query": "DEBUG,INFO,WARN,ERROR",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      },
+      {
+        "name": "search",
+        "label": "Search",
+        "type": "textbox",
+        "query": "",
+        "description": "A case-insensitive regex over the whole line.",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "iconColor": "purple",
+        "name": "Server restarts",
+        "expr": "changes(opensro_start_time_seconds{job=\"opensro-server\", instance=~\"$instance\"}[2m]) > 0",
+        "step": "60s",
+        "titleFormat": "server restarted",
+        "textFormat": ""
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "OpenSRO server",
+      "type": "link",
+      "url": "/d/opensro-server/opensro-server",
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Volume and errors",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Log lines by level",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (level) (count_over_time(${selector:raw} | logfmt | __error__=\"\" | character=~\"${character:raw}\" | account=~\"${account:raw}\" | zone=~\"${zone:raw}\" | level=~\"${level:regex}\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{level}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        }
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors and warnings by message",
+      "description": "The ten loudest ERROR/WARN messages (filters ignored).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "topk(10, sum by (msg) (count_over_time(${selector:raw} | logfmt | __error__=\"\" | level=~\"ERROR|WARN\" [$__auto])))",
+          "refId": "A",
+          "legendFormat": "{{msg}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        }
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "table",
+      "title": "Top ERROR/WARN messages over the range",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(25, sum by (level, msg) (count_over_time(${selector:raw} | logfmt | __error__=\"\" | level=~\"ERROR|WARN\" [$__range])))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "reduce",
+          "options": {
+            "reducers": [
+              "lastNotNull"
+            ],
+            "labelsToFields": true
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Field": true
+            },
+            "renameByName": {
+              "Last *": "count",
+              "Last": "count"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "count",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Live log",
+      "collapsed": false,
+      "id": 5,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "logs",
+      "title": "Server log (filtered)",
+      "description": "Filter with the variables above: character, account, zone, level, and a free-text search (case-insensitive regex).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "${selector:raw} | logfmt | __error__=\"\" | character=~\"${character:raw}\" | account=~\"${account:raw}\" | zone=~\"${zone:raw}\" | level=~\"${level:regex}\" |~ \"(?i)${search:raw}\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 16
+      }
+    },
+    {
+      "type": "row",
+      "title": "Logins, warps, GM",
+      "collapsed": false,
+      "id": 7,
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Logins by result",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (result) (count_over_time(${selector:raw} | logfmt | __error__=\"\" | msg=\"login\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Warps by kind",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (kind) (count_over_time(${selector:raw} | logfmt | __error__=\"\" | msg=\"warp\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 8,
+        "y": 35,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "GM commands by verb",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (verb) (count_over_time(${selector:raw} | logfmt | __error__=\"\" | msg=\"gm command\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{verb}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 16,
+        "y": 35,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Logins, world entries and exits",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "${selector:raw} | logfmt | __error__=\"\" | msg=~\"login|entered world|left world|lobby: .*\" | account=~\"${account:raw}\" | character=~\"${character:raw}\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 12,
+        "h": 10
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Warps and teleports",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "${selector:raw} | logfmt | __error__=\"\" | msg=~\"warp|teleport|teleport refused|walk-in teleport.*|scroll warp|zone change refused.*\" | account=~\"${account:raw}\" | character=~\"${character:raw}\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 12,
+        "y": 43,
+        "w": 12,
+        "h": 10
+      }
+    },
+    {
+      "type": "logs",
+      "title": "GM commands",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "${selector:raw} | logfmt | __error__=\"\" | msg=~\"gm command.*\" | account=~\"${account:raw}\" | character=~\"${character:raw}\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false
+      },
+      "id": 13,
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 12,
+        "h": 10
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Economy (mall, stalls, exchanges, gacha)",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "${selector:raw} | logfmt | __error__=\"\" | msg=~\"mall: .*|stall: .*|exchange: .*|gacha.*\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 10
+      }
+    }
+  ]
+}

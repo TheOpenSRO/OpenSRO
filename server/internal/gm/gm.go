@@ -426,7 +426,7 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
 	if d.Logger != nil {
-		d.Logger.Info("gm command", "account", actor.Account, "character", actor.Name,
+		d.Logger.Info("gm command", "account", actor.Account, "character", actor.Name, "character_id", actor.CharacterID, "verb", cmd,
 			"line", line, "refused", res.Refused, "reply", res.Text)
 	}
 	return res

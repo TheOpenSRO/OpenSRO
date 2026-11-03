@@ -2,9 +2,11 @@ package character
 
 import (
 	"context"
-	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 	"sort"
 	"sync"
+
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 )
 
 // MemStore is an in-memory Store, for tests and local development. Not
@@ -138,6 +140,7 @@ func (m *MemStore) AddGold(ctx context.Context, characterID int64, amount int64)
 	}
 	c.Gold += amount
 	m.undoLocked(ctx, characterID, func(c *Character) { c.Gold -= amount })
+	metrics.GoldIn(amount)
 	return nil
 }
 
@@ -155,6 +158,7 @@ func (m *MemStore) DeductGold(ctx context.Context, characterID int64, amount int
 	}
 	c.Gold -= amount
 	m.undoLocked(ctx, characterID, func(c *Character) { c.Gold += amount })
+	metrics.GoldOut(amount)
 	return nil
 }
 

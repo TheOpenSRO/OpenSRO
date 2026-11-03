@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
@@ -256,6 +257,7 @@ func (s *SQLStore) AddGold(ctx context.Context, characterID int64, amount int64)
 	if n == 0 {
 		return ErrNotFound
 	}
+	metrics.GoldIn(amount)
 	return nil
 }
 
@@ -283,6 +285,7 @@ func (s *SQLStore) DeductGold(ctx context.Context, characterID int64, amount int
 		}
 		return ErrInsufficientGold
 	}
+	metrics.GoldOut(amount)
 	return nil
 }
 

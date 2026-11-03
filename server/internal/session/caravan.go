@@ -144,7 +144,7 @@ func registerCaravan(ctx context.Context, characterID int64, why string) {
 	if e, ok := rt.d.Hub.EntityByCharacterID(characterID); ok {
 		level = e.Level
 	}
-	rt.d.Logger.Info("caravan: trader registered", "character", characterID, "why", why,
+	rt.d.Logger.Info("caravan: trader registered", "character_id", characterID, "why", why,
 		"trade_risk", tradeScaleOf(ctx, characterID, level), "first_wave_ms", c.threshold)
 }
 
@@ -224,7 +224,7 @@ func (rt *caravanRuntime) drop(characterID int64, why string) {
 		}
 	}
 	rt.mu.Unlock()
-	rt.d.Logger.Info("caravan: dropped", "character", characterID, "why", why, "wave_monsters_left", n)
+	rt.d.Logger.Info("caravan: dropped", "character_id", characterID, "why", why, "wave_monsters_left", n)
 }
 
 // wave is s:0x60bf30.
@@ -242,7 +242,7 @@ func (rt *caravanRuntime) wave(ctx context.Context, e world.Entity, zone string,
 	kind := jobs.WaveMobKind(job)
 	if kind == jobs.MobNPCThief && !rt.d.NPCThieves {
 		rt.mu.Unlock()
-		rt.d.Logger.Info("caravan: wave skipped, NPC thieves are off (-npc-thieves)", "character", e.CharacterID,
+		rt.d.Logger.Info("caravan: wave skipped, NPC thieves are off (-npc-thieves)", "character_id", e.CharacterID,
 			"value", value, "scale", scale, "count", n)
 		return
 	}
@@ -297,7 +297,7 @@ func (rt *caravanRuntime) wave(ctx context.Context, e world.Entity, zone string,
 	for _, id := range ids {
 		BroadcastMonsterSpawned(rt.d.Hub, rt.d.Monsters, id)
 	}
-	rt.d.Logger.Info("caravan: wave", "character", e.CharacterID, "job", job, "kind", kind, "value", value, "scale", scale,
+	rt.d.Logger.Info("caravan: wave", "character_id", e.CharacterID, "job", job, "kind", kind, "value", value, "scale", scale,
 		"count", n, "spawned", len(ids), "tactics", tacticsID, "group", group, "at_x", at.X, "at_z", at.Z, "ids", ids)
 }
 

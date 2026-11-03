@@ -9,6 +9,7 @@ import (
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
@@ -367,7 +368,7 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 			order.Dest = world.Position{X: w.X, Y: w.Y, Z: w.Z}
 			order.Wall = true
 		}
-		traceMove("move: leg", "character", e.CharacterID, "from_x", e.Pos.X, "from_y", fromY, "from_z", e.Pos.Z,
+		traceMove("move: leg", "character_id", e.CharacterID, "from_x", e.Pos.X, "from_y", fromY, "from_z", e.Pos.Z,
 			"to_x", x, "to_z", z, "wall", order.Wall, "end_x", order.Dest.X, "end_z", order.Dest.Z)
 	}
 	now := time.Now()
@@ -447,7 +448,7 @@ func arrowStop(sess *gateway.Session, data []byte, hub *world.Hub) error {
 	}
 	hub.SetHeading(sess, heading)
 	r.Entity.Heading = heading
-	traceMove("move: stop request", "character", e.CharacterID, "x", r.Entity.Pos.X, "y", r.Entity.Pos.Y, "z", r.Entity.Pos.Z)
+	traceMove("move: stop request", "character_id", e.CharacterID, "x", r.Entity.Pos.X, "y", r.Entity.Pos.Y, "z", r.Entity.Pos.Z)
 	motions.walking(e.CharacterID, time.Now())
 	stopRelay(sess, r, true)
 	return nil
@@ -542,6 +543,7 @@ func correctMover(sess *gateway.Session, hub *world.Hub) {
 	if !ok {
 		return
 	}
+	metrics.MoveCorrection()
 	motions.walking(r.Entity.CharacterID, time.Now())
 	stopRelay(sess, r, true)
 }
@@ -672,7 +674,9 @@ func ensureMoverPass(hub *world.Hub) {
 		t := time.NewTicker(moverPassPeriod)
 		defer t.Stop()
 		for range t.C {
+			start := time.Now()
 			moverPass(hub)
+			loopMover.Tick(start)
 			if hub.Moving() > 0 {
 				continue
 			}
@@ -702,7 +706,7 @@ func moverPass(hub *world.Hub) {
 	// F10), or a leg its navigation-mesh wall ended (round 812): the window
 	// and the mover hear where the server stopped it.
 	for _, r := range pass.Ended {
-		traceMove("move: ended by the server", "character", r.Entity.CharacterID, "x", r.Entity.Pos.X, "z", r.Entity.Pos.Z)
+		traceMove("move: ended by the server", "character_id", r.Entity.CharacterID, "x", r.Entity.Pos.X, "z", r.Entity.Pos.Z)
 		motions.walking(r.Entity.CharacterID, time.Now())
 		stopRelay(r.Entity.Session, r, true)
 	}

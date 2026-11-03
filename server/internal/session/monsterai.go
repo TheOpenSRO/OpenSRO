@@ -592,6 +592,7 @@ func (a *monsterAI) run(ctx context.Context, stats bool) {
 		case now := <-ticker.C:
 			start := time.Now()
 			monsterAITick(now)
+			loopMonsterAI.Tick(start)
 			if !stats {
 				continue
 			}

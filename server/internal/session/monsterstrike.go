@@ -17,6 +17,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
@@ -429,7 +430,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 			}
 			out.hp = hp
 			out.critical = wallCrit
-			slog.Info("wall: took a blow", "character", characterID, "monster", monster.ID, "damage", hit.Damage,
+			slog.Info("wall: took a blow", "character_id", characterID, "monster", monster.ID, "damage", hit.Damage,
 				"wall", hit.HP, "max", hit.Max, "critical", wallCrit, "caster hp", hp)
 			// A broken wall is ended by the caller once this blow's
 			// messages are out (endBrokenWall), as retail's book update
@@ -482,6 +483,9 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 		return monsterStrikeOutcome{}, fmt.Errorf("combat: applying counterattack: %w", err)
 	}
 	out.damage = incoming
+	if incoming > 0 {
+		metrics.Damage("player", "monster", incoming)
+	}
 	// A blow that lands stands a sitter up (Combat_ApplyActionEffects'
 	// FUN_004b1480(0) at 0x593aec; round 607, motion.go).
 	standOnHit(deps.hub, characterID, incoming)

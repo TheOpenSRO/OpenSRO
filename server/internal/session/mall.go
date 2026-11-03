@@ -50,6 +50,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mall"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
@@ -196,12 +197,15 @@ func mallBuy(ctx context.Context, sess *gateway.Session, data []byte) error {
 	}
 	res, code, err := d.purchase(ctx, e.CharacterID, acct, req)
 	if code != 0 {
+		metrics.MallPurchase(false, 0)
 		return fail(code)
 	}
 	if err != nil {
-		d.logger().Warn("mall: the purchase failed", "character", e.CharacterID, "package", req.Code, "err", err)
+		metrics.MallPurchase(false, 0)
+		d.logger().Warn("mall: the purchase failed", "character", e.Name, "character_id", e.CharacterID, "package", req.Code, "err", err)
 		return fail(mall.CodeFail)
 	}
+	metrics.MallPurchase(true, res.plan.Pay.Silk())
 	if res.plan.SilkPriced() {
 		sendTo(sess, mall.OpSilk, mall.EncodeBalances(balancesOf(res.after)))
 	}
@@ -212,7 +216,7 @@ func mallBuy(ctx context.Context, sess *gateway.Session, data []byte) error {
 		sendTo(sess, mall.OpChestReceived, mall.EncodeChestReceived(c.ItemID, c.Quantity))
 	}
 	lotteryRegistered(sess, res.plan)
-	d.logger().Info("mall: purchase", "character", e.CharacterID, "account", acct, "package", req.Code,
+	d.logger().Info("mall: purchase", "character", e.Name, "character_id", e.CharacterID, "account_id", acct, "package", req.Code,
 		"quantity", req.Quantity, "own", res.plan.Pay.Own, "gift", res.plan.Pay.Gift, "point", res.plan.Pay.Point,
 		"gold", res.plan.Pay.Gold, "slots", res.slots, "chest", len(res.chest))
 	return nil
@@ -429,7 +433,7 @@ func (d *MallDeps) chestList(ctx context.Context, sess *gateway.Session) error {
 	}
 	es, err := d.Store.Chest(ctx, e.CharacterID)
 	if err != nil {
-		d.logger().Warn("mall: reading the chest failed", "character", e.CharacterID, "err", err)
+		d.logger().Warn("mall: reading the chest failed", "character_id", e.CharacterID, "err", err)
 	}
 	return sess.Send(&proto.Packet{Opcode: mall.OpChestListResult, Data: mall.EncodeChestList(es)})
 }
@@ -441,7 +445,7 @@ func (d *MallDeps) chestLog(ctx context.Context, sess *gateway.Session) error {
 		var err error
 		ls, err = d.Store.TakeLog(ctx, e.CharacterID, d.now().AddDate(0, 0, -mall.TakeLogDays))
 		if err != nil {
-			d.logger().Warn("mall: reading the take log failed", "character", e.CharacterID, "err", err)
+			d.logger().Warn("mall: reading the take log failed", "character_id", e.CharacterID, "err", err)
 		}
 	}
 	return sess.Send(&proto.Packet{Opcode: mall.OpChestLogResult, Data: mall.EncodeTakeLog(ls)})
@@ -470,7 +474,7 @@ func (d *MallDeps) chestTake(ctx context.Context, sess *gateway.Session, data []
 	case code != 0:
 		return reply(mall.EncodeChestTakeFail(code))
 	case err != nil:
-		d.logger().Warn("mall: a chest take failed", "character", e.CharacterID, "entry", id, "err", err)
+		d.logger().Warn("mall: a chest take failed", "character_id", e.CharacterID, "entry", id, "err", err)
 		return reply(mall.EncodeChestTakeFail(mall.CodeDB))
 	}
 	return reply(mall.EncodeChestTaken(taken))

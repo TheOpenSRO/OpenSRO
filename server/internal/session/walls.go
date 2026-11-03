@@ -250,7 +250,7 @@ func toggleOffOnCast(hub *world.Hub, casterID int64, ref *refdata.Skill) bool {
 	if !ok {
 		return false
 	}
-	slog.Info("toggle: the recast switched it off", "character", casterID, "skill", ref.ID, "token", rec.Token)
+	slog.Info("toggle: the recast switched it off", "character_id", casterID, "skill", ref.ID, "token", rec.Token)
 	broadcastBuffEnd(zoneOf(hub, casterID), casterID, []buff.Record{rec}, sp)
 	return true
 }
@@ -284,7 +284,7 @@ func endBrokenWallBy(hub *world.Hub, ownerID int64, cutoff time.Time) {
 	defer l.Unlock()
 	ended, sp := buffBooks.EndBrokenWalls(ownerID, cutoff)
 	if len(ended) > 0 {
-		slog.Info("wall: broken, ended", "character", ownerID, "skill", ended[0].SkillID, "token", ended[0].Token)
+		slog.Info("wall: broken, ended", "character_id", ownerID, "skill", ended[0].SkillID, "token", ended[0].Token)
 		broadcastBuffEnd(zoneOf(hub, ownerID), ownerID, ended, sp)
 	}
 }
@@ -414,7 +414,9 @@ func RunToggleTicker(ctx context.Context, hub *world.Hub, chars character.Store,
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
+			start := time.Now()
 			togglePass(ctx, hub, chars, deps, now)
+			loopToggles.Tick(start)
 		}
 	}
 }
@@ -461,10 +463,10 @@ func drainOwner(ctx context.Context, hub *world.Hub, chars character.Store, deps
 		if left, ok := deps.Mana.Spend(ownerID, maxMP, r.OnffMP); ok {
 			buffBooks.Drained(ownerID, r.Token, now)
 			drained = true
-			slog.Info("toggle: drain", "character", ownerID, "skill", r.SkillID, "mp", r.OnffMP, "left", left)
+			slog.Info("toggle: drain", "character_id", ownerID, "skill", r.SkillID, "mp", r.OnffMP, "left", left)
 			continue
 		}
-		slog.Info("toggle: MP short of the drain, ended", "character", ownerID, "skill", r.SkillID, "mp", r.OnffMP,
+		slog.Info("toggle: MP short of the drain, ended", "character_id", ownerID, "skill", r.SkillID, "mp", r.OnffMP,
 			"have", deps.Mana.Current(ownerID, maxMP))
 		ended, sp := buffBooks.EndToken(ownerID, r.Token)
 		if len(ended) > 0 {
