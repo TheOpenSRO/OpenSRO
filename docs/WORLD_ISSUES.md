@@ -7483,6 +7483,239 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifty-ninth round, lane C: the chat caret, and every text box and caption, where the original draws them
+
+The user: "looks like the cursor in the chat input field is too far to the left now. Can you please
+[make] sure that and all other gui items are properly aligned?" Labels: READ (`c:` sro_client.exe;
+`/var/tmp/decomp_client`, `/var/tmp/sro_client.asm` and the exe's `.rdata` on the box; layouts from
+Media.pk2's resinfo there), MEASURED, INFERRED, OURS, OPEN. Base `deb95be4` (v0.1.624). UI-only lane
+(no world drawing changed): no perf gate.
+
+**Why the chat caret moved (MEASURED, real client, base).** Round 848 made the chat line a `CifEdit`
+laid FULL_RECT over the authored `GDR_CHAT_INPUTBOX` with `StyleBoxEmpty` styles: no inset at all. Its
+text and caret started at the box's left edge (INFERRED why "now": the plain LineEdit before 848 kept
+Godot's default box with its own content margin, not measured here). Lane server on 17350, `Caret859`, real Enter, typed
+"hello there", Home, three Rights, End, eleven Backspaces (`/var/tmp/r859c/qa859.sh`), each state
+measured in the frame (`textalign:HudChat`, below): base, 100 % and 200 % UI scale alike, **text and
+caret 5 px left and 1 px high, the caret 2 px short** (14 against 16) at every column (0, 3, 11, empty).
+
+**What the original does (READ).**
+- **The text rect** (`c:0x652800`): the control's rect moved in by `+0x18c / +0x190` and shrunk by
+  `+0x18c + +0x194` / `+0x190 + +0x198`: the ClientRect's left, top, right, bottom (round 630).
+  `GDR_CHAT_INPUTBOX` (ifchatviewer.txt): Rect 38,378 360x20, **ClientRect 5,4,0,0**, HAlign 0,
+  VAlign 0, FontIndex 0.
+- **CIFEdit's draw** (`c:0x637b70`, CIFEdit and CIFEInputChatBox slot 13): the text's extent from the
+  text board (`+0x4c`), then HAlign (`+0x88`) 0 left, 1 `left + (w - tw) * 0.5` (0.5 = the double at
+  0xe1b7d0), 2 `right - tw - 2.0` (0xe1b898); VAlign (`+0x8c`) 0 top, 1 `top + (h - th) * 0.5`, 2
+  `bottom - th` (0x637c97..0x637d64). An empty edit: VAlign 1 `top + ((h - tmHeight - 2) >> 1)`
+  (0x637e54..0x637e7c), VAlign 2 `bottom - tmHeight` (0x637e3d). **The caret**: x = the text's left
+  + 0x8b3820's sum of glyph cell advances before `+0x448` (plus one while an IME composition is open,
+  0x634c50), quad x .. x + 2.0, from the text's top (plus the caret line's y) to + tmHeight + 2.0
+  (0x637e80..0x637ee5, the quad 0x637f83..); blink as round 848 read.
+- **A long single-line text** (0x637d85..0x637de3, 0x637ef1..0x637f6f): when its width is at least
+  `w - 5`, its end is put at `left + w - 5` whatever the caret; then, while its start is left of the
+  rect and the caret within 40 (the double at 0xe1b8f8) of the rect's left, it moves right by
+  `min(rect left - text left, rect left - caret x + 40)`. In TextLayout (tested); not built (OPEN, below).
+- **CNIFEdit** (`.2dt` edits, `c:0x47b5b0`, CNIFEdit slot 13): the same arms on its own fields
+  (insets `+0x194..+0x1a0`, HAlign 2's 2.0, the w - 5 rule, the caret quad tmHeight + 2).
+- **CIFStatic / CIFButton text** (`c:0x64d9b0`): as the edit, but HAlign 2 is `right - tw` (no 2.0).
+- MEASURED, the archive's 93 edit records (CIFEdit 78, CIFEInputChatBox 15, all resinfo files): 60
+  are VAlign 0, 33 VAlign 1, none VAlign 2; ClientRects 5,4,0,0 (the chat line and the supporter chat's)
+  and 7,5,7,5 (9 message-box amounts, counts and coupon fields), the rest 0; the front end's (pstitle,
+  pscharactercreate*, pscharacterselect*) are all VAlign 1.
+
+**The fix, one place (CifEdit, OURS form of the READ rule).** `TextLayout` (new, `scripts/ui/
+text_layout.gd`): the original's formulas, pure. `CifEdit.lay_out(client_rect, halign, valign)`: the
+ClientRect and HAlign become LineEdit's content margins and alignment (HAlign 2 + 2.0); **VAlign by the
+margins** (LineEdit only centres: a top-aligned text gets the room under it as bottom margin, kept on
+every resize and font change, worked out for the authored rect so Godot's minimum never holds it
+taller). The caret is drawn by CifEdit itself (`_draw`, `caret_rect()`): Godot's is transparent; ours
+is the original's quad -- x from TextServer's caret on the same shaped text LineEdit draws (so it sits
+on the drawn glyph boundary at every UI scale), 2 wide, from the text's top, tmHeight + 2 tall, hidden
+until the first 200 ms flip after the edit takes the keyboard (READ 0x637b50). Every edit maker calls
+it: UiBuilder._build_edit (the record's ClientRect, HAlign, VAlign), TwoDtBuilder (the record's
+alignment; a `.2dt` record has no inset, zero INFERRED), the chat line (`lay_out_as` the authored box),
+Login.style_login_edit, CharacterCreate's name. GDI's tmHeight is tmAscent + tmDescent and Godot's font
+height ascent + descent of the same face: taken as equal (INFERRED).
+
+**The census (MEASURED).** `TextAlignCensus` (new, `scripts/ui/text_align_census.gd`) measures where a
+text is drawn against the original's rule from the frame itself: the frame with every text, with one
+text hidden (its ink) and with the same string drawn by the census at the original's origin, same face
+and size (the reference ink); the two inks' left / top / right edges are compared, so the face's own
+bearings cancel. Edits also get their caret: the frame with it against one without, against the
+original's quad. The rule comes from the archive's own record, found by name in the builder's parsed
+layouts (not from what the node was given); labels with no record are measured by their own rect and
+alignment (window captions, spin values) or over their control (`.2dt` texts, CNIFStatic's draw INFERRED
+as CIFStatic's); a window that sets a label's alignment at run time (the party pane's leader name) is
+measured against the alignment it set. `tools/window_text_census.gd` (new) opens every window
+`window_hole_census.gd` opens (that tool now takes an overridable measure and scenario hook) plus the
+chat window and the front end's edits (the login's ID and password through `Login.style_login_edit`,
+character create's name, character select's rename box), at any UI scale (`--scale 2 --view 1280x720`
+renders 2560x1440). QA step `textalign:<name>` runs it in a real client. Base + the tools vs this
+branch, 1280x720 UI, Forward+ on the box (`/var/tmp/r859c/census/{b,a}{100,200}.log`):
+
+| | base 100 % | base 200 % | after 100 % | after 200 % |
+|---|---|---|---|---|
+| texts + carets measured (61 windows + chat + front end) | 393 | 393 | 393 | 393 |
+| off by 1 px or more | 11 | 11 | 4 | 4 |
+| carets off (any edge) | 14 of 14 | 14 of 14 | 0 of 18 | 0 of 18 |
+| worst | 11 px | 11 px | 1 px | 1 px |
+
+(18 carets after: the chat line and the four front-end edits are measured after; base drew Godot's
+caret, found on 14.) Per control, before -> after (UI px; 200 % the same in UI px):
+
+| Window / control | Rule (record) | Before | After | Cause, fix |
+|---|---|---|---|---|
+| chat line `GDR_CHAT_INPUTBOX/Input` text | ClientRect 5,4,0,0, H0 V0 | dx -5, dy -1 | 0, 0 | no inset on the overlaid line; `lay_out_as` the box |
+| chat line caret | x = 5 + advance, top 4, 2 x tmHeight + 2 | dx -5, dy -1, dh -2 | 0 | as above; the drawn quad |
+| every other edit's caret (13: stall chat, party match name / levels, mall search, guild name, stall title, exchange gold, custom title, friend add, guild notice title, guild donate, whole chat) | the quad | dh -2 | 0 | Godot's caret is the line's height; CifEdit draws the quad |
+| whole chat `GDR_WHOLE_CHAT_EDITBOX_INPUT` (298x36) text + caret | H0 V0 | dy +11 | 0 | LineEdit centred a top-aligned text; VAlign by the margins |
+| page spin value (storage, guild storage, store, party match) | 18x12 centred | dy +1 | 0 | the settling pass set it back to its rect (it lays only STATIC_TEXT labels by place_label); marked |
+| guild GP history caption `TitleBar` | its 12 px row | dy +5 | 0 | kept the height Godot's default face gave it before the client's face; HudWindow's caption laid by place_label |
+| front end: login ID / password, char name, rename box | V1 | text 0, caret dh -2 | 0 | the caret |
+| option "Video", "Graphic 1"; silk "Inquire" (checked tabs) | -- | dr +1 | dr +1 | not a misalignment: the simulated weight 600 draws each glyph again 1 px right (round 833, READ); the reference has no second pass |
+| silk history "Silk Charge History" (88 px button, text wider) | centred | dx +1 | dx +1 | OPEN: a centred .2dt text overrunning by an odd amount grows half a pixel each way and Godot rounds it right; a floor in TwoDtBuilder fixed it but moved twelve other .2dt captions 1 px up (MEASURED), so it was taken out |
+
+Window captions (HudWindow, layouts without a title): VAlign 0 now, as `GDR_ALCHEMYBOX_TITLE`'s record
+(HAlign 1, VAlign 0) that the strip's rect is measured from; base had VAlign 1, which no record gives
+(INFERRED: the original's title for a window without one is drawn like alchemy's). The census measures
+placement against the alignment the node has, so this change is by the record, not by a measurement.
+
+**Real client (MEASURED).** `qa859.sh` (above), base and this branch, 960x540 at 100 % and 1920x1080 at
+200 % (`OPENSRO_QA_UI_SCALE=2`): base every step `TEXT ... dx -5.0 dy -1.0`, `CARET ... dx -5.0 dy -1.0
+dh -2.0` (columns 11, 0, 3, 11, empty 0); this branch `dx +0.0 dy +0.0` and `CARET dx +0.0 dy +0.0 dw
++0.0 dh +0.0` at every column, both scales. Frames for a human (`snap:`): `/var/tmp/r859c/qa/
+{before100,before200,after100f,after200f}.snaps/{typed_end,home,right3,empty}.png`; the chat line
+cropped, base above and this branch below, `/var/tmp/r859c/evidence/chat_{100,200}_<state>.png`.
+
+**Tests.** `text_layout859_test.gd` (new): TextLayout against known rects and strings (the chat's text
+rect 43,382 355x16, static and edit origins for every alignment, the empty edit, the caret quad, the
+long-text rule, LineEdit margins for each VAlign); CifEdit laid out: the chat layout's caret at (5, 4)
+empty, after the text, at Home, after "Hello"; a resize keeps the top; H2's caret at right - 2; H1 V1's
+empty caret; the blink starts hidden, shows at 200 ms, none without the keyboard; HudChat's line takes
+the box's layout. Updated: `ui_builder_test` (VAlign 1 and VAlign 0 margins), `native_gui848h_test`
+and `frontend_native_test` (Godot's caret transparent, ours in the FontColor), `party_match_window_test`
+(the top-aligned edit is no taller than its rect). `native_gui848_test.gd` passes.
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1117 scripts, 9 scenes); `tests` "ran 420 suite(s), 0
+failing" (the first run flagged the census's LineEdit / Button references in `native_gui848_test`'s
+guard: allowlisted, it creates none). The server is untouched (the lane server is
+a build of this tree's). UI-only: no perf gate.
+
+**OPEN.**
+- The long-text rule (end at `w - 5`, the 40 px pull-back) is read and in TextLayout but not drawn:
+  LineEdit keeps its own scroll (the caret kept in view). A long chat line scrolls differently.
+- The IME composition (the `+1` in the caret column, the underline): Godot's.
+- The guild notice body (a multi-line CIFEdit, style 0x40, a TextEdit here): its line pitch and caret
+  are Godot's (round 848's OPEN).
+- Not measured by this census: tooltips (HelpTips), list rows and chat lines (custom draws), gauge
+  texts, slot numbers (the digit images, round 728), combo values (OptionButton, rounds 696/700) and
+  67 labels with no rect to measure against (NORULE lines: e.g. the bag tabs' captions, message-box
+  `Message` lines, BG captions).
+- The silk history button's half pixel (above). Whether the original's tmHeight equals Godot's height
+  of the fallback face (Tahoma is not on the box; Arial) is not established.
+
+The user: "setup a grafana/prom container on the .10.100 proxmox? Then let's add a bunch of
+metrics/logs from the server so we can have full observability into it." The stack (CT 111
+`monitoring`, 192.168.10.86: Prometheus, Loki, Grafana) was set up first (`62a4bf6b`); this lane is
+the server's side, the dashboards and the alert rules. All OURS: the original has no such thing.
+Server-only and deploy config; no client change, so no perf gate.
+
+**Metrics (OURS).** `internal/metrics`, one private registry, served on `-metrics-addr` (env
+`OPENSRO_METRICS_ADDR`, default `127.0.0.1:9469`, empty off) for Alloy on the prod host to scrape.
+Every hot-path call is a pre-resolved counter/histogram child; no label names a player, and every
+label is a fixed set. Placed at the chokepoints, not scattered:
+- the gateway (`gateway.serveConn`, `dispatch`, `enqueue`, the writer): connections, disconnects
+  by reason, send stalls by bound, bytes, packets by opcode and group, handler time and
+  errors/panics by group, shared broadcast frames and their recipients. The **opcode label** is
+  the hex of an opcode the code names, else `other`: `opcodes_gen.go` is generated from every
+  `Op...` constant (`go generate ./internal/metrics`, 466 opcodes; `TestOpcodeTableIsCurrent`
+  fails on a stale table), the group from the defining file (login, lobby, world, combat, item,
+  economy, guild, social, quest, cos, gm);
+- the world: players online by zone (scrape time; the zone is the named town, or in the one world
+  frame the town whose centre region is nearest, a served dungeon, or other), entities by kind,
+  legs started (`world.Hub.StartMove`), legs ended by a wall or the run limit (`AdvanceMovers`),
+  claims taken / refused / refused_wall (round 857) / refused_state, corrections, warps by kind
+  (`warpVia`'s path folded to 9 kinds), round 854's zone-change refusals by reason, deaths and
+  revives, GM commands by verb;
+- the loops: tick time histogram, overruns (a tick longer than its period) and the last tick's
+  time for monster_ai, monster_aoi, cos, buffs, toggles, status, regen, mover, potions,
+  ground_items and nest;
+- combat and the economy: casts (`nextCastID`), blows and damage by target/source, monsters
+  spawned/killed/removed (`combat.Hub`), ground stacks dropped/picked/expired, gold in/out (the
+  character stores' `AddGold`/`DeductGold`), mall buys and silk, gacha draws, stall events,
+  exchanges, lobby create/delete/restore;
+- the database: `txn.OpenNamedPool` wraps the pgx connector once (`metrics.WrapConnector`), so every
+  statement on the `stores` and `refdata` pools is counted by op and first table and timed, every
+  transaction end counted, and `go_sql_*` exports each pool's stats; no store changed;
+- faults: recovered panics by where, log lines by level (a counting slog handler), build info,
+  start time, the Go runtime with the scheduler-latency histogram.
+
+**Logs (OURS).** slog text (logfmt) kept. `err=` everywhere (about 60 `"error"` keys renamed);
+`character` is a name and `character_id` an id (about 110 log calls that put an id under
+`character` renamed); new one-line events: `login` (account, ip, result, never the password),
+`entered world`, `left world`, `warp` (via, kind, from, zone), `lobby: character created/marked
+for deletion/restored`; the gm package's `gm command` line gained `verb` and `character_id`.
+`packet received` -- one INFO line per packet, most of the 847 MB prod log -- is DEBUG
+(`-log-level`, env `OPENSRO_LOG_LEVEL`). `slog.SetDefault` routes the packages that log through
+`slog.Info` and `log.Printf` into the same handler. Checked: no password, PIN, token or DSN in any
+log call.
+
+**Rotation: the server rotates its own file** (`internal/logfile`; `-log-file`, `-log-max-size-mb`
+100, `-log-max-files` 10, `-log-compress` on). Chosen over newsyslog because launchd holds the stdout
+file open: rotating it needs a rename plus a reopen the server would have to be signalled for, with
+newsyslog's config in `/etc/newsyslog.d` (root), or a copy-truncate that races the writer. A file
+the server opens itself rotates with no root and no signal; a file past the limit at boot is
+rotated at once. launchd's stdout/stderr keep only a crash's stack.
+
+**Dashboards and rules.** `deploy/observability/grafana/dashboards/opensro-server.json` (70 panels:
+health tiles, players, gateway, loops, world, combat, economy, database, runtime; restarts
+annotated) and `opensro-logs.json` (lines by level, ERROR/WARN by message, the live log filtered by
+character/account/zone/level/search, logins, warps, GM, economy), generated by
+`grafana/gen_dashboards.py`. `prometheus/rules/opensro.yml`: 13 rules (down, restarted, tick
+overrun, loop stalled, slow ticks, error-log rate, handler errors, panics, DB errors, slow DB, pool
+saturated, send stalls, scheduler latency), wired into `prometheus.yml` and mounted in compose.
+
+**QA (MEASURED).**
+- `go test ./...` passes; `GOOS=darwin GOARCH=arm64 go build ./cmd/server` builds. New tests: the
+  metrics package (opcode table current, unknown opcodes share `other`, handler and loop
+  histograms, overruns, teleport kinds, SQL labels, the driver wrapper against a fake driver,
+  `/metrics` serving the families, the counting handler), the gateway (one session's packets,
+  bytes, handler run and handler_error disconnect), the session (a login by result; a world
+  entry, a refused not_gm and a granted zone change, packets by opcode and the scrape snapshot,
+  over a real gateway), combat (spawn, damage, kill, removal) and the log file (rotation by size,
+  keep N, gzip, an oversized file at boot).
+- Lane server on the render box (`/var/tmp/r858o/srv858o.sh`: in memory, navmesh, the monster
+  switches, `/metrics` on 127.0.0.1:17329, its own log file) with partybots
+  (`/var/tmp/r858o/qa858o.sh`). Phase A (prod-like): Walker's walk loop, NotGM's zone change,
+  BotGM's `/goto donwhang` and back, BotGM2's `/spawn`, `/notice`, `/hour`; A0 -> A1:
+  logins ok +4, world entries +4, players_online 4 (zone jangan), sessions 4/4/4,
+  move_legs destination +14, move_leg_ends wall +10, teleports gm +2, zone_change_refused not_gm +1,
+  gm_commands goto 2 / level 2 / spawn 1 / notice 1 / hour 1, broadcasts 62 to 94 recipients,
+  monsters_spawned +55,362 (the nests filling, 66,854 alive), every loop ticking (monster_ai 482
+  ticks, p99 under 0.1 ms; nest p99 under 5 ms; 0 overruns); A1 -> A2 after the bots left:
+  disconnects client_closed +3, read_error +1, connections 4 -> 0. Phase B (trust, the pick-up
+  run, 3 kills): damage events +6 (3,093 HP), monsters_killed +3, items_dropped gold +3,
+  items_picked player gold +3, gold in +469, claims taken +3.
+- Lane server on this host against a scratch Postgres DB (`opensro_r858o`): statements by pool
+  (`stores` 32 series, `refdata` 5 at boot), ops select/insert/update/delete/with/ddl, 11 commits
+  and 1 rollback for one bot's account, character and world entry; `go_sql_*` for both pools; one
+  db_errors (the bot's second register of an existing account, a real unique violation). A
+  4 MB `server.log` at boot was rotated to `server.log.1.gz` at once.
+- Grafana on .86: both dashboards provisioned in the OpenSRO folder; all 98 panel queries parsed
+  by the live Prometheus and Loki (`/var/tmp/r858o/checkq.py`; no data yet: prod's Alloy is the
+  user's); `promtool check rules`: 13 rules.
+
+**What prod needs** (the user deploys): the new binary (`-ldflags "-X main.version=<tag>"`),
+`export OPENSRO_LOG_FILE=$HOME/opensro/logs/opensro.log` in `run.sh`, Alloy tailing that file and
+scraping 127.0.0.1:9469 with `job="opensro-server"`, `instance="prod"`; archive the old
+`server.log` at the restart; on .86 `docker compose up -d` (the rules mount).
+
+**OPEN.** The `gold_total` counter counts a credit inside an economy transaction that later rolls
+back. A query's time is to the driver's first answer, not through the rows. Guild operations are
+counted as the guild group's inbound packets, not by outcome. The dashboards were checked for
+loading and query parsing, not against live data (none flows until Alloy runs on prod).
+
 ## Eight-hundred-and-fifty-ninth round, lane B: the kill orbs, the hit's blood, everyone's level-up, the pet's summon, the button click
 
 The user: "can you finally add all remaining effects? Especially potions and pills. When you use them

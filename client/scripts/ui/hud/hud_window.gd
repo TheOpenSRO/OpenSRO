@@ -413,6 +413,14 @@ func _place_title_bar(bar: Control) -> void:
 		rect = Rect2(Vector2(MAINFRAME_CAPTION_X, MAINFRAME_CAPTION_Y),
 			Vector2(size.x - MAINFRAME_STRIP_WIDTH_LESS, MAINFRAME_CAPTION_HEIGHT))
 	bar.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
+	if bar is Label and bar.has_meta(UiBuilder.STATIC_TEXT_META):
+		# Round 859: laid by CIFStatic's rule (place_label): a caption whose
+		# line is taller than its 12 px row overruns it by its alignment.
+		# Set straight to the rect, the Label grew to its line -- or kept the
+		# height Godot's default face gave it before the client's face came
+		# (GP history's title: 5 px low, MEASURED by the text census).
+		UiBuilder.place_label(bar as Label, rect)
+		return
 	bar.position = rect.position
 	bar.size = rect.size
 
@@ -421,9 +429,13 @@ func _add_title_bar(title: String) -> void:
 	bar.name = "TitleBar"
 	bar.text = title
 	bar.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	# CIFMainFrame gives its caption vertical alignment 0, the top.
-	bar.vertical_alignment = VERTICAL_ALIGNMENT_TOP if registry_def != null \
-		else VERTICAL_ALIGNMENT_CENTER
+	# CIFMainFrame gives its caption vertical alignment 0, the top; so does
+	# the layout this strip is measured from (ifalchemybox's
+	# GDR_ALCHEMYBOX_TITLE: HAlign 1, VAlign 0 -- round 859; before, VAlign 1,
+	# which no record gives, on a Label grown past the row).
+	bar.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	bar.set_meta(UiBuilder.STATIC_TEXT_META, true)
+	bar.set_meta(UiBuilder.CLIENT_RECT_META, Rect2i())
 	_place_title_bar(bar)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_theme_color_override("font_color", MAINFRAME_CAPTION_COLOUR if registry_def != null \
@@ -437,6 +449,9 @@ func _add_title_bar(title: String) -> void:
 		# Index 0's size, which is what the client's own controls use.
 		bar.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	add_child(bar)
+	# Laid again in the client's face, and whenever its line changes.
+	_place_title_bar(bar)
+	UiBuilder._relay(bar)
 
 	# A layout that declares its own close button already built one, and
 	# putting a second over it would be wrong in both look and behaviour.

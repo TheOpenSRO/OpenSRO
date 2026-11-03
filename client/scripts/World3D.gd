@@ -18124,6 +18124,9 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   holes:<name>        the hole census (HoleCensus) of the first shown
 #                       Control of that name: HOLES / PIECE lines (round 858)
 #   snap:<name>         this frame into OPENSRO_QA_SNAP_DIR/<name>.png (858)
+#   textalign:<name>    the text alignment census (TextAlignCensus) of the
+#                       first shown Control of that name: TEXT / CARET lines,
+#                       each text and caret against the original's rule (859)
 #   netnode:<id>[,..] / netbox:<id> / underbar:<id>[,..]  left click a control
 #                       of the stall network window, its buy box or the
 #                       underbar by GetChild path (round 840)
@@ -19336,6 +19339,15 @@ func _qa_input_step() -> void:
 				_qa_input_report = action + " (not shown)"
 			else:
 				HoleCensus.measure(hn, "qa_" + arg, OS.get_environment("OPENSRO_QA_HOLES_OUT"))
+		"textalign":
+			# Round 859: the text alignment census (TextAlignCensus) of a shown
+			# Control by name, in this real frame, with the text typed as it
+			# is (no sample); prints TEXT / CARET / TEXTSUM lines.
+			var tn := _qa_find_visible(ui_control, arg)
+			if tn == null:
+				_qa_input_report = action + " (not shown)"
+			else:
+				TextAlignCensus.measure(tn, "qa_" + arg, TextAlignCensus.index_layouts(_ui_builder), false)
 		"helpclose", "helptab", "helpstate":
 			# Round 858: left click the Help window's X or a menu tab; report
 			# its state (root, frame, tab, document).

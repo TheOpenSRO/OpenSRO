@@ -624,6 +624,11 @@ static func style_login_edit(field: LineEdit, d: UiLayoutParser.ControlDef, secr
 	# menu (CifEdit, READ); the login's two edits keep the class's
 	# 512-character default (CPSTitle sets none: CifEdit.DEFAULT_CHAR_LIMIT).
 	CifEdit.style(field, d.font_color if d != null else Color.WHITE)
+	# Round 859: the record's ClientRect, HAlign and VAlign as CIFEdit's draw
+	# lays them (CifEdit.lay_out; the caret drawn by its rule).
+	if field is CifEdit:
+		(field as CifEdit).lay_out(d.client_rect if d != null else Rect2i(), d.halign if d != null else 1,
+			d.valign if d != null else 1)
 	if parent != null:
 		parent.add_child(field)
 	if d != null:

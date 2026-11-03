@@ -301,6 +301,10 @@ func _edit(r: TwoDtReader.Record) -> LineEdit:
 	if font != null:
 		edit.add_theme_font_override("font", font)
 	edit.add_theme_font_size_override("font_size", _font_size(r.font_index))
+	# Round 859: CNIFEdit's draw (c:0x47b5b0) lays its text as CIFEdit's does
+	# (READ: the same HAlign / VAlign arms, HAlign 2's 2.0, the caret quad);
+	# its insets (+0x194..+0x1a0) are not in a .2dt record (zero, INFERRED).
+	edit.lay_out(Rect2i(), r.halign, r.valign)
 	return edit
 
 static func _font_size(index: int) -> int:

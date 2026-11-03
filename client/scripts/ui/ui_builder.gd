@@ -1037,22 +1037,28 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 			sb = tsb
 		else:
 			sb = StyleBoxEmpty.new()
-		sb.content_margin_left = cr.position.x
-		sb.content_margin_top = cr.position.y
-		sb.content_margin_right = cr.size.x + (EDIT_RIGHT_INSET if def.halign == 2 else 0.0)
-		sb.content_margin_bottom = cr.size.y
 		edit.add_theme_stylebox_override(style, sb)
-	edit.alignment = _map_halign(def.halign)
 	var font := font_at(def.font_index)
 	if font != null:
 		edit.add_theme_font_override("font", font)
 	var size: int = FONT_SIZES[def.font_index] if def.font_index >= 0 and def.font_index < FONT_SIZES.size() else FONT_SIZE_FALLBACK
 	edit.add_theme_font_size_override("font_size", size)
 	edit.set_colour(def.font_color)
+	# Round 859: the text in the ClientRect by HAlign and VAlign, as CIFEdit's
+	# draw (0x637b70) lays it -- the margins come from CifEdit.lay_out, kept
+	# on every resize (VAlign 0, the archive's usual, is the top, not
+	# LineEdit's centre).
+	if def.rect.size.y > 0:
+		# The rect the margins are worked out for (CifEdit.layout_height),
+		# before Godot's minimum can hold the edit taller (build_control
+		# records the same rect).
+		edit.set_meta(AUTHORED_RECT_META, Rect2(Vector2(def.rect.position), Vector2(def.rect.size)))
+		edit.size = Vector2(def.rect.size)
+	edit.lay_out(cr, def.halign, def.valign)
 	return edit
 
-## CIFEdit's right inset for HAlign 2: 2.0 (`0xe1b898`, READ).
-const EDIT_RIGHT_INSET := 2.0
+## CIFEdit's right inset for HAlign 2: 2.0 (`0xe1b898`, READ; TextLayout).
+const EDIT_RIGHT_INSET := TextLayout.EDIT_RIGHT_INSET
 
 ## The artwork a list row draws itself with, and the one it uses when it is
 ## the selected row.
@@ -1314,6 +1320,13 @@ func _build_spin(def: UiLayoutParser.ControlDef) -> Control:
 	# user's "numbers ... too low" under party matching. Centred, the line
 	# now overruns the rect evenly, as the client's centred text does.
 	label.set_meta(AUTHORED_RECT_META, SPIN_LABEL_RECT)
+	# Round 859: and kept there by the settling pass, which lays only
+	# STATIC_TEXT labels by place_label -- without the mark it set the label
+	# straight to 18x12 again, the Label grew down, and the page number was
+	# drawn 1 px low (MEASURED, the text census: storage, guild storage,
+	# store and party match pages).
+	label.set_meta(STATIC_TEXT_META, true)
+	label.set_meta(CLIENT_RECT_META, Rect2i())
 	place_label(label, SPIN_LABEL_RECT)
 	_relay(label)
 	ctrl.add_child(label)

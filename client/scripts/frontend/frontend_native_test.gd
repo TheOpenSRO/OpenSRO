@@ -94,7 +94,10 @@ func _edit_rules() -> void:
 			and not a.middle_mouse_paste_enabled and not a.drag_and_drop_selection_enabled,
 		"no context menu, shortcut keys, middle-click paste or drag (READ: CIFEdit has none)")
 	_check(a.get_theme_constant(&"caret_width") == 2, "the caret is 2 px wide (READ 0xe1b898)")
-	_check(a.get_theme_color(&"caret_color") == colour, "the caret is the font's colour (READ +0xa0)")
+	# Round 859: a CifEdit draws the original's caret itself (Godot's is
+	# transparent) in its FontColor; a plain LineEdit keeps Godot's in it.
+	_check((a.get_theme_color(&"caret_color").a == 0.0 and (a as CifEdit).colour() == colour) if a is CifEdit
+		else a.get_theme_color(&"caret_color") == colour, "the caret is the font's colour (READ +0xa0)")
 	_check(a.caret_blink and is_equal_approx(a.caret_blink_interval, 0.2), "the caret blinks every 0.2 s (READ, rate 5)")
 	# No byte limit set (+0x3fc -1): the constructor's 512 characters
 	# (READ, +0x400 = 0x200 at 0x635d85), cut back as 0x636330 does.

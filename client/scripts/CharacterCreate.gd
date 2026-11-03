@@ -392,6 +392,10 @@ func _build_custom_panel() -> void:
 	# Round 848: CIFEdit's caret and rules (CifEdit, READ); the limit
 	# stays the name's own (as bytes, CifEdit's 0x634f80 rule).
 	CifEdit.style(_name_edit, ed.font_color if ed != null else Color.WHITE)
+	# Round 859: GDR_EDIT_NAME's own layout (HAlign 0, VAlign 1), as CIFEdit
+	# draws it; the caret by its rule (CifEdit.lay_out).
+	if ed != null:
+		_name_edit.lay_out(ed.client_rect, ed.halign, ed.valign)
 	if ed != null:
 		_place_centred(_name_edit, Rect2(ed.rect))
 	_name_edit.text_submitted.connect(func(_t): _on_confirm())

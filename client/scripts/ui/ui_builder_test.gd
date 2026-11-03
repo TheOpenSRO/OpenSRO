@@ -90,7 +90,7 @@ Section = Create,"0,0,200,100","0"
 	_check_font_table()
 	_check_frame_pieces_at_own_size()
 	_check_six_piece_edges_rotated()
-	_check_edit_halign_and_client_rect()
+	await _check_edit_halign_and_client_rect()
 	_check_spin_arrows_step()
 	_check_edit_draws_its_own_art()
 	_check_section_size_measures_what_is_drawn()
@@ -439,7 +439,7 @@ func _check_spin_arrows_step() -> void:
 
 func _check_edit_halign_and_client_rect() -> void:
 	var builder := UiBuilder.new(null, null)
-	var text := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_E:CIFEdit\n\t{\n\t\tRect=RECT,\"0,0,81,11\"\n\t\tClientRect=RECT,\"7,5,7,5\"\n\t\tHAlign=INTEGER,\"2\"\n\t}\n}\n"
+	var text := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_E:CIFEdit\n\t{\n\t\tRect=RECT,\"0,0,81,30\"\n\t\tClientRect=RECT,\"7,5,7,5\"\n\t\tHAlign=INTEGER,\"2\"\n\t\tVAlign=INTEGER,\"1\"\n\t}\n}\n"
 	var root := builder.build_section(UiLayoutParser.parse(text), "Create")
 	var e := root.get_node_or_null("GDR_E") as LineEdit
 	_check(e != null and e.alignment == HORIZONTAL_ALIGNMENT_RIGHT, "HAlign 2 right-aligns the edit")
@@ -447,7 +447,23 @@ func _check_edit_halign_and_client_rect() -> void:
 		var sb := e.get_theme_stylebox("normal")
 		_check(sb is StyleBoxEmpty and sb.content_margin_left == 7 and sb.content_margin_top == 5
 			and sb.content_margin_right == 9 and sb.content_margin_bottom == 5,
-			"ClientRect 7,5,7,5 plus the 2 px right inset (got %s)" % str([sb.content_margin_left, sb.content_margin_top, sb.content_margin_right, sb.content_margin_bottom]))
+			"ClientRect 7,5,7,5 plus the 2 px right inset, VAlign 1 centred in it (got %s)" % str([sb.content_margin_left, sb.content_margin_top, sb.content_margin_right, sb.content_margin_bottom]))
+	root.free()
+	# Round 859: VAlign 0 (the archive's usual) puts the text at the top of
+	# the ClientRect: the room under it is margin (CIFEdit 0x637b70).
+	var top := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_E:CIFEdit\n\t{\n\t\tRect=RECT,\"0,0,81,30\"\n\t\tClientRect=RECT,\"7,5,7,5\"\n\t\tHAlign=INTEGER,\"0\"\n\t\tVAlign=INTEGER,\"0\"\n\t}\n}\n"
+	root = builder.build_section(UiLayoutParser.parse(top), "Create")
+	# In the tree: a LineEdit's minimum (its theme cache) is only current there.
+	get_root().add_child(root)
+	await process_frame
+	var t := root.get_node_or_null("GDR_E") as CifEdit
+	if t != null:
+		var tsb := t.get_theme_stylebox("normal")
+		var th := ceilf(t.font_height())
+		_check(tsb.content_margin_top == 5 and is_equal_approx(tsb.content_margin_bottom, 30 - 5 - th),
+			"VAlign 0: top 5, the rest under the text (got %s, %s; size %s, text h %s)" % [tsb.content_margin_top, tsb.content_margin_bottom, t.size, th])
+	else:
+		_check(false, "a VAlign 0 edit is a CifEdit")
 	root.free()
 
 ## **An edit with its own art** (the user's report, 2026-10-05): the chat's

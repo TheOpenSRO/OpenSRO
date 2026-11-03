@@ -299,13 +299,17 @@ func _test_round718(builder: UiBuilder) -> void:
 		# The size itself settles a frame later (settle_authored_rects: the
 		# theme cache refreshes in the tree), so what is checked here is what
 		# makes it settle small: every state's style pads nothing.
-		var pads := Vector2.ZERO
+		# Round 859: VAlign 0 (this record's) puts the text at the top, the
+		# room under it a margin (CifEdit.lay_out); the margins and the line
+		# together are never taller than the authored 15 (or the line).
+		var line := ceilf((lo as CifEdit).font_height()) if lo is CifEdit else 0.0
 		for st_name in ["normal", "focus", "read_only"]:
 			var sb := lo.get_theme_stylebox(st_name)
 			_check(sb is StyleBoxEmpty, "a CIFEdit's %s style is empty: no box of its own" % st_name)
 			if sb != null:
-				pads += sb.get_minimum_size()
-		_check(pads == Vector2.ZERO, "no style padding, so the edit settles at its font's line (got %s)" % str(pads))
+				var pads := sb.get_minimum_size()
+				_check(pads.x == 0.0 and sb.content_margin_top == 0.0 and pads.y + line <= maxf(15.0, line),
+					"%s: no side padding, the text at the top, the edit no taller than its rect or its line (got %s, line %s)" % [st_name, str(pads), line])
 	else:
 		_check(false, "the min level edit is built")
 	# The Purpose value: right-aligned, an overflow cut on the left.

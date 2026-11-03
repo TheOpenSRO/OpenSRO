@@ -31,6 +31,8 @@ const PANELS := ["inventory", "character", "skill", "action", "party", "academy"
 	"buff_cancel"]
 
 var _builder: UiBuilder
+## The UI's own size (VIEW, unless an extension scales the UI).
+var _ui_view := VIEW
 var _names := {}
 var _min_piece := 4
 
@@ -65,22 +67,23 @@ func _run() -> void:
 	var table := UiTextTable.parse(archive.read_file(entry)) if entry != null else null
 	_builder = UiBuilder.new(archive, table)
 	root.size = VIEW
+	_set_up_view()
 	var wanted := _args("--panel")
 	if wanted.is_empty():
-		wanted = PackedStringArray(PANELS)
+		wanted = PackedStringArray(_panels())
 	var ground := ColorRect.new()
-	ground.size = Vector2(VIEW)
+	ground.size = Vector2(_ui_view)
 	ground.color = Color(0.2, 0.2, 0.2)
 	ground.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(ground)
 	var ui := Control.new()
 	ui.name = "UI"
-	ui.size = Vector2(VIEW)
+	ui.size = Vector2(_ui_view)
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(ui)
 	_builder.apply_ui_theme(ui)
 	var panels: Control = (load("res://scripts/ui/hud/hud_panels.gd") as GDScript).new(_builder)
-	panels.size = Vector2(VIEW)
+	panels.size = Vector2(_ui_view)
 	ui.add_child(panels)
 	await process_frame
 	var total_full := 0
@@ -104,9 +107,8 @@ func _run() -> void:
 			if _covered_by(c, shown):
 				continue
 			var label := String(id) if n == 0 else "%s#%s" % [id, c.name]
-			_name_textures()
-			var r: Dictionary = await HoleCensus.measure(c, label, out, _min_piece, _names)
-			total_full += int(r["full"])
+			var r: Dictionary = await _measure(c, label, out)
+			total_full += int(r.get("full", 0))
 			n += 1
 		if n == 0:
 			print("HOLES %s not built" % id)
@@ -119,11 +121,28 @@ func _run() -> void:
 	print("CENSUS DONE")
 	quit(0)
 
+## The measure each window gets (round 859: window_text_census.gd extends
+## this tool with the text alignment census instead).
+func _measure(c: Control, label: String, out: String) -> Dictionary:
+	_name_textures()
+	return await HoleCensus.measure(c, label, out, _min_piece, _names)
+
+## The scenarios (an extension adds its own).
+func _panels() -> Array:
+	return PANELS
+
+## The window and UI scale (an extension may change them).
+func _set_up_view() -> void:
+	pass
+
 ## Opens one scenario; returns the window(s) it built (may be empty when the
 ## shown-set diff finds them).
 func _open(id: String, ui: Control, panels: Control) -> Array:
 	var noop := func() -> void: pass
 	var noop1 := func(_a = null) -> void: pass
+	var extra = await _open_extra(id, ui, panels)
+	if extra != null:
+		return extra
 	match id:
 		"worldmap":
 			var map: Control = (load("res://scripts/ui/hud/hud_worldmap.gd") as GDScript).new(_builder)
@@ -153,7 +172,7 @@ func _open(id: String, ui: Control, panels: Control) -> Array:
 		"exchange", "exchange_retail":
 			panels.call("_drop_exchange_window")
 			ClientSettings.set_value(ClientSettings.SECTION_EXTRA, ClientSettings.KEY_EXCHANGE_PORTRAITS, id == "exchange")
-			panels.set("exchange_canvas", Vector2(VIEW))
+			panels.set("exchange_canvas", Vector2(_ui_view))
 			panels.call("open_exchange_window")
 			var inv = (panels.get("_windows") as Dictionary).get("inventory")
 			if inv != null:
@@ -264,6 +283,10 @@ func _open(id: String, ui: Control, panels: Control) -> Array:
 			var w = panels.call("open", id)
 			return [w] if w != null else []
 	return []
+
+## A scenario an extension adds: its windows, or null when it is not one.
+func _open_extra(_id: String, _ui: Control, _panels_node: Control):
+	return null
 
 func _visible_set(node: Node, out: Dictionary) -> void:
 	if node is CanvasItem and not (node as CanvasItem).visible:
