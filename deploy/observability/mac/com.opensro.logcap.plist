@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hourly log cap for OpenSRO's prod host (round 859): logcap.sh. Install to
+     ~/Library/LaunchAgents/com.opensro.logcap.plist, then
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.opensro.logcap.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.opensro.logcap</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/gaigelama/opensro/observability/logcap.sh</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/gaigelama/opensro/observability/logcap.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gaigelama/opensro/observability/logcap.log</string>
+</dict>
+</plist>

@@ -13,6 +13,8 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=90d
+      # Whichever comes first: 90 days or 30 GB (the CT's disk is 63 GB, round 859).
+      - --storage.tsdb.retention.size=30GB
       - --web.enable-remote-write-receiver
       - --web.enable-lifecycle
     volumes:
@@ -21,6 +23,18 @@ services:
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
+
+  # This container's own CPU, memory and disk, for the disk-space alerts
+  # (round 859). Reads the root filesystem through a read-only bind.
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($|/)
+    volumes:
+      - /:/host:ro,rslave
+    pid: host
 
   loki:
     image: grafana/loki:3.5.3

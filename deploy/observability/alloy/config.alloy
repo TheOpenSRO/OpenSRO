@@ -7,6 +7,13 @@
 //     -metrics-addr, local only) and this host's own metrics;
 //   - remote-writes every metric to Prometheus on the monitoring container.
 
+// Alloy's own log (launchd's alloy.log, capped hourly by logcap.sh): warnings
+// and errors only (round 859).
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
 // --- Where things go -----------------------------------------------------
 
 prometheus.remote_write "monitoring" {
@@ -38,7 +45,11 @@ prometheus.scrape "opensro_server" {
 }
 
 // This host: CPU, memory, disk, network, load (the macOS collectors).
-prometheus.exporter.unix "host" { }
+prometheus.exporter.unix "host" {
+  // The thermal collector fails on every scrape on this Mac ("no CPU power
+  // status"), an error line every 15 s in alloy.log (round 859).
+  disable_collectors = ["thermal"]
+}
 
 prometheus.scrape "host" {
   targets         = prometheus.exporter.unix.host.targets

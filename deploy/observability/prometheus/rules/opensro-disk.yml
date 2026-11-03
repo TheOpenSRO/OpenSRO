@@ -1,0 +1,34 @@
+# Disk space on both machines (round 859): the prod Mac (Alloy's unix
+# exporter, job integrations/unix) and the monitoring container
+# (node-exporter, job monitoring-host). Only the volumes the server and the
+# stack live on: the Mac's / and /System/Volumes/Data, the container's /. The
+# Mac's other drives (/Volumes/...) are the owner's and not watched here.
+groups:
+  - name: opensro-disk
+    rules:
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|devfs|autofs|nullfs|overlay|squashfs",mountpoint=~"/|/System/Volumes/Data"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|devfs|autofs|nullfs|overlay|squashfs",mountpoint=~"/|/System/Volumes/Data"}) < 0.15
+          and node_filesystem_size_bytes > 5e9
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Less than 15% free on {{ $labels.mountpoint }} ({{ $labels.job }})"
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|devfs|autofs|nullfs|overlay|squashfs",mountpoint=~"/|/System/Volumes/Data"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|devfs|autofs|nullfs|overlay|squashfs",mountpoint=~"/|/System/Volumes/Data"}) < 0.05
+          and node_filesystem_size_bytes > 5e9
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Less than 5% free on {{ $labels.mountpoint }} ({{ $labels.job }})"
+      - alert: DiskFillingFast
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|devfs|autofs|nullfs|overlay|squashfs",mountpoint=~"/|/System/Volumes/Data"}[6h], 3 * 24 * 3600) < 0
+          and node_filesystem_size_bytes > 5e9
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.mountpoint }} ({{ $labels.job }}) will fill within 3 days at the current rate"
