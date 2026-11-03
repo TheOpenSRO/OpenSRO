@@ -43,6 +43,9 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 860 lane E: 0x304E kind 4's decoder; the Godot client decodes the
+	// message over the socket, so only the golden-bytes test calls it in Go.
+	"DecodeHwan": "round 860: 0x304E kind 4 (violet hwan orbs) wire decoder, the client's side; hwan860_test.go checks EncodeHwan with it.",
 	// Round 858: the metrics package's world collector implements
 	// prometheus.Collector; the registry calls these at every scrape.
 	"Collect":  "round 858: prometheus.Collector, called by the metrics registry at scrape time (internal/metrics/game.go).",
