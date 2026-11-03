@@ -37,9 +37,65 @@ func _set_up_view() -> void:
 	print("TEXTCENSUS view %s scale %.2f window %s" % [str(_ui_view), _scale, str(root.size)])
 
 func _panels() -> Array:
-	return ["chat"] + PANELS
+	return ["chat", "frontend_edits"] + PANELS
+
+## The front end's edits on a dark ground: the login's ID and password
+## (Login.style_login_edit on pstitle.txt's records, the scene's own call),
+## character create's name (GDR_EDIT_NAME, set up as CharacterCreate does)
+## and character select's rename box (HudCosBox.build_rename_input).
+func _open_frontend_edits(ui: Control) -> Array:
+	var holder := Control.new()
+	holder.name = "FrontEndEdits"
+	holder.position = Vector2(40, 40)
+	holder.size = Vector2(600, 400)
+	ui.add_child(holder)
+	var ground := ColorRect.new()
+	ground.color = Color(0.08, 0.08, 0.1)
+	ground.size = holder.size
+	ground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(ground)
+	var login := load("res://scripts/Login.gd") as GDScript
+	var title := _builder.load_layout("resinfo\\pstitle.txt")
+	if title != null and title.sections.has("Login"):
+		var sec = title.sections["Login"]
+		for pair in [["GDR_EDIT_ID", false], ["GDR_EDIT_PASS", true]]:
+			var d = sec.control_by_name.get(pair[0])
+			if d == null:
+				continue
+			var f := CifEdit.new()
+			f.name = pair[0]
+			login.call("style_login_edit", f, d, pair[1], holder)
+	var create := _builder.load_layout("resinfo\\pscharactercreatechina.txt")
+	if create != null and create.sections.has("Custom"):
+		var ed = create.sections["Custom"].control_by_name.get("GDR_EDIT_NAME")
+		if ed != null:
+			var n := CifEdit.new()
+			n.name = "GDR_EDIT_NAME"
+			for st in ["normal", "focus", "read_only"]:
+				n.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+			n.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[ed.font_index])
+			CifEdit.style(n, ed.font_color)
+			if n.has_method("lay_out"):
+				n.call("lay_out", ed.client_rect, ed.halign, ed.valign)
+			holder.add_child(n)
+			n.position = Vector2(ed.rect.position) + Vector2(0, 120)
+			n.size = Vector2(ed.rect.size)
+	var shown: Array = [holder]
+	var box := HudCosBox.new()
+	if box.build_rename_input(_builder):
+		ui.add_child(box)
+		box.centre_on(Vector2(_ui_view))
+		box.position.y += 150
+		shown.append(box)
+	else:
+		box.free()
+	for i in 4:
+		await process_frame
+	return shown
 
 func _open_extra(id: String, ui: Control, _panels_node: Control):
+	if id == "frontend_edits":
+		return await _open_frontend_edits(ui)
 	if id != "chat":
 		return null
 	var chat: Control = (load("res://scripts/ui/hud/hud_chat.gd") as GDScript).new(_builder)

@@ -158,6 +158,19 @@ static func _item_of(c: Control, index: Dictionary) -> Dictionary:
 			own.valign = _code_v(l.vertical_alignment)
 			var nm := String(c.name) if parent == null else "%s/%s" % [parent.name, c.name]
 			return {"node": c, "kind": "static", "def": own, "rect": r, "name": nm, "note": "own rect and alignment"}
+		if parent != null and is_equal_approx(c.anchor_right, 1.0) and is_equal_approx(c.anchor_bottom, 1.0) \
+				and is_zero_approx(c.anchor_left) and is_zero_approx(c.anchor_top):
+			# A label over its whole control (TwoDtBuilder.set_text's, a .2dt
+			# CNIFStatic's text with the record's alignment): the control's
+			# rect and the label's alignment by CIFStatic's rule (CNIFStatic's
+			# own draw is not read: INFERRED the same, as CNIFEdit's is).
+			var full := UiLayoutParser.ControlDef.new()
+			full.name = c.name
+			full.type = "CIFStatic"
+			full.halign = _code_h(l.horizontal_alignment)
+			full.valign = _code_v(l.vertical_alignment)
+			return {"node": c, "kind": "static", "def": full, "rect": Rect2(Vector2.ZERO, parent.size),
+				"name": "%s/%s" % [parent.name, c.name], "note": "over its control, own alignment"}
 		return {}
 	var e := c as LineEdit
 	var er := _rect_of(e)
