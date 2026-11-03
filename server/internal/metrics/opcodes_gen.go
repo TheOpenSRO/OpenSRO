@@ -196,7 +196,7 @@ var knownOpcodes = map[uint16]string{
 	0x3042: "economy",
 	0x304E: "world",
 	0x3052: "combat",
-	0x3054: "cos",
+	0x3054: "combat",
 	0x3056: "world",
 	0x3057: "combat",
 	0x3065: "social",
