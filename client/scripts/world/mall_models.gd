@@ -188,10 +188,15 @@ func build_cos(cos_ref: int) -> Dictionary:
 	var row: CosTable.Row = (table as CosTable).row(cos_ref) if table is CosTable else null
 	if row == null or row.model == "":
 		return {}
+	# Round 861: the model the world draws the row from (World3D._cos_model_of:
+	# its own, else its trade twin -- OURS -- else the Mangyang stand-in).
+	var named := String(world.call("_cos_model_of", row)) if world.has_method("_cos_model_of") else row.model
+	if named == "":
+		return {}
 	world.call("_monster_model_path", "", "")
 	var textures = world.get("_monster_texture_by_code")
 	var tex := int((textures as Dictionary).get(row.code, 0)) if textures is Dictionary else 0
-	var model := MonsterDraw.template_key(row.model, NpcTableReader.texture_slot(tex, 0, true))
+	var model := MonsterDraw.template_key(named, NpcTableReader.texture_slot(tex, 0, true))
 	var templates = world.get("_monster_templates")
 	if not (templates is MonsterDraw.Templates):
 		return {}

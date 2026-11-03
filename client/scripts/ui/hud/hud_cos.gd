@@ -229,6 +229,16 @@ func _row(ref_id: int) -> CosTable.Row:
 		return null
 	return c.call(ref_id) as CosTable.Row
 
+## Round 861: a row's icon, or its trade twin's when the archive lacks its own
+## (CosModelFallback.icon_path, OURS): the ride camels' and donkey's
+## `icon\cos\cos_c_*.ddj` are not in this version's Media.pk2 (MEASURED).
+func _icon_of(row: CosTable.Row) -> String:
+	if row == null:
+		return ""
+	if _builder == null:
+		return row.icon
+	return CosModelFallback.icon_path(row.icon, func(p: String) -> bool: return _builder.load_texture(p) != null)
+
 ## 0x30C8 for the owner.
 func add_cos(d: CosNet.Data) -> void:
 	if d == null:
@@ -276,7 +286,7 @@ func _make_ui(e: Entry) -> void:
 	e.status = HudCosStatus.new(_builder)
 	e.status.name = "COSStatus%d" % e.data.uid
 	e.status.build()
-	e.status.setup_kind(e.kind, row.icon if row != null else "")
+	e.status.setup_kind(e.kind, _icon_of(row))
 	var uid := e.data.uid
 	e.status.pressed_left.connect(func() -> void: _on_status_left(uid))
 	e.status.released_right.connect(func() -> void: _on_status_right(uid))
@@ -471,7 +481,7 @@ func _show_pet_info(e: Entry) -> void:
 	var row := _row(e.data.ref_id)
 	var icon: Texture2D = null
 	if row != null and _builder != null and row.icon != "":
-		icon = _builder.load_texture(row.icon)
+		icon = _builder.load_texture(_icon_of(row))
 	pet_info.fill(e.data.uid, e.data.name, e.data.level, icon)
 	pet_info.visible = true
 	_refresh_gauges(e)
@@ -527,7 +537,7 @@ func apply_update(u: CosNet.Update) -> void:
 			if e.kind == 3:
 				e.data.hgp = CosNet.HGP_FULL
 			if e.status != null:
-				e.status.setup_kind(e.kind, row.icon if row != null else "")
+				e.status.setup_kind(e.kind, _icon_of(row))
 			_refill_pet_info(e)
 			_refresh_entry(e)
 			_refresh_window(u.uid)
