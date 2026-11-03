@@ -4490,7 +4490,19 @@ const EXCHANGE_FULL_RECTS := {
 	"GDR_EXCHANGE_TEXT_BOX_BG_2": Rect2i(28, 426, 310, 32),
 	"GDR_EXCHANGE_BUTTON_EXCHANGE": Rect2i(96, 450, 76, 24),
 	"GDR_EXCHANGE_BUTTON_CANCEL": Rect2i(194, 450, 76, 24),
+	# Round 858 (OURS): the strip between the two subframes (retail's own
+	# com_bg_tile_a, 40,179,174,3 -- 31 in from the 236-wide subframes' sides)
+	# kept 31 in from the 346-wide ones, so the 3-row gap is filled across
+	# (the hole census: 111 x 3 px of the world between them).
+	"GDR_EXCHANGE_NORMALTILE_BG": Rect2i(40, 179, 284, 3),
 }
+## Round 858 (OURS): the widened subframes uncover a strip retail's narrower
+## ones draw their right edge over -- the lattice outline's transparent right
+## column (com_lattice_right_up, alpha 0), a 1-px column between the line and
+## the portrait, and the corner under the gold strip (the hole census: 371 px
+## a side). Backed with the window's own fill tile, behind everything.
+const EXCHANGE_FULL_BACKING := [Rect2i(229, 61, 18, 116), Rect2i(229, 205, 18, 116)]
+const EXCHANGE_BACKING_DDJ := "interface\\ifcommon\\bg_tile\\com_bg_tile_a.ddj"
 ## The portrait is drawn into its control inset by 2, 2 at the top left and
 ## 4, 4 off the size (READ, exchange.md 4.3: c:0x7b21b0).
 const EXCHANGE_PORTRAIT_INSET := Rect2i(2, 2, 4, 4)
@@ -4579,6 +4591,23 @@ func _drop_exchange_window() -> void:
 	w.queue_free()
 
 func _install_exchange_extras(window: HudWindow) -> void:
+	# Round 858: the backing behind the portrait column (EXCHANGE_FULL_BACKING),
+	# the layout root's first children so every control draws over it.
+	if window.panel_root != null and _builder != null:
+		var tex := _builder.load_texture(EXCHANGE_BACKING_DDJ)
+		for i in EXCHANGE_FULL_BACKING.size():
+			var r: Rect2i = EXCHANGE_FULL_BACKING[i]
+			var back := TextureRect.new()
+			back.name = "ExchangeBacking%d" % i
+			back.texture = tex
+			back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			back.stretch_mode = TextureRect.STRETCH_TILE
+			back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			back.position = Vector2(r.position)
+			back.size = Vector2(r.size)
+			back.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(r))
+			window.panel_root.add_child(back)
+			window.panel_root.move_child(back, i)
 	# The log: CIFTextBox 304's lines, from the top, no hanging indent.
 	var box := window.node("GDR_EXCHANGE_TEXT_BOX") as Control
 	if box != null:
@@ -10095,7 +10124,11 @@ func open_guild_gp_history(entries: Array) -> GuildGPHistoryWindow:
 	print("GUILD844B history %s" % [gw.lines])
 	gw.show()
 	gw.move_to_front()
-	gw.position = (get_viewport_rect().size - gw.size) / 2.0
+	# Round 858: on whole pixels, as HudWindow.centre() places a window. The
+	# window is 311 tall, and at y + 0.5 its top row drew half-covered and
+	# every texel between two pixels (the hole census: a 464 x 9 strip of
+	# the frame's top showing the world).
+	gw.position = ((get_viewport_rect().size - gw.size) / 2.0).round()
 	return gw
 
 ## A UIIT_STT_EVENTGUIDE box with one text (the vote's results).

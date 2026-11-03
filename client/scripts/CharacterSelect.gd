@@ -134,6 +134,8 @@ var _rename: CharSelectRename = null
 var _renamed_to := ""
 
 func _ready() -> void:
+	# Round 858: the window hole census in a real run (OPENSRO_QA_HOLES; HoleCensus).
+	HoleCensus.qa_hook(self)
 	_started_ms = Time.get_ticks_msec()
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	NetClient.character_list_result.connect(_on_list_result)

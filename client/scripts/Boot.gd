@@ -15,6 +15,8 @@ extends Node
 var _updater: AutoUpdater
 
 func _ready() -> void:
+	# Round 858: the window hole census in a real run (OPENSRO_QA_HOLES; HoleCensus).
+	HoleCensus.qa_hook(self)
 	print("OpenSRO boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
 	print("OpenSRO log file: %s" % ProjectSettings.globalize_path("user://logs/opensro.log"))
 	print("OpenSRO version: %s" % UpdateChecker.CLIENT_VERSION)

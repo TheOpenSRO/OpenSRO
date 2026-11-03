@@ -218,11 +218,15 @@ const TABS_NODE := "GGMenuTabs"
 
 var _tabs: Control
 var _tab := 0
+## [selected, unselected] art (0x64ce30's two textures).
+var _tab_art: Array = [null, null]
 
 static func tab_rect(i: int) -> Rect2:
 	return Rect2(TAB_ORIGIN + Vector2(TAB_PITCH * i, 0), TAB_SIZE)
 
 func _build_tabs(frame: Control, origin: Vector2) -> void:
+	_tab_art = [_builder.load_texture(TAB_ON_DDJ) if _builder != null else null,
+		_builder.load_texture(TAB_OFF_DDJ) if _builder != null else null]
 	_tabs = Control.new()
 	_tabs.name = TABS_NODE
 	_tabs.position = origin
@@ -231,8 +235,6 @@ func _build_tabs(frame: Control, origin: Vector2) -> void:
 	for i in TAB_COUNT:
 		var tab := TextureButton.new()
 		tab.name = "Tab%d" % i
-		tab.set_meta("tex_on", _builder.load_texture(TAB_ON_DDJ) if _builder != null else null)
-		tab.set_meta("tex_off", _builder.load_texture(TAB_OFF_DDJ) if _builder != null else null)
 		tab.ignore_texture_size = true
 		tab.stretch_mode = TextureButton.STRETCH_SCALE
 		tab.focus_mode = Control.FOCUS_NONE
@@ -265,7 +267,7 @@ func _paint_tabs() -> void:
 	for i in _tabs.get_child_count():
 		var tab := _tabs.get_child(i) as TextureButton
 		if tab != null:
-			tab.texture_normal = tab.get_meta("tex_on" if i == _tab else "tex_off", null)
+			tab.texture_normal = _tab_art[0] if i == _tab else _tab_art[1]
 
 ## Selects a menu tab (0x7688b0): its art on, the others off, the list
 ## refilled. Only the first tab lists documents here (see TAB_KEYS).
