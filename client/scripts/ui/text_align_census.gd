@@ -398,9 +398,26 @@ static func measure(window: Control, label: String, index: Dictionary, sample :=
 			ref.at = it["expected"]
 			ref.colour = Color(_text_colour(c), 1.0)
 			var parent := c.get_parent() as Control
-			parent.add_child(ref)
-			ref.size = parent.size
-			refs.append(ref)
+			if it["kind"] == "edit":
+				# Round 860: an edit's text is cut at the edit's own rect (the
+				# viewport CIFEdit's draw sets, READ 0x6531a0), so the
+				# reference is too -- a long text's ends are measured where
+				# both are drawn.
+				var er: Rect2 = it["rect"]
+				var holder := Control.new()
+				holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				holder.clip_contents = true
+				holder.position = er.position
+				holder.size = er.size
+				parent.add_child(holder)
+				ref.at = ref.at - er.position
+				holder.add_child(ref)
+				ref.size = er.size
+				refs.append(holder)
+			else:
+				parent.add_child(ref)
+				ref.size = parent.size
+				refs.append(ref)
 		var with_ref := await _frame(tree, vp)
 		for ref in refs:
 			(ref as Node).get_parent().remove_child(ref)

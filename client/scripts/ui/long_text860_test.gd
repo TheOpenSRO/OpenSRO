@@ -33,7 +33,8 @@ func _initialize() -> void:
 	root.size = Vector2i(1280, 720)
 	await _chat_edit()
 	await _other_edits()
-	_check(_reached == 2, "every part ran to its end (a script error stops one silently)")
+	await _centred_overrun()
+	_check(_reached == 3,"every part ran to its end (a script error stops one silently)")
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -234,4 +235,36 @@ func _other_edits() -> void:
 	await process_frame
 	_check(ph.text_left() == 0.0, "a long placeholder starts at the left (%.1f)" % ph.text_left())
 	ph.queue_free()
+	_reached += 1
+
+## A centred .2dt text wider than its control (TwoDtBuilder's label, grown
+## both ways) starts at floor(left + (w - text w) * 0.5), as CNIFStatic draws
+## it (READ 0x4820b0, 0x482020's `_ftol` of a positive screen x): an odd
+## overrun puts the half pixel on the left.
+func _centred_overrun() -> void:
+	var host := Control.new()
+	host.position = Vector2(100, 100)
+	host.size = Vector2(88, 24)
+	root.add_child(host)
+	var odd := 0
+	for t in ["Silk Charge History!", "Silk Charge History!!", "Silk Charge History!!!", "Short"]:
+		var label := Label.new()
+		label.add_theme_font_size_override(&"font_size", 12)
+		label.set_anchors_preset(Control.PRESET_FULL_RECT)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		label.text = t
+		host.add_child(label)
+		TwoDtBuilder._hold_centred_overrun(label)
+		await process_frame
+		var minw := label.get_combined_minimum_size().x
+		var over := minw - 88.0
+		if over > 0.0 and fmod(over, 2.0) != 0.0:
+			odd += 1
+		var want := floorf(-over / 2.0) if over > 0.0 else 0.0
+		_check(label.position.x == want and label.size.x == maxf(minw, 88.0),
+			"'%s' (overrun %.1f): the label at %.1f, want floor(-overrun / 2) = %.1f" % [t, over, label.position.x, want])
+		label.queue_free()
+	_check(odd > 0, "an odd or fractional overrun was among them (%d)" % odd)
+	host.queue_free()
 	_reached += 1
