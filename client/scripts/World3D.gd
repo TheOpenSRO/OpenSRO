@@ -2872,6 +2872,9 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.name = "HudChat"
 	ui_control.add_child(_hud_chat)
 	_hud_chat.setup()
+	# The starting message (round 863): CGInterface::Create adds it to the
+	# chat as it builds the game interface (HudChat.add_starting_message).
+	_hud_chat.add_starting_message()
 	# The game windows draw, and take clicks and the wheel, above the chat
 	# where they overlap (HudPanels.stack_over has why, and that the order
 	# is ours).

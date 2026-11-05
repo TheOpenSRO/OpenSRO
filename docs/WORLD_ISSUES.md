@@ -7483,6 +7483,38 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-third round, the starting message: UIIT_STT_STARTING_MSG in the chat on entering the world
+
+The user asked for the message the original shows in the chat every time the game is entered.
+Labels: READ (`c:` sro_client.exe), MEASURED, INFERRED, OURS, OPEN. Base `4ade3371` (v0.1.629).
+
+**READ.** `CGInterface::Create` (c:0x78c910) looks up `UIIT_STT_STARTING_MSG` (0x78cf1d, 0x8c9c30) and
+calls 0x777c60(0xff, 0xffdbc99b, 1, text): `vswprintf` with the text as the format, then the chat
+window (interface child 1, 0x8b51f0(1, 1)) gets it through 0x7aca30 as type 0xff -- a system line,
+filed in all five lists (the All list through 0x64f8a0, the four tab lists through 0x7aab40), in
+0xffdbc99b, RGB (219, 201, 155). The text is the archive's own (the English column of
+`textuisystem`'s row); an archive without the row adds nothing.
+
+**MEASURED** (1280x1024, entering the world): the message fills the chat as six rows of the row's
+`\n`-separated parts. Each part after a break starts at the list's left edge with only its own
+leading space -- no hanging indent -- while a part too long for the list (the first, "... in a great
+journey") wraps with the usual 20 px hanging indent.
+
+**Built.** `HudChat.add_starting_message` (the text, `%%` -> `%` as `vswprintf` prints it, type 0xff,
+0xffdbc99b), called by World3D right after the chat window is set up. `HudChat.wrap` now starts a new,
+unindented row at a line break (a real one or the table's written `\n`); rows without a break wrap
+as before. Chat lines from the network still have their breaks removed first (`format_line`,
+0x876930), so they are unchanged. Test `scripts/ui/hud/starting_msg863_test.gd` (ALL PASS):
+all five lists, the colour, the rows, no break drawn, nothing without the text, the wrap indent;
+`hud_chat_test` ALL PASS. UI-only: no perf gate.
+
+**OPEN.**
+- Whether the message is added again after a teleport (a zone change): `CGInterface::Create`
+  carries a `snd_warp` branch, which suggests it also runs on a warp's arrival, but that was not
+  measured; ours adds it once per world entry.
+- A text ending in a break (the Korean column does) leaves an empty last row here; the original's
+  handling of a trailing break was not measured.
+
 ## Eight-hundred-and-sixty-second round, lane M: the guild war mark is drawn (its effect) and told to everyone around; berserk measured
 
 The round's three movement-and-effects items, checked against measured behaviour. Labels: READ (`c:`

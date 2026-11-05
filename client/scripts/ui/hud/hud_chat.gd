@@ -833,6 +833,23 @@ func add_chat(type: int, name: String, message: String, sent: bool = false, colo
 		color = argb(color_argb)
 	_add_to(lists_for(int(line["type"])), String(line["text"]), color)
 
+## The starting message (round 863, READ): CGInterface::Create (c:0x78c910)
+## looks up UIIT_STT_STARTING_MSG (0x78cf1d) and hands it to 0x777c60, which
+## formats it (vswprintf, the text as the format) and adds it to the chat
+## window (interface child 1) through 0x7aca30 as type 0xff in 0xffdbc99b --
+## a system line: all five lists (0x7aab40 for the four tab lists). Its line
+## breaks start new rows (wrap). Nothing when the archive has no such text.
+const STARTING_MSG_KEY := "UIIT_STT_STARTING_MSG"
+const STARTING_MSG_COLOR := 0xffdbc99b
+
+func add_starting_message() -> bool:
+	var text := _text(STARTING_MSG_KEY, "")
+	if text == "":
+		return false
+	# vswprintf with the text as the format: "%%" prints one "%".
+	_add_to(lists_for(TYPE_SYSTEM), text.replace("%%", "%"), argb(STARTING_MSG_COLOR))
+	return true
+
 ## Adds one line to the All list only, the way CIFChatViewer's vslot 49
 ## (0x7aaa50) does. `speaker` empty makes it a speakerless line; this
 ## client's system lines go to the system message window instead (round 639,
@@ -1343,7 +1360,20 @@ class ChatList extends Control:
 ## screenshot: every wrapped line there breaks between words); a
 ## continuation line starts with floor(20 / space width) spaces (at least
 ## one) and has that much less room.
+## A line break in a message (a real one, or the text table's written "\n")
+## starts a new row at the left edge, with no hanging indent; only a row too
+## long for the list wraps, indented (MEASURED, round 863: the starting
+## message's rows after each break begin at the edge, its first row's
+## wrapped tail is indented 20 px).
 static func wrap(text: String, font: Font, font_size: int, width: float, indent_lines: bool = true) -> PackedStringArray:
+	if text.contains("\n") or text.contains("\\n"):
+		var rows := PackedStringArray()
+		for part in text.replace("\r", "").replace("\\n", "\n").split("\n"):
+			rows.append_array(_wrap_row(part, font, font_size, width, indent_lines))
+		return rows
+	return _wrap_row(text, font, font_size, width, indent_lines)
+
+static func _wrap_row(text: String, font: Font, font_size: int, width: float, indent_lines: bool) -> PackedStringArray:
 	var out := PackedStringArray()
 	if font == null or width <= 0.0:
 		out.append(text)
