@@ -5774,6 +5774,34 @@ func open_hammer_confirm(slot: int) -> PartyMatchConfirm:
 	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
 	return box
 
+## Whether TypeIDs are a composite item's, 3/3/13/14 (round 864: the premium
+## items, the Energy of life scroll).
+static func is_composite_item(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 14
+
+## Round 864: the question a composite item asks before its use, the box the
+## repair hammer asks (open_hammer_confirm: kind 0x1f, UIIT_MSG_QUESTION_
+## SILKMALL_ITEM_USE, READ c:0x676a09 for the CanUse-129 3/3/13 rows).
+## MEASURED: a right click on the Premium Gold Time opens "Confirmation
+## window" / "Will you use the selected item?" with Yes and No; Yes uses it.
+## OURS: the same generic question box as the hammer's.
+func open_use_confirm(slot: int) -> PartyMatchConfirm:
+	if _builder == null:
+		return null
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, _resolve_ui("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE", "Will you use the selected item?")):
+		box.free()
+		return null
+	box.name = "UseConfirm"
+	box.confirmed.connect(func() -> void:
+		if NetClient.current_character_name != "":
+			print("HudPanels: the composite item at bag slot %d" % slot)
+			UiSounds.expect_use(bag_item_types(slot))
+			NetClient.use_item(NetClient.current_character_name, slot))
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	return box
+
 ## Whether TypeIDs are an item used on the current COS (round 805,
 ## UseItemNet.is_cos_target_item).
 static func is_cos_target_item(types: PackedInt32Array) -> bool:
@@ -7212,6 +7240,10 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		# Round 838: the repair hammer asks first (open_hammer_confirm).
 		if is_repair_hammer(item_types(item_id)):
 			open_hammer_confirm(slot)
+			return
+		# Round 864: a composite item (the premium) asks first too.
+		if is_composite_item(item_types(item_id)):
+			open_use_confirm(slot)
 			return
 		# Round 838: the skin change scroll opens its window.
 		if is_skin_change_item(item_types(item_id)):

@@ -159,7 +159,9 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 		p := send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slot)}).Encode())
 		// Round 838: a BFI1 grant's 0x315C goes out as its job starts, before
 		// the use's reply.
-		for p.Opcode == OpBuffItemStart {
+		// Round 864: the fills' state goes first too (the use's answer
+		// order); the state after the reply is the caller's.
+		for p.Opcode == OpBuffItemStart || p.Opcode == OpCompositeState {
 			p = f.recv()
 		}
 		res, err := DecodeUseItemResult(p.Data)

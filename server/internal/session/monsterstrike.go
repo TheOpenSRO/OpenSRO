@@ -557,6 +557,9 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 	// leveldata.DeathPenaltyExp for the other three and for why the
 	// reduction stat is left out.
 	cause, hasCause := takeDeathCause(characterID)
+	// Round 864: this death's loss replaces the last one's (0 until the
+	// penalty below says otherwise; resurrectfill.go).
+	noteDeathLoss(characterID, 0)
 	if levelTable != nil && hasCause && cause.job {
 		// A job death (round 802, jobpvp.go): the cause-1 handler's penalty
 		// instead of GObjPC_OnDeath's.
@@ -565,6 +568,7 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 			c = fresh
 		}
 		out.deathExpLost = jobDeathPenalty(ctx, chars, c, cause.killerLevel)
+		noteDeathLoss(characterID, out.deathExpLost)
 		unlock()
 	} else if levelTable != nil {
 		// The EXP is re-read under the leveling lock (round 712: a party
@@ -598,6 +602,9 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 				return monsterStrikeOutcome{}, fmt.Errorf("combat: applying death penalty: %w", err)
 			}
 			out.deathExpLost = loss
+			// pc+0x1ce0, the loss a resurrection scroll gives back (round
+			// 864): what the death really took, the clamped loss.
+			noteDeathLoss(characterID, c.Exp-exp)
 		}
 		unlock()
 	}

@@ -7483,6 +7483,151 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-fourth round, lane P: the premium's third icon -- one icon per composite, grants that last the premium and refill daily, the free resurrection
+
+The user: "also the premium item doesn't show all 3 icons at the top left. It's missing the premium
+icon where you can click it and use the free instant, return, or ressurection scrolls". Labels: READ
+(`c:` sro_client.exe, `s:` SR_GameServer.exe; `/var/tmp/decomp_client`, `/var/tmp/decomp_server`,
+`/var/tmp/gs_full.asm` on the box), MEASURED, INFERRED, OURS, OPEN. Base `d5f86f19` (v0.1.633).
+
+### What the original does
+
+MEASURED (a level-40 character, ITEM_MALL_PREMIUM_GOLDTIME 9277 used from the bag; frames, packets):
+
+| What | MEASURED |
+|---|---|
+| The use | a right click opens "Confirmation window" / "Will you use the selected item?" / Yes, No; Yes uses it |
+| The icons | three, left to right at the use: the premium item's own art (the composite, kind 5), the Gold Time ticket's art (kind 3), the premium skill's art (the USU1 buff); 20 x 20, pitch 23, top row y 10 (the same place as ours); each with a full cyan gauge under it |
+| Composite tooltip | "Premium Gold Time (4 weeks)", a blank line, "Remaining time: 27Day 23Hour 59Minute", "Instant Return Scroll: 3Unit", "100% resurrection scroll: 1Unit", "Reverse Return Scroll: 3Unit" |
+| Gold Time tooltip | "Expert Package Service", blank, "Left service period: 27Day", "(27Day 23Hour 59Minute)", "Left experience time:", "180Minute", "(Previous day 0Minute + Today 180Minute)" |
+| Buff tooltip | "Premium", blank, "Continuous hours 28Day", the eight effect lines, blank, "Remaining time: 27Day 23Hour 59Minute" |
+| The click | the composite window: "Confirmation window", buttons "Instant Return Scroll(3)", "100% resurrection scroll(1)", "Reverse Return Scroll(3)", "Cancel" (fill-id order) |
+| Instant return | the window closes, the casting bar "Instant Return Scroll" 1 s, the warp to the return point; tooltip and button then read 2 |
+| Third use | "Instant Return Scroll(0)" greyed, "0Unit" in the tooltip, the icon stays (the grant is not ended) |
+| Reverse return | the reverse box ("Select the location used by the reverse return scroll.", last recall point / where you died / map / Cancel); the last recall point warped back to where the instant return started |
+| Resurrection while alive | "Can use it only in the state of death." in the system log, the window stays open, nothing is sent |
+| Packets, the use | `0x315C` {9277, 2419200, 3847}, `0x3159` {9277, u32 2419200 s left, fill, u8 count} for 3783 (1), 3769 (3), 3795 (3), `0x3206` {3, 1, 9278, 2419200, 10800}, `0xB070`/`0xB071`/`0xB0BD` (skill 5412), `0x3206` {0, token, 2419200000 ms}, `0xB04C` |
+| Packets, a fill | `0x715F` {u32 9277, u32 3769} (a reverse return adds u8 2, the last recall point); answer `0x30BF` {id, 0x0b, 1}, `0xB15F` {1, 9277, fill}; the warp ~1 s later; after it the server sends the three `0x3159` again with the new count (0 kept) |
+| After a warp | the icons are re-sent and drawn buff, Gold Time, composite (all three warps seen); OPEN why (below) |
+
+The 0x3159 seconds are the composite's Param1 (2,419,200), not the UIL1 entry's 86,400.
+
+READ:
+- One icon per composite: `0x3159`'s handler `c:0x8992b0` stores the fill in the board's map (keyed by
+  the fill, `FUN_00805230`) and adds the icon with `FUN_00777f20(5, compositeRefId, 1, secs)`; the
+  tooltip `c:0x800a10` kind 5 walks the map for the icon's composite ("%s: " name, "%d%s" count with
+  UIIT_STT_UNIT); `0x315B` (`c:0x8993b0`) removes the composite's icon; `0x3161` (`c:0x899420` ->
+  `FUN_00805480`) sets a fill's count back to its UIL1 maximum; `0x315A` (`c:0x899350`) is read and
+  dropped.
+- The grant's life: `s:0x49f605..0x49f63f` adds TimeSpan(scroll ref+0x2a0 = Param1) to now; the UIL1
+  job takes that end (`0x49fa97`); the entry's seconds (`+0x28`, `0x49fa46`) are the job's period
+  (+0x7c) and its end (+0x80). `CUsedItemLimit::FUN_00653a40` (`s:0x653a40`): past the period's end, k =
+  (now - end) / period, end += (k + 1) x period, count = max; run at load (slot 1 `s:0x653b40`, then
+  `0x3159`) and in the tick (slot 2 `s:0x653c30`, then `0x3161`).
+- A fill at 0 keeps its job: `CUsedItemLimit::vslot_007` (`s:0x654080`) ends the job on the last use
+  only in its TypeID3 1 branch (the Energy of life's fill); the return scrolls (TypeID3 3) and the
+  resurrection scroll (3/3/13/6) just count down (`FUN_006538d0(1, n - 1)`).
+- The resurrection: `vslot_007`'s 3/3/13/6 branch calls `FUN_0049ff20(Param3, Param2)` (`s:0x49ff20`):
+  not dead 0x1887; lost = |pc+0x1ce0|; `GObjPC::Revive(1)`; EXP back = ceil(lost x Param3 / 100.0)
+  (`0xb45af0` = 100.0, a fraction above `0xb45c84` = 1e-6 rounds up; x 0.5 `0xb45c50` when the byte at
+  (pc+0x30)+0xc is 2); HP and MP += trunc(max x Param2 / 100) through ApplyHPMPDelta. MEASURED (the
+  shard's rows): every 3/3/13/6 has Param2 100 and Param3 100, 60 or 0.
+- The window's own checks (`c:0x7afd05..0x7b035d`): a 3/3/3/1 fill while dead posts `0xB04C {2,
+  0x1889}`, a 3/3/13/6 while alive `{2, 0x1887}` (the jump table's target `c:0x7b9261` pushes
+  UIIT_MSG_STRGERR_ONLY_THE_DEAD_CAN_USE_RESURRECT_SCROLL), each leaving the window open.
+- The Gold Time's gauge: `c:0x805a40` case 3: total = the 0x3206 ref's Param1 x 1000, elapsed = total
+  - the period left x 1000 (round 838's "no gauge" was wrong; MEASURED: a full gauge).
+
+### What OpenSRO did (MEASURED, base `d5f86f19`, real client on the lane server)
+
+The use (no confirmation box) put FIVE icons up: the Gold Time (no gauge), the buff, and one premium
+icon per fill (three identical, one per UIL1 grant, each with the fill's own tooltip "Premium Gold
+Time (4 weeks) | Remaining time: 0Day 23Hour 59Minute"). Each grant lived the UIL1 entry's 86,400 s
+and was ENDED at that time, and a return scroll's last use ended its grant -- so a day after the use
+the premium icons were gone and only two icons were left: the user's report. The resurrection fill was
+not modelled (refused).
+
+### OpenSRO now
+
+- Client (`World3D._on_composite_state`, `composite_token`, `composite_fill_lines`,
+  `_composite_entries`): one kind-5 icon per composite (token = -composite id), its tooltip name /
+  blank / remaining time / one "<fill>: <n>Unit" line per fill in fill-id order
+  (`HudBuffBoard.add_item_state`'s `fill_lines`), the window lists that composite's fills; the window
+  refreshes when a state arrives while it is open.
+- Client: the window's pre-check (`CompositeItemWindow.pre_check` / `refused`,
+  `World3D._composite_fill_check`): resurrection while alive -> 0x1887's text, return scroll while dead
+  -> 0x1889's, window left open, nothing sent. `ErrorText` gains 0x1887's key.
+- Client: the Gold Time icon has its gauge (`HudBuffBoard.add_gold_time(..., total_ms, remaining_ms)`).
+- Client: a 3/3/13/14 item asks "Will you use the selected item?" first (`HudPanels.open_use_confirm`,
+  the hammer's box; OURS: the generic question box).
+- Server (`session/composite.go`): a UIL1 grant lives the composite's Param1 (`scroll.RestoreHP`; the
+  entry's seconds when it has none, OURS) and refills every period (`compositeGrant.refill`, at every
+  read, and by a timer that pushes OpCompositeState -- OURS for 0x3161); the period and its end are
+  kept in the timed-job row (V3, V4; a row from before has none and never refills). The use's answer
+  sends the state before the Gold Time and the buff (the measured order).
+- Server: return-scroll fills never end their grant (`useScrollFill`); a resurrection fill
+  (`session/resurrectfill.go`) revives a dead owner in place with +trunc(max x Param2 %) HP / MP (+1 HP
+  of Revive), gives back ceil(last death's loss x Param3 %) (the loss kept per character,
+  `noteDeathLoss`, the clamped loss), ends a berserk, starts the 6 s protection, and answers the fill,
+  OpReviveResult and the stats; refused 0x1887's text when alive. The fill handler's berserk turn is
+  released before it (the revive's berserk end takes the same turn).
+
+### Verification
+
+- Go: `composite864_test.go` -- the grant lives 2,419,200 s with an 86,400 s period; the refill at the
+  period's end and after days away (end on the next boundary); NEGATIVE: a pre-864 grant never refills;
+  the keeper refills on read and stores V3/V4; the resurrection arithmetic; a dead character revived
+  full with 60 % of a 300 loss back, NEGATIVE the living refused. Existing fixtures read the state that
+  now precedes the use's reply. `cd server && go build ./... && go test ./...`: all pass (93 packages).
+- Client: `premium864_test.gd` (the tooltip as measured, one icon refreshed in place, the Gold Time's
+  gauge and NEGATIVE without a total, the window's refusal keeps it open and sends nothing, the
+  greyed "(0)" button). `remote_godot.sh check`: ALL LOAD (1143 scripts); `tests`: "ran 436 suite(s), 0 failing" (a first run had `buff_persist_test` fail under load, ALL PASS alone, its known flake).
+- Live (render box, lane server 17641 with `-navmesh-dir`, the real client with real clicks; frames in
+  `/var/tmp/r864p/keep/`):
+  - before (`before_b1`): five icons (Gold Time, buff, three premium icons), tooltip "... Remaining
+    time: 0Day 23Hour 59Minute".
+  - `after_a1`: the bag's right click -> the question box -> Yes: one premium icon at (220, 10) then
+    the Gold Time (with its gauge) then the buff; tooltip "Premium Gold Time (4 weeks) |  | Remaining
+    time: 27Day 23Hour 59Minute | Instant Return Scroll: 3Unit | 100% resurrection scroll: 1Unit |
+    Reverse Return Scroll: 3Unit"; the click -> the window with the three fills; resurrection while
+    alive -> "Can use it only in the state of death.", window open; instant return -> cast 1000 ms,
+    warp to (9, -409), the tooltip then "2Unit".
+  - `after_a2` (`-player-dead-state` and the monster flags): at 1 HP outside the south gate, killed by a
+    Mangyang; while dead the board click opened the window; "100% resurrection scroll(1)" -> revived
+    in place, HP 1494/1494, MP 1494/1494 (server: `composite: resurrection fill ... hp=1494 mp=1494
+    exp_back=0 left=0`, `protection started ... seconds=6`); the tooltip then "100% resurrection
+    scroll: 0Unit", the icon kept.
+  - `after_a3`: instant return from (-6, 1180) to (9, -409), then the reverse return's box -> "Move to
+    the last recall point." -> cast 1000 ms -> back at (-6, 1180); tooltip "2Unit" for both.
+- No perf gate: HUD, net and server only (no world drawing).
+
+### Differs on purpose / unsure (for the user)
+
+- The Gold Time tooltip's lines (round 838, OURS): ours "Expert Package Service / Remaining time:
+  27Day 23Hour 59Minute / Remaining time (Previous day 0Hour 0Minute 0Second + Today 3Hour 0Minute
+  0Second)"; the original's are in the table above (READ: `c:0x800a10` kind 3 builds them from
+  PARAM_REMAINED_PERIOD, PARAM_REMAINED_TIME, PARAM_PREVIOUS_DAY, PARAM_TODAY). Left as is.
+- The use's question box is the generic one the hammer uses (OURS); the original asks it for every
+  CanUse-129 3/3/13 item but TypeID4 8, 12, 15, 16 (round 838's READ) -- only 3/3/13/14 is routed here.
+- "Revived." after the resurrection is OpenSRO's own line (every revive's).
+- The icons' x: 218 in the original's frames against 220 here (the archive's GDR_MAGIC_STATE_BOARD
+  rect, READ round 618); the HUD around it matches to the pixel, so INFERRED a different interface
+  file in that client, not changed.
+
+### OPEN
+
+- The order after a warp: the original drew buff, Gold Time, composite after each of three warps,
+  though the re-sent packets came in two different orders; the board's rebuild rule was not found
+  (no other caller of `FUN_00777f20(5, ...)`). OpenSRO keeps the order of the use.
+- The resurrection on the original was not reproduced (no monster could be spawned there; the GM
+  spawn was refused); the rule is READ only. Its halving under (pc+0x30)+0xc == 2 is not modelled
+  (the byte not identified). What another player sees of the scroll's revive is the revive's own
+  path, not measured.
+- The composite window's other two local checks for a return scroll (0x185e, 0x1875) are left to the
+  server.
+- Grants kept before this round (prod) have no period: they keep their old 86,400 s end and never
+  refill; a premium used before v0.1.634 shows its icon only until that day ends.
+
 ## Eight-hundred-and-sixty-third round, lane T: turning on a click-walk direction change -- the turn already matched; a far re-click snapped before its echo
 
 The user: "when abruptly change directions with click walking the original gives a fluid animation and

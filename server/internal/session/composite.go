@@ -212,6 +212,31 @@ type compositeGrant struct {
 	max       int
 	until     time.Time
 	gen       uint64 // which put this is (a timer ends only its own)
+	// Round 864: the UIL1 entry's seconds are a PERIOD, not the grant's
+	// life (READ, s:0x49f605..0x49f63f and 0x49fa3d..0x49fa9e): the job
+	// lasts the composite's Param1 (ref+0x2a0) from the use, and the entry's
+	// seconds (+0x28) mark a period whose end (job +0x80) refills the uses
+	// (refill, CUsedItemLimit::FUN_00653a40). period 0 is a grant kept before
+	// round 864, which never refills.
+	period    time.Duration
+	periodEnd time.Time
+}
+
+// refill is CUsedItemLimit::FUN_00653a40 (READ, s:0x653a40..0x653aea), run
+// when the period's end is reached (FUN_00653a10 answers end - now < 1): k =
+// (now - end) / period whole periods past, the end moves to end + (k + 1) x
+// period -- the first boundary after now, the boundaries anchored at the
+// use -- and the uses go back to the maximum (setter +0x48 with max << 16 |
+// max). It reports whether it refilled. (k is a byte there, `mov bl,al`;
+// a 28-day job never reaches 256 periods of a day.)
+func (g *compositeGrant) refill(now time.Time) bool {
+	if g.period <= 0 || now.Before(g.periodEnd) {
+		return false
+	}
+	k := now.Sub(g.periodEnd) / g.period
+	g.periodEnd = g.periodEnd.Add((k + 1) * g.period)
+	g.remaining = g.max
+	return true
 }
 
 // CompositeKeeper holds every character's UIL1 grants (CTJ_CompositeItemKeeper
@@ -236,6 +261,16 @@ type CompositeKeeper struct {
 	store   timedjob.Store
 	scrolls *ScrollCaster
 	loaded  map[int64]bool
+	// zerk is the berserk tracker a period refill's state push reads the
+	// bonus from (round 864; SetBerserk).
+	zerk *berserk.Tracker
+}
+
+// SetBerserk names the tracker a period refill's push reads (round 864).
+func (k *CompositeKeeper) SetBerserk(z *berserk.Tracker) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.zerk = z
 }
 
 func NewCompositeKeeper() *CompositeKeeper {
@@ -275,10 +310,14 @@ func (k *CompositeKeeper) running(characterID int64, now time.Time) []*composite
 	defer k.mu.Unlock()
 	var out []*compositeGrant
 	m := k.grants[characterID]
+	var refilled []compositeGrant
 	for id, g := range m {
 		if !now.Before(g.until) {
 			delete(m, id)
 			continue
+		}
+		if g.refill(now) {
+			refilled = append(refilled, *g)
 		}
 		cp := *g
 		out = append(out, &cp)
@@ -286,6 +325,11 @@ func (k *CompositeKeeper) running(characterID int64, now time.Time) []*composite
 	if m != nil && len(m) == 0 {
 		delete(k.grants, characterID)
 	}
+	k.mu.Unlock()
+	for _, g := range refilled {
+		k.saveGrant(characterID, g)
+	}
+	k.mu.Lock()
 	return out
 }
 
@@ -296,7 +340,13 @@ func (k *CompositeKeeper) get(characterID, fillID int64, now time.Time) (*compos
 	if !ok || !now.Before(g.until) {
 		return nil, false
 	}
+	refilled := g.refill(now)
 	cp := *g
+	if refilled {
+		k.mu.Unlock()
+		k.saveGrant(characterID, cp)
+		k.mu.Lock()
+	}
 	return &cp, true
 }
 
@@ -316,6 +366,53 @@ func (k *CompositeKeeper) put(characterID int64, g compositeGrant, lasts time.Du
 	k.saveGrant(characterID, g)
 	gen := g.gen
 	time.AfterFunc(lasts, func() { k.expire(characterID, g.fillID, gen) })
+	k.armPeriod(characterID, g.fillID, gen, g.periodEnd)
+}
+
+// armPeriod starts the timer for a grant's next period end: the job's tick
+// (CUsedItemLimit::FUN_00653c30, slot 2) refills it there and sends 0x3161
+// {composite, fill}, whose client handler (c:0x899420 -> FUN_00805480) sets
+// the fill's count back to its UIL1 maximum (READ). OpenSRO pushes the
+// whole OpCompositeState instead (OURS: its own opcodes). The tick runs only
+// while the character is in the world; a refill missed while away happens
+// at the next read (refill), as the job's load (slot 1, FUN_00653b40) does.
+func (k *CompositeKeeper) armPeriod(characterID, fillID int64, gen uint64, periodEnd time.Time) {
+	if periodEnd.IsZero() {
+		return
+	}
+	wait := time.Until(periodEnd)
+	if d := periodEnd.Sub(useItemClock()); d < wait {
+		wait = d
+	}
+	if wait < 0 {
+		wait = 0
+	}
+	time.AfterFunc(wait, func() { k.periodTick(characterID, fillID, gen) })
+}
+
+// periodTick is the period end's refill and push, for the grant the timer
+// was started for.
+func (k *CompositeKeeper) periodTick(characterID, fillID int64, gen uint64) {
+	now := useItemClock()
+	k.mu.Lock()
+	g, ok := k.grants[characterID][fillID]
+	if !ok || g.gen != gen || !now.Before(g.until) {
+		k.mu.Unlock()
+		return
+	}
+	refilled := g.refill(now)
+	cp := *g
+	sess := k.sessions[characterID]
+	zerk := k.zerk
+	k.mu.Unlock()
+	if refilled {
+		k.saveGrant(characterID, cp)
+		slog.Info("composite: period refill", "character_id", characterID, "item", fillID, "uses", cp.max, "next", cp.periodEnd)
+		if sess != nil && zerk != nil {
+			_ = sendCompositeState(sess, k, zerk, characterID, now)
+		}
+	}
+	k.armPeriod(characterID, fillID, gen, cp.periodEnd)
 }
 
 // saveGrant writes a UIL1 grant to the store (round 838).
@@ -326,8 +423,15 @@ func (k *CompositeKeeper) saveGrant(characterID int64, g compositeGrant) {
 	if store == nil {
 		return
 	}
+	// Round 864: V3 the period in seconds, V4 its end (unix seconds); 0 on
+	// a row kept before then (no refill).
+	var periodEnd int64
+	if !g.periodEnd.IsZero() {
+		periodEnd = g.periodEnd.Unix()
+	}
 	_ = store.Put(context.Background(), timedjob.Job{CharID: characterID, Type: timedjob.TypeComposite, Sub: "UIL1",
-		Ref: g.fillID, Key: g.scrollID, Start: useItemClock(), End: g.until, V1: int64(g.remaining), V2: int64(g.max)})
+		Ref: g.fillID, Key: g.scrollID, Start: useItemClock(), End: g.until, V1: int64(g.remaining), V2: int64(g.max),
+		V3: int64(g.period / time.Second), V4: periodEnd})
 }
 
 // dropGrant removes a UIL1 grant's row (round 838).
@@ -582,11 +686,24 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			if e.flagP {
 				remaining = e.count - 1
 			}
+			// Round 864: the job lasts the composite's Param1 from the use
+			// (s:0x49f61b..0x49f63f: esi = the scroll's ref, TimeSpan of
+			// ref+0x2a0 added to now; the UIL1 job takes that end,
+			// 0x49fa97), and the entry's seconds are its refill period
+			// (0x49fa46: TimeSpan of entry+0x28, the job's +0x7c / +0x80).
+			// MEASURED: the premium's 0x3159 carries 2,419,200 s left (its
+			// Param1), not the entry's 86,400. A row with no Param1 keeps
+			// the entry's seconds as its life (OURS).
+			period := time.Duration(e.seconds) * time.Second
+			lasts := period
+			if scroll.RestoreHP > 0 {
+				lasts = time.Duration(scroll.RestoreHP) * time.Second
+			}
 			plan.grants = append(plan.grants, compositeGrant{
 				fillID: part.ID, scrollID: scroll.ID, remaining: remaining, max: e.count,
-				until: now.Add(time.Duration(e.seconds) * time.Second),
+				until: now.Add(lasts), period: period, periodEnd: now.Add(period),
 			})
-			plan.grantFor = append(plan.grantFor, time.Duration(e.seconds)*time.Second)
+			plan.grantFor = append(plan.grantFor, lasts)
 		case "UIU1":
 			// FUN_0049f590's UIU1 branch: a 3/3/13/4 row (FUN_004929c0,
 			// 0x4929c0: TypeID 3/3/13, and TID & 0xf800 == 0x2000) makes a
@@ -666,6 +783,16 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	}
 	if plan.bonusValid {
 		zerk.SetDurationBonus(characterID, plan.bonusSecs, now, plan.bonusFor)
+	}
+	// Round 864, MEASURED: the use's answer starts with the fills' state
+	// (0x315C, then 0x3159 per fill), then the premium time's 0x3206, then
+	// the USU1 buff (0xB0BD), then 0xB04C -- the board shows the composite's
+	// icon, the premium time's, the buff's, in that order. So the state goes
+	// first here (it went last, after the use result, before round 864).
+	if len(plan.grants) > 0 {
+		if err := sendCompositeState(sess, keeper, zerk, characterID, now); err != nil {
+			return err
+		}
 	}
 	// Round 838: the premium and the BFI1 / UQL1 grants.
 	if plan.premium != nil {
@@ -912,7 +1039,12 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 		username, _ := AuthenticatedUsername(sess)
 		isGM := gate.Allows(username)
 		now := useItemClock()
-		release := zerk.Turn(characterID)
+		// Round 864: released once, by the deferred call or early by the
+		// resurrection fill, whose revive ends a berserk under the same turn
+		// (endBerserk) -- taken twice it waited on itself.
+		var released sync.Once
+		unlockTurn := zerk.Turn(characterID)
+		release := func() { released.Do(unlockTurn) }
 		defer release()
 		// 0x511640: no UIL1 job for the item answers 2.
 		g, ok := keeper.get(characterID, req.ItemID, now)
@@ -927,14 +1059,19 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 		if err != nil || fill == nil {
 			return fail("that cannot be used", req.ItemID)
 		}
+		// Round 864: a resurrection scroll's fill (vslot_007's 3/3/13/6
+		// branch, resurrectfill.go).
+		if isResurrectionScroll(fill) {
+			release()
+			return useResurrectionFill(ctx, sess, chars, hub, keeper, characterID, fill, g, req, fail)
+		}
 		// Round 838: a return scroll's fill (vslot_007's TypeID3 3 branch,
 		// 0x654258 / 0x65423b) runs the scroll's own routine.
 		if fill.TypeID1 == equipment.TypeItem && fill.TypeID2 == equipment.TypeExpendable && (IsReturnScroll(fill) || IsReverseReturnScroll(fill)) {
 			return useScrollFill(ctx, sess, hub, keeper, zerk, characterID, fill, g, req, fail)
 		}
 		// vslot_007's row test, TypeID3 1 branch: 3/3 expendable, TypeID4 8.
-		// Its TypeID3 3 and 13 branches (other recovery, resurrection) are
-		// not modelled.
+		// Its TypeID3 3 branch's other kinds are not modelled.
 		if fill.TypeID1 != equipment.TypeItem || fill.TypeID2 != equipment.TypeExpendable ||
 			fill.TypeID3 != recoveryFamily || fill.TypeID4 != berserkPotionKind {
 			return fail("that cannot be used", req.ItemID)

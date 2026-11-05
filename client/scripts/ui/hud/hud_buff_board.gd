@@ -489,7 +489,12 @@ func _remove(b: Buff) -> void:
 ## (ref+0x2b4), elapsed = total - secs x 1000. `token` is ours (the granted
 ## item's id, negated, so it never meets a server buff token). The main list
 ## is INFERRED: FUN_00805a40's list choice for kind 5 was not read.
-func add_item_state(token: int, icon: String, total_ms: int, remaining_ms: int, tooltip: String) -> Buff:
+##
+## Round 864: one entry per COMPOSITE (the caller's token is the composite's;
+## FUN_00777f20(5, compositeRefId, ...), READ c:0x8992b0). `fill_lines` are
+## the tooltip's lines after the remaining time, one per fill of it.
+func add_item_state(token: int, icon: String, total_ms: int, remaining_ms: int, tooltip: String,
+		fill_lines: PackedStringArray = PackedStringArray()) -> Buff:
 	var b: Buff = _by_token.get(token)
 	var fresh := b == null
 	if fresh:
@@ -502,7 +507,7 @@ func add_item_state(token: int, icon: String, total_ms: int, remaining_ms: int, 
 	b.elapsed_ms = 0.0
 	if b.total_ms > 0 and remaining_ms >= 0:
 		b.elapsed_ms = float(clampi(b.total_ms - remaining_ms, 0, b.total_ms))
-	b.info = {"icon": icon, "tooltip": tooltip}
+	b.info = {"icon": icon, "tooltip": tooltip, "fill_lines": fill_lines}
 	if fresh:
 		b.main_list = true
 		_main.append(b)
@@ -523,14 +528,25 @@ func add_item_state(token: int, icon: String, total_ms: int, remaining_ms: int, 
 const KIND_SAFE_TRADE := 0xb
 
 ## Round 838: the premium Gold Time (FUN_00777f20(3, ...) -> FUN_00805a40
-## case 3, from 0x3206): no gauge; its tooltip (0x800a10's kind 3) is the
-## item's name, the period left and the gold time (previous day + today),
-## composed by the caller. Main list, as kind 0xb (INFERRED).
+## case 3, from 0x3206); its tooltip (0x800a10's kind 3) is the item's name,
+## the period left and the gold time (previous day + today), composed by the
+## caller. Main list, as kind 0xb (INFERRED).
+## Round 864: it HAS a gauge (READ c:0x805a40 case 3: total = the 0x3206
+## ref's Param1 (ref+0x2b4) x 1000, elapsed = total - period left x 1000;
+## MEASURED: a full gauge under the icon at the use, as under the other two).
+## `total_ms` < 0 keeps the round-838 gaugeless entry.
 const KIND_GOLD_TIME := 3
 
-func add_gold_time(token: int, icon: String, tooltip: String) -> Buff:
+func add_gold_time(token: int, icon: String, tooltip: String, total_ms: int = -1, remaining_ms: int = -1) -> Buff:
 	var b := add_state_entry(KIND_GOLD_TIME, token, icon, tooltip)
 	b.info = {"icon": icon, "tooltip": tooltip}
+	b.total_ms = total_ms if total_ms > 0 else -1
+	b.elapsed_ms = 0.0
+	if b.total_ms > 0 and remaining_ms >= 0:
+		b.elapsed_ms = float(clampi(b.total_ms - remaining_ms, 0, b.total_ms))
+	if b.slot != null:
+		b.slot.gauge.value = b.gauge_value()
+		b.slot.gauge.visible = b.total_ms > 0
 	return b
 
 func remove_gold_time(token: int) -> void:
@@ -705,7 +721,19 @@ func tooltip_for(token: int) -> String:
 	var b: Buff = _by_token.get(token)
 	if b == null:
 		return ""
-	if b.kind == 5 or b.kind == KIND_SAFE_TRADE or b.kind == KIND_GOLD_TIME:
+	if b.kind == 5:
+		# Round 864 (c:0x800a10 kind 5, READ; MEASURED): the composite's name,
+		# a blank line (0x7769a0 / 0x776d20 close the title's paragraph), the
+		# remaining time, then one "<fill>: <n><Unit>" line per fill.
+		var comp_lines := PackedStringArray([String(b.info.get("tooltip", "")), ""])
+		if b.total_ms >= 0:
+			comp_lines.append(remain_line(b.remaining_ms(), _unit_texts()))
+		comp_lines.append_array(b.info.get("fill_lines", PackedStringArray()))
+		return "\n".join(comp_lines)
+	if b.kind == KIND_GOLD_TIME:
+		# The caller composes every line, the period left among them.
+		return String(b.info.get("tooltip", ""))
+	if b.kind == KIND_SAFE_TRADE:
 		var item_lines := PackedStringArray([String(b.info.get("tooltip", ""))])
 		if b.total_ms >= 0:
 			item_lines.append(remain_line(b.remaining_ms(), _unit_texts()))

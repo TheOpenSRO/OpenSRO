@@ -19,10 +19,13 @@ class_name CompositeItemWindow
 ##     count + 1; the last closes the window (composite review).
 ##   - A button's click (FUN_007b03e0 -> FUN_007afbf0) closes the window and
 ##     sends 0x715F {compositeRefId, limitedRefId} for a granted item that is
-##     not 3/3/3/1, 3/3/3/3 or 3/3/13/6.
+##     not 3/3/3/1, 3/3/3/3 or 3/3/13/6. Round 864: those three are tested
+##     first (c:0x7afd05..0x7b035d): a 3/3/3/1 while dead posts 0x1889, a
+##     3/3/13/6 while alive 0x1887, and the window stays (pre_check); a
+##     3/3/3/3 opens the reverse return box.
 ## Not recovered: the frame/tile resize arithmetic for several buttons, and
 ## what UI_SILKMALL::FUN_00655ec0 does to a zero-count button (OURS: it is
-## disabled).
+## disabled; MEASURED round 864: a fill at 0 shows "<name>(0)" greyed).
 
 const LAYOUT := "resinfo\\ifcompositeitemwnd.txt"
 const REGISTRY := "GDR_COMPOSITE_ITEM"
@@ -33,6 +36,14 @@ const BUTTON_STEP := 0x22
 
 ## A button was pressed for this granted item.
 signal use_requested(item_id: int)
+## Round 864: a button's own pre-check refused the fill (the window stays
+## open, nothing is sent): the code the client posts itself.
+signal refused(code: int)
+
+## Round 864: asked before a fill goes (item_id -> 0 to go, else the code);
+## the window's caller supplies it (World3D._composite_fill_check, READ
+## c:0x7afd05..0x7b035d). Unset lets every fill go.
+var pre_check: Callable = Callable()
 
 var _buttons: Array = []
 
@@ -56,6 +67,10 @@ func show_entries(entries: Array) -> void:
 		btn.disabled = int(e[2]) <= 0
 		var item_id := int(e[0])
 		btn.pressed.connect(func() -> void:
+			var code := int(pre_check.call(item_id)) if pre_check.is_valid() else 0
+			if code != 0:
+				refused.emit(code)
+				return
 			hide()
 			use_requested.emit(item_id))
 	var cancel_text := _builder.resolve_text("UIIT_CTL_CANCEL") if _builder != null else ""
