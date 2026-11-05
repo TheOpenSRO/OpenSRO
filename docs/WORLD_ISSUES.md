@@ -7602,15 +7602,20 @@ filed in all five lists (the All list through 0x64f8a0, the four tab lists throu
 
 **MEASURED** (1280x1024, entering the world): the message fills the chat as six rows of the row's
 `\n`-separated parts. Each part after a break starts at the list's left edge with only its own
-leading space -- no hanging indent -- while a part too long for the list (the first, "... in a great
-journey") wraps with the usual 20 px hanging indent.
+leading space -- no hanging indent -- while a part too long for the list (the first) wraps with the
+usual 20 px hanging indent.
 
-**Built.** `HudChat.add_starting_message` (the text, `%%` -> `%` as `vswprintf` prints it, type 0xff,
-0xffdbc99b), called by World3D right after the chat window is set up. `HudChat.wrap` now starts a new,
+**OURS (the user, same round): the words are OpenSRO's own.** The archive's row is not used: a
+player's archive may carry anything there (the test archive's names a private server's website), and
+the original's wording is not ours to ship. `HudChat.STARTING_MSG` keeps the original's shape -- six
+rows, the breaks in the same places, the continuation rows led by a space -- in its colour and lists.
+
+**Built.** `HudChat.add_starting_message` (OpenSRO's text, type 0xff, 0xffdbc99b), called by World3D
+right after the chat window is set up. `HudChat.wrap` now starts a new,
 unindented row at a line break (a real one or the table's written `\n`); rows without a break wrap
 as before. Chat lines from the network still have their breaks removed first (`format_line`,
 0x876930), so they are unchanged. Test `scripts/ui/hud/starting_msg863_test.gd` (ALL PASS):
-all five lists, the colour, the rows, no break drawn, nothing without the text, the wrap indent;
+all five lists, the colour, the rows, no break drawn, the archive's row ignored, the wrap indent;
 `hud_chat_test` ALL PASS. UI-only: no perf gate.
 
 **OPEN.**

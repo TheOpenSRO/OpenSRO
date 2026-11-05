@@ -1,15 +1,14 @@
 extends SceneTree
 
 ## Round 863: the starting message. CGInterface::Create (c:0x78c910) adds
-## UIIT_STT_STARTING_MSG to the chat window as a type-0xff line in 0xffdbc99b
-## (0x78cf1d -> 0x777c60 -> 0x7aca30): every list, that colour; its line
-## breaks start new rows at the left edge, and only a row too long for the
-## list wraps with the hanging indent. Nothing is added when the archive has
-## no such text. No archive is read: the text table and the layout are
-## fixtures.
+## its text to the chat window as a type-0xff line in 0xffdbc99b (0x78cf1d ->
+## 0x777c60 -> 0x7aca30): every list, that colour; its line breaks start new
+## rows at the left edge, and only a row too long for the list wraps with the
+## hanging indent. The words are OpenSRO's own (OURS): the archive's row is
+## not used, whatever it says. No archive is read: the layout is a fixture.
 
 const CHAT_PATH := "res://scripts/ui/hud/hud_chat.gd"
-const TEXT := "Be successful as a Trader, Hunter, or a Thief in a great journey\\n on the vast open Silkroad.\\nBecome a great adventurer\\n as you gain wealth and glory\\n on the Silkroad.\\n You will have great fun in Silkroad Online."
+const TEXT := "An archive's own welcome row\n with a website in it."
 
 var _failures := 0
 
@@ -64,7 +63,7 @@ func _run() -> void:
 		await process_frame
 	_check(chat.has_method("add_starting_message"), "HudChat has add_starting_message")
 	if chat.has_method("add_starting_message"):
-		_check(chat.call("add_starting_message") == true, "the starting message is added when the archive has it")
+		_check(chat.call("add_starting_message") == true, "the starting message is added")
 		for tab in 5:
 			var msgs: Array = chat.call("list_messages", tab)
 			_check(msgs.size() == 1, "tab %d holds it (type 0xff: every list) (got %d)" % [tab, msgs.size()])
@@ -77,9 +76,10 @@ func _run() -> void:
 		for r in rows:
 			texts.append(String(r["text"]) if r is Dictionary else String(r))
 		print("rows: %s" % [texts])
-		_check(texts.has(" on the vast open Silkroad."), "a break starts a new row, its own leading space kept, no hanging indent")
-		_check(texts.has("Become a great adventurer"), "a row after a break starts at the left edge")
-		_check(texts.has(" You will have great fun in Silkroad Online."), "the last row")
+		_check(texts.has(" across the wide open Silk Road."), "a break starts a new row, its own leading space kept, no hanging indent")
+		_check(texts.has("Grow into a true adventurer"), "a row after a break starts at the left edge")
+		_check(texts.has(" Have a great time in OpenSRO."), "the last row")
+		_check(not texts.has(" with a website in it."), "the archive's row is not used (OURS)")
 		var joined := "".join(PackedStringArray(texts))
 		_check(not joined.contains("\\n") and not joined.contains("\n"), "no written or real break is drawn")
 	ui.remove_child(chat)
@@ -90,14 +90,14 @@ func _run() -> void:
 	bare.call("setup")
 	await process_frame
 	if bare.has_method("add_starting_message"):
-		_check(bare.call("add_starting_message") == false, "no text in the archive: nothing added")
-		_check((bare.call("list_messages", 0) as Array).is_empty(), "and the All list stays empty")
+		_check(bare.call("add_starting_message") == true, "no row in the archive: still added (the words are ours)")
+		_check((bare.call("list_messages", 0) as Array).size() == 1, "and the All list holds it")
 
 	# The wrap itself: a row too long for the width wraps with the indent;
 	# the next break's row does not.
 	var font := ThemeDB.fallback_font
-	var w := font.get_string_size("Be successful as a Trader", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
-	var wrapped: PackedStringArray = chat_script.call("wrap", "Be successful as a Trader, Hunter\\nNext", font, 12, w + 2.0)
+	var w := font.get_string_size("Make your way as a Trader", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var wrapped: PackedStringArray = chat_script.call("wrap", "Make your way as a Trader, Hunter\\nNext", font, 12, w + 2.0)
 	print("wrapped: %s" % [wrapped])
 	_check(wrapped.size() == 3, "one long row wraps into two, the break adds a third (got %d)" % wrapped.size())
 	if wrapped.size() == 3:

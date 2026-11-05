@@ -834,20 +834,22 @@ func add_chat(type: int, name: String, message: String, sent: bool = false, colo
 	_add_to(lists_for(int(line["type"])), String(line["text"]), color)
 
 ## The starting message (round 863, READ): CGInterface::Create (c:0x78c910)
-## looks up UIIT_STT_STARTING_MSG (0x78cf1d) and hands it to 0x777c60, which
-## formats it (vswprintf, the text as the format) and adds it to the chat
-## window (interface child 1) through 0x7aca30 as type 0xff in 0xffdbc99b --
-## a system line: all five lists (0x7aab40 for the four tab lists). Its line
-## breaks start new rows (wrap). Nothing when the archive has no such text.
-const STARTING_MSG_KEY := "UIIT_STT_STARTING_MSG"
+## adds a text-table row (UIIT_STT_STARTING_MSG, 0x78cf1d) to the chat window
+## through 0x777c60 and 0x7aca30 as type 0xff in 0xffdbc99b -- a system line:
+## all five lists (0x7aab40 for the four tab lists). Its line breaks start
+## new rows (wrap).
+##
+## OURS (the user, round 863): the words are OpenSRO's own, not the archive's
+## row -- a player's archive may carry anything there (a private server's
+## website, as the test archive does), and the original's wording is not
+## ours to ship. The shape, colour and placement are the original's: six
+## rows, the breaks where the original puts them, the continuation rows led
+## by a space.
 const STARTING_MSG_COLOR := 0xffdbc99b
+const STARTING_MSG := "Make your way as a Trader, Hunter, or Thief on a grand journey\n across the wide open Silk Road.\nGrow into a true adventurer\n as you earn fortune and fame\n along the Silk Road.\n Have a great time in OpenSRO."
 
 func add_starting_message() -> bool:
-	var text := _text(STARTING_MSG_KEY, "")
-	if text == "":
-		return false
-	# vswprintf with the text as the format: "%%" prints one "%".
-	_add_to(lists_for(TYPE_SYSTEM), text.replace("%%", "%"), argb(STARTING_MSG_COLOR))
+	_add_to(lists_for(TYPE_SYSTEM), STARTING_MSG, argb(STARTING_MSG_COLOR))
 	return true
 
 ## Adds one line to the All list only, the way CIFChatViewer's vslot 49
