@@ -23795,12 +23795,15 @@ func _qa_move_report() -> void:
 		print("MOVE body %d t=%d ms=%d pos=(%.3f,%.3f) target=(%.3f,%.3f)" % [
 			id, _qa_move_tick, ms, body.position.x, body.position.z, to.x, to.z])
 var _qa_facing_log_ms := 0
+## OPENSRO_QA_FACING_LOG_MS (round 863): the report's interval, 50 ms unless
+## set; 0 reports every rendered frame (a turn's frames). Measurement only.
+var _qa_facing_every_ms := int(OS.get_environment("OPENSRO_QA_FACING_LOG_MS")) if OS.get_environment("OPENSRO_QA_FACING_LOG_MS") != "" else 50
 ## The monsters whose model the facing report has named (round 673).
 var _qa_facing_models := {}
 
 func _qa_facing_report() -> void:
 	var now := Time.get_ticks_msec()
-	if now - _qa_facing_log_ms < 50:
+	if now - _qa_facing_log_ms < _qa_facing_every_ms:
 		return
 	_qa_facing_log_ms = now
 	# This player too (round 637's review follow-up): its own turn, read off
@@ -29522,11 +29525,19 @@ func _issue_walk(point: Vector3) -> String:
 	# follow-up; RemoteFacing.click_rule): with no movement order in effect a
 	# click under 5 units away is not sent -- nothing moves; a far click
 	# within 5 degrees of a far order snaps the heading instead of turning.
-	match RemoteFacing.click_rule(_player_move_order, point - player.position, _move_target - player.position):
+	# Round 863: the order a far click is measured against is the one the
+	# mover holds -- the server's echo's (MoveOrderSync.mover_dest, READ) --
+	# not the click this client already walks (OURS, round 749). Before, a
+	# second far click within 5 degrees of the first, before the first's echo,
+	# snapped the body in one frame (up to 180 degrees: MEASURED 115 in one
+	# frame) where the original was still turning; a heading run keeps its
+	# own point (OURS, SkyRun).
+	match RemoteFacing.click_rule(_player_move_order, point - player.position, _click_rule_dest() - player.position):
 		"ignore":
 			return "ignore"
 		"snap":
 			_player_turn_snap = true
+			_move_sync.mover_snapped(point)
 	# Round 846: a click within 5.0 of the point this walk is still going to.
 	# READ: the server refuses it (GObjPC::FUN_004b0ea0, 0xb45b28, while the
 	# leg runs) and retail's client walks only on its echo, so nothing moves.
@@ -29544,6 +29555,17 @@ func _issue_walk(point: Vector3) -> String:
 	_move_heading_run = false
 	_end_own_cast_for_move("a walk order")
 	return "walk"
+
+## Round 863: the destination the ground click's filter measures a click
+## against (RemoteFacing.click_rule): the mover's, which is the server's echo
+## of an order (MoveOrderSync.mover_dest; READ, UI_SILKMALL::FUN_009eb2a0
+## reads the mover's +0x684, written on the echo by FUN_009e0550); where the
+## mover holds none, the player's own spot (no snap). A heading run's is its
+## pick-reach point, as before (OURS).
+func _click_rule_dest() -> Vector3:
+	if _has_move_target and _move_heading_run:
+		return _move_target
+	return _move_sync.mover_dest if _move_sync.mover_dest != Vector3.INF else player.position
 
 ## Round 846: whether a walk to `point` is one the server refuses: this
 ## player's walk to a destination it sent is still in progress (an order, not
