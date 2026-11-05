@@ -7483,18 +7483,22 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
-## Eight-hundred-and-sixty-second round, lane M: berserk's gauge and look measured; the COS follow and the war mark not reached
+## Eight-hundred-and-sixty-second round, lane M: the guild war mark is drawn (its effect) and told to everyone around; berserk measured
 
 The round's three movement-and-effects items, checked against measured behaviour. Labels: READ (`c:`
-sro_client.exe), MEASURED, INFERRED, OURS, OPEN. Base `a1034d2e` (v0.1.628). **No code changed**:
-every difference found is either within the measurement's grain or the one open question below.
+sro_client.exe, `s:` SR_GameServer.exe), MEASURED, INFERRED, OURS, OPEN. Base `a1034d2e` (v0.1.628).
+Changed: the guild war mark (client and server, item 3). Berserk (item 2): no change, one open question.
+The COS follow (item 1) and the kill's violet orbs: not measured, OPEN.
 
 ### 1. A trade transport's and a pet's follow (rounds 851-852) -- OPEN
 
-Not compared this round. It needs a level-20 character in a trader's suit (ITEM_COS_T_DONKEY's
-ReqLevel1 is 20) and a level-5 one for a growth pet (ITEM_COS_P_FLUTE's ReqLevel1 is 5), with the
-COS's movement packets recorded while the owner walks, runs, stops and turns, and a second client
-watching. What to measure when it is reached: the
+Not measured this round: no COS could be called out where it was to be measured, so there are no
+legs to compare and nothing in cosfollow.go / navkind.go / PetGait was changed. Found on the way
+(MEASURED): a transport needs the trader's suit worn (else "Only trader or thief can summon a
+transport.", the scroll's ReqLevel1 20); ITEM_CH_M_TRADE_TRADER_02 (2160, ReqLevelType2 -1) is not
+taken by a level-40 trader with an alias, _04 (8986, job level 1) is; and a GM character that is
+invisible cannot put a job suit on at all -- the client sends nothing and shows nothing. Putting the
+suit on moves the character to the town's spawn. What to measure when it is reached: the
 legs' targets either side of the owner as a transport closes in (round 851's INFERRED weave), where it
 stops (BC + 50.0 READ), the gait switch at 20.0 (round 852), and the stop at a trunk.
 
@@ -7533,19 +7537,81 @@ the press to 5 s after, every third grab, labelled with ms from the press) and
 `/var/tmp/r862m/keep/ours_body_act.png` (the body); the runs' logs are `/var/tmp/r862m/qa/bz2/godot.log`
 and `bz3/godot.log`.
 
-### 3. The guild war mark (round 860) -- OPEN
+### 3. The guild war mark (`client/scripts/effects/aura_model.gd`, `guild_war_mark.gd`; server `guildwar.go`)
 
-Not compared: it needs two guilds at war, so two characters able to found a guild and declare war.
-What to measure when it is reached: the mark's height over a player (READ 36 above the foot), who
-wears it (both guilds' members, own guild included, READ), and whether a non-member standing by sees it
-appear at the declaration or only at the next spawn (round 860's OPEN gap).
+Two guilds founded at the Jangan guild manager by two level-40 masters, a war proclaimed and accepted
+through the guild window (Hostility, "Request to start the war"; 10000 points, 1 day, no stake), ended
+by "Request to end the war" (a minute's countdown, then "Lost the war"). Server messages recorded with
+their arrival times on both masters' connections.
+
+| What | MEASURED | OpenSRO before (`a1034d2e`) | after |
+|---|---|---|---|
+| The look | crossed blades with a red glow, the glow swelling and fading on a ~2.0 s cycle (red pixels of the mark 63 -> 3,032 -> 63 at 0.88 / 1.80 / 2.74 s, again at 3.79, 4.78, 5.75 s), high over the head | **nothing drawn**: the log says `guild war mark on`, but `res\etc\guild_war_mark.bsr` has no mesh (below) | the blades and glow over each member (`EFFECTS aura model res\etc\guild_war_mark.bsr: 1 ambient effect(s)`) |
+| When | on both masters in the same frame, ~0.9 s after the target's OK; the plates' enemy guild line turns red at the same frame | -- | on both at the 0x30EF |
+| Who wears it | both guilds' members, the own guild included; a GM-invisible member too | (as READ) | (unchanged) |
+| 0x30EF at the start | each master got **both** guilds' {0, id}, the declarer's guild first, 4 ms apart, then the 0x38F5 0x19 | each master got its own guild's only | both, the declarer's first |
+| 0x30EF at the end | the masters two regions apart: each got its own guild's {1, id} only, 0-40 ms after the 0x1c | its own | its own (the other is not in view) |
+| A player arriving later | the spawn (0x3015) then 0x30FF {..., role 0, war flag 0} | (round 860) | (unchanged) |
+
+- **Why nothing was drawn (MEASURED, the box's Data.pk2).** `res\etc\guild_war_mark.bsr` names no
+  mesh: its only content is an `ambient` particle set with one entry, `map\guild\guild_war_mark.efp`
+  at offset 0,3,0 (mode 1). AuraModel (round 838) built the model's meshes and nothing else, so the
+  mark was an empty node. Of the 79 `.bsr` files skilleffect.txt names, 25 carry ambient entries and 13
+  have no mesh at all: the war mark, the helper mark, the capture mark, the five trade job shields
+  (`system_trade_*`), the quest marks (QuestMarks draws those itself, round 785). **Built:**
+  AuraModel plays a kept model's offset ambient entries (READ round 720: an object's `ambient` set
+  runs for as long as the object), looping, under the model, so they follow the body's `*`; a bone
+  entry (mode 0) and a night-only one are left out, as QuestMarks leaves them (OURS; mode 0 on a kept
+  model is OPEN).
+- **Who hears 0x30EF (READ, s:0x5c8800 / s:0x5c88d0 -> s:0x5c4350).** The war add and remove pass the
+  guild in EAX to s:0x5c4350, which walks its members and, for each one in the world, sends through
+  `GObjPC::FUN_00484d90` (s:0x5c4434) -- the send to every player in the member's 3 x 3 message
+  blocks, the member included (movement.md, "Who receives it"). Round 860 sent it to the members
+  alone, which left a player standing by a member without the mark until the next spawn (round 860's
+  OPEN "non-member" gap, now closed). **Built:** `tellWarState` -> `toGuildAndAround`
+  (`sendAboutPlayerPacket` per member in the world). A player near two members hears it twice, as the
+  original would.
+
+**QA (render box; lane server 127.0.0.1:17623, real input; `/var/tmp/r862m/qa/war.sh`, round 860's
+`war860e.sh` with this lane's ports):** QaWin (rendered) founds Alpha and proclaims war on Mate's Beta
+(partybot accepts, surrenders 40 s later) through the guild window; Cato (Gamma) is the control;
+Watch860 (headless, no guild) arrives after the war began.
+
+| Client | base (`war1`: server and client `a1034d2e`) | head (`war2`) |
+|---|---|---|
+| QaWin | only `guild 3 joins the at-war set`; mark "on" for itself, nothing on screen; Mate's guild never in its set, so no mark on Mate | `guild 3 joins` and `guild 1 joins`; marks on QaWin and Mate, each with `1 ambient effect(s)`; at the end both leave, both marks off |
+| Watch860 (no guild) | marks from the spawns only; none removed at the end | `guild 1 joins`, `guild 3 joins` (from the spawns), then at the end `guild 3 leaves`, `guild 1 leaves` and `guild war mark off uid 2`, `uid 4` |
+
+Frames for a human: `/var/tmp/r862m/keep/war_base_sheet.png` (base: no mark), `war_head_sheet.png` and
+`war_head_zoom.png` (head: the blades over Mate and QaWin). Logs: `/var/tmp/r862m/qa/war2/godot.log`,
+`second.log`.
 
 ### Gates
 
-No code changed: no perf gate, no Go test needed. `remote_godot.sh check` ALL LOAD (1137 scripts, 9
-scenes) and `tests` (RENDER_DIR `/var/tmp/r862m`): "ran 431 suite(s), 3 failing" with
-the box loaded (`retail_gateway_test`'s 32000-byte feed at 11.06 ms, `crowd_main_thread_test`'s
-plates, `seated_spawn_test`); each of the three run again alone: ALL PASS. Base tree, untouched.
+- Go: `TestRound844WarFlow` (each master hears both guilds' 0x30EF at the start and the end, the
+  declarer's first; NEGATIVE: `a1034d2e` sends one each); `go build ./...`, `go test ./...`: all ok.
+- Client: `guild_war_mark862_test` (the mesh-less model plays its one offset entry, looping, under the
+  model; the bone and night-only entries are not asked for; NEGATIVE: a template without the set plays
+  nothing). `remote_godot.sh check` ALL LOAD (1138 scripts, 9 scenes); `tests` "ran 432 suite(s), 0 failing"
+  (RENDER_DIR `/var/tmp/r862m`; the first, base-tree run had three timing / load failures, each passing
+  alone).
+- Perf gate (`--base a1034d2e --head aafdcfa9 --sites jangan --frames 24000`; the view has no war mark,
+  so this says the standing world costs what it did):
+
+```
+perf gate: base a1034d2e (forward_plus) vs head aafdcfa9 (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 1.99  head 2.00  (+0.0)  SAME
+jangan  entry ms   base 11513  head 11369  (-144.0)  SAME
+jangan  freeze ms  base 3800  head 3644  (-156.0)  SAME
+jangan  hitches    base 5  head 4  (-1.0)  SAME
+```
+
+### OPEN
+
+- Item 1, the COS follow against measured legs (above): not measured.
+- The violet orbs from a kill: not measured.
+- The berserk activation's white flash: READ, not MEASURED (above); left as built.
+- A kept model's bone (mode 0) ambient entries.
 
 ## Eight-hundred-and-sixty-first round: the ride camels and the mule were white blobs -- their models are not in this archive; drawn from the trade twins (OURS)
 
