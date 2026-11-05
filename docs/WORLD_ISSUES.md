@@ -7483,6 +7483,140 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-second round, lane W: what a return scroll's cast refuses; the items on the ground
+
+Two items: (1) round 860 held only the moves during a return scroll's cast -- find and build
+everything else the cast refuses or allows, with the replies; (2) the items lying on the ground: the
+drop glow of sealed, plus, rare and gold drops, and the names' colours. Labels: READ (`s:`
+SR_GameServer.exe, `c:` sro_client.exe; `/var/tmp/decomp_server`, `/var/tmp/decomp_client`, the asm
+dumps on the box), MEASURED, INFERRED, OURS, OPEN. Base `a1034d2e` (v0.1.628).
+
+### 1. The cast's refusals
+
+**What the original does.**
+- READ, the refusal (`CGObjPC::vslot_358` s:0x4ecbc0..0x4ece3e, the slot round 860 named): 0x7034
+  answers 0xB034 {2, 0x181d}, 0x7045 0xB045 {2, 0x6006}, 0x7046 0xB046 {2, 0x1c0b}
+  (`Msg_SendTwoFieldReply` s:0x4e7250: `push code; mov ecx, reply`; {u8 2, u16 code}); 0x7074 its
+  handler with the refused flag ({3, 0, 0x4004}, round 860); 0x70C5 command 2 0xB0C5 {2, 2, u16 0x3009,
+  u32 cos} and command 8 {2, 8, u16 0x4414, u32 cos, u32 item} (s:0x4ecd5b..0x4ece2b), any other
+  command nothing; 0x7155 0xB155 {2, 0x5814} unless its byte is 1; 0x7158 runs anyway
+  (`GObjPC::FUN_00518c20`, the client's settings). Everything else refused gets no answer.
+- READ, the client: 0xB0C5's handler (c:0x872590) hands 0x3009 to the error dispatcher (c:0x7b8b40)
+  under category 4 and 0x4414 under 0xc, neither of which has a case: nothing shown. Category 1's
+  0x185d case (another scroll) jumps to 0x7b8ccc, which raises the warning banner (0x77b580) before the
+  system line; 0x185f (0x7b919f -> 0x7b8cc7), 0x1875 and 0x187a do the same; every other code of the
+  use-item table (0x185b, 0x185e, 0x186a, 0x1882..0x1892, 0x18e9..0x18fd) goes to 0x7b966d, the line
+  only (each target resolved through the jump table 0x7bb6d4 / 0x7bb438 with objdump).
+- MEASURED (packets and frames), a 30 s return scroll's cast: a bag move and taking the weapon off ->
+  {2, 0x181d}, the item stays, no line; a click on the blacksmith in reach -> {2, 0x6006}, no window, no
+  line; a pick-up (0x7074 kind 2) -> {3, 0, 0x4004}, no line; the sit (0x704F [04]), an emote (0x3091),
+  the stall's title box Confirm (0x70B1 + 0x70BA), the party match window (0x706C) and a ground click
+  (0x7021) -> no answer, nothing happens (the title box itself opens: the client asks nothing first);
+  chat (0x7025) and an HP herb (0x704C, its 0xB04C and 0x305C) work; another return scroll -> 0x185d
+  ("Cannot choose another teleport method because you are now being teleported.") in the banner and
+  the log. **None of them cancels the cast**: it ended on time and warped every time; the bar's
+  cancel (0x705B) is the only early end. The 15 s special return scroll holds the same way (state 1, a
+  ground click unanswered, a bag move {2, 0x181d}); the reverse return scroll's recall sets the same
+  state 1 (its 1 s cast warped before a request could be tried). Control runs outside a cast: the sit
+  0x30BF {1, 4}, the emote's 0x3091 echo, the stall's 0xB0EA.
+
+**What OpenSRO did.** Round 860 held the moves, the arrow keys, 0x7074 and OpenSRO's own attack and
+skill requests; the NPC, the bag, the equipment, the sit, the emote, the stall, the exchange, the pet
+commands and the pick-up all went through (the OPEN of round 860).
+
+**OpenSRO now.**
+- Server (`session/scrollhold.go`, `ScrollHoldGate`, wired in front of every handler in
+  `cmd/server/main.go`): while the session's cast holds (state 1), every retail request
+  0x7000..0x7FFF outside group 11's allow list (0x7025, 0x704C, 0x705B, 0x7005, 0x34BF, and 0x7158) is
+  refused with the answer above; the moves, 0x7074 and a rider's 0x70C5 commands 1 / 3 / 4 still reach
+  their handlers, which hold them as round 860 built (with its OURS 0xB023). The emote 0x3091 is
+  refused silently. OpenSRO's own twins of refused retail requests get the same silence in their own
+  replies: OpInventoryMove and OpEquip / OpUnequip (retail 0x7034; an error the client logs and shows
+  nowhere) and OpPickUp (retail 0x7074 kind 2; OpPickUpResult 0x4004).
+- Client: a second scroll's 0x185d (and 0x185f, 0x1875, 0x187a) raises the warning banner as well as
+  the line (`ErrorText.SCROLL_BANNER_CODES`, `World3D._on_use_item_result`); a held pick-up's 0x4004
+  writes no line and ends the pick (`GroundItemsNet.ERR_REFUSED`).
+- Left alone (unsure; OPEN for the user): the stall network's 0x7461..0x7463 (OpenSRO's own way in,
+  round 840) and OpenSRO's own requests with no retail twin (the GM console, guild, party, storage,
+  alchemy) pass during a cast; retail's filter would refuse their retail counterparts.
+
+**Verification.**
+- Server: `scroll862_test.go` -- during a cast each refused request gets exactly the answer above
+  (bytes compared), the silent ones nothing, none reaches a handler, chat / 0x7158 / OpenSRO's chat pass,
+  the cast keeps running; after the cancel the emote echoes and the sit answers; state 2 holds nothing.
+  NEGATIVE: with the gate forced open the suite fails at the bag move. `go build ./... && go test
+  ./...`: all pass except `TestRound786EveryTeleportPathIsHeld`, a timing flake that fails on the base
+  `a1034d2e` too (3 of 3 at -count=3) and passed here on a re-run.
+- Client: `scroll_refusal862_test.gd` (the banner codes; 0x185d banner + line, 0x185b line only, a held
+  pick-up silent, any other refusal still says why) PASS.
+- Live (render box, lane server 17622 in memory with `-navmesh-dir`, the real client driven by its own
+  input, `/var/tmp/r862w/q1.sh`): at the blacksmith, after the return scroll (right click in the bag):
+  the NPC click -> "NPC select refused, code 24582" (0x6006), no window; a bag move and taking the
+  weapon off -> refused, nothing moved; N -> sent, no sit; the emote and the stall title box -> sent,
+  nothing played or opened beyond the box; the herb -> used (HP back to full); another scroll -> 0x185d
+  in the banner; every `where` between at (-627.00, -407.00), state 1, held; the server's cast logged
+  07:36:40.558 -> warp 07:37:10.558 (the full 30 s). Frames: `/var/tmp/r862w/q1/snap/*.png`.
+
+### 2. The items on the ground
+
+**What the original does.**
+- READ: a drop's model is its item row's drop `.bsr` (column 54): `item\etc\drop_ch_equip.bsr` for a
+  plain weapon, `item\etc\drop_ch_equip_rare.bsr` for every sealed one (Seal of Star, Moon and Sun
+  alike), `drop_ch_money_small/normal/large.bsr` for gold 1/2/3, `drop_ch_bag.bsr` for a herb. Each
+  `.bsr` names its own effects in an `ambient` mod set (dump_bsr): the rare box
+  `system\item_drop_equip_rare.efp`; the plain box `item_drop_equip.efp` and `item_drop_acc.efp`; the
+  small gold `item_drop_money.efp`; the bag `item_drop_use.efp`; the large gold none.
+- READ, the name (CIItem::vslot_025 c:0x9e1d00): the item's own name, "%d %s" with UIIT_STT_GOLD for
+  gold; the plus byte of an equipment spawn is read into a local the function never uses (no "+7"); the
+  colour is set to 0xff72bfff (0x8b2b70) only when the spawn's last byte (+0x260) is 1.
+- MEASURED (0x3015 records of GM-made drops): that last byte is 2 for the three seals and 0 for the
+  plain sword, the +7 blade, gold and the herb; the plus byte is 7 for the blade. Frames: every sealed
+  box stands in a gold column of light; the plain and +7 boxes do not, with small yellow-green motes
+  drifting over them; every name is pure white (255, 255, 255) with no box behind it, "Copper Sword" for
+  all four swords, "Copper Blade" for the +7.
+
+**What OpenSRO did.** No drop effect at all (GroundItems loaded the model through ObjectLoader, which
+keeps the `ambient` entries on the node, and nothing played them), and the names in the pale
+`NAME_PLATE_COLOUR` placeholder with an outline. MEASURED on the before frame: name pixels (255, 239,
+183).
+
+**OpenSRO now.**
+- `GroundItems.set_effects_for` / `World3D._attach_drop_effects`: a drop model with an `ambient` set has
+  it played through the objects' ambient path (`AmbientParticles.attach`: the display blend, the glow
+  pass), as the gates' and the buildings' effects are; the effects are the model's children, so they
+  go with it. Live: "GROUND DROP FX drop_ch_equip_rare: 1 effect(s)" for each seal, 2 for each plain
+  box, 1 for the small gold and the bag.
+- `World3D._ground_item_plate`: the original's plate look (font 0, 1:1, no outline) in white, no box.
+  Live: name pixels (255, 255, 255).
+- QA hook `OPENSRO_QA_GROUND_DROPS="<id>[x<qty>]:<dx>:<dz>,..."` lays drops beside the player through
+  the spawn path (no server drop table needed).
+- OPEN: which items the server sends the last byte 1 for (the blue name) -- not measured, not built;
+  INFERRED from the two values measured that the byte is the item row's Rarity column (2 for the seals),
+  whose value 1 the alchemy recipes carry. OPEN: the plain box's inner green glow (ours, from its two
+  effects) could not be compared at the same angle; the original's frames show the motes over it.
+  OpenSRO's gold is always ITEM_ETC_GOLD_03 (the large pile, no effect; round 785's READ).
+
+**Verification.** `ground_drop862_test.gd` PASS (the plate white, no outline, no box; the hook runs
+for a model with an `ambient` set, not for one without). Live, `/var/tmp/r862w/q2.sh` (drops at the
+Jangan spawn, Z held): before `/var/tmp/r862w/q2before/snap/dropsz.png` (no glow, pale names), after
+`/var/tmp/r862w/q2after2/snap/dropsz.png` (the gold columns, white names).
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1139 scripts, 9 scenes); `tests` "ran 433 suite(s), 3
+failing" under the other lanes' load -- `buff_persist_test`, `crowd_main_thread_test` and
+`seated_spawn_test` -- each ALL PASS when re-run alone (seated_spawn's load flake is round 860's).
+
+**Perf gate** (`client/tools/perf_gate.sh --base a1034d2e --head 2015e797 --sites jangan`, median of
+3; the box was loaded by the other lanes, load average 42-64 on 28 threads, so the absolute numbers
+are high for both builds; the Jangan view has no drop on the ground, so it shows the change costs
+nothing where no drop lies):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 9.34 | 9.18 | SAME |
+| entry ms | 16196 | 16375 | SAME |
+| freeze ms | 4881 | 5084 | SAME |
+| hitches | 9 | 8 | SAME |
+
 ## Eight-hundred-and-sixty-first round: the ride camels and the mule were white blobs -- their models are not in this archive; drawn from the trade twins (OURS)
 
 The user: "the camel mounts are still white blobs" (after v0.1.627, round 860 lane H's horses).
