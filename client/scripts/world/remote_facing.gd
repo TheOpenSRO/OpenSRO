@@ -145,7 +145,11 @@ static func from_wire_angle(a: int) -> float:
 ##     "snap";
 ##   otherwise the move is sent, and its echo (0xB021 -> FUN_008a5750 ->
 ##     FUN_009e0550) turns the player at TURN_RATE_PER_SECOND -- "turn".
-## The distances are FUN_009ed1e0's, 3-D.
+## The distances are FUN_009ed1e0's, 3-D. The order's destination is the
+## MOVER's (player +0x684, written by the echo's FUN_009e0550 or a snap's
+## FUN_009e04b0), never the click's: World3D passes MoveOrderSync.mover_dest
+## (round 863). MEASURED: a re-click within 5 degrees after the echo snaps
+## (90.7 degrees in one frame) and the turn is otherwise 3 pi rad/s.
 const CLICK_IDLE_MIN_SQ := 25.0
 const SNAP_FAR_SQ := 10000.0
 const SNAP_MAX_ANGLE := 0.0872664600610733
