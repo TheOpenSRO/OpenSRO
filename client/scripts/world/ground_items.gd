@@ -50,6 +50,28 @@ var _types_for: Callable
 func set_types_for(types_for: Callable) -> void:
 	_types_for = types_for
 
+## Round 862: plays a drop model's own `ambient` effects: (model: Node3D) ->
+## int, the number attached (World3D._attach_drop_effects). A drop model's
+## .bsr names them in its `ambient` mod set (AmbientParticles, READ), and the
+## original draws them on the ground: the sealed items' box
+## (item\etc\drop_ch_equip_rare.bsr) its column of light,
+## system\item_drop_equip_rare.efp; the plain box its sparkle,
+## item_drop_equip.efp; the small gold pile item_drop_money.efp. MEASURED:
+## the sealed boxes stand in a gold column, the plain box and the +7 one do
+## not, the same at every plus. Unset (tests), no effect is attached.
+var _effects_for: Callable
+
+func set_effects_for(effects_for: Callable) -> void:
+	_effects_for = effects_for
+
+## Hands `model` to the effects hook when its .bsr has an `ambient` set;
+## whether it did.
+func _attach_model_effects(model: Node3D) -> bool:
+	if not _effects_for.is_valid() or not model.has_meta(AmbientParticles.META_ENTRIES):
+		return false
+	_effects_for.call(model)
+	return true
+
 func setup(archive: Pk2Reader, drop_models: Dictionary, name_for: Callable, plate_for: Callable, height_at: Callable) -> void:
 	_archive = archive
 	_drop_models = drop_models
@@ -206,6 +228,9 @@ func spawn(snap: GroundItemsNet.Snapshot) -> void:
 
 	add_child(body)
 	_nodes[snap.id] = body
+	# Its own effects, once it is in the tree (set_effects_for).
+	if model != null:
+		_attach_model_effects(model)
 
 ## Takes a drop off the ground. `fade_out`, given, is handed the node instead
 ## of it being freed (World3D._fade_out_body: a 1.5 s fade, then it frees

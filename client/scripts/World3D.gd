@@ -20294,11 +20294,11 @@ func _qa_step() -> void:
 		_hud_panels.qa_fill_sample_inventory()
 
 	# Round 862, QA only: OPENSRO_QA_GROUND_DROPS="<item id>[x<qty>]:<dx>:<dz>,..."
-	# lays drops on the ground beside the player at tick 60, through the same
+	# lays drops on the ground beside the player at tick 150 (after the commands), through the same
 	# path a server's 0x006c takes (_on_ground_item_spawned), so a render can
 	# show a drop's model, its glow and its name with no server drop table.
 	# Item 1 is gold (its quantity is the amount).
-	if OS.get_environment("OPENSRO_QA_GROUND_DROPS") != "" and _qa_tick == 60 and player != null:
+	if OS.get_environment("OPENSRO_QA_GROUND_DROPS") != "" and _qa_tick == 150 and player != null:
 		_qa_ground_drops(OS.get_environment("OPENSRO_QA_GROUND_DROPS"))
 
 	# OPENSRO_QA_TALK="<name>" opens the NPC dialogue for a render, standing
@@ -31755,11 +31755,48 @@ func _try_setup_ground_items() -> void:
 	_ground_items = GroundItems.new()
 	_ground_items.name = "GroundItems"
 	# Unswept plates: an item's name has its own visibility rule (_name_plate).
-	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate.bind(false), _terrain_hit_height)
+	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _ground_item_plate, _terrain_hit_height)
 	_ground_items.set_types_for(func(item_id: int) -> PackedInt32Array:
 		var row = _item_rows.get(item_id)
 		return row.type_ids if row != null else PackedInt32Array())
+	# Round 862: a drop model's own `ambient` effects (GroundItems.set_effects_for).
+	_ground_items.set_effects_for(_attach_drop_effects)
 	other_entities.add_child(_ground_items)
+
+## A ground item's name (round 862): the original's plate look -- font 0 at
+## 12 px, 1:1 on screen, no outline (_retail_plate_look) -- in white and with
+## no box. READ: CIItem::vslot_025 (c:0x9e1d00) leaves the name in the plate's
+## own colour and sets 0xff72bfff through 0x8b2b70 only when the spawn's last
+## byte (+0x260) is 1 (0x9e2121..0x9e212a). MEASURED: the plain box, the three
+## seals (that byte 2), a +7 blade, gold and a potion (0) all draw their
+## names in pure white (255, 255, 255) with no box behind them; the name has no
+## plus ("Copper Blade" for a +7: vslot_025 reads the spawn's plus byte into a
+## local it never uses). Until this round the pale NAME_PLATE_COLOUR placeholder drew it.
+## OPEN: which items the server sends byte 1 for (not measured), so the blue
+## name is not built.
+const ITEM_NAME_COLOUR := Color(1.0, 1.0, 1.0)
+
+func _ground_item_plate(text: String, above: float) -> Label3D:
+	var label := _name_plate(text, above, false)
+	_retail_plate_look(label, ITEM_NAME_COLOUR, false)
+	label.remove_meta(NamePlates.BOX_META)
+	return label
+
+## Round 862: plays a ground item's drop model's `ambient` effects through
+## the objects' ambient path (AmbientParticles.attach: the display blend, the
+## glow pass), as the original draws them on the ground. They are the
+## model's children, so they go with it (a pick-up's fade, a despawn).
+## OPENSRO_QA_AMBIENT=off leaves them out, as it does the objects'.
+func _attach_drop_effects(model: Node3D) -> int:
+	if OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+		return 0
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return 0
+	var made := _ambient.attach(model, model.get_meta(AmbientParticles.META_ENTRIES), particles)
+	if OS.get_environment("OPENSRO_QA_GROUND_DROPS") != "":
+		print("GROUND DROP FX %s: %d effect(s) %s" % [model.name, made.size(), str(AmbientParticles.efp_paths(model.get_meta(AmbientParticles.META_ENTRIES)))])
+	return made.size()
 
 ## The object-name table (textdata_object.txt), parsed once on first use and
 ## shared with the monster-model loader, which fills the same variable.
