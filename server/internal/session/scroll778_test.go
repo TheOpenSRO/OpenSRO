@@ -70,6 +70,8 @@ type scrollRig struct {
 	// seen is what came before a use's reply (round 779: the stop and the
 	// state's 0x30bf).
 	seen []*proto.Packet
+	// reached is every opcode ScrollHoldGate passed on (round 862).
+	reached []uint16
 }
 
 func newScrollRig(t *testing.T, level int) *scrollRig {
@@ -125,7 +127,18 @@ func newScrollRig(t *testing.T, level int) *scrollRig {
 		TeleportHandler(rig.chars, eq, rig.hub, tab, gm.ParseAccounts(""), false, nil, nil),
 		UseItemHandler(rig.chars, rig.inv, items, nil, nil, nil, rig.hub, nil, nil, nil, rig.caster),
 		// Round 860: the action request, which the scroll's hold refuses.
-		ActionHandler(rig.hub))
+		ActionHandler(rig.hub),
+		// Round 862: what the gate lets through answers as usual (the sit,
+		// the emote, the bag move), and every request it passes is recorded.
+		MotionHandler(rig.hub), EmoteHandler(rig.hub), InventoryMoveHandler(rig.chars, rig.inv, items),
+		func(_ context.Context, _ *gateway.Session, p *proto.Packet) error {
+			rig.mu.Lock()
+			rig.reached = append(rig.reached, p.Opcode)
+			rig.mu.Unlock()
+			return nil
+		})
+	// Round 862: retail's filter in front of every handler (scrollhold.go).
+	handle = ScrollHoldGate(handle)
 	t.Cleanup(func() { InstallDungeonEntries(nil) })
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)

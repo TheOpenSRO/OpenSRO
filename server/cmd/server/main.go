@@ -2872,6 +2872,9 @@ func main() {
 	// restore held until the session has entered it (charlock.go).
 	charLock := characterLock(accounts, logger)
 	handle = session.CharacterLockGate(charLock, logger, handle)
+	// Round 862: what a return scroll's cast refuses beyond the moves, the
+	// action and the attacks (session/scrollhold.go, retail's filter).
+	handle = session.ScrollHoldGate(handle)
 	// The original client's agent gets the same gate: it has no PIN window, so
 	// on an account with a PIN its delete and restore are refused like ours
 	// (docs/protocol/pin.md, "Retail clients").

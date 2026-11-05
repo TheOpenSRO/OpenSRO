@@ -20293,6 +20293,14 @@ func _qa_step() -> void:
 	if OS.get_environment("OPENSRO_QA_FAKEITEMS") != "" and _qa_tick == 50 and _hud_panels != null:
 		_hud_panels.qa_fill_sample_inventory()
 
+	# Round 862, QA only: OPENSRO_QA_GROUND_DROPS="<item id>[x<qty>]:<dx>:<dz>,..."
+	# lays drops on the ground beside the player at tick 60, through the same
+	# path a server's 0x006c takes (_on_ground_item_spawned), so a render can
+	# show a drop's model, its glow and its name with no server drop table.
+	# Item 1 is gold (its quantity is the amount).
+	if OS.get_environment("OPENSRO_QA_GROUND_DROPS") != "" and _qa_tick == 60 and player != null:
+		_qa_ground_drops(OS.get_environment("OPENSRO_QA_GROUND_DROPS"))
+
 	# OPENSRO_QA_TALK="<name>" opens the NPC dialogue for a render, standing
 	# in for a click on an NPC (which a render cannot make).
 	# Round 725: "<CODE>@<tick>;<CODE>@<tick>..." talks to several in one boot
@@ -31802,6 +31810,29 @@ func _on_ground_item_list_result(items: Array, error: String) -> void:
 	print("World3D: %d item(s) on the ground in this zone (%d with no ground under them yet)" % [
 		_ground_items.count(), _ground_items.pending_count()])
 
+## OPENSRO_QA_GROUND_DROPS (round 862, QA only; see the QA tick block).
+func _qa_ground_drops(spec: String) -> void:
+	var n := 0
+	for part in spec.split(",", false):
+		var f := part.strip_edges().split(":")
+		if f.size() < 3:
+			continue
+		var idq := f[0].split("x")
+		var snap := GroundItemsNet.Snapshot.new()
+		snap.id = 900000 + n
+		snap.item_id = int(idq[0])
+		snap.quantity = int(idq[1]) if idq.size() > 1 else 1
+		snap.gold = snap.item_id == 1
+		snap.x = player.global_position.x + float(f[1])
+		snap.y = player.global_position.y
+		snap.z = player.global_position.z + float(f[2])
+		_on_ground_item_spawned(snap)
+		n += 1
+		print("QA GROUND DROP: item %d x%d at (%.1f, %.1f) -> %s" % [snap.item_id, snap.quantity, snap.x, snap.z,
+			_ground_items.label_text(snap) if _ground_items != null else ""])
+	if _ground_items != null:
+		_ground_items.update_labels(player.global_position, 300.0, -1)
+
 func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 	if _ground_items == null:
 		return
@@ -31894,6 +31925,11 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			print("World3D: ground item %d is out of reach (%.0f units) -- walking to it" % [result.ground_id, GroundItemsNet.PICK_RANGE])
 			if OS.get_environment("OPENSRO_QA_PICKUP") != "":
 				print("QA PICKUP: result 4 (too far)")
+		GroundItemsNet.ERR_REFUSED:
+			# Round 862: held by a return scroll's cast -- no line (MEASURED:
+			# the pick-up is refused and nothing is shown).
+			_pending_pickup_id = -1
+			print("World3D: pick of ground item %d refused (0x4004, shown nowhere)" % result.ground_id)
 		_:
 			_pending_pickup_id = -1
 			print("World3D: cannot pick up ground item %d (server code 0x%x)" % [result.ground_id, result.code])
@@ -38666,7 +38702,12 @@ func _on_use_item_result(result) -> void:
 		_skin_sent = []
 		# A refusal with an engine code (round 778: the scrolls') is the
 		# archive's own category-1 message (ErrorText.scroll_line).
-		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
+		var refused_line: String = ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error
+		# Round 862 (READ, ErrorText.SCROLL_BANNER_CODES): some codes raise
+		# the warning banner as well, as the original does.
+		if ErrorText.scroll_banner(result.code):
+			_show_banner("warning", refused_line)
+		_log_system(refused_line)
 		return
 	# Round 826: its re-use timers.
 	_arm_item_cooldowns(result)
