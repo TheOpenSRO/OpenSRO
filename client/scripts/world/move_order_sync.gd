@@ -92,6 +92,20 @@ var server_free_ms := 0
 ## back until server_free_ms (Vector3.INF: none held).
 var held := Vector3.INF
 
+## Round 863: the destination the original's own mover holds -- the one the
+## ground click's filter measures a new click against (RemoteFacing.click_rule's
+## "snap"). READ: UI_SILKMALL::FUN_009eb2a0 compares the click with the
+## mover's destination (player +0x684 = mover +0x1c, the record FUN_009e0550
+## writes), and the mover takes it from this player's own 0xB021 (0x8a5750 ->
+## FUN_009e0550) or from the snap's local re-aim (FUN_009e04b0), never from
+## the click itself: until its echo comes, a click is measured against the
+## order before it. This client walks its click at once (OURS, round 749), so
+## the click's point is not the mover's. Set by every destination echo
+## (confirm) and by a snap (mover_snapped); a heading echo or a stop or
+## placement (the server's 0xB023, FUN_008a4f80 -> FUN_009e00f0 clears the
+## order) clears it; an arrival does not (FUN_009e0e60 clears +0x84 only).
+var mover_dest := Vector3.INF
+
 ## The tick's decision for the order in effect (has_order, the walk's point
 ## `target` and that point as the wire truncates it, `qtarget`; or a heading
 ## run with `wire`) and the player at `pos`, at now_ms.
@@ -185,6 +199,9 @@ func sent_heading(wire: int, now_ms: int = 0) -> void:
 ## echo); a near point held back (decide) goes out then. It is taken even when
 ## the walk here already ended (arrived) before the echo came.
 func confirm(kind: int, echo_dest: Vector3, angle: int, free_ms: int = -1) -> void:
+	# Round 863: every echo is the mover's (FUN_009e0550 takes it whatever
+	# came after; a heading form has no point).
+	mover_dest = Vector3.INF if kind == DestMoveNet.KIND_HEADING else echo_dest
 	if free_ms >= 0 and kind != DestMoveNet.KIND_HEADING and not heading_run \
 			and dest != Vector3.INF and _flat(echo_dest - dest) < 0.01:
 		server_free_ms = free_ms
@@ -214,6 +231,7 @@ func placed(at: Vector3) -> void:
 	heading_run = false
 	heading_wire = -1
 	dest = Vector3.INF
+	mover_dest = Vector3.INF
 	rest = at
 	pending_ms = -1
 	# Round 846: the server has no leg now (a stop, a placement); a point the
@@ -237,6 +255,11 @@ func corrected(at: Vector3) -> bool:
 		answered = at
 		return true
 	return false
+
+## Round 863: a click the filter called "snap" re-aimed the mover at `point`
+## locally (FUN_009e04b0 writes the destination record, READ).
+func mover_snapped(point: Vector3) -> void:
+	mover_dest = point
 
 static func _flat(v: Vector3) -> float:
 	return Vector2(v.x, v.z).length()

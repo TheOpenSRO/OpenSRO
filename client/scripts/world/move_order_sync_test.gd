@@ -223,6 +223,45 @@ func _test_held() -> void:
 	s.sent_heading(0x4000, 6000)
 	_check(s.server_free_ms == 0, "a heading run refuses no destination")
 
+## Round 863: the mover's destination, which the ground click's filter
+## measures a far click against (RemoteFacing.click_rule's "snap"), is the
+## echo's, not the click's. NEGATIVE: measuring against the click (the
+## order sent, `dest`) fails "a far re-click before the first echo turns":
+## the body snapped up to 180 degrees in one frame (round 863, MEASURED).
+func _test_mover_dest() -> void:
+	var s := MoveOrderSync.new()
+	var pos := Vector3.ZERO
+	_check(s.mover_dest == Vector3.INF, "no echo yet: the mover holds no destination")
+	# Running north to a far point, echoed.
+	s.sent_destination(Vector3(0, 0, -200), 0)
+	s.confirm(DestMoveNet.KIND_DESTINATION, Vector3(0, 0, -200), -1)
+	_check(s.mover_dest == Vector3(0, 0, -200), "the echo sets the mover's destination")
+	# A far click straight behind, then a second within 5 degrees of it before
+	# the first click's echo: measured against the mover's (north) -- a turn.
+	var behind := Vector3(0, 0, 150)
+	s.sent_destination(behind, 100)
+	_check(RemoteFacing.click_rule(true, Vector3(4, 0, 150) - pos, s.mover_dest - pos) == "turn",
+		"a far re-click before the first echo turns (the mover still holds the old order)")
+	_check(RemoteFacing.click_rule(true, Vector3(4, 0, 150) - pos, s.dest - pos) == "snap",
+		"(measured against the click sent it would have snapped)")
+	# After the echo the same re-click snaps, as the original's does (MEASURED:
+	# 90.7 degrees in one frame).
+	s.confirm(DestMoveNet.KIND_DESTINATION, behind, -1)
+	_check(RemoteFacing.click_rule(true, Vector3(4, 0, 150) - pos, s.mover_dest - pos) == "snap",
+		"after the echo a far re-click within 5 degrees snaps (FUN_009e04b0)")
+	s.mover_snapped(Vector3(4, 0, 150))
+	_check(s.mover_dest == Vector3(4, 0, 150), "the snap re-aims the mover at the click")
+	# An echo of an older order still lands in the mover (FUN_009e0550).
+	s.confirm(DestMoveNet.KIND_DESTINATION, Vector3(0, 0, 150), -1)
+	_check(s.mover_dest == Vector3(0, 0, 150), "every destination echo is the mover's")
+	s.arrived()
+	_check(s.mover_dest == Vector3(0, 0, 150), "an arrival keeps it (FUN_009e0e60 clears +0x84 only)")
+	s.confirm(DestMoveNet.KIND_HEADING, Vector3.ZERO, 0x4000)
+	_check(s.mover_dest == Vector3.INF, "a heading echo has no point")
+	s.confirm(DestMoveNet.KIND_DESTINATION, Vector3(0, 0, 150), -1)
+	s.placed(Vector3(1, 0, 1))
+	_check(s.mover_dest == Vector3.INF, "a stop or placement clears it")
+
 func _init() -> void:
 	_test_click_walk()
 	_test_heading_run()
@@ -232,6 +271,7 @@ func _init() -> void:
 	_test_other_walk()
 	_test_catch_up()
 	_test_held()
+	_test_mover_dest()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
