@@ -219,7 +219,12 @@ every intro in an archive (keyframes, length, the path through each keyframe, th
 `measure_login_ready.tscn` (run as the main scene) clicks at the screen's first frame and prints how
 long the login takes to become interactable and fully faded in, and its longest frame, and
 `dump_title_layout.gd -- --media=<Media.pk2>` prints pstitle.txt's Title and Login controls as the
-frame reads them.
+frame reads them. `OPENSRO_QA_FRONT_INPUT="<frame>:<action>;..."` (round 862, `QaFrontInput`) plays
+keys and clicks on the login screen as `OPENSRO_QA_INPUT` does in the world: `key:` / `type:` /
+`click:x,y` / `clickfield:username_edit`, `skipintro`, `snap:<name>` / `snapfield:<edit>:<name>` (the
+edit's rect grown 20 x 8 px) into `OPENSRO_QA_SNAP_DIR`, and `editstate:<edit>` (`QA FRONT` lines);
+run it with `QA_SHOT_REALTIME=1 QA_SHOT_MAX_FPS=30` so a snap every few frames catches the caret's
+200 ms blink both ways.
 
 **Sounds are logged, not heard** (round 613). The box's Godot runs the dummy audio driver, so every
 animation-fired sound prints one `AUDIO <effect key> t=<key ms> clip <type>:<group> <body> at

@@ -205,8 +205,9 @@ static func _width(font: Font, fs: int, s: String) -> float:
 
 ## The original's origin for an item (UI px, in the node's parent's space),
 ## truncated as the original truncates the screen coordinate (the windows
-## sit at whole pixels).
-static func expected_origin(item: Dictionary) -> Vector2:
+## sit at whole pixels). `truncate` false (round 862): the unrounded origin,
+## which the caret's quad is placed from (TextLayout.caret_pixels).
+static func expected_origin(item: Dictionary, truncate := true) -> Vector2:
 	var c: Control = item["node"]
 	var d = item["def"]
 	var font := _font(c)
@@ -224,7 +225,7 @@ static func expected_origin(item: Dictionary) -> Vector2:
 		o.x = TextLayout.edit_scrolled_left(o.x, tr, tw, _width(font, fs, s.left(col)))
 	else:
 		o = TextLayout.static_origin(item["rect"], d.client_rect, ha, va, Vector2(tw, fh))
-	return o.floor()
+	return o.floor() if truncate else o
 
 ## Draws a string at a point of its parent's space (the reference ink).
 class RefText extends Control:
@@ -509,8 +510,12 @@ static func measure_caret(it: Dictionary, tree: SceneTree, vp: Viewport, s: floa
 	var font := _font(e)
 	var fs := _font_size(e)
 	var shown := _shown_text(e)
-	var origin: Vector2 = it["expected"]
-	var want := TextLayout.caret_rect(origin, _width(font, fs, shown.left(e.caret_column)), font.get_height(fs))
+	# Round 862: the caret from the unrounded origin (the text is drawn at
+	# its truncation; the quad covers the pixels from its own edges).
+	var origin: Vector2 = expected_origin(it, false)
+	# Round 862: the font's point size + 2 tall, on the pixels the quad covers.
+	var want := TextLayout.caret_pixels(TextLayout.caret_rect(origin, _width(font, fs, shown.left(e.caret_column)),
+		TextLayout.point_size(fs)))
 	# Round 860: the caret quad is drawn inside the edit's viewport too (READ
 	# 0x637b70: the quad at 0x638050..0x6380a7, before 0x653220 restores the
 	# screen), so a caret taller than its edit is cut at the edit's rect.

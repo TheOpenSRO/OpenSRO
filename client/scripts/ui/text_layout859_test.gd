@@ -51,8 +51,13 @@ func _formulas() -> void:
 	# Empty edit: H1 is the rect's centre; V1 centres tmHeight + 2.
 	_check(TextLayout.edit_origin(r, Rect2i(), 1, 1, Vector2.ZERO, 13.0) == Vector2(50, 2), "an empty H1 V1 edit: x at the centre, y (20 - 13 - 2) >> 1 = 2")
 	_check(TextLayout.edit_origin(r, Rect2i(), 0, 2, Vector2.ZERO, 13.0) == Vector2(0, 7), "an empty V2 edit: bottom - tmHeight")
-	# The caret: x + advance, 2 wide, tmHeight + 2 tall.
-	_check(TextLayout.caret_rect(Vector2(43, 382), 31, 13.0) == Rect2(74, 382, 2, 15), "caret after 31 px of text: 74,382 2x15")
+	# The caret: x + advance, 2 wide, the font's point size + 2 tall (round 862).
+	_check(TextLayout.caret_rect(Vector2(43, 382), 31, 9.0) == Rect2(74, 382, 2, 11), "caret after 31 px of text in a 9 pt face: 74,382 2x11")
+	# Round 862: the pixels a quad covers (each edge at its ceiling) and the point sizes.
+	_check(TextLayout.caret_pixels(Rect2(93.5, 2, 2, 11)) == Rect2(94, 2, 2, 11), "a caret quad from x 93.5 covers 94 and 95")
+	_check(TextLayout.caret_pixels(Rect2(97, 3.5, 2, 11)) == Rect2(97, 4, 2, 11), "a whole-pixel quad stays; a half-pixel top goes down a row")
+	_check(TextLayout.point_size(12) == 9 and TextLayout.point_size(11) == 8 and TextLayout.point_size(16) == 12
+		and TextLayout.point_size(15) == 11 and TextLayout.point_size(20) == 15, "FontIndex 0..4's pixels are 9, 8, 12, 11, 15 points (0x469350)")
 	# The long-text rule: end at right - 5; caret near the left pulls it back.
 	var tr := Rect2(0, 0, 100, 16)
 	_check(TextLayout.edit_scrolled_left(0, tr, 90, 90) == 0, "a 90-wide text in 100: not moved (95 > 90)")
@@ -100,7 +105,7 @@ func _edits() -> void:
 		"VAlign 0: the room under the text is margin (got %s, size %s, text h %s)" % [[sb.content_margin_left, sb.content_margin_top, sb.content_margin_right, sb.content_margin_bottom], e.size, th])
 	var c := e.caret_rect()
 	_check(c.position == Vector2(5, 4), "the empty chat caret at (5, 4) of the box (got %s)" % [c.position])
-	_check(c.size == Vector2(2, fh + 2), "the caret 2 x tmHeight + 2 (got %s)" % [c.size])
+	_check(c.size == Vector2(2, 11), "the caret 2 x 11: the 9 pt face's point size + 2 (got %s)" % [c.size])
 	e.text = "Hello there"
 	e.caret_column = e.text.length()
 	var adv := _adv(e, "Hello there")
@@ -130,7 +135,16 @@ func _edits() -> void:
 	var l := _edit(Rect2(0, 0, 135, 20), Rect2i(), 1, 1)
 	await process_frame
 	var lc := l.caret_rect()
-	_check(lc.position == Vector2(67, floorf((20 - l.font_height() - 2) / 2.0)), "an empty H1 V1 edit's caret at (67, (20 - tmHeight - 2) >> 1) (got %s, tmHeight %s, size %s)" % [lc.position, l.font_height(), l.size])
+	_check(lc.position == Vector2(68, floorf((20 - l.font_height() - 2) / 2.0)), "an empty H1 V1 edit's caret at (68: 67.5's pixel, (20 - tmHeight - 2) >> 1) (got %s, tmHeight %s, size %s)" % [lc.position, l.font_height(), l.size])
+	# Round 862: a centred text whose w - text w is odd is drawn at the
+	# truncated left and its caret a pixel right of the glyph boundary.
+	l.text = "ab"
+	l.caret_column = 2
+	var lw := ceilf(_adv(l, "ab"))
+	var lf := (135.0 - lw) * 0.5
+	_check(absf(l.text_left() - floorf(lf)) <= 1.0, "centred 'ab' (%.0f wide): drawn at %.0f (got %.1f)" % [lw, floorf(lf), l.text_left()])
+	_check(absf(l.caret_rect().position.x - ceilf(lf + _adv(l, "ab"))) <= 1.0 and l.caret_rect().size == Vector2(2, 11),
+		"its caret at the pixel the quad from %.1f covers (got %s)" % [lf + _adv(l, "ab"), l.caret_rect()])
 	l.queue_free()
 	# The draw: hidden until the blink's first flip, then shown with focus.
 	var d := _edit(Rect2(0, 0, 100, 20), Rect2i(), 0, 0)
