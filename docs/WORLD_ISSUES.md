@@ -7483,6 +7483,70 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-second round, lane M: berserk's gauge and look measured; the COS follow and the war mark not reached
+
+The round's three movement-and-effects items, checked against measured behaviour. Labels: READ (`c:`
+sro_client.exe), MEASURED, INFERRED, OURS, OPEN. Base `a1034d2e` (v0.1.628). **No code changed**:
+every difference found is either within the measurement's grain or the one open question below.
+
+### 1. A trade transport's and a pet's follow (rounds 851-852) -- OPEN
+
+Not compared this round. It needs a level-20 character in a trader's suit (ITEM_COS_T_DONKEY's
+ReqLevel1 is 20) and a level-5 one for a growth pet (ITEM_COS_P_FLUTE's ReqLevel1 is 5), with the
+COS's movement packets recorded while the owner walks, runs, stops and turns, and a second client
+watching. What to measure when it is reached: the
+legs' targets either side of the owner as a transport closes in (round 851's INFERRED weave), where it
+stops (BC + 50.0 READ), the gait switch at 20.0 (round 852), and the stop at a trunk.
+
+### 2. Berserk: the gauge, the activation, the end
+
+QA (render box, our real client against the lane server 127.0.0.1:17623, in memory, `-navmesh-dir`):
+`/var/tmp/r862m/qa/bz.sh` gives the player five Berserker Regeneration Potions (ITEM_EVENT_HWAN_POTION,
+24993), right-clicks one in the bag (`rbagitem`), closes the bag and presses Tab, all through the
+client's own input path, in real time with the window grabbed every 50-150 ms (runs `bz2`, `bz3`), at
+1280x1024. The numbers are per grabbed frame, from crops of the player block (CIFPlayerMiniInfo) and of
+the body.
+
+| What | MEASURED | OpenSRO (head = base) |
+|---|---|---|
+| The potion fills the gauge | all five orbs and the ready circle in ONE frame (no orb-by-orb fill, no violet orb); 133 lit pixels in the orb column | the same frame (`hwan count 5 from 0 (no body): shown now`); 128 lit pixels |
+| The ready circle | steady (no pulse: the count of its pixels is constant to the pixel over 8 s) | steady |
+| Tab | the ready circle hides; the flames show on the five orbs; the face and glow fade in, linear, 2.6 s from the first changed frame to full | the same; 2.9 s (both READ as 3.0 s, `0x00d8adc4`; the 0.3 s gap is within two grabs of each side) |
+| The body | the burst (system_hwan_motion), then the red pulse with a period of 2.0-2.2 s (peaks 3.06, 5.28, 7.28 s) | the same rows (`BERSERK look ... every 1000 ms, size x1.1`), pulse peaks ~2 s apart |
+| The drain | one orb out about every 12.0-12.2 s after the press (12.2, 24.2, 36.4, 48.4 s, 1 s sampling) | 12.5, 24.6, 36.4, 48.5 s (`drain step 12.000 s`) |
+| The end | the face and glow fade out linear over 2.9 s from 60.8 s after the press | from 60.4 s, 3.0 s; the look off at 60.0 s (`BERSERK look off`) |
+| **The screen** | **no white flash**: the mean brightness of the whole screen moves +0.006 (the burst), a grass patch away from the body +0.0002 | **a white flash**: the same patch 0.165 -> 0.667 70 ms after the press, back by ~650 ms (`BerserkLook.flash_alpha`) |
+
+**The flash is the open question.** OpenSRO draws it because it is READ: the 0x30BF kind 4 handler, for
+the own player and a non-zero mode, starts CGWeatherManager's colour fade to (255, 255, 255, 128) over
+0.2 s with 0.5 s back (c:0x8a827b..0x8a82be, unconditional in this binary), drawn by
+`CGWeatherManager::FUN_00a43270` (SRCALPHA / SRCCOLOR over the texture factor) when the manager's +0xb4
+is 0 (`CGWeatherManager::vslot_010` c:0xa43530). MEASURED: none. The two disagree: either a build
+difference, a condition on +0xb4 not read here, or a drawing difference in how that quad reaches the
+screen. Left as built (round 651) until it is decided.
+
+**The violet orbs from a kill** (round 860 lane E) were not measured: a kill earns an orb at most 8 %
+of the time (READ s:0x410880, round 223); not measured this round. OPEN.
+
+Frames for a human (ours): `/var/tmp/r862m/keep/ours_hud_act.png` (the player block from 17 s before
+the press to 5 s after, every third grab, labelled with ms from the press) and
+`/var/tmp/r862m/keep/ours_body_act.png` (the body); the runs' logs are `/var/tmp/r862m/qa/bz2/godot.log`
+and `bz3/godot.log`.
+
+### 3. The guild war mark (round 860) -- OPEN
+
+Not compared: it needs two guilds at war, so two characters able to found a guild and declare war.
+What to measure when it is reached: the mark's height over a player (READ 36 above the foot), who
+wears it (both guilds' members, own guild included, READ), and whether a non-member standing by sees it
+appear at the declaration or only at the next spawn (round 860's OPEN gap).
+
+### Gates
+
+No code changed: no perf gate, no Go test needed. `remote_godot.sh check` ALL LOAD (1137 scripts, 9
+scenes) and `tests` (RENDER_DIR `/var/tmp/r862m`): "ran 431 suite(s), 3 failing" with
+the box loaded (`retail_gateway_test`'s 32000-byte feed at 11.06 ms, `crowd_main_thread_test`'s
+plates, `seated_spawn_test`); each of the three run again alone: ALL PASS. Base tree, untouched.
+
 ## Eight-hundred-and-sixty-first round: the ride camels and the mule were white blobs -- their models are not in this archive; drawn from the trade twins (OURS)
 
 The user: "the camel mounts are still white blobs" (after v0.1.627, round 860 lane H's horses).
