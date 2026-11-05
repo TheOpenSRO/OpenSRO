@@ -7483,6 +7483,136 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-second round, lane M: the guild war mark is drawn (its effect) and told to everyone around; berserk measured
+
+The round's three movement-and-effects items, checked against measured behaviour. Labels: READ (`c:`
+sro_client.exe, `s:` SR_GameServer.exe), MEASURED, INFERRED, OURS, OPEN. Base `a1034d2e` (v0.1.628).
+Changed: the guild war mark (client and server, item 3). Berserk (item 2): no change, one open question.
+The COS follow (item 1) and the kill's violet orbs: not measured, OPEN.
+
+### 1. A trade transport's and a pet's follow (rounds 851-852) -- OPEN
+
+Not measured this round: no COS could be called out where it was to be measured, so there are no
+legs to compare and nothing in cosfollow.go / navkind.go / PetGait was changed. Found on the way
+(MEASURED): a transport needs the trader's suit worn (else "Only trader or thief can summon a
+transport.", the scroll's ReqLevel1 20); ITEM_CH_M_TRADE_TRADER_02 (2160, ReqLevelType2 -1) is not
+taken by a level-40 trader with an alias, _04 (8986, job level 1) is; and a GM character that is
+invisible cannot put a job suit on at all -- the client sends nothing and shows nothing. Putting the
+suit on moves the character to the town's spawn. What to measure when it is reached: the
+legs' targets either side of the owner as a transport closes in (round 851's INFERRED weave), where it
+stops (BC + 50.0 READ), the gait switch at 20.0 (round 852), and the stop at a trunk.
+
+### 2. Berserk: the gauge, the activation, the end
+
+QA (render box, our real client against the lane server 127.0.0.1:17623, in memory, `-navmesh-dir`):
+`/var/tmp/r862m/qa/bz.sh` gives the player five Berserker Regeneration Potions (ITEM_EVENT_HWAN_POTION,
+24993), right-clicks one in the bag (`rbagitem`), closes the bag and presses Tab, all through the
+client's own input path, in real time with the window grabbed every 50-150 ms (runs `bz2`, `bz3`), at
+1280x1024. The numbers are per grabbed frame, from crops of the player block (CIFPlayerMiniInfo) and of
+the body.
+
+| What | MEASURED | OpenSRO (head = base) |
+|---|---|---|
+| The potion fills the gauge | all five orbs and the ready circle in ONE frame (no orb-by-orb fill, no violet orb); 133 lit pixels in the orb column | the same frame (`hwan count 5 from 0 (no body): shown now`); 128 lit pixels |
+| The ready circle | steady (no pulse: the count of its pixels is constant to the pixel over 8 s) | steady |
+| Tab | the ready circle hides; the flames show on the five orbs; the face and glow fade in, linear, 2.6 s from the first changed frame to full | the same; 2.9 s (both READ as 3.0 s, `0x00d8adc4`; the 0.3 s gap is within two grabs of each side) |
+| The body | the burst (system_hwan_motion), then the red pulse with a period of 2.0-2.2 s (peaks 3.06, 5.28, 7.28 s) | the same rows (`BERSERK look ... every 1000 ms, size x1.1`), pulse peaks ~2 s apart |
+| The drain | one orb out about every 12.0-12.2 s after the press (12.2, 24.2, 36.4, 48.4 s, 1 s sampling) | 12.5, 24.6, 36.4, 48.5 s (`drain step 12.000 s`) |
+| The end | the face and glow fade out linear over 2.9 s from 60.8 s after the press | from 60.4 s, 3.0 s; the look off at 60.0 s (`BERSERK look off`) |
+| **The screen** | **no white flash**: the mean brightness of the whole screen moves +0.006 (the burst), a grass patch away from the body +0.0002 | **a white flash**: the same patch 0.165 -> 0.667 70 ms after the press, back by ~650 ms (`BerserkLook.flash_alpha`) |
+
+**The flash is the open question.** OpenSRO draws it because it is READ: the 0x30BF kind 4 handler, for
+the own player and a non-zero mode, starts CGWeatherManager's colour fade to (255, 255, 255, 128) over
+0.2 s with 0.5 s back (c:0x8a827b..0x8a82be, unconditional in this binary), drawn by
+`CGWeatherManager::FUN_00a43270` (SRCALPHA / SRCCOLOR over the texture factor) when the manager's +0xb4
+is 0 (`CGWeatherManager::vslot_010` c:0xa43530). MEASURED: none. The two disagree: either a build
+difference, a condition on +0xb4 not read here, or a drawing difference in how that quad reaches the
+screen. Left as built (round 651) until it is decided.
+
+**The violet orbs from a kill** (round 860 lane E) were not measured: a kill earns an orb at most 8 %
+of the time (READ s:0x410880, round 223); not measured this round. OPEN.
+
+Frames for a human (ours): `/var/tmp/r862m/keep/ours_hud_act.png` (the player block from 17 s before
+the press to 5 s after, every third grab, labelled with ms from the press) and
+`/var/tmp/r862m/keep/ours_body_act.png` (the body); the runs' logs are `/var/tmp/r862m/qa/bz2/godot.log`
+and `bz3/godot.log`.
+
+### 3. The guild war mark (`client/scripts/effects/aura_model.gd`, `guild_war_mark.gd`; server `guildwar.go`)
+
+Two guilds founded at the Jangan guild manager by two level-40 masters, a war proclaimed and accepted
+through the guild window (Hostility, "Request to start the war"; 10000 points, 1 day, no stake), ended
+by "Request to end the war" (a minute's countdown, then "Lost the war"). Server messages recorded with
+their arrival times on both masters' connections.
+
+| What | MEASURED | OpenSRO before (`a1034d2e`) | after |
+|---|---|---|---|
+| The look | crossed blades with a red glow, the glow swelling and fading on a ~2.0 s cycle (red pixels of the mark 63 -> 3,032 -> 63 at 0.88 / 1.80 / 2.74 s, again at 3.79, 4.78, 5.75 s), high over the head | **nothing drawn**: the log says `guild war mark on`, but `res\etc\guild_war_mark.bsr` has no mesh (below) | the blades and glow over each member (`EFFECTS aura model res\etc\guild_war_mark.bsr: 1 ambient effect(s)`) |
+| When | on both masters in the same frame, ~0.9 s after the target's OK; the plates' enemy guild line turns red at the same frame | -- | on both at the 0x30EF |
+| Who wears it | both guilds' members, the own guild included; a GM-invisible member too | (as READ) | (unchanged) |
+| 0x30EF at the start | each master got **both** guilds' {0, id}, the declarer's guild first, 4 ms apart, then the 0x38F5 0x19 | each master got its own guild's only | both, the declarer's first |
+| 0x30EF at the end | the masters two regions apart: each got its own guild's {1, id} only, 0-40 ms after the 0x1c | its own | its own (the other is not in view) |
+| A player arriving later | the spawn (0x3015) then 0x30FF {..., role 0, war flag 0} | (round 860) | (unchanged) |
+
+- **Why nothing was drawn (MEASURED, the box's Data.pk2).** `res\etc\guild_war_mark.bsr` names no
+  mesh: its only content is an `ambient` particle set with one entry, `map\guild\guild_war_mark.efp`
+  at offset 0,3,0 (mode 1). AuraModel (round 838) built the model's meshes and nothing else, so the
+  mark was an empty node. Of the 79 `.bsr` files skilleffect.txt names, 25 carry ambient entries and 13
+  have no mesh at all: the war mark, the helper mark, the capture mark, the five trade job shields
+  (`system_trade_*`), the quest marks (QuestMarks draws those itself, round 785). **Built:**
+  AuraModel plays a kept model's offset ambient entries (READ round 720: an object's `ambient` set
+  runs for as long as the object), looping, under the model, so they follow the body's `*`; a bone
+  entry (mode 0) and a night-only one are left out, as QuestMarks leaves them (OURS; mode 0 on a kept
+  model is OPEN).
+- **Who hears 0x30EF (READ, s:0x5c8800 / s:0x5c88d0 -> s:0x5c4350).** The war add and remove pass the
+  guild in EAX to s:0x5c4350, which walks its members and, for each one in the world, sends through
+  `GObjPC::FUN_00484d90` (s:0x5c4434) -- the send to every player in the member's 3 x 3 message
+  blocks, the member included (movement.md, "Who receives it"). Round 860 sent it to the members
+  alone, which left a player standing by a member without the mark until the next spawn (round 860's
+  OPEN "non-member" gap, now closed). **Built:** `tellWarState` -> `toGuildAndAround`
+  (`sendAboutPlayerPacket` per member in the world). A player near two members hears it twice, as the
+  original would.
+
+**QA (render box; lane server 127.0.0.1:17623, real input; `/var/tmp/r862m/qa/war.sh`, round 860's
+`war860e.sh` with this lane's ports):** QaWin (rendered) founds Alpha and proclaims war on Mate's Beta
+(partybot accepts, surrenders 40 s later) through the guild window; Cato (Gamma) is the control;
+Watch860 (headless, no guild) arrives after the war began.
+
+| Client | base (`war1`: server and client `a1034d2e`) | head (`war2`) |
+|---|---|---|
+| QaWin | only `guild 3 joins the at-war set`; mark "on" for itself, nothing on screen; Mate's guild never in its set, so no mark on Mate | `guild 3 joins` and `guild 1 joins`; marks on QaWin and Mate, each with `1 ambient effect(s)`; at the end both leave, both marks off |
+| Watch860 (no guild) | marks from the spawns only; none removed at the end | `guild 1 joins`, `guild 3 joins` (from the spawns), then at the end `guild 3 leaves`, `guild 1 leaves` and `guild war mark off uid 2`, `uid 4` |
+
+Frames for a human: `/var/tmp/r862m/keep/war_base_sheet.png` (base: no mark), `war_head_sheet.png` and
+`war_head_zoom.png` (head: the blades over Mate and QaWin). Logs: `/var/tmp/r862m/qa/war2/godot.log`,
+`second.log`.
+
+### Gates
+
+- Go: `TestRound844WarFlow` (each master hears both guilds' 0x30EF at the start and the end, the
+  declarer's first; NEGATIVE: `a1034d2e` sends one each); `go build ./...`, `go test ./...`: all ok.
+- Client: `guild_war_mark862_test` (the mesh-less model plays its one offset entry, looping, under the
+  model; the bone and night-only entries are not asked for; NEGATIVE: a template without the set plays
+  nothing). `remote_godot.sh check` ALL LOAD (1138 scripts, 9 scenes); `tests` "ran 432 suite(s), 0 failing"
+  (RENDER_DIR `/var/tmp/r862m`; the first, base-tree run had three timing / load failures, each passing
+  alone).
+- Perf gate (`--base a1034d2e --head aafdcfa9 --sites jangan --frames 24000`; the view has no war mark,
+  so this says the standing world costs what it did):
+
+```
+perf gate: base a1034d2e (forward_plus) vs head aafdcfa9 (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 1.99  head 2.00  (+0.0)  SAME
+jangan  entry ms   base 11513  head 11369  (-144.0)  SAME
+jangan  freeze ms  base 3800  head 3644  (-156.0)  SAME
+jangan  hitches    base 5  head 4  (-1.0)  SAME
+```
+
+### OPEN
+
+- Item 1, the COS follow against measured legs (above): not measured.
+- The violet orbs from a kill: not measured.
+- The berserk activation's white flash: READ, not MEASURED (above); left as built.
+- A kept model's bone (mode 0) ambient entries.
+
 ## Eight-hundred-and-sixty-second round, lane W: what a return scroll's cast refuses; the items on the ground
 
 Two items: (1) round 860 held only the moves during a return scroll's cast -- find and build

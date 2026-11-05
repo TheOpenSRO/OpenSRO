@@ -28,6 +28,18 @@ class_name AuraModel
 ##   .bsr names no .bsk), which is why BsrEffect, built for cast objects with
 ##   their own clips, does not take them.
 ##
+## Round 862: the object's own `ambient` particle entries play with it (READ,
+## round 720: CRTModParticle runs an object's `ambient` mod set for as long
+## as the object lives -- AmbientParticles.ambient_entries). MEASURED (the
+## box's Data.pk2, the 79 `.bsr` files skilleffect.txt names): 25 carry
+## such entries and 13 have no mesh at all -- their whole look is the effect:
+## the guild war mark (`map\guild\guild_war_mark.efp` at 0,3,0), the
+## helper mark, the capture mark, the trade job shields, the quest marks
+## (QuestMarks draws those apart). Before, a mesh-less one drew nothing. The
+## entries placed at an offset in the object's frame (mode 1) play here; a
+## bone's (mode 0: the sword blades, the hawks, the stones) and a night-only
+## one do not (OURS, as QuestMarks leaves them out; mode 0 here is OPEN).
+##
 ## OURS: the model is built by ObjectLoader (prepared on a worker, committed
 ## on the main thread, one template per path, shared meshes and textures) and
 ## drawn with the object shader; its collision is dropped; it vanishes at the
@@ -49,6 +61,8 @@ static var _lock := Mutex.new()
 static var _textures: Dictionary = {}
 ## Test seam: Callable(path) -> Node3D (a template), instead of the archive.
 static var builder: Callable = Callable()
+## Test seam: Callable(efp path) -> EfpEffect, instead of SkillEffects._make.
+static var effect_factory: Callable = Callable()
 ## Round 860: Callable(host) -> float, the body's `*` height in its own units
 ## (GuildWarMark.star_height of its characterInfo Size; World3D sets it).
 ## Unset, `*` stays at the skeleton's origin as before.
@@ -59,6 +73,8 @@ var host: Node3D = null
 var bone := ""
 var offset := Vector3.ZERO
 var model: Node3D = null
+## Round 862: the ambient effects playing on the model.
+var ambient_fx: Array = []
 var _skel: Skeleton3D = null
 var _bone := -1
 
@@ -137,6 +153,36 @@ func _build() -> void:
 	model = t.duplicate() as Node3D
 	add_child(model)
 	ClothDriver.enlist(model)
+	_play_ambient(t)
+
+## The template's offset (mode 1) ambient entries, looping on the model until
+## it goes (round 862, see the header).
+func _play_ambient(t: Node3D) -> void:
+	for e in ambient_entries_of(t):
+		var fx = effect_factory.call(String(e[0])) if effect_factory.is_valid() else SkillEffects._make(String(e[0]))
+		if fx == null or not (fx is EfpEffect):
+			continue
+		var ef := fx as EfpEffect
+		ef.loop = true
+		ef.auto_free = false
+		SkillEffects.attach(ef, model, "none", e[1])
+		ambient_fx.append(ef)
+	if not ambient_fx.is_empty():
+		print("EFFECTS aura model %s: %d ambient effect(s)" % [path, ambient_fx.size()])
+
+## [[efp path, offset], ...]: a template's ambient entries placed at an offset
+## (mode 1), not night-only.
+static func ambient_entries_of(t: Node) -> Array:
+	var out: Array = []
+	if t == null or not t.has_meta(AmbientParticles.META_ENTRIES):
+		return out
+	for entries in t.get_meta(AmbientParticles.META_ENTRIES):
+		for e_v in entries:
+			var e := e_v as BsrReader.ParticleEntry
+			if e == null or e.efp == "" or e.mode == 0 or AmbientParticles.night_only(e):
+				continue
+			out.append([e.efp, e.offset])
+	return out
 
 func _process(_delta: float) -> void:
 	if host == null or not is_instance_valid(host):
