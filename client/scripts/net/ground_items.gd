@@ -35,6 +35,11 @@ const ERR_TOO_FAR := 4
 const ERR_NOT_OWNER := 0x1812
 const ERR_BUSY := 0x1813
 const ERR_CANNOT_PICK := 0x1839
+## Round 862: a pick refused by a return scroll's cast. Retail's pick-up is
+## 0x7074, refused {3, 0x4004} by the server's filter (s:0x4ecbc0), which the
+## client shows nowhere (0x7baf0d); the server answers OpenSRO's own pick-up
+## with the same code, and nothing is shown for it either.
+const ERR_REFUSED := 0x4004
 
 ## The pick range the server enforces, in world units (.rdata 0xb45b44).
 const PICK_RANGE := 10.0

@@ -198,8 +198,34 @@ return scroll's bar -- it sends the click and the keys as ever. **The server ref
   silent end). OURS: a refused move is answered with 0xB023 to the mover at the server's position
   (retail answers nothing; OpenSRO's client walks a click at once). The client (`ScrollHold`,
   `World3D._scroll_hold`) sends none of them while its own state is 1: no click walk, sky run, arrow
-  key, walk into reach, attack or skill. OPEN: the rest of the allow list (NPC, inventory, exchange,
-  stall, pick-up and pet requests) is not held yet.
+  key, walk into reach, attack or skill.
+- Round 862, the rest (`ScrollHoldGate`, in front of every handler): every retail request
+  (0x7000..0x7FFF) outside group 11's allow list is refused with the server's own answer (READ,
+  `CGObjPC::vslot_358` 0x4ecbc0..0x4ece3e, each `Msg_SendTwoFieldReply` 0x4e7250 a {u8 2, u16 code}
+  on the request's reply): 0x7034 -> 0xB034 {2, 0x181d}; 0x7045 -> 0xB045 {2, 0x6006}; 0x7046 ->
+  0xB046 {2, 0x1c0b}; 0x70C5 command 2 -> 0xB0C5 {2, 2, u16 0x3009, u32 cos}, command 8 -> {2, 8,
+  u16 0x4414, u32 cos, u32 item}, any other command nothing; 0x7155 -> 0xB155 {2, 0x5814} unless its
+  byte is 1 (not built: OpenSRO's alchemy is OpAlchemy); 0x7158 runs as if allowed
+  (`GObjPC::FUN_00518c20`); the rest -- 0x704F (sit), 0x70B1 / 0x70BA (stall), 0x7081 (exchange),
+  0x706C (party match) -- get nothing. The emote 0x3091 too. The client shows none of these codes
+  (0xB0C5's handler c:0x872590 sends 0x3009 under category 4 and 0x4414 under category 0xc of the
+  error dispatcher c:0x7b8b40, neither of which has a case for them; 0x181d and 0x6006 the same).
+  OpenSRO's own twins get the same silent refusal: OpInventoryMove, OpEquip / OpUnequip (an error
+  text the client logs and shows nowhere) and OpPickUp (OpPickUpResult 0x4004, shown nowhere).
+  **MEASURED** during a return scroll's cast: a bag move and taking the weapon off -> {2, 0x181d}, the
+  item stays, nothing shown; a click on an NPC in reach -> {2, 0x6006}, no window, nothing shown; a
+  pick-up (0x7074 kind 2) -> {3, 0, 0x4004}; the sit, an emote, the stall's title box Confirm, the party
+  match window's 0x706C and a ground click get no answer and nothing happens; chat and a potion work;
+  another return scroll -> 0x185d, shown in the warning banner and the system log (READ: category 1's
+  0x185d case jumps to 0x7b8ccc, the banner 0x77b580 before the line; 0x185f, 0x1875 and 0x187a
+  too; every other code of the table goes to 0x7b966d, the line only). Nothing of it cancels the cast:
+  it ends on time and warps; the cancel button is the only early end. The 15 s special return scroll
+  holds the same way (MEASURED: state 1, a ground click unanswered, a bag move {2, 0x181d}); the
+  reverse return scroll's recall point sets the same state 1 (MEASURED, 0x30BF kind 0xb value 1) but
+  its 1 s cast warped before a request could be tried.
+- Left alone (unsure; the original refuses them too): the stall network's 0x7461..0x7463 (OpenSRO's
+  own way in) and OpenSRO's own requests with no retail twin (the GM console, guild, party, storage
+  and alchemy messages).
 
 ## 6. Verification
 

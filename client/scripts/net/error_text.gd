@@ -337,6 +337,19 @@ const SCROLL_UIIT_BY_CODE := {
 	0x18fd: "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT",
 }
 
+## Round 862: the category-1 codes above whose case also raises the warning
+## banner (GDR_WARNING_WND, 0x77b580) before the system line (0x7781b0): their
+## jump-table targets go to 0x7b8ccc (READ: 0x185d 0x7b9038, 0x1875 0x7b916f,
+## 0x187a 0x7b8d3e jump there; 0x185f 0x7b919f jumps to 0x7b8cc7, which falls
+## into it). Every other code above goes to 0x7b966d: the system line only.
+## MEASURED: a second return scroll during a cast shows 0x185d's text in the
+## banner and in the system log.
+const SCROLL_BANNER_CODES := [0x185d, 0x185f, 0x1875, 0x187a]
+
+## Whether a use-item refusal's code raises the warning banner too.
+static func scroll_banner(code: int) -> bool:
+	return SCROLL_BANNER_CODES.has(code)
+
 ## A use-item refusal in words: the archive's text for the code's category-1
 ## name, else `reason` (the server's own words).
 static func scroll_line(code: int, table: UiTextTable, reason: String) -> String:

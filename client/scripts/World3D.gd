@@ -20293,6 +20293,14 @@ func _qa_step() -> void:
 	if OS.get_environment("OPENSRO_QA_FAKEITEMS") != "" and _qa_tick == 50 and _hud_panels != null:
 		_hud_panels.qa_fill_sample_inventory()
 
+	# Round 862, QA only: OPENSRO_QA_GROUND_DROPS="<item id>[x<qty>]:<dx>:<dz>,..."
+	# lays drops on the ground beside the player at tick 150 (after the commands), through the same
+	# path a server's 0x006c takes (_on_ground_item_spawned), so a render can
+	# show a drop's model, its glow and its name with no server drop table.
+	# Item 1 is gold (its quantity is the amount).
+	if OS.get_environment("OPENSRO_QA_GROUND_DROPS") != "" and _qa_tick == 150 and player != null:
+		_qa_ground_drops(OS.get_environment("OPENSRO_QA_GROUND_DROPS"))
+
 	# OPENSRO_QA_TALK="<name>" opens the NPC dialogue for a render, standing
 	# in for a click on an NPC (which a render cannot make).
 	# Round 725: "<CODE>@<tick>;<CODE>@<tick>..." talks to several in one boot
@@ -31747,11 +31755,48 @@ func _try_setup_ground_items() -> void:
 	_ground_items = GroundItems.new()
 	_ground_items.name = "GroundItems"
 	# Unswept plates: an item's name has its own visibility rule (_name_plate).
-	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate.bind(false), _terrain_hit_height)
+	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _ground_item_plate, _terrain_hit_height)
 	_ground_items.set_types_for(func(item_id: int) -> PackedInt32Array:
 		var row = _item_rows.get(item_id)
 		return row.type_ids if row != null else PackedInt32Array())
+	# Round 862: a drop model's own `ambient` effects (GroundItems.set_effects_for).
+	_ground_items.set_effects_for(_attach_drop_effects)
 	other_entities.add_child(_ground_items)
+
+## A ground item's name (round 862): the original's plate look -- font 0 at
+## 12 px, 1:1 on screen, no outline (_retail_plate_look) -- in white and with
+## no box. READ: CIItem::vslot_025 (c:0x9e1d00) leaves the name in the plate's
+## own colour and sets 0xff72bfff through 0x8b2b70 only when the spawn's last
+## byte (+0x260) is 1 (0x9e2121..0x9e212a). MEASURED: the plain box, the three
+## seals (that byte 2), a +7 blade, gold and a potion (0) all draw their
+## names in pure white (255, 255, 255) with no box behind them; the name has no
+## plus ("Copper Blade" for a +7: vslot_025 reads the spawn's plus byte into a
+## local it never uses). Until this round the pale NAME_PLATE_COLOUR placeholder drew it.
+## OPEN: which items the server sends byte 1 for (not measured), so the blue
+## name is not built.
+const ITEM_NAME_COLOUR := Color(1.0, 1.0, 1.0)
+
+func _ground_item_plate(text: String, above: float) -> Label3D:
+	var label := _name_plate(text, above, false)
+	_retail_plate_look(label, ITEM_NAME_COLOUR, false)
+	label.remove_meta(NamePlates.BOX_META)
+	return label
+
+## Round 862: plays a ground item's drop model's `ambient` effects through
+## the objects' ambient path (AmbientParticles.attach: the display blend, the
+## glow pass), as the original draws them on the ground. They are the
+## model's children, so they go with it (a pick-up's fade, a despawn).
+## OPENSRO_QA_AMBIENT=off leaves them out, as it does the objects'.
+func _attach_drop_effects(model: Node3D) -> int:
+	if OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+		return 0
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return 0
+	var made := _ambient.attach(model, model.get_meta(AmbientParticles.META_ENTRIES), particles)
+	if OS.get_environment("OPENSRO_QA_GROUND_DROPS") != "":
+		print("GROUND DROP FX %s: %d effect(s) %s" % [model.name, made.size(), str(AmbientParticles.efp_paths(model.get_meta(AmbientParticles.META_ENTRIES)))])
+	return made.size()
 
 ## The object-name table (textdata_object.txt), parsed once on first use and
 ## shared with the monster-model loader, which fills the same variable.
@@ -31801,6 +31846,29 @@ func _on_ground_item_list_result(items: Array, error: String) -> void:
 	_ground_items.apply_list(items)
 	print("World3D: %d item(s) on the ground in this zone (%d with no ground under them yet)" % [
 		_ground_items.count(), _ground_items.pending_count()])
+
+## OPENSRO_QA_GROUND_DROPS (round 862, QA only; see the QA tick block).
+func _qa_ground_drops(spec: String) -> void:
+	var n := 0
+	for part in spec.split(",", false):
+		var f := part.strip_edges().split(":")
+		if f.size() < 3:
+			continue
+		var idq := f[0].split("x")
+		var snap := GroundItemsNet.Snapshot.new()
+		snap.id = 900000 + n
+		snap.item_id = int(idq[0])
+		snap.quantity = int(idq[1]) if idq.size() > 1 else 1
+		snap.gold = snap.item_id == 1
+		snap.x = player.global_position.x + float(f[1])
+		snap.y = player.global_position.y
+		snap.z = player.global_position.z + float(f[2])
+		_on_ground_item_spawned(snap)
+		n += 1
+		print("QA GROUND DROP: item %d x%d at (%.1f, %.1f) -> %s" % [snap.item_id, snap.quantity, snap.x, snap.z,
+			_ground_items.label_text(snap) if _ground_items != null else ""])
+	if _ground_items != null:
+		_ground_items.update_labels(player.global_position, 300.0, -1)
 
 func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 	if _ground_items == null:
@@ -31894,6 +31962,11 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			print("World3D: ground item %d is out of reach (%.0f units) -- walking to it" % [result.ground_id, GroundItemsNet.PICK_RANGE])
 			if OS.get_environment("OPENSRO_QA_PICKUP") != "":
 				print("QA PICKUP: result 4 (too far)")
+		GroundItemsNet.ERR_REFUSED:
+			# Round 862: held by a return scroll's cast -- no line (MEASURED:
+			# the pick-up is refused and nothing is shown).
+			_pending_pickup_id = -1
+			print("World3D: pick of ground item %d refused (0x4004, shown nowhere)" % result.ground_id)
 		_:
 			_pending_pickup_id = -1
 			print("World3D: cannot pick up ground item %d (server code 0x%x)" % [result.ground_id, result.code])
@@ -38666,7 +38739,12 @@ func _on_use_item_result(result) -> void:
 		_skin_sent = []
 		# A refusal with an engine code (round 778: the scrolls') is the
 		# archive's own category-1 message (ErrorText.scroll_line).
-		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
+		var refused_line: String = ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error
+		# Round 862 (READ, ErrorText.SCROLL_BANNER_CODES): some codes raise
+		# the warning banner as well, as the original does.
+		if ErrorText.scroll_banner(result.code):
+			_show_banner("warning", refused_line)
+		_log_system(refused_line)
 		return
 	# Round 826: its re-use timers.
 	_arm_item_cooldowns(result)
