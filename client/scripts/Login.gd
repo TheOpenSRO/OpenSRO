@@ -151,6 +151,8 @@ const KEY_SHARD_NAME := "shard_name"
 func _ready() -> void:
 	# Round 858: the window hole census in a real run (OPENSRO_QA_HOLES; HoleCensus).
 	HoleCensus.qa_hook(self)
+	# Round 862: a player's keys and clicks on this screen (OPENSRO_QA_FRONT_INPUT).
+	QaFrontInput.qa_hook(self)
 	_started_ms = Time.get_ticks_msec()
 	NetClient.connected.connect(_on_connected)
 	NetClient.connection_failed.connect(_on_connection_failed)

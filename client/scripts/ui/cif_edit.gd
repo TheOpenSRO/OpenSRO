@@ -88,14 +88,19 @@ class_name CifEdit
 ## the edit's CETime (`+0x388`, set to 5 per second by 0x637b3c ->
 ## 0xba9aa0(5): 1000 / 5 = 200 ms) ticks (0x635530). So the caret is 2 pixels
 ## wide, the text's colour, and blinks 200 ms on, 200 ms off. Its height is
-## the font's tmHeight + 2.0 from the text's top.
+## the font's point size + 2.0 from the text's top (round 862: `[[+0x11c] +
+## 4]`, the font object's size, not tmHeight; MEASURED 11 rows for FontIndex
+## 0's 9 pt -- TextLayout's header). Its x and top are not truncated as the
+## text is: a quad edge on a half pixel covers the next pixel (MEASURED,
+## TextLayout.caret_pixels), so a centred text with an odd `w - text w` has
+## its caret a pixel right of the glyph boundary.
 ##
 ## **Where the text and the caret go (READ, round 859; TextLayout has the
 ## formulas).** The text rect is the edit's rect less its ClientRect
 ## (0x652800); HAlign 0 / 1 / 2 put the text at its left, centre, or 2.0
 ## short of its right; VAlign 0 / 1 / 2 at its top, centre or bottom; the
 ## caret at the text's left + the advances before it, from the text's top,
-## tmHeight + 2 tall. Round 848's chat line was a second edit laid over the
+## point size + 2 tall (round 862). Round 848's chat line was a second edit laid over the
 ## authored one with no insets at all, so its text and caret sat 5 px left of
 ## the original's (ClientRect 5,4,0,0) and its text was centred in the 20 px
 ## (VAlign 0 is the top). `lay_out` gives every edit the rule: the ClientRect
@@ -262,6 +267,11 @@ func layout_halign() -> int:
 func layout_valign() -> int:
 	return _valign
 
+## The point size the edit's font was made at (round 862, READ: the caret is
+## that + 2.0 tall; TextLayout.point_size).
+func caret_points() -> int:
+	return TextLayout.point_size(get_theme_font_size(&"font_size"))
+
 ## The face's height at the edit's size: the tmHeight stand-in (GDI's
 ## tmHeight is tmAscent + tmDescent; Godot's height is ascent + descent of
 ## the same face -- INFERRED equivalent).
@@ -400,7 +410,8 @@ func caret_shown() -> bool:
 
 ## Where the caret goes, in the edit's own coordinates (READ, the header):
 ## x at the text's left + the advance before the caret column, 2 wide; from
-## the text's top, tmHeight + 2 tall.
+## the text's top, the font's point size + 2 tall, on the pixels the quad
+## covers (round 862).
 func caret_rect() -> Rect2:
 	var p := placement()
 	return p["caret"] if not p.is_empty() else Rect2()
@@ -463,12 +474,20 @@ func placement() -> Dictionary:
 	var th := line.get_size().y if line != null else 0.0
 	# LineEdit's x with no scroll (ints, as line_edit.cpp has them).
 	var x := float(int(ml))
+	# Round 862: the unrounded left and top the original works the caret
+	# from (`+0x370` / `+0x374` as floats; only the text board is drawn at
+	# their truncation, 0x6356c0). Centred, the left is left + (w - text w)
+	# * 0.5, a half pixel whenever w - text w is odd.
+	var x_exact := x
 	match alignment:
 		HORIZONTAL_ALIGNMENT_CENTER:
 			x = float(int(ml + maxi(0, int(size.x - float(int(ml + mr)) - tw) / 2)))
+			x_exact = maxf(ml, ml + (size.x - ml - mr - tw) * 0.5)
 		HORIZONTAL_ALIGNMENT_RIGHT:
 			x = float(maxi(int(ml), int(size.x - ceilf(mr + tw))))
-	var top := float(int(mt + (y_area - th) / 2.0))
+			x_exact = x
+	var top_exact := mt + (y_area - th) / 2.0
+	var top := float(int(top_exact))
 	var adv := 0.0
 	if line != null and not placeholder:
 		var carets: Dictionary = TextServerManager.get_primary_interface().shaped_text_get_carets(line.get_rid(), col)
@@ -486,6 +505,7 @@ func placement() -> Dictionary:
 		var ruled := TextLayout.edit_scrolled_left(x, Rect2(span.x, 0.0, span.y, 0.0), ceilf(tw), adv)
 		if ruled != x:
 			left = floorf(ruled)
+			x_exact = left
 	var caret: Rect2
 	if shown == "":
 		# No text: the empty caret (LineEdit's x per alignment; the
@@ -493,15 +513,17 @@ func placement() -> Dictionary:
 		var ex := ml
 		match alignment:
 			HORIZONTAL_ALIGNMENT_CENTER:
-				ex = ml + maxi(0, int(size.x - ml - mr) / 2)
+				# Round 862: left + w * 0.5, unrounded (a half pixel for an
+				# odd width; the quad's pixels below).
+				ex = ml + maxf(0.0, size.x - ml - mr) * 0.5
 			HORIZONTAL_ALIGNMENT_RIGHT:
 				ex = size.x - mr
 		var ey := mt + int((y_area - ceilf(fh)) / 2.0)
 		if _laid:
 			ey = TextLayout.edit_origin(Rect2(Vector2.ZERO, size), _client, 0, _valign, Vector2.ZERO, fh).y
-		caret = Rect2(Vector2(floorf(ex), floorf(ey)), Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
+		caret = TextLayout.caret_pixels(TextLayout.caret_rect(Vector2(ex, ey), 0.0, caret_points()))
 	else:
-		caret = Rect2(Vector2(left + adv, top), Vector2(TextLayout.CARET_WIDTH, fh + TextLayout.CARET_EXTRA))
+		caret = TextLayout.caret_pixels(TextLayout.caret_rect(Vector2(x_exact, top_exact), adv, caret_points()))
 	return {"line": line, "left": left, "top": top, "text_w": tw, "text_h": th, "advance": adv,
 		"caret": caret, "placeholder": placeholder, "shown": shown}
 

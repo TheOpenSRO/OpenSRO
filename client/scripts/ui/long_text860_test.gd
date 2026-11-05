@@ -139,7 +139,7 @@ func _chat_edit() -> void:
 	_check(left == floorf(5 + 350 - ceilf(tw)), "End: the text's end at 5 + 355 - 5 = 355 (left %.1f, want %.1f)" % [left, floorf(355 - ceilf(tw))])
 	var c := e.caret_rect()
 	_check(absf(c.position.x - (5 + 350)) <= 1.0, "End: the caret at w - 5 (x %.1f, want 355)" % c.position.x)
-	_check(c.position.y == 4 and c.size == Vector2(2, e.font_height() + 2), "the caret's top and quad unchanged (%s)" % [c])
+	_check(c.position.y == 4 and c.size == Vector2(2, e.caret_points() + 2), "the caret's top and quad unchanged (%s)" % [c])
 	# Walk left a character at a time, by the edit's own keys.
 	var moved := 0
 	var last := left

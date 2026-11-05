@@ -510,7 +510,9 @@ static func measure_caret(it: Dictionary, tree: SceneTree, vp: Viewport, s: floa
 	var fs := _font_size(e)
 	var shown := _shown_text(e)
 	var origin: Vector2 = it["expected"]
-	var want := TextLayout.caret_rect(origin, _width(font, fs, shown.left(e.caret_column)), font.get_height(fs))
+	# Round 862: the font's point size + 2 tall, on the pixels the quad covers.
+	var want := TextLayout.caret_pixels(TextLayout.caret_rect(origin, _width(font, fs, shown.left(e.caret_column)),
+		TextLayout.point_size(fs)))
 	# Round 860: the caret quad is drawn inside the edit's viewport too (READ
 	# 0x637b70: the quad at 0x638050..0x6380a7, before 0x653220 restores the
 	# screen), so a caret taller than its edit is cut at the edit's rect.

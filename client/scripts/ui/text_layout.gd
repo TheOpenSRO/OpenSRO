@@ -44,9 +44,28 @@ class_name TextLayout
 ## (0x8b3820 sums each glyph cell's width and spacing up to `+0x448`, plus one
 ## while an IME composition is open); its quad runs from that x to x + 2.0,
 ## from the text's top (plus the caret line's y, for a multi-line edit) to the
-## top + the font's tmHeight + 2.0, in the edit's FontColor.
+## top + the font's point size + 2.0, in the edit's FontColor.
+##
+## **The caret's height is the font's point size + 2 (READ, round 862).**
+## 0x637ec6 adds `[[+0x11c] + 4]` -- the font object's second field, which
+## 0xbaa110 stores from its size argument (the point size: it asks GDI for
+## `lfHeight = -MulDiv(size, 96, 72)` and keeps each style's TEXTMETRIC from
+## `+0x38`, tmHeight first) -- not tmHeight. The font table (0x469350) makes
+## indices 0..4 at 9, 8, 12, 11 and 15 points (12, 11, 16, 15 and 20 px).
+## MEASURED: font 0's caret is 11 rows tall (the login ID and password, the
+## image-code box, character create's name, the chat line); round 859 drew it
+## tmHeight + 2 (16 rows here).
+##
+## **Where the quad lands (MEASURED, round 862).** The x and top are floats
+## and are not truncated as the text board is: a quad edge on a half pixel
+## covers the pixel to its right (below), the rasteriser's own rule for a
+## pre-transformed quad with pixel centres on whole coordinates. So a centred
+## text whose `w - text w` is odd is drawn at the truncated left, and its
+## caret one pixel right of the glyph boundary there: the empty login ID (135
+## wide) has its caret at x 68..69 of the edit, not 67; after "a" (8 px) at
+## 68 + 8 = 76. `caret_pixels` is that rule.
 
-## The caret's width and the extra below the font's height (READ, 2.0 at 0xe1b898).
+## The caret's width and the extra below the font's point size (READ, 2.0 at 0xe1b898).
 const CARET_WIDTH := 2.0
 const CARET_EXTRA := 2.0
 ## A long single-line edit keeps its end this far in from the right (READ, 0x637d89 `add -5`).
@@ -113,9 +132,27 @@ static func edit_scrolled_left(left: float, r: Rect2, text_w: float, caret_advan
 	return left
 
 ## The caret's quad: from the text's left + the advance before the caret, 2
-## wide, from the text's top, tmHeight + 2 tall.
-static func caret_rect(origin: Vector2, caret_advance: float, font_height: float) -> Rect2:
-	return Rect2(origin.x + caret_advance, origin.y, CARET_WIDTH, font_height + CARET_EXTRA)
+## wide, from the text's top, the font's point size + 2 tall (round 862).
+static func caret_rect(origin: Vector2, caret_advance: float, point_size: float) -> Rect2:
+	return Rect2(origin.x + caret_advance, origin.y, CARET_WIDTH, point_size + CARET_EXTRA)
+
+## The pixels a caret quad covers (MEASURED, round 862, the header): each
+## edge at its ceiling, so a quad from x 93.5 covers 94 and 95.
+static func caret_pixels(quad: Rect2) -> Rect2:
+	var p := Vector2(ceilf(quad.position.x), ceilf(quad.position.y))
+	return Rect2(p, Vector2(ceilf(quad.end.x), ceilf(quad.end.y)) - p)
+
+## The font table's point sizes by pixel size (READ 0x469350: 9, 8, 12, 11,
+## 15 points for FontIndex 0..4; UiBuilder.FONT_SIZES are their
+## MulDiv(points, 96, 72) pixels).
+const FONT_POINTS := {12: 9, 11: 8, 16: 12, 15: 11, 20: 15}
+
+## The point size a face of `px` pixels was asked for: the table's, else
+## px * 72 / 96 rounded (OURS for a size no table entry has).
+static func point_size(px: int) -> int:
+	if FONT_POINTS.has(px):
+		return FONT_POINTS[px]
+	return roundi(px * 72.0 / 96.0)
 
 ## Content margins that make a Godot LineEdit of height `height` draw its
 ## text where `edit_origin` puts it vertically, for a text `text_height` tall
