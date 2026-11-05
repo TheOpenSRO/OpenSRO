@@ -30,6 +30,15 @@ class_name GuildWarMark
 ## the body's turn, the offset times the body's scale, plus the body's
 ## height -- 20 x the characterInfo Size column x 0.5 (.rdata 0xe1b7d0) x
 ## the scale. A player (Size 2, MEASURED) wears it 36 above the feet.
+##
+## Round 862: the file has no mesh (MEASURED, Data.pk2: no .bms, only an
+## `ambient` particle set) -- its whole look is `map\guild\guild_war_mark.efp`
+## at 0,3,0 in the object's frame, which AuraModel now plays (round 860's
+## mark drew nothing). So the efp's origin stands 39 above a player's feet.
+## MEASURED: the mark appears on every member's body in the same frame,
+## ~0.9 s after the target master's OK; its red glow swells and fades on a
+## ~2.0 s cycle (the efp's own); a GM-invisible member still wears it; the
+## enemy guild's line on the plate turns red, the own stays orange.
 
 const EFFECT := "SYSTEM_GUILD_WAR_MARK"
 ## UserSpawnNet.JOB_STATE_NONE: the job state slot 43 must answer.

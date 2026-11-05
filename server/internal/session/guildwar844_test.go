@@ -105,16 +105,19 @@ func TestRound844WarFlow(t *testing.T) {
 	if !guildWarAnswer(ctx, nil, bramE, []byte{1, 1}) {
 		t.Fatal("the answer was not the war's")
 	}
-	// Round 860: each guild's first war puts it in its members' "at war" set
-	// (0x30EF {0, the guild}, s:0x5c8800), before the 0x19.
+	// Round 860: each guild's first war puts it in the "at war" set (0x30EF
+	// {0, the guild}, s:0x5c8800), before the 0x19. Round 862: sent around
+	// each member (s:0x5c4350 -> s:0x484d90), so Aria and Bram, in view of
+	// each other, each hear both guilds, the declarer's first.
 	for _, c := range []struct {
 		conn net.Conn
 		r    *bufio.Reader
-		id   uint32
-	}{{f.connA, f.rA, uint32(ga.GuildID)}, {f.connB, f.rB, uint32(gb.GuildID)}} {
-		p := warNext(t, f, c.conn, c.r, OpGuildWarState)
-		if !bytes.Equal(p.Data, binary.LittleEndian.AppendUint32([]byte{0}, c.id)) {
-			t.Fatalf("0x30EF at the start % x", p.Data)
+	}{{f.connA, f.rA}, {f.connB, f.rB}} {
+		for _, id := range []uint32{uint32(ga.GuildID), uint32(gb.GuildID)} {
+			p := warNext(t, f, c.conn, c.r, OpGuildWarState)
+			if !bytes.Equal(p.Data, binary.LittleEndian.AppendUint32([]byte{0}, id)) {
+				t.Fatalf("0x30EF at the start % x, want guild %d", p.Data, id)
+			}
 		}
 	}
 	// And a spawn / 0x30FF of a member writes the war flag 0 now.
@@ -213,11 +216,12 @@ func TestRound844WarFlow(t *testing.T) {
 	for _, c := range []struct {
 		conn net.Conn
 		r    *bufio.Reader
-		id   uint32
-	}{{f.connA, f.rA, uint32(ga.GuildID)}, {f.connB, f.rB, uint32(gb.GuildID)}} {
-		p := warNext(t, f, c.conn, c.r, OpGuildWarState)
-		if !bytes.Equal(p.Data, binary.LittleEndian.AppendUint32([]byte{1}, c.id)) {
-			t.Fatalf("0x30EF at the end % x", p.Data)
+	}{{f.connA, f.rA}, {f.connB, f.rB}} {
+		for _, id := range []uint32{uint32(ga.GuildID), uint32(gb.GuildID)} {
+			p := warNext(t, f, c.conn, c.r, OpGuildWarState)
+			if !bytes.Equal(p.Data, binary.LittleEndian.AppendUint32([]byte{1}, id)) {
+				t.Fatalf("0x30EF at the end % x, want guild %d", p.Data, id)
+			}
 		}
 	}
 	if line := ownGuildLine(ctx, f.aria); line == nil || line.Data[len(line.Data)-1] != 1 {

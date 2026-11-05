@@ -200,11 +200,20 @@ const OpGuildWarState uint16 = 0x30EF
 // tellWarState is the war count's edge (round 860, READ): CGuild's war add
 // s:0x5c8800 sends 0x30EF {0, id} when the count goes 0 -> 1 (`cmp byte
 // [guild+0x44],1 ; jne` with the old count 0), its remove s:0x5c88d0 {1, id}
-// when it reaches 0, each to that guild's own members (FUN_005c4350). Called
-// after the cache changed: a guild with exactly one war has just begun its
-// first, one with none has just ended its last; any other count says
-// nothing. The other guilds' players learn of it at the next spawn or 0x30FF
-// (the original's gap too).
+// when it reaches 0. Called after the cache changed: a guild with exactly one
+// war has just begun its first, one with none has just ended its last; any
+// other count says nothing.
+//
+// Round 862: who hears it. Both pass the guild in EAX to s:0x5c4350, which
+// walks the guild's members and, for each one in the world, hands the message
+// to GObjPC::FUN_00484d90 (s:0x5c4434) -- the send to every player in the
+// member's 3 x 3 message blocks, the member included (movement.md, "Who
+// receives it"). So the players standing by a member learn of the war too,
+// not only the guild's own (round 860 sent it to the members alone). READ,
+// and MEASURED: two masters side by side each got both guilds' 0x30EF at the
+// war's start, the declarer's guild first; at its end, standing two regions
+// apart, each got its own guild's only. A player near two members hears it
+// twice, as there.
 func (d *guildWarDeps) tellWarState(ctx context.Context, guildID int64) {
 	var op byte
 	switch hostileCount(guildID) {
@@ -216,7 +225,22 @@ func (d *guildWarDeps) tellWarState(ctx context.Context, guildID int64) {
 		return
 	}
 	data := binary.LittleEndian.AppendUint32([]byte{op}, uint32(guildID))
-	d.toGuild(ctx, guildID, OpGuildWarState, data)
+	d.toGuildAndAround(ctx, guildID, OpGuildWarState, data)
+}
+
+// toGuildAndAround is s:0x5c4350 with s:0x484d90 per member: op/data to the
+// players in view of each of guildID's members in the world, each member
+// included.
+func (d *guildWarDeps) toGuildAndAround(ctx context.Context, guildID int64, op uint16, data []byte) {
+	g, err := d.guilds.Get(ctx, guildID)
+	if err != nil || g == nil || d.hub == nil {
+		return
+	}
+	for _, m := range g.Members {
+		if _, ok := entityOf(d.hub, m.CharacterID); ok {
+			sendAboutPlayerPacket(d.hub, m.CharacterID, true, op, data)
+		}
+	}
 }
 
 func (d *guildWarDeps) guildName(ctx context.Context, id int64) string {
