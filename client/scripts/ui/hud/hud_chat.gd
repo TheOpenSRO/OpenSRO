@@ -846,10 +846,17 @@ func add_chat(type: int, name: String, message: String, sent: bool = false, colo
 ## rows, the breaks where the original puts them, the continuation rows led
 ## by a space.
 const STARTING_MSG_COLOR := 0xffdbc99b
-const STARTING_MSG := "Make your way as a Trader, Hunter, or Thief on a grand journey\n across the wide open Silk Road.\nGrow into a true adventurer\n as you earn fortune and fame\n along the Silk Road.\n Have a great time in OpenSRO."
+## The last row names the server played on (the user's request):
+## NetClient.server_name, else "OpenSRO".
+const STARTING_MSG := "Make your way as a Trader, Hunter, or Thief on a grand journey\n across the wide open Silk Road.\nGrow into a true adventurer\n as you earn fortune and fame\n along the Silk Road.\n Have a great time in %s."
+const STARTING_MSG_DEFAULT_SERVER := "OpenSRO"
 
-func add_starting_message() -> bool:
-	_add_to(lists_for(TYPE_SYSTEM), STARTING_MSG, argb(STARTING_MSG_COLOR))
+static func starting_message(server_name: String) -> String:
+	var shown := server_name.strip_edges()
+	return STARTING_MSG % (shown if shown != "" else STARTING_MSG_DEFAULT_SERVER)
+
+func add_starting_message(server_name: String = "") -> bool:
+	_add_to(lists_for(TYPE_SYSTEM), starting_message(server_name), argb(STARTING_MSG_COLOR))
 	return true
 
 ## Adds one line to the All list only, the way CIFChatViewer's vslot 49

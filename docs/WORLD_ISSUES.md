@@ -7609,6 +7609,9 @@ usual 20 px hanging indent.
 player's archive may carry anything there (the test archive's names a private server's website), and
 the original's wording is not ours to ship. `HudChat.STARTING_MSG` keeps the original's shape -- six
 rows, the breaks in the same places, the continuation rows led by a space -- in its colour and lists.
+Its last row names the server played on ("Have a great time in <server>."): `NetClient.server_name`,
+set by the login screen to the chosen shard's row, else the server list entry's name
+(`setting/config.yaml`); "OpenSRO" when there is none.
 
 **Built.** `HudChat.add_starting_message` (OpenSRO's text, type 0xff, 0xffdbc99b), called by World3D
 right after the chat window is set up. `HudChat.wrap` now starts a new,

@@ -328,6 +328,10 @@ func _target_address() -> String:
 ## The chosen server's name in the Server field (round 679): centred and
 ## read-only like retail's GDR_STA_SERVER static, the address as its tooltip.
 func _show_selected_server() -> void:
+	# Round 863 (OURS): the name the game names the server by (the starting
+	# message): the chosen shard's row, else the server's own entry.
+	if _selected != null:
+		NetClient.server_name = _shard_name if _shard_name != "" else _selected.name
 	if server_address_edit != null and _selected != null:
 		show_server_field(server_address_edit, _selected, "")
 		# Round 788: a legacy server's chosen shard as its list row reads.

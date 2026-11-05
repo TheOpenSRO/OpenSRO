@@ -17,6 +17,10 @@ signal disconnected
 ## remember and the debug panel to show. Empty until the first attempt.
 var server_host := ""
 var server_port := 0
+## Round 863 (OURS): the chosen server's name as the login shows it (the
+## shard's row, else the server list entry's name), for the starting message.
+## Empty until the login screen has a server.
+var server_name := ""
 
 signal login_result(ok: bool, reason: String)
 ## Round 788: retail's 0xA102, the answer to gateway_login.
