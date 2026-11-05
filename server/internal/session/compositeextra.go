@@ -223,8 +223,16 @@ func compositeArrived(ctx context.Context, arrived world.Entity) {
 				switch j.Sub {
 				case "UIL1":
 					if _, running := k.get(arrived.CharacterID, j.Ref, now); !running {
-						k.put(arrived.CharacterID, compositeGrant{fillID: j.Ref, scrollID: j.Key, remaining: int(j.V1),
-							max: int(j.V2), until: j.End}, j.End.Sub(now))
+						g := compositeGrant{fillID: j.Ref, scrollID: j.Key, remaining: int(j.V1), max: int(j.V2), until: j.End}
+						// Round 864: the refill period and its end (V3, V4);
+						// the load refills a period passed while away
+						// (slot 1, FUN_00653b40 -> FUN_00653a40).
+						if j.V3 > 0 && j.V4 > 0 {
+							g.period = time.Duration(j.V3) * time.Second
+							g.periodEnd = time.Unix(j.V4, 0)
+							g.refill(now)
+						}
+						k.put(arrived.CharacterID, g, j.End.Sub(now))
 					}
 				case "BFI1", "UQL1":
 					if _, running := k.extra(arrived.CharacterID, j.Sub, j.Ref, now); !running {
@@ -349,12 +357,13 @@ func useScrollFill(ctx context.Context, sess *gateway.Session, hub *world.Hub, k
 	if sc == nil {
 		return fail("that cannot be used", req.ItemID)
 	}
+	// Round 864: a return scroll's fill never ends its grant (vslot_007's
+	// TypeID3 3 branch, s:0x654258..0x65427b, then FUN_006538d0(1,
+	// remaining - 1), READ): only the TypeID3 1 fill's last use ends the job.
+	// MEASURED: after the third instant return the grant stays at 0 ("0Unit"
+	// in the tooltip, the button greyed) and the icon stays.
 	spend := func() error {
-		if g.remaining == 1 {
-			keeper.end(characterID, req.ItemID)
-		} else {
-			keeper.setRemaining(characterID, req.ItemID, g.remaining-1)
-		}
+		keeper.setRemaining(characterID, req.ItemID, g.remaining-1)
 		return nil
 	}
 	delay, code, err := sc.begin(ctx, sess, characterID, fill, req.Option, req.Target, spend)

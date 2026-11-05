@@ -3078,41 +3078,92 @@ func _on_composite_state(state: CompositeNet.State) -> void:
 		_hud_player_info.set_hwan_time_bonus(state.bonus_seconds, state.bonus_seconds_left)
 	if _hud_buff_board == null:
 		return
+	# Round 864: ONE icon per composite item, not one per granted fill. READ
+	# (sro_client.exe): 0x3159's handler (c:0x8992b0) stores the fill in the
+	# board's composite map (FUN_00805230, keyed by the fill) and puts the
+	# icon through FUN_00777f20(5, compositeRefId, 1, secs) -- the board entry
+	# is keyed by the COMPOSITE, so a premium's three fills share one icon,
+	# whose tooltip (c:0x800a10 kind 5) lists every fill of that composite and
+	# whose click opens the window with them all. MEASURED: one icon, the
+	# premium's own art, its gauge full at the use; tooltip "<name>", a blank
+	# line, "Remaining time: 27Day 23Hour 59Minute", then "<fill>: <n>Unit"
+	# for each fill in fill-id order.
 	var live := {}
+	var by_scroll := {}
 	for g in state.grants:
 		var grant: CompositeNet.Grant = g
-		var token := -grant.item_id
-		live[token] = grant
-		var icon := _hud_panels.item_icon_path(grant.scroll_id) if _hud_panels != null else ""
-		var total_s := _hud_panels.item_param1(grant.scroll_id) if _hud_panels != null else 0
-		var scroll_name := _hud_panels.item_name(grant.scroll_id) if _hud_panels != null else ""
-		var b := _hud_buff_board.add_item_state(token, icon, total_s * 1000, grant.seconds_left * 1000, scroll_name)
+		live[-grant.item_id] = grant
+		if not by_scroll.has(grant.scroll_id):
+			by_scroll[grant.scroll_id] = []
+		(by_scroll[grant.scroll_id] as Array).append(grant)
+	for scroll_id in by_scroll:
+		var grants: Array = by_scroll[scroll_id]
+		grants.sort_custom(func(a: CompositeNet.Grant, b: CompositeNet.Grant) -> bool: return a.item_id < b.item_id)
+		var token := composite_token(int(scroll_id))
+		var icon := _hud_panels.item_icon_path(int(scroll_id)) if _hud_panels != null else ""
+		var total_s := _hud_panels.item_param1(int(scroll_id)) if _hud_panels != null else 0
+		var scroll_name := _hud_panels.item_name(int(scroll_id)) if _hud_panels != null else ""
+		var secs := 0
+		for g in grants:
+			secs = maxi(secs, (g as CompositeNet.Grant).seconds_left)
+		var b := _hud_buff_board.add_item_state(token, icon, total_s * 1000, secs * 1000, scroll_name, composite_fill_lines(grants))
 		if b != null and b.slot != null:
-			print("QA COMPOSITE: grant item %d from %d, %d/%d uses, %d s left, icon token %d at screen %s size %s" % [
-				grant.item_id, grant.scroll_id, grant.remaining, grant.maximum, grant.seconds_left, token,
-				str(b.slot.global_position), str(b.slot.size)])
+			print("QA COMPOSITE: composite %d, %d fill(s), %d s left, icon token %d at screen %s size %s" % [
+				int(scroll_id), grants.size(), secs, token, str(b.slot.global_position), str(b.slot.size)])
+		for g in grants:
+			var grant: CompositeNet.Grant = g
+			print("QA COMPOSITE: grant item %d from %d, %d/%d uses, %d s left" % [
+				grant.item_id, grant.scroll_id, grant.remaining, grant.maximum, grant.seconds_left])
 	for t in _hud_buff_board.item_state_tokens():
-		if not live.has(t):
+		if not by_scroll.has(-int(t)):
 			_hud_buff_board.remove_item_state(int(t))
 	_composite_grants = live
+	if _composite_window != null and is_instance_valid(_composite_window) and _composite_window.visible and _composite_window_scroll != 0:
+		_composite_window.show_entries(_composite_entries(_composite_window_scroll))
 	print("World3D: composite state: %d grant(s), berserk bonus %d s (%d s left)" % [
 		state.grants.size(), state.bonus_seconds, state.bonus_seconds_left])
 
-func _on_item_state_clicked(token: int) -> void:
-	var clicked: CompositeNet.Grant = _composite_grants.get(token)
-	if clicked == null:
-		return
-	# FUN_007af830 lists every board entry whose composite (entry+0) is the
-	# clicked icon's key.
+## Round 864: a composite item's board token -- its id, negated (the board's
+## keys for item states; a server buff token is never negative).
+static func composite_token(scroll_id: int) -> int:
+	return -scroll_id
+
+## Round 864: the tooltip's fill lines (c:0x800a10 kind 5, READ: for each
+## entry of the composite map whose composite is this icon's, "%s: " of the
+## fill's name then "%d%s" of its count and UIIT_STT_UNIT, in the map's order
+## -- the fill ids ascending).
+func composite_fill_lines(grants: Array) -> PackedStringArray:
+	var unit := _resolve_any_text("UIIT_STT_UNIT", "Unit")
+	var out := PackedStringArray()
+	for g in grants:
+		var grant: CompositeNet.Grant = g
+		var n := _hud_panels.item_name(grant.item_id) if _hud_panels != null else ""
+		out.append("%s: %d%s" % [n if n != "" else "Item %d" % grant.item_id, grant.remaining, unit])
+	return out
+
+## The window's entries for a composite: [[item_id, name, remaining], ...]
+## in the fill ids' order (FUN_007af830 walks the map, keyed by the fill).
+func _composite_entries(scroll_id: int) -> Array:
 	var entries: Array = []
 	for t in _composite_grants:
 		var g: CompositeNet.Grant = _composite_grants[t]
-		if g.scroll_id == clicked.scroll_id:
+		if g.scroll_id == scroll_id:
 			var n := _hud_panels.item_name(g.item_id) if _hud_panels != null else ""
 			entries.append([g.item_id, n if n != "" else "Item %d" % g.item_id, g.remaining])
-	# Round 838: in the item ids' order (INFERRED: the board's map is keyed by
-	# them), so a premium's two fills keep their places.
 	entries.sort_custom(func(a: Array, b: Array) -> bool: return int(a[0]) < int(b[0]))
+	return entries
+
+## The composite whose fills the window shows (round 864).
+var _composite_window_scroll := 0
+
+func _on_item_state_clicked(token: int) -> void:
+	# Round 864: the icon is the composite's (composite_token); its click
+	# lists every fill of that composite (FUN_007af830 walks the map for
+	# entries whose composite (entry+0) is the clicked icon's key).
+	var scroll_id := -token
+	var entries := _composite_entries(scroll_id)
+	if entries.is_empty():
+		return
 	if _composite_window == null or not is_instance_valid(_composite_window):
 		_composite_window = CompositeItemWindow.new()
 		if not _composite_window.setup(_ui_builder):
@@ -3123,6 +3174,11 @@ func _on_item_state_clicked(token: int) -> void:
 		var reg := _ui_builder.window_def(CompositeItemWindow.REGISTRY)
 		if reg != null:
 			_composite_window.position = Vector2(reg.rect.position)
+		_composite_window.pre_check = _composite_fill_check
+		_composite_window.refused.connect(func(code: int) -> void:
+			var why := ErrorText.scroll_line(code, _ui_text_table, "")
+			print("World3D: composite fill refused here, code 0x%x: %s" % [code, why])
+			_log_system(why))
 		_composite_window.use_requested.connect(func(item_id: int) -> void:
 			if NetClient.current_character_name == "":
 				return
@@ -3132,20 +3188,39 @@ func _on_item_state_clicked(token: int) -> void:
 			if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.item_types(item_id)):
 				_hud_panels.open_reverse_return_box(COMPOSITE_FILL_SLOT - item_id)
 				return
+			print("World3D: composite fill requested: item %d" % item_id)
 			NetClient.composite_use(NetClient.current_character_name, item_id))
+	_composite_window_scroll = scroll_id
 	_composite_window.show_entries(entries)
 	_composite_window.show()
 	await get_tree().process_frame
 	if _composite_window != null:
 		print("QA COMPOSITE: window open, button 0 at screen %s" % str(_composite_window.button_screen_centre(0)))
 
+## Round 864: the composite window's own refusals before anything is sent
+## (READ, c:0x7afd05..0x7b035d): a return scroll fill (3/3/3/1) while dead
+## posts 0x1889, a resurrection scroll fill (3/3/13/6) while alive posts
+## 0x1887 -- each as a local 0xB04C {2, code}, the window left open. 0 lets
+## the fill go. (The return scroll's other two local tests, 0x185e and 0x1875,
+## are not modelled: the server answers them.)
+func _composite_fill_check(item_id: int) -> int:
+	var t := _hud_panels.item_types(item_id) if _hud_panels != null else PackedInt32Array()
+	if t.size() < 4 or t[0] != 3 or t[1] != 3:
+		return 0
+	if t[2] == 3 and t[3] == 1 and _player_dead:
+		return 0x1889
+	if t[2] == 13 and t[3] == 6 and not _player_dead:
+		return 0x1887
+	return 0
+
 ## A grant's end (composite review; retail 0x315B, FUN_008993b0 removes the
 ## entry and its kind-5 icon).
 func _on_composite_ended(item_id: int, scroll_id: int) -> void:
-	var token := -item_id
-	_composite_grants.erase(token)
+	_composite_grants.erase(-item_id)
+	# Round 864: 0x315B's FUN_00777f20(5, compositeRefId, 0, ...) takes the
+	# composite's icon down (c:0x8993b0, READ).
 	if _hud_buff_board != null:
-		_hud_buff_board.remove_item_state(token)
+		_hud_buff_board.remove_item_state(composite_token(scroll_id))
 	print("World3D: composite grant ended: item %d from %d -- icon removed" % [item_id, scroll_id])
 
 func _on_composite_use_result(result: CompositeNet.UseResult) -> void:
@@ -3212,7 +3287,9 @@ func _on_gold_time(g: CompositeNet.GoldTime) -> void:
 		return
 	_gold_time = g
 	var icon := _hud_panels.item_icon_path(g.ref_id) if _hud_panels != null else ""
-	var b := _hud_buff_board.add_gold_time(GOLD_TIME_TOKEN, icon, gold_time_tooltip(g))
+	# Round 864: with its gauge (c:0x805a40 case 3: the ref's Param1).
+	var total_s := _hud_panels.item_param1(g.ref_id) if _hud_panels != null else 0
+	var b := _hud_buff_board.add_gold_time(GOLD_TIME_TOKEN, icon, gold_time_tooltip(g), total_s * 1000, g.period_left * 1000)
 	print("QA GOLDTIME: item %d period %d s prev %d s today %d s paused %s icon '%s' at %s" % [g.ref_id, g.period_left,
 		g.prev, g.today, str(g.paused), icon, str(b.slot.global_position) if b != null and b.slot != null else "-"])
 

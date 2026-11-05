@@ -326,6 +326,10 @@ const SCROLL_UIIT_BY_CODE := {
 	0x1886: "UIIT_MSG_STRGERR_CANT_FIND_LAST_DIEDPOS",
 	# Round 838: the repair hammer with nothing to mend (UseByKind case 7).
 	0x1888: "UIIT_MSG_STRGERR_THERE_IS_NO_ITEM_TO_REPAIR",
+	# Round 864: the resurrection scroll's (FUN_0049ff20, s:0x49ff39; the
+	# composite window's own pre-check, c:0x7b02cc); the table's target
+	# 0x7b9261 pushes this key (READ).
+	0x1887: "UIIT_MSG_STRGERR_ONLY_THE_DEAD_CAN_USE_RESURRECT_SCROLL",
 	0x1889: "UIIT_SKILL_USE_FAIL_CHAR_DEAD",
 	# Round 838: the skin change of sex with gear on (UpdateCharRefObjIDAndScale
 	# 0x4efe50; shown under category 1 as the client's own pre-check shows it,

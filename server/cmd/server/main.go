@@ -2701,6 +2701,11 @@ func main() {
 	// Round 844 part 2: the guild recall's warp.
 	session.SetGuildRecallWarp(eq, zerkTracker)
 	compositeKeeper.SetScrolls(scrollCaster)
+	// Round 864: a period refill's push reads the berserk bonus, and a
+	// resurrection fill revives with the revive's deps.
+	compositeKeeper.SetBerserk(zerkTracker)
+	reviveDeps := session.RegenDeps{Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker, Berserk: zerkTracker}
+	session.SetResurrectDeps(reviveDeps)
 	session.StartGoldTime(ctx, timedJobs, refItems, hub)
 	// The players' stalls (round 839), held here so the metrics can count them.
 	stalls := stall.NewHub()
@@ -2800,7 +2805,7 @@ func main() {
 		// OpRevive (round 549): answered whatever the flag says -- with it off
 		// nobody is ever dead and the reply is "not dead", which no client
 		// asks for since none is dead.
-		session.ReviveHandler(chars, hub, session.RegenDeps{Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker, Berserk: zerkTracker}),
+		session.ReviveHandler(chars, hub, reviveDeps),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandlerWithRefs(chars, skills, refItems),
 		session.RaiseMasteryHandler(chars, skills),

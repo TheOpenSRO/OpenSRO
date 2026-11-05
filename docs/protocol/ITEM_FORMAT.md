@@ -606,6 +606,40 @@ removed and unable to use Energy of life for 20 Mins)".
   `OpCompositeEnd` (0x0108) from a timer and from the last use, before the
   use's result (vslot_007 ends the job before `0xB15F`), and sends the state
   after a refused fill too.
+- **Round 864, the premium's fills** (READ unless marked):
+  - **One icon per composite.** `0x3159`'s handler (`c:0x8992b0`) keys the board
+    entry by the composite (`FUN_00777f20(5, compositeRefId, 1, secs)`), so a
+    premium's three fills share one icon; its tooltip (`c:0x800a10` kind 5) is
+    the composite's name, the remaining time, then "<fill>: <n>Unit" per fill of
+    it in fill-id order. MEASURED: "Premium Gold Time (4 weeks)", a blank line,
+    "Remaining time: 27Day 23Hour 59Minute", "Instant Return Scroll: 3Unit",
+    "100% resurrection scroll: 1Unit", "Reverse Return Scroll: 3Unit".
+  - **The grant's life and its period.** The job lasts the composite's Param1
+    from the use (`s:0x49f61b..0x49f63f`, the end taken at `0x49fa97`); the
+    UIL1 entry's seconds are a period (`0x49fa46`) whose end refills the count
+    to the maximum (`CUsedItemLimit::FUN_00653a40`, `s:0x653a40`: end += (k + 1)
+    x period, k the whole periods past) at load (slot 1, then `0x3159`) and in
+    the tick (slot 2, then `0x3161` {composite, fill}, whose client handler
+    `c:0x899420` -> `FUN_00805480` sets the count back to the UIL1 maximum).
+    `0x315A` (slot 2's float timer) is a refresh the client reads and drops
+    (`c:0x899350`). MEASURED: `0x3159` at the use carries 2,419,200 s left.
+  - **The count at 0 keeps the job** for a return or resurrection fill
+    (`vslot_007`'s TypeID3 3 and 13 branches then `FUN_006538d0(1, n - 1)`); only
+    the TypeID3 1 fill's last use ends it. MEASURED: after three instant
+    returns the tooltip reads "0Unit", the button "Instant Return Scroll(0)" is
+    greyed, the icon stays.
+  - **The resurrection fill** (3/3/13/6): `FUN_0049ff20(Param3, Param2)`
+    (`s:0x49ff20`): not dead 0x1887; else lost = |pc+0x1ce0|, Revive(1), EXP back
+    = ceil(lost x Param3 / 100) (halved when (pc+0x30)+0xc is 2), HP and MP +=
+    trunc(max x Param2 / 100). The client refuses it first while alive
+    (`c:0x7afddf..0x7b035d`: a local `0xB04C {2, 0x1887}`, the window stays);
+    a 3/3/3/1 fill while dead gets 0x1889 the same way.
+  - **The wire** (MEASURED): the fill sends `0x715F` {u32 composite, u32 fill}
+    (+ u8 option for a reverse return, 2 = the last recall point); the server
+    answers `0x30BF` {id, 0x0b, 1} and `0xB15F` {1, composite, fill}, and the
+    warp follows the scroll's cast (1 s for the instant return). The use's own
+    answer is `0x315C`, `0x3159` x3, `0x3206` (premium time), `0xB070`/`0xB071`/
+    `0xB0BD` (the premium skill), `0x3206` {0, token, ms}, `0xB04C`.
 - **Texts**: 0x185b's authored text is `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY`,
   "Still have time to reuse the item." -- every item path's reuse refusal now
   uses it.
