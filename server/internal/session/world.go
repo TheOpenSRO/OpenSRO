@@ -1964,6 +1964,17 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 	if warpBeforeResultHook != nil {
 		warpBeforeResultHook(sess)
 	}
+	// The hold is on the books before the client hears the result (round
+	// 862): a warp started off the session's own goroutine (a respawn after
+	// a kill, a recall) could otherwise have its client's 0x3012 handled
+	// before holdArrival ran, find nothing to release, and leave the
+	// character held until the stale clear closed the session.
+	if guard {
+		if now, ok := hub.EntityBySession(sess.ID()); ok {
+			now.Session = sess
+			holdArrival(d, now, via, nil)
+		}
+	}
 	data, _ := result.EncodeFitting()
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data}); err != nil {
 		return true, err
@@ -1996,11 +2007,10 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 	// 0, and the players where it lands spawn it with 0 (round 737: before
 	// the spawns, so their records carry it).
 	endBerserk(hub, zerk, old.CharacterID)
-	if guard {
-		// Out of the world until its client's loading is done (round 786):
-		// the spawns both ways and the protection follow the 0x3012.
-		holdArrival(d, arrived, via, nil)
-	} else {
+	// With the guard on, it is out of the world until its client's loading
+	// is done (round 786; held above, before the result): the spawns both
+	// ways and the protection follow the 0x3012.
+	if !guard {
 		arrivePlayer(d, arrived)
 	}
 	sendOwnBuffs(arrived, time.Now())

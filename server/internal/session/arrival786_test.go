@@ -494,6 +494,11 @@ func TestRound786EveryTeleportPathIsHeld(t *testing.T) {
 			}
 		}},
 		{"/unstuck", func(rig *arrivalRig) {
+			// The cooldown is package-wide by character id and every rig's Aria
+			// has the same id: an earlier /unstuck (another test, or -count)
+			// would answer a wait and no warp.
+			unstuckLast.Delete(rig.ids["Aria"])
+			rig.t.Cleanup(func() { unstuckLast.Delete(rig.ids["Aria"]) })
 			rig.send("Aria", OpUnstuck, nil)
 			rig.until("Aria", OpUnstuckResult)
 			rig.until("Aria", OpChangeZoneResult)
