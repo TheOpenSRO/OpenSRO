@@ -7483,7 +7483,7 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
-## Eight-hundred-and-sixty-second round, lane U: the login ID box and the chat line side by side -- the caret is the font's point size + 2 tall, and lands on the pixel its quad covers
+## Eight-hundred-and-sixty-second round, lane U: the login ID box and the chat line -- the caret is the font's point size + 2 tall, and lands on the pixel its quad covers
 
 The user asked whether the login's ID box centres its text, and for the chat input's caret, scrolling,
 length limit and sent line to be checked against the original, typing lines longer than the box.
