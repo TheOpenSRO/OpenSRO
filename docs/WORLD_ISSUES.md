@@ -7483,6 +7483,111 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-third round, lane T: turning on a click-walk direction change -- the turn already matched; a far re-click snapped before its echo
+
+The user: "when abruptly change directions with click walking the original gives a fluid animation and
+we just snap the model to the correct position. Check it for yourself and make it like the original."
+Labels: READ (`c:` sro_client.exe), MEASURED, INFERRED, OURS, OPEN. Base `4ade3371` (v0.1.629).
+
+### What the original does (MEASURED, per frame; READ where it says so)
+
+Ground clicks at about 45, 60-70, 90-105, 130-135, 150-175 and 180 degrees from the way the body
+faced, while running (speed 50), while walking (16) and from standing; the body's heading, position
+and the mover's state each frame, and frames of the body.
+
+| What | MEASURED |
+|---|---|
+| Turn rate | constant, 3 pi rad/s: 180 deg in 335 ms; 172.6 deg (walking) 318 ms; 152.8 deg 277 ms; 129.2 deg 242 ms; 117.3 deg (from standing) 236 ms; 90-105 deg 169-229 ms; 47-66 deg 92-171 ms. Each frame's step is that frame's time x 9.42 rad/s (0.217 rad on a 23 ms frame, 0.30 on a 32 ms frame); no easing at either end, the last step cut to land on the heading |
+| Way round | the shorter one (a 220-degree change turned -140) |
+| Path | the body moves along the NEW line from the first frame of the turn: no arc, no carry along the old path (READ, `c:FUN_009e02f0`: the travel direction mover +0x68 is set to the TARGET heading by `FUN_009ec850` on every call; only the drawn heading +0x8c steps) |
+| When | on this player's own echo, 65-141 ms after the click on this link; the body runs straight on the old line until then |
+| Walk / run / standing | the same rate in all three; from standing the body starts along the new line at once while it turns; a body that arrives before the turn ends goes on turning where it stands |
+| The clip | the walk or run loop plays on through the turn (no restart, no other clip) |
+| The camera | does not follow the turn: its yaw (camera +0x374) stayed 3.14 through runs and 180-degree turns |
+| Another player's view | the same: an observer's copy turned 82 deg in ~180 ms at 3 pi rad/s and walked the new line at once, speed factor 1.0 |
+| A far re-click | a second click within 5 degrees of a far (>= 100) destination, after the first click's echo and while the body is still turning, snaps the heading in one frame: 90.7 deg (1.47 -> 3.05 rad) in one frame, and the mover's point moves to the new click 30 ms after it (no round trip) |
+
+READ (re-read this round; round 637 has the rest): `c:FUN_009e02f0` steps the heading by
+`elapsed_ms x 9.42477798461914 / 1000` (0xde3128, 0xd83268) toward the target, the shorter way;
+`c:FUN_009e0c10` calls it each frame while mover +0xa4 is set, with the object clock less mover
++0xa0; no per-model value -- the rate is the one .rdata constant. `c:UI_SILKMALL::FUN_009eb2a0`,
+the ground click's filter, measures the click against the MOVER's destination (player +0x684 =
+mover +0x1c, written by the echo's `FUN_009e0550` or the snap's `FUN_009e04b0`), and its snap
+branch returns 0: the snapped click is not sent.
+
+### What OpenSRO did (MEASURED, base, real clicks: `groundclick` through the viewport, lane server)
+
+The turn was already the original's (round 637): `RemoteFacing.turn` at 3 pi rad/s, 9.0 deg a physics
+tick, the shorter way, the path on the new line at once, the run loop playing on (QA MIX: no restart at
+any direction change). Own player, 1280x1024: 180 deg 318-350 ms, 135 deg 234-265 ms, 90 deg 152-200
+ms, 45 deg 68-99 ms; no frame stepped more than one tick's 9 deg. An observer (with 60 ms one way of
+delay): 180 deg 326-333 ms, 135 deg 246-265, 90 deg 163-199, 45 deg 94-99, catch-up x1.00-1.04. One
+difference from the original in when the turn starts: here at the click (OURS, round 749: the walk
+starts on the click), there on the echo.
+
+**The snap that differed.** A second far click within 5 degrees of the first, before the first one's
+echo, snapped the body in ONE frame: 115.1 deg (63.0 -> 178.1) in one frame with no delay. This
+client walks its click at once and measured the next click against `_move_target`, the click it
+already walks; the original measures it against the mover's destination, which is still the OLD
+order until the echo comes (READ above), so there the re-click is a turn. With a delayed link the
+window is the whole round trip -- a quick double click in the new direction, the usual way to change
+direction in a hurry.
+
+### What changed
+
+- `MoveOrderSync.mover_dest` (READ): the destination the original's mover holds -- every
+  destination echo of this player's own 0xB021, or a snap's re-aim (`mover_snapped`); a heading
+  echo, a stop or a placement clears it; an arrival keeps it.
+- `World3D._click_rule_dest`: the ground click's filter (`RemoteFacing.click_rule`) measures a click
+  against it, not the click already walked; a heading run keeps its own point (OURS, SkyRun).
+- QA: `OPENSRO_QA_FACING_LOG_MS` (the facing report's interval; 0 = every frame).
+
+### QA (render box, lane server 127.0.0.1:17631, real clicks, 60 ms one way through a delay proxy)
+
+A run toward the camera, a far click straight behind (>= 100 away), and a second far click 3 ticks
+(50 ms) later within 5 degrees of it, before the first one's echo (the echo came 126-131 ms after
+each send):
+
+| | base `4ade3371` | head |
+|---|---|---|
+| the re-click | measured against the click walked: "snap" | measured against the mover's (old) order: a turn |
+| the body | 0 -> 27 deg in 49 ms, then **149.2 deg in one frame** (+73 ms) | 0 -> 176.2 deg at 9 deg a tick, on the new heading at +338 ms |
+| other turns (180, 135, 90, 45, walking, from standing) | 3 pi rad/s | unchanged: 3 pi rad/s, no frame beyond one tick's 9 deg |
+
+Without the delay (b6, base) the same re-click 7 ticks after the first also snapped (115.1 deg in one
+frame); the head snaps there too once the echo has come, as the original does (90.7 deg, above) --
+`move_order_sync_test` holds both. An observer turns at 3 pi rad/s before and after (the change is
+the mover's own filter). Frames: `/var/tmp/r863t/keep/dclick_before.png` (the one-frame flip) and
+`dclick_after.png`; the plain turns `ours_run45/90/135/180.png`; logs `dclick_*.godot.log`,
+`turns_b4.godot.log`, `observer_o1.*.log`, `farreclick_b6.godot.log`.
+
+### Differs on purpose / unsure
+
+- The turn starts at the click here, on the echo in the original (OURS, round 749's instant walk).
+- The original does not send a snapped click (FUN_009eb2a0 returns 0); this client still sends it when
+  it is more than 5 from the last point sent (the server then walks to it). Not changed (OPEN).
+- Nothing else measured differs: if the user's "snap" is something else (a particular case, a frame
+  rate), it needs their exact case.
+
+### Gates
+
+- `move_order_sync_test` (the mover's destination: a far re-click before the first echo turns, after it
+  snaps; every destination echo lands, a heading echo or a placement clears, an arrival keeps;
+  NEGATIVE: measured against the click sent, the first case snaps) ALL PASS.
+- `remote_godot.sh check` ALL LOAD (1141 scripts, 9 scenes); `tests` "ran 434 suite(s), 1 failing":
+  `buff_persist_test` under the suite's load, which passes alone on the head and on the base.
+- Perf gate (`--base 4ade3371 --head 035bbde4 --sites jangan --frames 24000`):
+
+```
+perf gate: base 4ade3371 (forward_plus) vs head 035bbde4 (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.92  head 0.91  (-0.0)  SAME
+jangan  entry ms   base 9018  head 9022  (+4.0)  SAME
+jangan  freeze ms  base 2923  head 2876  (-47.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+The server is unchanged (the original's path does not bend).
+
 ## Eight-hundred-and-sixty-second round, lane M: the guild war mark is drawn (its effect) and told to everyone around; berserk measured
 
 The round's three movement-and-effects items, checked against measured behaviour. Labels: READ (`c:`
