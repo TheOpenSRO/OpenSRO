@@ -7483,6 +7483,125 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-second round, lane U: the login ID box and the chat line side by side -- the caret is the font's point size + 2 tall, and lands on the pixel its quad covers
+
+The user asked whether the login's ID box centres its text, and for the chat input's caret, scrolling,
+length limit and sent line to be checked against the original, typing lines longer than the box.
+Labels: READ (`c:` sro_client.exe; `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm` on the box),
+MEASURED, INFERRED, OURS, OPEN. Base `a1034d2e` (v0.1.628). UI-only lane (no world drawing changed):
+no perf gate. The server is untouched (the lane server is a build of this tree's).
+
+**What the original does (MEASURED, 1280x1024, a character typed at a time; edit-local pixels).**
+- **The login ID and password are centred** (pstitle's `GDR_EDIT_ID` / `GDR_EDIT_PASS`: 135x20,
+  HAlign 1, VAlign 1, ClientRect 0): empty, the caret at x 68..69 -- the edit's centre, 67.5, on its
+  pixel; each character keeps the text centred and the caret at its end. A line wider than `w - 5`
+  (130) has its end held at 130 and the caret at 130..131 while typing; the start runs out of the box
+  and the glyph crossing the edit's left edge is cut there (drawn in part). Home puts the start at 0;
+  Right walks the caret to 40 px in, then the text moves a character a step under a caret held at 40;
+  End puts the end back at 130; Left walks the caret over a still text; Backspace at the end keeps the
+  end at 130 until the text fits again, then it is centred. Exactly round 860's rule (`TextLayout`,
+  0x637b70) -- with the long-text arm the same for an HAlign 1 edit as for the chat line. The
+  password draws one `*` per character by the same rule (its 22nd character, 132 px, is the first
+  past 130). The ID took 36 characters and more (no limit near the box: the class's 512, round 848).
+- **The caret is 11 rows tall** in every edit of FontIndex 0 measured: the login ID and password, the
+  image-code box, character create's name, the chat line. Round 859 drew `tmHeight + 2`: 16 rows on
+  the box's face (15 / 14 where the edit cuts it).
+- **A half pixel goes right.** The empty ID's caret is at 68, not 67; after one character 8 px wide
+  the text is drawn from 63 (63.5 truncated) and the caret at 72 (71.5's pixel), a pixel right of
+  the glyph boundary; every password state (`*` 6 px: `135 - 6n` always odd) has its caret at the
+  ceiling of `63.5 - 3n + 6n`. Whole-pixel lefts (an odd text width) put text and caret on the same
+  boundary.
+- **The chat line** (`GDR_CHAT_INPUTBOX`, 360x20, ClientRect 5,4,0,0, left aligned): empty caret at
+  5, rows 4..14; the end of a long line at 355 (`5 + 355 - 5`), the caret there; Left x80 walks the
+  caret to 45 (5 + 40) and then moves the text under it until the start is at 5; three Rights 5 -> 28;
+  End back to 355; the 100-character limit holds (34 more characters typed after 80 changed
+  nothing past the 100th; 100 Backspaces emptied it). Sent, the line reads `Name:text` (no space after
+  the colon), cut at the 100th character, in (255, 174, 195), wrapped between words at the box's
+  width, every continuation line indented by 20 px (the first line's ink at x 30, the continuations'
+  at 50), 14 px a line; the input stays open with the caret at its start.
+- **Other boxes:** character create's name (left aligned) takes 12 characters, its caret 11 rows;
+  the image-code box: the same caret. The chat line's `/whisper` menu entry puts `$` in the chat
+  line -- a whisper is `$name text` in the same edit (ours parses it the same way); no separate name box.
+
+**What the original's code says (READ).**
+- **The caret's height is the font's point size + 2.0, not tmHeight.** 0x637ec6 `fild [edx+0x4]`
+  with `edx = [esi+0x11c]`, then `fadd` 2.0 (0xe1b898). The font object (0x4927b0 allocates 0x118
+  bytes) is filled by 0xbaa110: `[0]` the index, `[1]` the size argument, `lfHeight = -MulDiv(size,
+  96, 72)`, and each style's TEXTMETRIC from `+0x38` (`(i + 1) * 0xe` dwords; tmHeight first --
+  0x8b3040 returns `[font + (style + 1) * 0x38]`, the empty caret's tmHeight). So `+4` is the point
+  size. The font table (0x469350) builds indices 0..4 at 9, 8, 12, 11, 15 points (`push 9 / 8 / 0xc /
+  0xb / 0xf`): 12, 11, 16, 15, 20 px, `UiBuilder.FONT_SIZES`. 9 + 2 = 11, the measured rows.
+  INFERRED: that `+0x11c` is the edit's own font object (its `+4` read as the size gives exactly the
+  measured height).
+- **The caret's x and top are floats** (`local_c0` = `+0x370` + the advance, `local_a8` = `+0x374`;
+  the quad's vertices are those floats), while the text board is drawn at their truncation (0x6356c0).
+  The quad covers the pixels whose centres it holds, centres on whole coordinates: an edge on a half
+  pixel takes the next pixel (MEASURED above; INFERRED: D3D9's rule for pre-transformed vertices).
+
+**Built.** `TextLayout.caret_rect(origin, advance, point_size)` (the quad, point size + 2 tall),
+`caret_pixels` (each edge to its ceiling), `point_size(px)` (the table; else px * 72 / 96 rounded,
+OURS for a size no index has). `CifEdit.placement` keeps the text where it was (LineEdit's
+truncated centre; the long-text rule) and works the caret from the unrounded left and top
+(`left + (w - text w) * 0.5`, `top + (h - text h) / 2`; the empty centred caret from `left + w *
+0.5`), through `caret_pixels`, `caret_points() + 2` tall. The alignment census measures carets the same
+way (from the unrounded origin). Every edit takes it (the chat line, whisper / stall / guild /
+login / name / amount boxes: all CifEdit).
+New QA hook `OPENSRO_QA_FRONT_INPUT` (`QaFrontInput`, hooked in Login): keys, clicks
+(`clickfield:<edit>`), `skipintro`, `snap` / `snapfield:<edit>:<name>` and `editstate:<edit>` on a
+front-end screen, as `OPENSRO_QA_INPUT` plays them in the world.
+
+**Real client (MEASURED).** Login: `qa_shot.sh --scene res://scenes/Login.tscn` at 1280x1024, real time
+(30 fps), the intro skipped, a real click on the ID box, End, 40 Backspaces, then the same 89 states as
+above, each with its `editstate` and six snaps of the edit 100 ms apart (`/var/tmp/r862u/qa862front.sh`,
+`front_input.py`); the password the same with 22 `x`. Chat: lane server on 17621 (in memory, navmesh),
+`Long862`, Enter, the 80-character line a key at a time, Left x80, three Rights, End, 34 more, Home,
+End, 116 Backspaces, then the 114-character line sent (`qa862chat.sh`, `qa862chat_input.py`); each key
+followed by `editstate:HudChat`, 16 states snapped six times. Measured in the frames (the caret by
+the blink's difference between the snaps, the text by its ink), edit-local:
+
+| State | Original | Base (`a1034d2e` + QA hook) | This branch |
+|---|---|---|---|
+| login ID empty, caret | x 68..69, rows 2..12 | x 67..68, rows 2..17 | x 68..69, rows 2..12 |
+| login ID one character, caret | 72..73 (8 px glyph) | 71..72 (7 px glyph: whole left), rows 3..18 | 71..72, rows 3..13 |
+| login ID 4 characters (26 px here: left 54.5) | -- | caret 80 | caret 81 (80.5's pixel) |
+| login ID long, End / typing | caret 130..131, rows 3..13 | 130..131, rows 3..18 | 130..131, rows 3..13 |
+| login ID Right from Home | caret held at 40 | held at 40 | held at 40 |
+| password empty | 68..69, rows 2..12 | 67..68, rows 2..17 | 68..69, rows 2..12 |
+| chat line empty / End / 40-in hold / Home | 5 / 355 / 45 / 5, rows 4..14 | same x, rows 4..19 | same x, rows 4..14 |
+| sent line | `Name:` + 100 characters, (255,174,195), x 30, continuation x 50, 14 px pitch | the same, continuation ink at 48 (this face's 6 spaces) | unchanged |
+
+Every caret's x on both sides follows the rule worked out from its own text width; the remaining
+x differences mid-text are the faces' advances (below), not the rule.
+
+**Every edit (MEASURED, TextAlignCensus, 1280x720 UI, Forward+ on the box; `/var/tmp/r862u/census/`).**
+Base's edits measured by this branch's census (`b100`: base + the new TextLayout and census): **17 of
+18 carets off** -- 16 rows where 11 are wanted (15 / 14 where the edit cuts it; party match's 11 px
+name edit was already cut to 11), and the login ID's caret 1 px left (the half pixel). This branch
+(`a100`, `a200`): 0 of 18 carets off at 100 % and 200 %; 393 texts and carets, 3 off (round 860's
+three bold tabs' second pass, not a misalignment), as before.
+
+**Gates.** `remote_godot.sh check` ALL LOAD (1138 scripts, 9 scenes); `tests` "ran 431 suite(s), 5
+failing" with the box at a load average of 66-83 (other lanes' renders), each of
+the five a timing-bound suite: run alone, `retail_gateway_test`, `crowd_ghost_test`,
+`crowd_main_thread_test` and `seated_spawn_test` pass on this branch, and base (`a1034d2e` + the QA
+hook) fails `retail_gateway_test` (the key schedule's 2.71 ms bound) and `seated_spawn_test` the same
+way under the same load; `buff_persist_test` ("a body built after its owner's buff arrived") fails
+alone on both, as round 860 saw under load. `text_layout859_test` and `long_text860_test` (updated:
+the 11-row caret, the half pixel, the point sizes) pass.
+
+**OPEN.**
+- **The face.** The glyph advances differ by face (MEASURED: 'a' 8 px and `*` 6 px in the original's
+  draw; ours on the box falls back to the archive's Arial: 7 and 4.67), so the wrap point of a sent
+  line and every mid-text caret x differ by the font, not the rule. Ours also accumulates fractional
+  advances (`*` 5, 9, 14 px for 1..3) where GDI's are whole per glyph (6, 12, 18): with a face whose
+  advances are fractional, Godot's shaping does not round per glyph. Not changed (a face-wide
+  change).
+- The text's vertical place against the original's: font-dependent (ascent), not compared.
+- The guild notice and the stall title were not compared; both are CifEdit and take this caret.
+- The `$` the chat menu's `/whisper` puts in the line, and that menu itself (Friend / Guild / Block /
+  Unblock / block whisper / unblock whisper / /whisper on the input's left icon): not compared with
+  ours.
+
 ## Eight-hundred-and-sixty-first round: the ride camels and the mule were white blobs -- their models are not in this archive; drawn from the trade twins (OURS)
 
 The user: "the camel mounts are still white blobs" (after v0.1.627, round 860 lane H's horses).
