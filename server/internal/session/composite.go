@@ -264,6 +264,9 @@ type CompositeKeeper struct {
 	// zerk is the berserk tracker a period refill's state push reads the
 	// bonus from (round 864; SetBerserk).
 	zerk *berserk.Tracker
+	// items is the item table the dropped-fill repair reads (round 864
+	// follow-up; SetItems, compositerepair.go).
+	items ItemLookup
 }
 
 // SetBerserk names the tracker a period refill's push reads (round 864).
