@@ -7626,7 +7626,59 @@ not modelled (refused).
 - The composite window's other two local checks for a return scroll (0x185e, 0x1875) are left to the
   server.
 - Grants kept before this round (prod) have no period: they keep their old 86,400 s end and never
-  refill; a premium used before v0.1.634 shows its icon only until that day ends.
+  refill; a premium used before v0.1.634 shows its icon only until that day ends. (Closed by the
+  follow-up below.)
+
+### Follow-up: a premium used before v0.1.634 had lost its fills (the repair, OURS)
+
+The user, after v0.1.634, still saw no premium icon. A player's screenshot showed four icons; each
+matched to the archive's art by sampling the 2x screenshot to 20 x 20 against every `icon\*.ddj` of
+Media.pk2 (mean RGB difference 0.0 for all four): the premium skill (`item\etc\mall_pre_apru_4w.ddj`,
+skill 5412), skill 46321 SKILL_SPEED_105 (`item\etc\105speed.ddj`, a speed item's buff), skill 46333
+(`electus\electus_visual_03.ddj`, a mall character visual's buff), and the Gold Time ticket
+(`item\etc\mall_gold_time_service_ticket.ddj`, with its gauge). So the Gold Time showed; the premium's
+own icon did not. That player's kept rows: BFI1 3847 and UQL1 224, both Key 35567
+(ITEM_MALL_PREMIUM_VIETNAM_GOLDTIME_PLUS, the composite: a type-5 row's Key is the composite that
+made it), started 2026-10-28 07:05:59, ending 2026-11-25 07:05:59 (the composite's Param1, 28 days);
+the type-3 Gold Time 9278 (ends NULL as every premium row; V1 17,085,716 = 66,740 << 8 | 20 days,
+V2 674,703,920 = 10,295 << 16 | 10,800); and NO UIL1 row -- the code before v0.1.634 ended the fills
+after 86,400 s and deleted their rows.
+
+- **The repair** (`session/compositerepair.go`, OURS): at a character's first world entry in the
+  process, for each composite with a running BFI1 or UQL1 row, every UIL1 entry of that composite's own
+  CompositeDesc whose fill has no running grant is re-created: full, ending with those rows (the
+  latest), its period the entry's seconds with the boundaries on the use's time (the rows' Start), kept
+  in the store (V3/V4) so it runs once. Not for a composite with no BFI1/UQL1 entry (nothing says it
+  ran) nor a TypeID3 1 fill (the Energy of life's fill really ends on its last use).
+- **The push**: `compositeArrived` now sends the fills' state with every arrival, as the job's load
+  sends 0x3159 (READ, slot 1 `s:0x653b40`). MEASURED on the lane server: the client's own
+  OpCompositeList was answered (empty) 7 s before the entry hook loaded the rows, so even a correctly
+  kept grant showed no icon after a restart until the next state. The arrival order is now the buff
+  (the roster), the Gold Time, the composite -- the order the original showed after every warp.
+- **The data**: in this archive's itemdata (both itemdata_36000 and _40000) 35567 carries two UIL1
+  entries -- ITEM_MALL_REVERSE_RETURN_SCROLL (3/day) and ITEM_MALL_RETURN_SCROLL_HIGH_SPEED (3/day) --
+  and no resurrection scroll; the server reads the archive, so the window lists those two. (9277,
+  ITEM_MALL_PREMIUM_GOLDTIME, carries all three.) Left to the user (below).
+- **QA tool** (OURS): `-qa-seed-jobs <file>` (with `-in-memory`) puts timed-job and item skill-job rows
+  in the stores before serving (`session.SeedQAJobs`; `server/README.md`).
+
+**Verification.** Go: `compositerepair864_test.go` -- the player's rows give the composite's two
+fills, full, ending 2026-11-25 07:05:59.178, next refill 2026-11-06 07:05:59.178, stored with V3
+86,400 / V4; a second pass changes nothing and a spent fill stays spent; NEGATIVE: ended rows restore
+nothing, and an Energy of life's fill is never restored; the period boundary arithmetic. `go test
+./...`: all pass (93 packages). Live (lane server 17641 seeded with those rows as character 2, plus the premium
+skill job; `/var/tmp/r864p/pain_seed.txt`): before (the v0.1.634 server, `keep/f0_before`): the buff
+and the Gold Time only, "composite state: 0 grant(s)"; after (`keep/f1_after`): server "composite:
+fill grant restored (OURS, dropped before v0.1.634) ... composite=35567 item=3795 uses=3 ends=
+2026-11-25T07:05:59.178Z next_refill=2026-11-06T07:05:59.178Z" and item 3769; the client: the buff at
+(220, 10), the Gold Time at (243, 10) "period 1660817 s", the premium's own icon at (266, 10),
+tooltip "Premium GoldTime PLUS |  | Remaining time: 19Day 5Hour 20Minute | Instant Return Scroll:
+3Unit | Reverse Return Scroll: 3Unit"; the click lists "Instant Return Scroll(3), Reverse Return
+Scroll(3), Cancel"; Instant Return -> cast 1 s -> warp to (9, -409), then "2Unit". `check`
+ALL LOAD (1143 scripts); `tests` "ran 436 suite(s), 0 failing".
+
+**For the user.** Should 35567 offer the 100 % resurrection scroll too, as 9277 does? This archive's
+row has only the two return scrolls, and the server follows it. Not changed.
 
 ## Eight-hundred-and-sixty-third round, lane T: turning on a click-walk direction change -- the turn already matched; a far re-click snapped before its echo
 

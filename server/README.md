@@ -31,6 +31,7 @@ in `deploy/README.md`.
 | `-postgres-dsn` | — | PostgreSQL DSN; the persisted store for accounts, characters, inventory, equipment, storage, guilds, friends, quests, skills, reference items/skills/drops |
 | `-postgres-wait` | `60s` | how long to wait at startup for PostgreSQL to accept connections, retrying every second (`0`: one try). At a host's boot Docker starts the server and postgres together, ignoring compose's `depends_on`, so postgres may not be up yet (deploy/README.md) |
 | `-in-memory` | — | run with in-memory stores instead of PostgreSQL (QA renders, tests, local play; nothing survives a restart) |
+| `-qa-seed-jobs` | — | QA only, needs `-in-memory` (round 864 follow-up, OURS): a file of `timed,<char>,<type>,<sub>,<ref>,<key>,<started>,<ends>,<v1>,<v2>,<v3>,<v4>` and `skill,<char>,<skill>,<item>,<until>` rows (RFC 3339 times) put into the timed-job and item skill-job stores before the server serves, so a lane server can stand in for a character's kept state (`session.SeedQAJobs`). The boot log says `QA jobs seeded` |
 | `-tls-cert` / `-tls-key` | — | serve TLS on the gateway instead of plain TCP |
 | `-leveldata-csv` | `OPENSRO_LEVELDATA_CSV` | the EXP curve (`export-leveldata`); **without it characters never level** |
 | `-skills-csv` | `OPENSRO_SKILLS_CSV` | skill reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |

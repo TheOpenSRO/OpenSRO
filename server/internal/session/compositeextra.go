@@ -241,6 +241,7 @@ func compositeArrived(ctx context.Context, arrived world.Entity) {
 					}
 				}
 			}
+			k.restoreDroppedFills(ctx, arrived.CharacterID, jobs, now)
 		}
 	}
 	k.mu.Lock()
@@ -255,6 +256,17 @@ func compositeArrived(ctx context.Context, arrived world.Entity) {
 		for _, e := range bfi {
 			sendBuffItem(arrived.Session, OpBuffItemRefresh, e, now)
 		}
+	}
+	// Round 864 follow-up: the fills' state is pushed with the entry, as
+	// the job's load sends 0x3159 (slot 1, s:0x653b40, READ). The client's
+	// own OpCompositeList can come before this hook has loaded the kept rows
+	// (MEASURED on a lane server: the list was answered empty 7 s before the
+	// load), which left no icon until the next state.
+	k.mu.Lock()
+	zerk := k.zerk
+	k.mu.Unlock()
+	if zerk != nil && arrived.Session != nil && len(k.running(arrived.CharacterID, now)) > 0 {
+		_ = sendCompositeState(arrived.Session, k, zerk, arrived.CharacterID, now)
 	}
 }
 
