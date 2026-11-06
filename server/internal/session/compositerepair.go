@@ -94,7 +94,7 @@ func (k *CompositeKeeper) restoreDroppedFills(ctx context.Context, characterID i
 		if err != nil || scroll == nil || !isCompositeScroll(scroll) {
 			continue
 		}
-		entries, err := parseCompositeDesc(scroll.CompositeDesc)
+		entries, err := parseCompositeDesc(compositeDescOf(scroll))
 		if err != nil {
 			continue
 		}

@@ -7677,8 +7677,13 @@ tooltip "Premium GoldTime PLUS |  | Remaining time: 19Day 5Hour 20Minute | Insta
 Scroll(3), Cancel"; Instant Return -> cast 1 s -> warp to (9, -409), then "2Unit". `check`
 ALL LOAD (1143 scripts); `tests` "ran 436 suite(s), 0 failing".
 
-**For the user.** Should 35567 offer the 100 % resurrection scroll too, as 9277 does? This archive's
-row has only the two return scrolls, and the server follows it. Not changed.
+**For the user, answered: yes.** 35567 offers the 100 % resurrection scroll too. MEASURED: its full
+descriptor lists `[UIL1:ITEM_MALL_RESURRECTION_100P_SCROLL, A, 86400, 1]` right after the UIU1 entry,
+the same three fills as 9277; the archive prod's items were imported from carries the row without it.
+`compositeDescOf` (`session/compositefix.go`, used by the use and by the arrival repair) puts the entry
+back in that place for ITEM_MALL_PREMIUM_VIETNAM_GOLDTIME_PLUS when it is missing, so the window lists
+three fills and the repair restores the resurrection grant (1 a day) for a premium already running.
+Test `compositefix864_test.go` (the short row fixed, a full row untouched, another item untouched).
 
 ## Eight-hundred-and-sixty-third round, lane T: turning on a click-walk direction change -- the turn already matched; a far re-click snapped before its echo
 

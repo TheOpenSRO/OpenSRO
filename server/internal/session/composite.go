@@ -604,7 +604,7 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 	if !ok {
 		return plan, "that cannot be used"
 	}
-	entries, err := parseCompositeDesc(scroll.CompositeDesc)
+	entries, err := parseCompositeDesc(compositeDescOf(scroll))
 	if err != nil || len(entries) == 0 {
 		return plan, "that cannot be used"
 	}
