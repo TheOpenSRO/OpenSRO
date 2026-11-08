@@ -104,6 +104,13 @@ const PANELS := {
 	# Round 837: the item mall, CIFNewItemMall (GDR_RENEWAL_ITEM_MALL, ID
 	# 167, 800x600; ItemMallController). F10's warning box opens it.
 	"itemmall": [ItemMallController.LAYOUT, "Item Mall"],
+	# Round 865: the academy's evaluation window (AcademyJudgeWindow) and
+	# honor ranking (AcademyHonorWindow), both CIFMainFrames framed by their
+	# registry entries (REGISTRY_FRAMES).
+	"academy_judge": [AcademyJudgeWindow.LAYOUT, "Guardian Evaluation"],
+	"academy_honor": [AcademyHonorWindow.LAYOUT, "Honor Rank"],
+	# The Guardian Matching window (AcademyMatchWindow), CIFMentorMatch.
+	"academy_match": ["resinfo\\ifmentormatch.txt", "Guardian Matching"],
 }
 
 ## M opens the world map, the retail binding (read): the default key table
@@ -226,6 +233,12 @@ const REGISTRY_FRAMES := {
 	# Round 837: ginterface's NewItemMall section, under #ifdef NEW_ITEMMALL
 	# (config\define.txt defines it).
 	"itemmall": {"name": "GDR_RENEWAL_ITEM_MALL", "archive_defines": true},
+	# Round 865: ginterface IDs 155 (420x174) and 154 (512x386), both on
+	# msgbox2_window_ (academy.md 10.3 / 10.4).
+	"academy_judge": {"name": AcademyJudgeWindow.REGISTRY},
+	"academy_honor": {"name": AcademyHonorWindow.REGISTRY},
+	# ginterface ID 153, 785x480, mframe_wnd_, UIIT_STT_TC_MACHING_TITLE.
+	"academy_match": {"name": "GDR_MENTOR_MATCH"},
 }
 
 ## Controls a window's own class hides when it creates the window, so they
@@ -773,6 +786,9 @@ func _exit_tree() -> void:
 	if party_match != null:
 		party_match.dispose()
 		party_match = null
+	if academy_match != null:
+		academy_match.dispose()
+		academy_match = null
 
 ## c:0x8841f0's compare: the leader's name in a party, the player's otherwise.
 func _party_match_key() -> String:
@@ -991,6 +1007,10 @@ const EXTRA_SECTIONS := {
 	"grant": [GrantMagicAttributeWindow.SECTION_LIST],
 	# Round 837: the mall's info block (GDR_ITEM_MALL_MYINFO, section MyInfo).
 	"itemmall": ["MyInfo"],
+	# Round 865: CIFApprenticeShipHonorRanking's headers and rows.
+	"academy_honor": AcademyHonorWindow.SECTIONS,
+	# CIFMentorMatch::Create (c:0x770910) builds Create and these three.
+	"academy_match": ["SearchInfo", "SlotListButton", "SlotList"],
 }
 
 var _builder: UiBuilder
@@ -1202,6 +1222,10 @@ func open(panel_id: String) -> HudWindow:
 	_populate(panel_id)
 	if panel_id == "partymatch":
 		_party_match_opened(window, was_shown)
+	if panel_id == "academy_match":
+		_ensure_academy_match().attach(window)
+		if not was_shown:
+			academy_match.on_shown()
 	if panel_id == AUTO_POTION_ID and not was_shown:
 		_auto_potion_opened(window)
 	return window
@@ -1527,6 +1551,7 @@ func _open_main_popup(panel_id: String) -> HudWindow:
 		_apply_equipment_slot_backgrounds()
 		_place_paper_doll_docked()
 		_wire_party_pane(popup.pane_control("GDR_PARTY"))
+		_wire_academy_pane(popup.pane_control(AcademyWindow.PANE))
 		_wire_action_pane(popup.pane_control("GDR_ACTION"))
 		_fill_equipment_slots(_equipped_items)
 		# The bag's page tabs and its shown page (0x6b6620 builds them with
@@ -5215,6 +5240,11 @@ func _process(_delta: float) -> void:
 		var whole := int(_match_ms_acc)
 		_match_ms_acc -= whole
 		party_match.advance(whole)
+	if academy_match != null:
+		_academy_match_ms_acc += _delta * 1000.0
+		var whole_a := int(_academy_match_ms_acc)
+		_academy_match_ms_acc -= whole_a
+		academy_match.advance(whole_a)
 
 ## The System window as CIFSystemWnd::Create (0x6f6610) leaves it, which is
 ## not ifsystemwnd.txt's geometry. After building the layout it:
@@ -9769,6 +9799,7 @@ func _populate(panel_id: String) -> void:
 			NetClient.guild_info(who)
 		"character":
 			_apply_character_fields()
+			apply_academy_honor()
 		"equipment":
 			# Fill from what we already have, then ask the server for fresh.
 			_fill_equipment_slots(_equipped_items)
@@ -10260,3 +10291,146 @@ func guild_gp_price(item_id: int) -> int:
 				if pk.costs.has(8) and pk.scraps.size() == 1:
 					_guild_gp_prices[(pk.scraps[0] as MallData.Scrap).item_code] = int(pk.costs[8])
 	return int(_guild_gp_prices.get(item_code_for_id(item_id), 0))
+
+# --- The academy (round 865) -------------------------------------------------------
+
+## The academy window's pane (AcademyWindow), built with the main popup.
+var academy_pane: AcademyWindow = null
+## The world's hooks for it (portrait_of, own_portrait), set before or after
+## the pane exists.
+var academy_hooks := {}
+## The pane was built: the world (AcademyFlow) wires its signals.
+signal academy_pane_built(pane: AcademyWindow)
+
+func set_academy_hooks(hooks: Dictionary) -> void:
+	for k in hooks:
+		academy_hooks[k] = hooks[k]
+	if academy_pane != null:
+		for k in academy_hooks:
+			academy_pane.set(k, academy_hooks[k])
+		academy_pane.refresh()
+
+func _wire_academy_pane(pane: Control) -> void:
+	if pane == null or academy_pane != null:
+		return
+	academy_pane = AcademyWindow.new(_builder, pane, NetClient.academy)
+	for k in academy_hooks:
+		academy_pane.set(k, academy_hooks[k])
+	academy_pane.refresh()
+	academy_pane_built.emit(academy_pane)
+
+## The academy pane, building the main popup (hidden) when it is not built
+## yet -- the client builds every pane at game start (CGInterface's create).
+func ensure_academy_pane() -> AcademyWindow:
+	if academy_pane == null and _popup == null and not _unavailable.has(MAIN_POPUP_ID):
+		var w := _open_main_popup("academy")
+		if w != null:
+			w.hide()
+	return academy_pane
+
+## The evaluation window (c:0x79d290(1)): built once, reset at each open.
+func open_academy_judge() -> AcademyJudgeWindow:
+	var w := open("academy_judge")
+	var j := AcademyJudgeWindow.compose(w, _builder)
+	if j != null:
+		j.reset()
+	return j
+
+## The honor ranking (c:0x79d180(1)) with 0xB478's rows.
+func open_academy_honor(rows: Array) -> AcademyHonorWindow:
+	var w := open("academy_honor")
+	var h := AcademyHonorWindow.compose(w, _builder)
+	if h != null:
+		h.fill(rows)
+	return h
+
+## One academy question box (AcademyMsgBox), centred (0x798b70).
+func open_academy_box(markup: String, caption_key: String, kind: String) -> AcademyMsgBox:
+	if _builder == null:
+		return null
+	var box := AcademyMsgBox.new()
+	if not box.build_academy(_builder, markup, caption_key, kind):
+		box.free()
+		return null
+	add_child(box)
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	move_to_front()
+	return box
+
+## The notice writer in academy mode (c:0x79b380(1, 2) -> 0x70b720(2)).
+var academy_notice_write: GuildNoticeWrite
+signal academy_notice_submitted(title: String, body: String)
+signal academy_local_refused(code: int)
+
+func open_academy_notice_write() -> GuildNoticeWrite:
+	if academy_notice_write != null and is_instance_valid(academy_notice_write):
+		academy_notice_write.move_to_front()
+		return academy_notice_write
+	var w := GuildNoticeWrite.new()
+	if not w.build_write(_builder):
+		w.free()
+		return null
+	w.set_mode(GuildNoticeWrite.MODE_ACADEMY)
+	w.submitted.connect(func(t: String, b: String) -> void: academy_notice_submitted.emit(t, b))
+	w.refused.connect(func(code: int) -> void: academy_local_refused.emit(code))
+	add_child(w)
+	w.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	academy_notice_write = w
+	return w
+
+## The academy's windows that close when the store is cleared (disbanded,
+## left, banned, graduated): the evaluation window and the academy-mode
+## notice writer.
+func close_academy_windows() -> void:
+	var j: HudWindow = _windows.get("academy_judge")
+	if j != null:
+		j.hide()
+	if academy_notice_write != null and is_instance_valid(academy_notice_write):
+		academy_notice_write.close()
+	academy_notice_write = null
+
+## The academy window's Matching (c:0x6e8770 -> 0x79c420(1)): the Guardian
+## Matching window (AcademyMatchWindow), built once, its requests through
+## NetClient.academy_send.
+var academy_match: AcademyMatchWindow = null
+var _academy_match_ms_acc := 0.0
+
+func open_academy_match() -> HudWindow:
+	return open("academy_match")
+
+func _ensure_academy_match() -> AcademyMatchWindow:
+	if academy_match != null:
+		return academy_match
+	academy_match = AcademyMatchWindow.new(_builder, NetClient.academy, self)
+	academy_match.send.connect(func(op: int, payload: PackedByteArray) -> void: NetClient.academy_send(op, payload))
+	academy_match.banner.connect(_party_match_banner)
+	academy_match.notice.connect(func(key: String, type: int) -> void:
+		var t := _resolve_ui(key, "")
+		if t != "" and t != key:
+			academy_line.emit(type, t))
+	academy_match.whisper_requested.connect(_party_match_whisper)
+	academy_match.own_name = func() -> String: return NetClient.current_character_name
+	academy_match.own_level = _party_match_level
+	academy_match.own_race = func() -> int: return _skill_race
+	academy_match.race_of_model = func(ref_id: int) -> int:
+		var c: Callable = party_hooks.get("race_of_model", Callable())
+		return int(c.call(ref_id)) if c.is_valid() else -1
+	academy_match.view_size = func() -> Vector2: return get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768)
+	return academy_match
+
+## A system line the academy's windows raise themselves (the matching
+## window's local lines): the type and the text (World3D's system window).
+signal academy_line(type: int, text: String)
+
+## The character window's "Honor Point" (CIFPlayerInfo, READ c:0x6b8aab..
+## 0x6b8b52): GDR_PI_HONOR_DATA (ID 51) is the player's own member record's
+## +0x5c as "%d" in an academy, else UIIT_STT_TC_CAMP_NOT_JOIN ("N/A").
+static func academy_honor_text(st: AcademyState, not_joined: String) -> String:
+	var m := st.own_member() if st != null and st.in_academy() else null
+	return "%d" % m.honor if m != null else not_joined
+
+func apply_academy_honor() -> void:
+	var window: HudWindow = _windows.get("character")
+	if window == null:
+		return
+	_set_label(window, "GDR_PI_HONOR_DATA", academy_honor_text(NetClient.academy, _resolve_ui("UIIT_STT_TC_CAMP_NOT_JOIN", "N/A")))

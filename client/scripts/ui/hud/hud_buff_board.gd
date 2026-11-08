@@ -549,6 +549,45 @@ func add_gold_time(token: int, icon: String, tooltip: String, total_ms: int = -1
 		b.slot.gauge.visible = b.total_ms > 0
 	return b
 
+## Round 865: the academy's exp buffs (FUN_00777f20(7 / 8, ...), academy.md
+## 7.11). READ c:0x7ff360..0x7ff382: kind 7 (the member's own cumulated
+## buff) draws icon\skill\etc\tc_reserve_buff.ddj, kind 8 (an accumulated
+## buff received from a member) icon\skill\etc\tc_amends_buff.ddj. Their time
+## is the message's minutes x 60000 + 1 (c:0x89bcc0, c:0x89b7b0); kind 7's
+## total is the buff's 1,440 minutes (READ s:0x4eb860), kind 8's is not read
+## (no gauge, OPEN). Left-click on kind 7: academy_buff_clicked (the
+## transfer's box, c:0x800520..0x80063d, when 3,600,000 ms or more remain).
+const KIND_ACADEMY_SAVE := 7
+const KIND_ACADEMY_RESERVE := 8
+const ACADEMY_ICONS := {7: "icon\\skill\\etc\\tc_reserve_buff.ddj", 8: "icon\\skill\\etc\\tc_amends_buff.ddj"}
+signal academy_buff_clicked(token: int, remaining_ms: int)
+
+func add_academy_buff(kind: int, token: int, total_ms: int, remaining_ms: int, tooltip: String) -> Buff:
+	var b := add_state_entry(kind, token, String(ACADEMY_ICONS.get(kind, "")), tooltip)
+	b.info = {"icon": String(ACADEMY_ICONS.get(kind, "")), "tooltip": tooltip}
+	b.total_ms = total_ms if total_ms > 0 else -1
+	b.elapsed_ms = 0.0
+	if b.total_ms > 0 and remaining_ms >= 0:
+		b.elapsed_ms = float(clampi(b.total_ms - remaining_ms, 0, b.total_ms))
+	b.info["remaining_ms"] = remaining_ms
+	if b.slot != null:
+		b.slot.gauge.value = b.gauge_value()
+		b.slot.gauge.visible = b.total_ms > 0
+	return b
+
+func remove_academy_buff(token: int) -> void:
+	var b: Buff = _by_token.get(token)
+	if b != null and (b.kind == KIND_ACADEMY_SAVE or b.kind == KIND_ACADEMY_RESERVE):
+		_remove(b)
+
+func academy_buff_tokens() -> Array:
+	var out: Array = []
+	for t in _by_token:
+		var k := (_by_token[t] as Buff).kind
+		if k == KIND_ACADEMY_SAVE or k == KIND_ACADEMY_RESERVE:
+			out.append(t)
+	return out
+
 func remove_gold_time(token: int) -> void:
 	var b: Buff = _by_token.get(token)
 	if b != null and b.kind == KIND_GOLD_TIME:
@@ -605,6 +644,8 @@ func on_slot_left_click(token: int) -> void:
 		item_state_clicked.emit(token)
 	elif b != null and b.kind == KIND_GOLD_TIME:
 		gold_time_clicked.emit(token)
+	elif b != null and b.kind == KIND_ACADEMY_SAVE:
+		academy_buff_clicked.emit(token, b.remaining_ms() if b.total_ms > 0 else int(b.info.get("remaining_ms", 0)))
 
 ## What a right-click on the icon with `token` does (vslot_033).
 func right_click_action(token: int) -> String:
@@ -613,7 +654,8 @@ func right_click_action(token: int) -> String:
 		return ACTION_NONE
 	# OURS: an item grant is not a skill buff; vslot_033's kind-5 branch was
 	# not read, so a right-click on it does nothing rather than send a cancel.
-	if b.kind == 5 or b.kind == KIND_SAFE_TRADE or b.kind == KIND_GOLD_TIME:
+	if b.kind == 5 or b.kind == KIND_SAFE_TRADE or b.kind == KIND_GOLD_TIME \
+			or b.kind == KIND_ACADEMY_SAVE or b.kind == KIND_ACADEMY_RESERVE:
 		return ACTION_NONE
 	if bool(b.info.get("nbuf", false)) and not bool(b.info.get("lnks", false)):
 		return ACTION_NONE
@@ -733,6 +775,13 @@ func tooltip_for(token: int) -> String:
 	if b.kind == KIND_GOLD_TIME:
 		# The caller composes every line, the period left among them.
 		return String(b.info.get("tooltip", ""))
+	if b.kind == KIND_ACADEMY_SAVE or b.kind == KIND_ACADEMY_RESERVE:
+		# Round 865: the caller's title and point lines, then the time left.
+		var aca := PackedStringArray([String(b.info.get("tooltip", ""))])
+		var left := b.remaining_ms() if b.total_ms > 0 else int(b.info.get("remaining_ms", -1))
+		if left >= 0:
+			aca.append(remain_line(left, _unit_texts()))
+		return "\n".join(aca)
 	if b.kind == KIND_SAFE_TRADE:
 		var item_lines := PackedStringArray([String(b.info.get("tooltip", ""))])
 		if b.total_ms >= 0:

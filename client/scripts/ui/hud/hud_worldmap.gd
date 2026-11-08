@@ -434,6 +434,7 @@ func _build_map_area() -> void:
 	_canvas.add_child(_sign_layer)
 	# The party's marks (round 717) go under the player's marker, as
 	# FUN_0061eec0 draws them first.
+	make_academy_layer(_canvas, _builder.load_texture(PartyMapMarks.WORLD_ACADEMY_DDJ))
 	make_party_layer(_canvas, _builder.load_texture(PartyMapMarks.WORLD_DOT_DDJ))
 	_canvas.add_child(_marker)
 
@@ -883,6 +884,8 @@ func _build_signs(id: int) -> void:
 				_sign_layer.add_child(pair[1])
 	_canvas.move_child(_sign_layer, -1)
 	_order_quest_layers()
+	if _academy_layer != null:
+		_canvas.move_child(_academy_layer, -1)
 	if _party_layer != null:
 		_canvas.move_child(_party_layer, -1)
 	if _marker != null:
@@ -1073,6 +1076,8 @@ func _build_place_labels(info: WorldmapInfoReader.MapInfo) -> void:
 		layer.add_child(plate)
 	# The party's marks and the player's own marker belong over the labels,
 	# not under them; the marker over the party's marks.
+	if _academy_layer != null:
+		_canvas.move_child(_academy_layer, -1)
 	if _party_layer != null:
 		_canvas.move_child(_party_layer, -1)
 	if _marker != null:
@@ -1349,6 +1354,54 @@ func update_player_dungeon(region_id: int, dungeon_pos: Vector3, facing: Vector2
 ## Whether the player is in a dungeon (bit 15 of its region id).
 func in_dungeon() -> bool:
 	return _player_rid >= 0 and (_player_rid & 0x8000) != 0
+
+## Round 865: the academy's members (PartyMapMarks.academy_draws), each
+## the 16 x 16 wmap_sign_apprenticeship.ddj at party_pixel's place for its
+## record region and position, transposed as the party's dot.
+var _academy_layer: Control
+var _academy_tex: Texture2D
+var _academy_dots: Array[TextureRect] = []
+
+func make_academy_layer(parent: Control, tex: Texture2D) -> void:
+	_academy_layer = Control.new()
+	_academy_layer.name = "AcademyMarks"
+	_academy_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(_academy_layer)
+	_academy_tex = tex
+
+func update_academy(regions: PackedInt32Array, positions: PackedVector3Array) -> void:
+	if _academy_layer == null:
+		return
+	var n := mini(regions.size(), positions.size())
+	while _academy_dots.size() < n:
+		var dot := TextureRect.new()
+		dot.name = "academy_%d" % _academy_dots.size()
+		dot.texture = _academy_tex
+		dot.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		dot.stretch_mode = TextureRect.STRETCH_SCALE
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dot.size = PartyMapMarks.WORLD_DOT_SIZE
+		dot.flip_h = true
+		dot.pivot_offset = PartyMapMarks.WORLD_DOT_SIZE / 2.0
+		dot.rotation = PartyMapMarks.TRANSPOSE_TURN
+		_academy_layer.add_child(dot)
+		_academy_dots.append(dot)
+	for i in n:
+		var at: Variant = party_pixel(regions[i], positions[i])
+		var dot := _academy_dots[i]
+		dot.visible = dot.texture != null and at != null
+		if dot.visible:
+			dot.size = PartyMapMarks.WORLD_DOT_SIZE
+			dot.position = ((at as Vector2) - PartyMapMarks.WORLD_DOT_SIZE / 2.0).floor()
+	for i in range(n, _academy_dots.size()):
+		_academy_dots[i].visible = false
+
+## How many academy marks are shown (tests, the QA log).
+func academy_marks_shown() -> int:
+	var c := 0
+	for d in _academy_dots:
+		c += 1 if d.visible else 0
+	return c
 
 ## The party's layer, its dots' art and the hover label, under `parent`
 ## (the map canvas; a test passes its own).

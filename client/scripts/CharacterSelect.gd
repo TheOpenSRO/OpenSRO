@@ -1174,25 +1174,31 @@ func _on_enter_world_result(result: WorldNet.EnterWorldResult) -> void:
 
 ## READ, 0x858b40: a guild member or master, or an academy student or
 ## guardian, is refused with the archive's line; anyone else gets the
-## confirm (0x858950).
+## confirm (0x858950). Round 865: the record's academy byte is 2 for the
+## guardian and 1 for an assistant or an apprentice (MEASURED on all three;
+## c:0x858b66 picks _STUDENT / _GUARDIAN from it).
+## [key, fallback] of the refusal, or [] for none.
+static func delete_refusal(guild_class: int, academy_class: int) -> Array:
+	match guild_class:
+		1:
+			return ["UIO_MSG_CHAR_DEL_WANNING_CONFIRM_MEMBER", "Leave the guild first."]
+		2:
+			return ["UIO_MSG_CHAR_DEL_WANNING_CONFIRM_MASTER", "Disband the guild first."]
+	match academy_class:
+		1:
+			return ["UIO_MSG_CHAR_DEL_WANNING_CONFIRM_STUDENT", "Leave the Academy first."]
+		2:
+			return ["UIO_MSG_CHAR_DEL_WANNING_CONFIRM_GUARDIAN", "Disband the Academy first."]
+	return []
+
 func _on_delete_pressed() -> void:
 	if not state in SELECTED_BUTTON_STATES or selected < 0:
 		return
 	var r = _slots[selected]
-	match int(r.guild_class):
-		1:
-			_say("UIO_MSG_CHAR_DEL_WANNING_CONFIRM_MEMBER", "Leave the guild first.")
-			return
-		2:
-			_say("UIO_MSG_CHAR_DEL_WANNING_CONFIRM_MASTER", "Disband the guild first.")
-			return
-	match int(r.academy_class):
-		1:
-			_say("UIO_MSG_CHAR_DEL_WANNING_CONFIRM_STUDENT", "Leave the Academy first.")
-			return
-		2:
-			_say("UIO_MSG_CHAR_DEL_WANNING_CONFIRM_GUARDIAN", "Disband the Academy first.")
-			return
+	var refusal := delete_refusal(int(r.guild_class), int(r.academy_class))
+	if not refusal.is_empty():
+		_say(String(refusal[0]), String(refusal[1]))
+		return
 	if _lock != null and _lock.hold(_on_delete_pressed):
 		return
 	_open_confirm(not r.deleting)

@@ -67,6 +67,35 @@ const HOVER_INSET := 2.0
 const DOT_DDJ := "interface\\minimap\\mm_sign_party.ddj"
 const ARROW_DDJ := "interface\\minimap\\mm_sign_partyarrow.ddj"
 const WORLD_DOT_DDJ := "interface\\worldmap\\wmap_sign_party.ddj"
+## Round 865: the academy's members (CIFMinimap::vslot_013's academy loop,
+## READ c:0x663bc2..0x664290, drawn before the party's): every member but the
+## player (the name compare), skipped when its record's play state is 1
+## (offline, +0x74) or its world id (+0x78) is not the player's (+0x20e4 via
+## 0x9d4d90), and then 0x9d5520 on the record's region and position, as the
+## party's; at the live object found by the record's display name (+0x28,
+## 0x9c35e0) else the record's region and (x, 0, z) (0x9ecfd0). The same
+## 47.0 switch (0xda0ef0) and 47 / dist rim (0xda0ee8), the same transposed
+## fan and turn; the dot mm_sign_apprenticeship.ddj (+0x3a0) at +-4.0
+## (0xe1b860: 8 x 8), the arrow mm_sign_apprenticeshiparrow.ddj (+0x3a4) at
+## corners +-16.0 (0xda0ef8 / 0xe1b8e0: 32 x 32, where the party's arrow is
+## +-8.0). The world map (CNIFWorldMap 0x61eec0) draws wmap_sign_
+## apprenticeship.ddj (+0x7f0) under the same tests at the party's 16 x 16
+## (INFERRED: its corners were not read apart from the party's).
+const ACADEMY_DOT_DDJ := "interface\\minimap\\mm_sign_apprenticeship.ddj"
+const ACADEMY_ARROW_DDJ := "interface\\minimap\\mm_sign_apprenticeshiparrow.ddj"
+const ACADEMY_ARROW_SIZE := Vector2(32, 32)
+const WORLD_ACADEMY_DDJ := "interface\\worldmap\\wmap_sign_apprenticeship.ddj"
+
+## Whether the maps draw academy member `m` (c:0x663bc2..0x663c34): not the
+## player, online, the same world id (`own_world` < 0: not compared, as the
+## party's stand-in when the player's own world id is unknown).
+static func academy_draws(m: AcademyNet.Member, own_name: String, own_world: int) -> bool:
+	if m == null or m.name == own_name:
+		return false
+	if m.play_state == AcademyNet.OFFLINE:
+		return false
+	return own_world < 0 or m.world_id == own_world
+
 ## A region word with this bit is a dungeon (the record's +0x5a, as 0x9d5520
 ## tests it).
 const DUNGEON_BIT := 0x8000

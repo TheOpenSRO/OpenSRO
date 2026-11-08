@@ -147,6 +147,9 @@ const ALLOWED := [
 	["scripts/ui/hud/party_match_qa.gd", "LineEdit", 4, "references only (QA): original-built edits; creates none"],
 	["scripts/ui/hud/party_match_register.gd", "LineEdit", 7, "references only: original-built edits; creates none"],
 	["scripts/ui/hud/party_match_window.gd", "LineEdit", 7, "references only: original-built edits; creates none"],
+	# Round 865: the academy's Guardian Matching window (AcademyMatchWindow).
+	["scripts/ui/hud/academy_match_window.gd", "LineEdit", 3, "references only: the layout's CIFEdits (the name search and the register box's title); creates none"],
+	["scripts/ui/hud/academy_match_window.gd", "OptionButton", 3, "styled with the original's art: the original's combo boxes (OptionVideoPage.make_combo, as party matching's) for the honor grade and condition"],
 	["scripts/ui/hud/party_match_window.gd", "OptionButton", 1, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],
 	["scripts/ui/hud/reverse_return_box.gd", "Button", 6, "references only: caption reads/writes on layout buttons; creates none"],
 	["scripts/ui/hud/silk_history_window.gd", "OptionButton", 1, "styled with the original's art: the original's combo box (OptionVideoPage.make_combo -- an OptionButton drawing only its value over the combo art -- with ComboList, the original's list; Godot's PopupMenu never opens)"],

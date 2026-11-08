@@ -6,8 +6,8 @@ class_name GuildNoticeWrite
 ## resinfo\ifguildnotifywrite.txt). READ in sro_client.exe:
 ## - opened by the notice bar's pencil (47 -> 222 -> 81, message map 0x51 ->
 ##   0x5b3cb0 -> 0x79b380(1, 1)), mode 1 (+0x7cc; mode 2 is the academy's
-##   training camp notice, SendTrainingCamp_HandleNoticeUpdate -- out of
-##   scope);
+##   training camp notice, SendTrainingCamp_HandleNoticeUpdate: round 865,
+##   set_mode);
 ## - Create (0x70ba50): the title edit 10 (+0x7b0) takes 0x7f characters, the
 ##   body edit 11 (+0x7b4) 0x3ff (0x634f80 at 0x70bbea / 0x70bbfa);
 ## - every frame (vslot_012 0x70b6c0) the line 2 shows
@@ -119,10 +119,36 @@ func _count() -> void:
 	if fmt.count("%d") >= 2:
 		set_static(COUNT_LINE, fmt % [body_text().length(), BODY_MAX])
 
+## Round 865: the window's mode (+0x7cc), set by 0x70b720 when it opens:
+## 1 the guild's, 2 the academy's (the pencil of the academy window,
+## c:0x6e8a90 -> 0x79b380(1, 2)). The mode sets the title static 53
+## (GDR_GUILD_NOTIFY_WRITE_TITLE): UIIT_STT_GUILD_COMMON_KNOW in mode 1,
+## UIIT_CTL_TC_COMMON ("Notice") in mode 2 (READ c:0x70b720). In mode 2
+## Completed refuses an empty title or body with category 0x1d's 0x6817
+## (UIIT_MSG_GUILD_COMMON_NOTEXIST, READ c:0x70b8a3) and otherwise sends
+## 0x7477 {title, body} (SendTrainingCamp_HandleNoticeUpdate, c:0x824560).
+const MODE_GUILD := 1
+const MODE_ACADEMY := 2
+const TITLE_STATIC := "GDR_GUILD_NOTIFY_WRITE_TITLE"
+const CODE_ACADEMY_EMPTY := 0x6817
+var mode := MODE_GUILD
+
+func set_mode(m: int) -> void:
+	mode = m
+	if m == MODE_ACADEMY:
+		set_static(TITLE_STATIC, text("UIIT_CTL_TC_COMMON", "Notice"))
+
 ## 0x70b7b0.
 func press_ok() -> void:
 	var t := title_text()
 	var b := body_text()
+	if mode == MODE_ACADEMY:
+		if t == "" or b == "":
+			refused.emit(CODE_ACADEMY_EMPTY)
+			return
+		submitted.emit(t, b)
+		close()
+		return
 	if t == "":
 		refused.emit(CODE_NO_TITLE)
 		return

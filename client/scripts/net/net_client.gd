@@ -483,6 +483,12 @@ var guild_storage := GuildStorageState.new()
 ## Round 844: the union requests, their replies and the request box
 ## (UnionOps; the union record itself is guild_data.union).
 var union_ops := UnionOps.new()
+## Round 865: the academy (training camp) store and its messages
+## (AcademyState; AcademyNet has the layouts).
+var academy := AcademyState.new()
+## Round 865 (QA): every academy request sent, [opcode, payload], newest
+## last, so a run without a server can still show what a click sent.
+var academy_sent: Array = []
 ## Round 824: the guilds' crests (CrestCache; World3D gives it silk.dat).
 var crest_cache := CrestCache.new()
 ## Round 838 (OURS): the service scrolls' messages -- the service lines, the
@@ -1020,6 +1026,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	guild_ops.reset_connection()
 	guild_storage.reset()
 	union_ops.reset_connection()
+	academy.reset_connection()
 	crest_cache.clear()
 	buff_roster.clear()
 	npc_roster.clear()
@@ -1952,6 +1959,10 @@ func _init() -> void:
 	union_ops.player_name = guild_ops.player_name
 	union_ops.player_guild = guild_ops.player_guild
 	union_ops.register_with(self)
+	# Round 865: the academy's replies and pushes (AcademyState).
+	for op in AcademyNet.SERVER_OPCODES:
+		register_handler(op, func(data: PackedByteArray) -> void: academy.handle(op, data))
+	academy.own_name = func() -> String: return current_character_name
 	# The game clock (round 786, GameClock): 0x3020 at world entry, 0x3027
 	# when an operator sets the hour.
 	for op in [GameClock.OP_POSITION, GameClock.OP_UPDATE]:
@@ -2033,6 +2044,31 @@ func guild_war_ask_reward(npc_uid: int) -> void:
 
 func guild_war_claim(npc_uid: int) -> void:
 	_send(GuildWarNet.OP_CLAIM, GuildWarNet.encode_u32(npc_uid))
+
+## Round 865: one academy request (AcademyNet's encoders build the payload;
+## the senders c:0x821e40..0x825100). Kept in academy_sent and logged, so a
+## QA run shows the bytes a click produced.
+func academy_send(op: int, payload: PackedByteArray = PackedByteArray()) -> void:
+	academy_sent.append([op, payload])
+	if academy_sent.size() > 64:
+		academy_sent = academy_sent.slice(academy_sent.size() - 64)
+	print("ACADEMY SEND 0x%04X %s" % [op, payload.hex_encode()])
+	if op == AcademyNet.OP_INVITE:
+		# GInterface+0x509 (c:0x777bd0(1) before the send).
+		academy.invite_pending = true
+	if is_connected_to_server():
+		_send(op, payload)
+
+## The academy invitation box's answer; nothing when no box is open.
+func academy_answer(accept: bool) -> void:
+	var payload := academy.answer(accept)
+	if not payload.is_empty():
+		academy_send(AcademyNet.OP_REQUEST, payload)
+
+## Round 865 (QA): a message through the real decode path, as if the server
+## had sent it (OPENSRO_QA_INPUT `acapkt:`; the suites).
+func qa_receive(op: int, data: PackedByteArray) -> void:
+	_dispatch(Packet.new(op, data))
 
 ## Box 0x0F's answer; nothing when no invitation is open.
 func guild_answer(accept: bool) -> void:
@@ -3291,6 +3327,9 @@ func _dispatch(p: Packet) -> void:
 				var info := GuildWarNet.decode_proclamation(p.data)
 				if not info.is_empty():
 					guild_war_proclaimed.emit(info)
+				return
+			# Round 865: kind 9 is the academy's invitation (c:0x88aba8).
+			if p.opcode == PartyNet.OP_REQUEST and academy.handle(p.opcode, p.data):
 				return
 			# Round 844: 0x3080 kind 6 is the union's (c:0x88afb4).
 			if p.opcode == PartyNet.OP_REQUEST and union_ops.handle(p.opcode, p.data):
