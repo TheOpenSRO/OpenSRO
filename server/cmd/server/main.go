@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/academy"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/account"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/ai"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/avatar"
@@ -1515,6 +1516,9 @@ func main() {
 		mallStore mall.Store
 		// The stall sales' record (round 839, internal/stall).
 		stallSales stall.SaleStore
+		// The academies (round 865, internal/academy): the four training
+		// camp tables and the honor bank (persistence.AcademySchema).
+		academies academy.Store
 	)
 
 	if *inMemory {
@@ -1594,6 +1598,7 @@ func main() {
 		friends = friend.NewMemStore()
 		mallStore = mall.NewMemStore()
 		stallSales = stall.NewMemStore()
+		academies = academy.NewMemStore()
 		logger.Warn("in-memory storage ready -- nothing will be persisted")
 		{
 			n, err := memRef.CountSkills(context.Background())
@@ -1769,6 +1774,14 @@ func main() {
 			os.Exit(1)
 		}
 		timedJobs = sqlTimed
+
+		// The academies (round 865): new tables only (persistence.AcademySchema).
+		sqlAcademies, err := academy.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening academy store", "err", err)
+			os.Exit(1)
+		}
+		academies = sqlAcademies
 
 		// The job records (round 799): their tables migrate themselves.
 		sqlJobs, err := jobs.NewSQLStore(storePool)
@@ -2655,6 +2668,20 @@ func main() {
 	// removal and the 1 s member-update sampler (session/party.go).
 	partyDeps := session.PartyDeps{Chars: chars, Hub: hub, Parties: parties, Trades: trades, Guilds: guilds, Skills: skills, Mana: manaTracker, Logger: logger}
 	go session.RunPartyUpdates(ctx, partyDeps)
+	// The academy (round 865, session/academy*.go): its requests, the world
+	// entry's camp, the members' places each second and the daily honor rank.
+	{
+		ad := session.AcademyDeps{Store: academies, Chars: chars, Hub: hub, Timed: timedJobs, Guilds: guilds,
+			Mana: manaTracker, Logger: logger}
+		if bySkill, ok := refItems.(interface {
+			GetSkillByCode(ctx context.Context, code string) (*refdata.Skill, error)
+		}); ok {
+			ad.Skills = bySkill
+		}
+		session.SetAcademy(ad)
+		go session.RunAcademyUpdates(ctx)
+		go session.RunAcademyRanks(ctx)
+	}
 	// Party matching on retail's opcodes (round 713): the listings, their
 	// pages and the join request with its 15 s backstop
 	// (session/partymatch.go, party/match.go).
@@ -2830,6 +2857,8 @@ func main() {
 		session.PartyHandler(partyDeps),
 		session.PartyMatchHandler(partyMatchDeps),
 		session.GuildHandler(chars, guilds, hub),
+		// The academy (round 865, session/academy.go): 0x7470..0x747F, 0x7483.
+		session.AcademyHandler(),
 		// The guild storage (round 844, guildstorage.go): 0x7250..0x7252;
 		// its moves are ItemOpHandler's 0x7034 types 0x1d..0x21.
 		session.GuildStorageHandler(&session.GuildStorageDeps{Guilds: guilds, Svc: guildStorageSvc, Hub: hub,

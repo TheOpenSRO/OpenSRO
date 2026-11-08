@@ -199,6 +199,8 @@ func (s *ScrollCaster) skinChange(ctx context.Context, sess *gateway.Session, in
 	}
 	// The spawn records built from now on carry the new body.
 	invalidateLook(characterID)
+	// Round 865: the academy's member row and its 0x3C80 05 field 7.
+	academyBodyChanged(ctx, characterID, int64(req.Target))
 	if s.logger != nil {
 		s.logger.Info("skin changed", "character_id", characterID, "from", c.RefObjID, "to", req.Target,
 			"scale", req.Scale, "gender", gender)

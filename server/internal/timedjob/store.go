@@ -18,8 +18,11 @@ import (
 //
 // The job types are the engine's (CTimedJobManagerForPC's switch 0x6565f0):
 // 3 the premium (CTJ_PremiumKeeper), 5 a composite item's grant
-// (CTJ_CompositeItemKeeper; its entry's FourCC in Sub).
+// (CTJ_CompositeItemKeeper; its entry's FourCC in Sub). Round 865: 2 a
+// penalty (CTJ_PenaltyKeeper, the category the academy's ids 7..10 carry,
+// READ s:0x411440 / s:0x4114d0; its id in Ref, its end in End).
 const (
+	TypePenalty   = 2
 	TypePremium   = 3
 	TypeComposite = 5
 )

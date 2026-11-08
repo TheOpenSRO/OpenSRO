@@ -7483,6 +7483,117 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-fifth round, stage 2, lane AS: the academy on the server
+
+The user: "Let's add the academy system fully. Make sure you're comparing against the original
+game and make no mistakes". Stage 2 builds the 15 SERVER items of `docs/protocol/academy.md`
+section 18 from the stage-1 contract; lane AC builds the client from the same page. Labels: READ
+(`s:` SR_GameServer.exe, `m:` SR_ShardManager.exe, `c:` sro_client.exe), MEASURED, INFERRED, OURS,
+OPEN. Base `fefb9077`. Server only: no perf gate (no world drawing touched).
+
+### What was built (checklist item -> file, test)
+
+1. **Store** -- `internal/academy/store.go`, `memstore.go`, `sqlstore.go`; tables in
+   `persistence.AcademySchema` (six NEW tables, `academy_*`; no existing table is altered). Found,
+   add (class from max level, caps, buff rows, the honor bank spent), remove (assistant banked less
+   10 unless banned), graduate (shares, GraduateCount, evaluation only at join level <= 30), disband
+   (assistants banked), notice, levels, name, body, honor spend, rank update. Dates minute-rounded.
+   `store_test.go` runs every rule against both stores (PostgreSQL included).
+2. **Wire** -- `internal/academy/wire.go`; `wire_test.go` holds section 6's measured bytes (the
+   joiner's `0a 01` CampInfo, the members' `02`, a teleport's `3C81` with the notice, `05`, `0d`,
+   `07`, `B471 02 1d68 c5350900`, `B47A`, `B47C`, `B478 01 00`, `B47D 01 00 00 00`, `0e 00`).
+3. **Handlers** -- `session/academy.go` (0x7470..0x7478, 0x7483) and `academyboard.go`
+   (0x747A..0x747F), each in the game server's refusal order, the crossed channels included (leave's
+   24 h refusal on 0xB473, disband's plain refusals on 0xB470). `academy865_test.go`.
+4. **Invitation** -- 0x3080 kind 9, 30 s, `academyInviteAnswer` chained in `handlePartyAnswer`;
+   0x6811 and 0x000E both ways. Tested (accept, refuse, timeout).
+5. **World entry / logout / moves** -- `academyArrived` at the end of `arrivePlayer` (0x3C81, then
+   `0d` to the others, `05 01 00` to all), `academyLeftWorld` in the world disconnect (`05 01 01` to
+   the others), the members' places sampled each second for `0d` (OURS cadence, the party sampler's).
+6. **Member refresh** -- a `world.Hub` level hook (`05` field 6, then field 2 when the max rose, the
+   row's levels follow; an offline change stays as stored, choice 4); rename (`05` 5) in the service
+   rename, body (`05` 7) in the skin change.
+7. **Penalties** -- timed jobs category 2 (`timedjob.TypePenalty`, ids 7..10 with section 8's
+   lengths) given at disband, an apprentice's ban, a leave; checked at open (with its seconds),
+   invite, being invited and the board.
+8. **NPC gate and gold** -- 0x7470 / 0x7478 need a storage keeper (function 3) in reach and in
+   talk; the fee is taken after the store succeeds, 0x304E before 0xB470.
+9. **Graduation** -- 0x7475 (live max level 40 / 60, 0x681a; evaluation table; 2,000,000 exp to a
+   self-graduating apprentice through the level table) and 0x7476 (stored max 41 / 61, 0x6822;
+   points 1, no exp); the honor shares as `05` field 3.
+10. **Honor rank** -- `RunAcademyRanks` (daily 00:00:00 and the start-up catch-up), `0c` to changed
+   camps, the guardian's `SKILL_TC_*` buffs by rank engaged at entry, rank change and revival,
+   cancelled at disband. `TestRankCampsBands` with 61 camps.
+11. **Honor store** -- `mall/honorgoods.go` (payment device 32 prices, the CSV's `npchonor` rows)
+   and `session/academyshop.go` (gold first, then the points, `05` field 3). `TestAcademy865HonorStore`.
+12. **Chat** -- type 0x10 to every member in the world, the sender included, the result first; a
+   non-member keeps the OURS 0xf002 (choice 3).
+13. **Matching board** -- in memory, dropped at the guardian's logout, a full camp, a disband; 15 s
+   join wait.
+14. **Exp buffs** -- only the READ parts: 0x7483's checks and its `B483 {02}` (guardian offline),
+   the world entry's donated-slot 0xB483 {01, ...}. The banking formula, the transfer's layout and
+   0x3C82's sends stay OPEN, not built.
+15. **Char select** -- the list's academy byte 2 / 1 / 0 (`TestLobbyRecordAcademyByte865`).
+
+`internal/systems`: academy and persistence leave the parked list. A GM's `/academytime
+<duration>` (OURS, QA; handled in `session/gm.go` ahead of the console's dispatcher, so the client's
+console does not forward it -- the bots send it) moves the academy's clock; `cmd/partybot -mode
+academy` is the live check.
+
+### Read and measured this stage
+
+- **The NPC test answers 3 whatever fails** (READ s:0x51908e: a result of s:0x4e72a0 other than 1
+  falls to `push 3`; s:0x519b02 the same for 0x7478), and s:0x4e72a0 needs the player in an
+  interaction with the NPC (s:0x4dd5d0). The spec's "0x1c0d or its own code" is corrected.
+- **A notice from a non-member is refused 0x6816**, not 0x680b (READ s:0x519900:
+  TrainingCamp_IsMemberClass0 precedes the string reads and answers 0 with no camp).
+- **The `02` entry the other members get carries play state 1**, not 0 (MEASURED, two joins, the
+  bytes `01 01 00000000 01 00000000 ...`). The display name follows the character, not the play
+  state: the joiner's own copy and a logging-in member's own 0x3C81 entry carry state 1 and the
+  name; an offline member's entry its last place and no name (MEASURED).
+- **0x3C81's own entry: play state 1 at a login, 0 at a teleport** (MEASURED, two logins, three
+  teleports; the spec's "a member's own copy in a 0x3C81 at world entry also carries play state 1"
+  holds for the logins). The server sends 1 at a login and 0 at a teleport.
+- **0xB47D's header is the page count, then the page** (READ c:0x7738c0, agreeing with lane AC).
+  From lane AC's reading of the client: the board's u8 is a type (1 apprentices, 2 assistants),
+  which the server keeps as sent (the shard's bit tests agree for both); 0xB47A's last u32 is the
+  camp's graduate count, now sent.
+- **Golden bytes**: `wire_test.go` uses synthetic identifiers of the measured widths (camp 101,
+  characters 0x101..0x103, the date 2026-01-01 00:00), the values lane AC's fixtures use. Before
+  that, the encoders were checked against AC's measured fixtures byte for byte: 22 messages (02 x2,
+  0a 01 x2, 0x3C81, 0xB470, 0d, 05 x2, 07, 0a 02, 0x3080, 0xB471, 0xB472 x2, 0xB473 x2, 0xB477,
+  0xB478, 0xB47A, 0xB47C, 0xB47D) and three requests (0x747A, 0x7473, 0x7477), all equal.
+- 0x3C80 04's kind byte: INFERRED 1 for 0x7475 and 0 for 0x7476 (the game server's job 4 carries
+  only its self flag, READ s:0x5def20's callers); still OPEN as a measurement.
+
+### The live check (lane server, in memory, NPC tables, `partybot -mode academy`, five bots)
+
+All 20 steps passed, every byte and the order on each stream: founding (0x304E -> 0xB470 with the
+founder's own entry at play state 1 -> `05 01 00`); a level-60 invite `02 03 00`; an apprentice's
+join (its `0x3080 {09, id, name}`; the guardian `02` / `0d` / `05`, the joiner `0a 01` / `05`, no
+0xB472); a refusal (`0x6811` both ways); no answer (`02 0e 00` and `0a 02 0e 00` after 30.0 s); an
+assistant's join (the guardian and the apprentice each `02` / `0d` / `05`); the chat line to all
+three; the notice (`07` to the writer, then 0xB477 {1}, `07` to the others); a walk (`0d`); a logout
+(`05 01 01`) and a login (0x3C81 with its own entry at play state 1 and its name, `05` to it; `0d`
+then `05` to the others); inside 24 h leave `02 21 68` on 0xB473 and ban `02 20 68`; disband
+`B471 02 1d 68 <604,771>`; `/academytime 25h` then the ban (0xB473 {1}, `03 .. 02` to all three) and
+the guardian's `0x681f`; the assistant's leave (0xB474 {1}, `03 .. 01`); an apprentice levelled 1 ->
+40 in the game (`05` 6 then 2 to both), refused `0x681a` before, graduated (0xB475 {1}, `04 .. 01`,
+the guardian's `05 03 27000000`); the honor list `01 00`; the board (`B47D 01 00 00 00`, `B47A`, a
+one-row page, `B47C`); `/academytime 168h`, the disband (0xB471 {1}, `01`) and the reopen refusal
+`B470 02 1c 68 80 3a 09 00` (604,800 s).
+
+### Gates
+
+`cd server && go build ./... && go test ./...` all passing; `go vet` clean on the changed packages.
+
+### OPEN
+
+0x3C80 04's kind byte (measured); the exp-buff banking, its cap, 0x3C82's sends and a transfer's
+0xB483; the guardian's matching question and 0x347F; the board's page layout beyond what is READ;
+the shard's choice between 0x6813 and 0x6814; what becomes of a deleted guardian's camp; the
+`SKILL_TC_*` buffs' effects (the skill rows').
+
 ## Eight-hundred-and-sixty-fifth round, stage 1 (spec): the academy
 
 The user: "Let's add the academy system fully. Make sure you're comparing against the original

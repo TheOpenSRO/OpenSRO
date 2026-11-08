@@ -434,14 +434,33 @@ func (h *Hub) SetLifeState(characterID int64, from, to LifeState, at time.Time) 
 // AI's link and swing) know only the character.
 func (h *Hub) SetLevel(characterID int64, level int) bool {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	e, ok := h.byChar[characterID]
 	if !ok {
+		h.mu.Unlock()
 		return false
 	}
+	changed := e.Level != level
 	e.Level = level
+	h.mu.Unlock()
+	// Round 865: a level change in the game refreshes an academy member
+	// (session.academyLevelChanged), outside the hub's lock.
+	if f := levelHook.Load(); changed && f != nil {
+		(*f)(characterID, level)
+	}
 	return true
+}
+
+// levelHook hears every level SetLevel changes.
+var levelHook atomic.Pointer[func(characterID int64, level int)]
+
+// SetLevelHook installs f as the hook every SetLevel that changes a level
+// calls (nil removes it). One hook for the process: the academy's.
+func SetLevelHook(f func(characterID int64, level int)) {
+	if f == nil {
+		levelHook.Store(nil)
+		return
+	}
+	levelHook.Store(&f)
 }
 
 // SetHeading sets sess's character's heading -- a restored one at world entry

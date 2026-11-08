@@ -258,7 +258,12 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 				watchedBefore = monsterWatchers(hub, deps.Monsters, m)
 			}
 		}
-		out := deps.Run(ctx, actor, req.Line)
+		// Round 865 (OURS, a bots' QA aid the client's console does not
+		// offer): /academytime moves the academy's clock (academylive.go).
+		out, isAcademyTime := academyTimeCommand(req.Line)
+		if !isAcademyTime {
+			out = deps.Run(ctx, actor, req.Line)
+		}
 		// Round 858: every GM command run is counted (gm.Deps.Run logs it,
 		// "gm command" with its verb).
 		metrics.GMCommand(gmMetricVerb(req.Line), out.Refused)

@@ -116,6 +116,18 @@ type bot struct {
 	// tap, when set, sees every packet the reader reads, first (round 786's
 	// latency mode, latency.go).
 	tap func(*proto.Packet)
+	// acad carries the academy's messages (round 865, academy.go).
+	acad chan *proto.Packet
+}
+
+// noteAcademy files an academy message for the academy run (round 865).
+func (b *bot) noteAcademy(p *proto.Packet) {
+	if b.acad != nil && isAcademyOp(p.Opcode) {
+		select {
+		case b.acad <- p:
+		default:
+		}
+	}
 }
 
 // lastGain is the newest 0x3056 b was sent, and how many it has had.
@@ -151,6 +163,7 @@ func (b *bot) readSync(op uint16) (*proto.Packet, error) {
 			return nil, fmt.Errorf("%s waiting for 0x%04x: %w", b.name, op, err)
 		}
 		b.note(p)
+		b.noteAcademy(p)
 		if isQuestOp(p.Opcode) && b.quest != nil {
 			select {
 			case b.quest <- p:
@@ -496,6 +509,7 @@ func (b *bot) run() {
 			return
 		}
 		b.note(p)
+		b.noteAcademy(p)
 		if b.tap != nil {
 			b.tap(p)
 		}
@@ -580,7 +594,7 @@ func connectAs(addr, user, name string, level int, kit session.LobbyRequest) (*b
 		return nil, err
 	}
 	b := &bot{name: name, conn: conn, r: bufio.NewReader(conn), in: make(chan *proto.Packet, 256), other: make(chan *proto.Packet, 64), ground: make(chan *proto.Packet, 256), seen: map[string]int64{},
-		quest: make(chan *proto.Packet, 4096), uidByRef: map[uint32]uint32{}}
+		quest: make(chan *proto.Packet, 4096), uidByRef: map[uint32]uint32{}, acad: make(chan *proto.Packet, 1024)}
 	const pw = "partybot-pw"
 	b.send(session.OpRegister, (&session.RegisterRequest{Username: user, Password: pw}).Encode())
 	if _, err := b.readSync(session.OpRegisterResult); err != nil {
@@ -1260,6 +1274,8 @@ func main() {
 		err = latencyScenario(*addr, *name, *level, *tp)
 	case "job":
 		err = jobScenario(*addr, *name, *level, jobRun)
+	case "academy":
+		err = academyRun(*addr, *prefix)
 	case "quest":
 		err = questScenario(*addr, *name, *questRace, *level, *questsDir, *npcsCSV, *npcposCSV, flag.Args())
 	default:

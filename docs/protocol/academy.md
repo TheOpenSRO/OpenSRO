@@ -148,14 +148,14 @@ manager's query strings):
 | 0xB477 | S>C | notice result | 01 / 02 code | c:0x899940 | yes |
 | 0x7478 | C>S | honor rank list | u32 npc unique id | c:0x8222e0 / s:0x519ad0 | yes |
 | 0xB478 | S>C | honor rank list | 01, u8 n, n x HonorRow / 02 code | c:0x89c620 / s:0x5dd29a | yes (empty) |
-| 0x747A | C>S | matching register | u32 (any), u32 (any), u8 flags, str title | c:0x823eb0 / s:0x519b80 | yes |
-| 0xB47A | S>C | its result | 01, u32 entry id, u32 camp id, u8 flags, str title, u32 0 / 02 code | c:0x8907f0 | yes |
+| 0x747A | C>S | matching register | u32 0, u32 camp id, u8 type, str title (7.10) | c:0x823eb0 / s:0x519b80 | yes |
+| 0xB47A | S>C | its result | 01, u32 entry id, u32 camp id, u8 type, str title, u32 graduates / 02 code | c:0x8907f0 | yes |
 | 0x747B | C>S | matching modify | u32 entry id, u32 (any), u8 flags, str title | c:0x823f70 / s:0x519bd0 | — |
 | 0xB47B | S>C | its result | 01, u32, u32, u8, str / 02 code | c:0x890960 | — |
 | 0x747C | C>S | matching delete | u32 entry id | c:0x81d2f0 / s:0x519c20 | yes |
 | 0xB47C | S>C | its result | 01, u32 entry id / 02 code | c:0x88df80 | yes |
 | 0x747D | C>S | matching list page | u8 page | c:0x81d3b0 / s:0x519c70 | yes |
-| 0xB47D | S>C | its result | 01, u8, u8, u8 n, n x MatchRow / 02 code | c:0x890ab0 | yes (empty: 01 00 00 00) |
+| 0xB47D | S>C | its result | 01, u8 page count, u8 page, u8 n, n x MatchRow / 02 code | c:0x890ab0 | yes (empty: 01 00 00 00) |
 | 0x747E | C>S | matching join request | u32 entry id | c:0x81d470 / s:0x519cc0 | — |
 | 0x747E | S>C | the request reaching the guardian | see 5.10 | c:0x890fa0 | — |
 | 0x347F | C>S | guardian's answer to it | u32, u32, u8 | c:0x81d530 / s:0x519d10 | — |
@@ -207,10 +207,23 @@ in the server's message map, not in the client's three registration lists).
 | 17 | display name | str | +0x28 | empty while offline; online: the character name, or its job alias when it wears a job suit (READ s:0x5dd0d8: job state 4 -> name, else nickname). MEASURED a job alias here. The minimap finds the live object by this string. |
 
 Field 11 and the location group are what the member was last known as. MEASURED: a
-member entry built for the **other** members when someone joins carries play state 0
-and a zero location (world 0, region 0, 0, 0, 0, empty name); the joiner's own copy of
-itself carries play state 1 and its position; a 0x3C80 05 (field 1 = 0) follows at
-once in both cases. Build exactly that.
+member entry built for the **other** members when someone joins carries play state **1**
+and a zero location (world 0, region 0, 0, 0, 0, empty name) -- both joins measured
+(`02 .. 01 01 00000000 01 00000000 0000 0000 0000 0000 0000` for a level-1 joiner, the same
+for a level-40 one; stage 2 corrected an earlier "play state 0" here); the joiner's own
+copy of itself carries play state 1 and its position; a 0x3C80 05 (field 1 = 0) follows
+at once in both cases. Build exactly that. A member's own copy in a 0x3C81 at world entry
+also carries play state 1 (MEASURED), its display name possibly empty.
+
+Lane AS (stage 2), from the same measurements, byte by byte: the own entry in a 0x3C81
+carries play state **1 at a login** (two logins) but **0 at a teleport** (three teleports:
+a member already online stays online; the guardian's own entry in the teleport frame
+3c81_world is `.. 00 | 01000100 ..`), and in all five it carries the member's name. The
+display name follows the character, not the play-state byte: it is present whenever the
+member's character is in the world on the server (the joiner's own copy and a logging-in
+member's own entry carry play state 1 with the name); an offline member's entry carries
+play state 1, its last-known world, region and x, y, z, and an empty name. The server
+builds exactly that; a client reads the byte either way.
 
 ### HonorRow (0xB478; READ s:0x5dd29a..0x5dd2f4, c:0x993230)
 
@@ -220,11 +233,13 @@ Only camps loaded on that game server are listed (READ s:0x5e17f0 patches the co
 
 ### MatchRow (0xB47D; READ c:0x890ab0, consumer c:0x773320)
 
-u32 entry id, u32 (OPEN, not stored), u8 flags, str title, u32 (OPEN), u8 level, u8
+u32 entry id, u32 (OPEN, not stored), u8 type, str title, u32 (OPEN), u8 level, u8
 max level, u32 guardian RefObjID (race from it), str guardian name, u32 GraduateCount,
 u8 honor rank, u32 assistants, u32 apprentices. The list header before the rows is u8,
-u8, u8 n (c:0x7738c0: page and page count, order OPEN). The server's page layout is
-built in the shard manager (OPEN beyond the empty reply).
+u8, u8 n: page count, then page (READ c:0x7738c0 stores them crossed). The server's page layout is
+built in the shard manager (OPEN beyond the empty reply). OpenSRO (stage 2) sends 12 rows
+a page (the window's rows 70..81, INFERRED), and in the two unread u32s the camp id and
+the graduate count, as 0xB47A's record carries them (INFERRED; the client reads neither).
 
 ## 6. The 0x3C80 push (READ s:0x5dd4f0.., c:0x8a2110; MEASURED where marked)
 
@@ -236,12 +251,20 @@ server (BroadcastToLocalMember, s:0x5de1e0).
 | 01 | — | all members | camp disbanded | `UIIT_STT_TC_DISSOLUTION_SUCCESS`, store cleared, academy windows closed, type-8 buff icons removed | |
 | 02 | MemberEntry | members except the joiner | a member joined | adds it; system line `UIIT_MSG_TC_MACHING_JOINING_MEMBER` "[%s] has been added to the Academy." | yes |
 | 03 | u32 CharID, u8 reason (1 left, 2 banned, 3 silent) | all members incl. the removed one | removal | self: store cleared + `UIIT_STT_TC_OUT_TRAININGCAMP_ANNOUNCE` (1) or `UIIT_MSG_TC_EXPULSION_RESULT_ANNOUNCE` (2); others: `..._OUT_TRAININGCAMP_OTHER_USER` / `..._EXPULSION_RESULT` "[%s] ..." and the slot removed | |
-| 04 | u32 CharID, u8 kind | all members incl. the graduate | graduation | self: `UIIT_STT_TC_GRADUATION_CONGRATULATIONS`, store cleared; others: `UIIT_STT_TC_GRADUATION_ANNOUNCE` "[%s] has graduated." (kind 0 and 1 both; OPEN which is which) | |
-| 05 | u32 CharID, u8 field, value | all members incl. the subject | a member's field changed | field 1 u8 play state (0 online / 1 offline); 2 u8 max level (grade recomputed); 3 u32 honor; 5 str name; 6 u8 current level; 7 u32 RefObjID | field 1 both ways |
+| 04 | u32 CharID, u8 kind | all members incl. the graduate | graduation | self: `UIIT_STT_TC_GRADUATION_CONGRATULATIONS`, store cleared; others: `UIIT_STT_TC_GRADUATION_ANNOUNCE` "[%s] has graduated." (kind 0 and 1 both; OPEN which is which -- INFERRED 1 for 0x7475 and 0 for 0x7476: the game server's job 4 carries one byte, the self flag, 1 from 0x7475 and 0 from 0x7476, READ s:0x5def20's two callers; OpenSRO sends that) | |
+| 05 | u32 CharID, u8 field, value | all members incl. the subject | a member's field changed | field 1 u8 play state (0 online / 1 offline); 2 u8 max level (grade recomputed); 3 u32 honor; 5 str name; 6 u8 current level; 7 u32 RefObjID. The client reads 1, 2, 3, 6 and 7 only: its jump table c:0x6e9674 sends 4 and 5 to the exit, so a field-5 name reaches no display | field 1 both ways |
 | 07 | str title, str content | all members | notice changed | stored; banner `UIIT_MSG_TC_COMMON_KNOW_REMIND_UPDATE` "The Academy notice has been updated." | yes |
-| 0a | 01 + CampInfo, or 02 u16 code | the invitee only | invitation accepted (or matching join done) / failed | 01: store filled, centre banner `UIIT_STT_TC_JOIN_ANNOUNCE` "Joined Academy.", the academy window opens; 02: the code's text | yes (01; 02 with code 0x000e) |
+| 0a | 01 + CampInfo, or 02 u16 code | the invitee only | invitation accepted (or matching join done) / failed | 01: store filled, the academy window opens (c:0x79af70), centre banner `UIIT_STT_TC_JOIN_ANNOUNCE` "Joined Academy."; 02: the code's text only (c:0x8a2fd5 -- the invitation box is left to its own timer) | yes (01; 02 with code 0x000e) |
 | 0c | u8 rank | all members | the camp's honor rank changed | rank mark redrawn | |
 | 0d | u32 CharID, str display name, u32 world, u16 region, i16 x, i16 y, i16 z | members except the subject | the member's position | location group | yes |
+
+Where each line goes (READ c:0x8a2110, c:0x6e8ed0, c:0x899630..0x899940): the GDR_WARNING_WND
+banner (0x77b580) carries `DISSOLUTION_SUCCESS`, `OUT_TRAININGCAMP_ANNOUNCE`,
+`EXPULSION_RESULT_ANNOUNCE`, `GRADUATION_CONGRATULATIONS`, `COMMON_KNOW_REMIND_UPDATE` (07 and
+0xB477) and `JOIN_ANNOUNCE`; the system message window, type 0 (0x778210 / 0x7781b0(0, ..)),
+carries `MACHING_JOINING_MEMBER`, `OUT_TRAININGCAMP_OTHER_USER`, `EXPULSION_RESULT`,
+`GRADUATION_ANNOUNCE`, `CONNECT2` / `DISCONNECT2`, `COMMON_KNOW` and `OPEN_SUCCESS`; the
+refusals go through 0x778190(0x1d, code).
 
 Sub 05 field 1 on the client: for another member, 0 prints `UIIT_MSG_TC_CONNECT2`
 "%s [%s] has logged on to the game." and 1 `UIIT_MSG_TC_DISCONNECT2` "... logged out of
@@ -249,7 +272,8 @@ the game.", the first %s being the class title (Guardian / Asst. guardian / Novi
 apprentice). MEASURED: "Novice apprentice [name] has logged on to the game.", "Asst.
 guardian [name] has logged on to the game.", "Novice apprentice [name] has logged out of
 the game.". For the member itself, field 1 = 0 prints `UIIT_STT_TC_COMMON_KNOW` "Academy
-Notice “%s”" with the notice title (MEASURED at world entry). The guardian's log-on is
+Notice “%s”" with the notice title (MEASURED at world entry) -- only when the camp has a
+title (READ c:0x6e9223 `cmp [eax+0x4c],esi ; je`: no title, no line). The guardian's log-on is
 announced once (c:0x6e8ed0 window flag) and a member's only when its slot was offline
 (READ).
 
@@ -295,8 +319,13 @@ otherwise it sends 0x7470 with the talk NPC's unique id.
 
 Server (READ s:0x4e4680 then the NPC check): character lock 0x6808; dead 0x6807; level <
 60 0x6809; gold < 100,000 (64-bit) 0x680a; already in a camp 0x6812; reopen penalty
-(2, 7) 0x681c + u32 seconds left; NPC out of range / not an NPC: 0x1c0d or its own code
-(s:0x4e72a0); NPC without function 3: 3. Then the store's founding; on success the fee
+(2, 7) 0x681c + u32 seconds left; then the NPC: **any failure answers 3** (CORRECTED
+round 865 stage 2, READ s:0x51908e: a result of s:0x4e72a0 other than 1 falls to `push
+3`, so its 0x1c0d and the range codes never reach the wire; s:0x519b02 does the same for
+0x7478). s:0x4e72a0 needs the NPC in reach (IsWithinInteractionRange, filter 0x146) and
+the player **in an interaction with that NPC** (s:0x4dd5d0 on the NPC's +0x1a0 set), then
+the NPC's function set must hold 3 (s:0x5190c4). So the client sends 0x7470 / 0x7478
+while the NPC talk is open, before its 0x704B. Then the store's founding; on success the fee
 is taken and the sequence of section 6 goes out (MEASURED). The client prints
 `UIIT_MSG_TC_OPEN_SUCCESS` "An Academy has been established." (READ c:0x899630).
 
@@ -319,7 +348,14 @@ entry penalty (2, 9) or (2, 10) 0x681e; already in this camp 0x680f, in another
 
 The invitee's box: `UIIT_STT_TC_JOIN_REQUEST` "[%s] has requested for Academy
 registration. Approve?" with Yes / No, caption "Join request sent" (MEASURED). Answer:
-Yes -> 0x3080 {01 01}; No or closing -> 0x3080 {02, 00 00}. Server on the answer (READ
+Yes -> 0x3080 {01 01}; No or closing -> 0x3080 {02, 00 00}. The box is GInterface
+0x788270's MsgBoxSimple (360 x 151 at creation), its text set by 0x643250, which sizes the
+box to the text (0x6413a0: the text's width + 0x3c by its height + 0x7a, never smaller),
+and the box's own timer armed (0x644650, READ c:0x88aba8..0x88ad62). Its timer ending
+answers nothing (MEASURED: no 0x3080 from the invitee in either timed-out case; the
+server's 0x000E ends it). MEASURED boxes of this kind: the invitation 402 x 167, the
+disband question 498 x 168, the leave question 618 x 151, the ban question 754 x 151 (one
+text line 151 high, two 167 / 168). Server on the answer (READ
 s:0x5df910): inviter gone 0x680c; target gone 3; refused (answer byte != 1) -> 0xB472
 {02, 0x6811} to the inviter and 0x3C80 {0a, 02, 0x6811} to the invitee; accepted -> the
 store adds the member; success per section 6.
@@ -397,12 +433,16 @@ and **no** exp.
 
 Client: the pencil button (guardian only) opens the shared notice writer in academy
 mode ("Notice": "Please enter the title of the note.", "Please enter the contents of
-the note.(0/Max.1023)", Completed / Cancel; MEASURED); it sends only when both are
-non-empty.
+the note.(0/Max.1023)", Completed / Cancel; MEASURED); the window's mode byte 2 titles it
+`UIIT_CTL_TC_COMMON` (static 53, READ c:0x70b720); Completed with an empty title or an empty
+content prints 0x6817's text through category 0x1d and sends nothing (READ c:0x70b8a3),
+otherwise it sends 0x7477.
 
 Server (READ s:0x519900, s:0x5df070): chat-banned -> dropped silently (0x3405 to the
 sender); not guardian 0x6816; a `'` or `"` or a filtered word in either -> dropped
 silently, no reply; dead 0x6807; no camp 0x680b; not guardian 0x6816; lengths 0x6817.
+The first test (TrainingCamp_IsMemberClass0, before the strings are read) answers 0
+for no camp too, so a **non-member is refused 0x6816**, not 0x680b (READ s:0x519900).
 Success per section 6. Members who log in later see the title in their system line at
 world entry (MEASURED).
 
@@ -438,13 +478,33 @@ and the window opens empty.
   result 0xB47E {01, u8 s}: 1 `UIIT_STT_TC_MACHING_COMPLETE`, 0 `UIIT_MSG_TC_JOIN_CANCEL`,
   2 `UIIT_MSG_TC_JOIN_NOREPLY`. The joiner then gets 0x3C80 {0a 01, CampInfo} as in an
   invitation. The guardian's question push and 0x347F's fields are OPEN (section 17).
+- The client's side, READ in stage 2 (CIFMentorMatch, Create c:0x770910; the register box
+  c:0x7693d0 / c:0x640660, its OK c:0x76fcc0):
+  - the register box's two checkboxes are exclusive (0x63c150 / 0x63c170), the apprentice
+    one on at open; the byte sent is a **type**, 1 apprentices, 2 assistants, 0 neither
+    (c:0x63c1c0) -- never 3; the shard reads it as the bit set above, so 1 and 2 agree;
+  - 0x747A's second u32 is the camp id (camp+0, c:0x76fdcb), its first 0; 0x747B's first
+    is the own entry's id (c:0x76ff47); a modify starts with an empty title;
+  - 0xB47A's last u32 is stored as the own entry's Graduate count (own+0x14, c:0x7738e0),
+    the rest of the own row built from the camp record (c:0x775bc0);
+  - 0xB47D's header is u8 page count, then u8 page; a row 0 carrying the player's name
+    becomes the own entry, pinned in row 0 (c:0x7747c0, c:0x770bc0);
+  - Delete sends 0x747C {own id} with no question (c:0x769510); 0xB47C with the own id
+    clears the own entry, and with no page held the page is asked for again (c:0x88df80);
+    the client deletes its own entry itself when a join fills the role it recruits
+    (c:0x76f7b0, called at c:0x8a242b) -- the case that shows `..._PULL_DELETE`;
+  - enabling (c:0x76f430): Join with no own entry, below level 60 and rows shown;
+    Whisper with rows; Registration in an academy, level 60 or more, the guardian, no own
+    entry and a role not full; Change and Delete with an own entry; Search always;
+    Refresh asks the spin's page and locks itself 2000 ms (c:0x769f70).
 
 ### 7.11 Exp buffs (partly OPEN)
 
 - Buff icons: type 7 = the member's own **cumulated** buff (`UIIT_CTL_TC_SAVE_BUFF`,
   "Cumulated Size: %d P"), type 8 = an **accumulated** buff received from a member
   (`UIIT_CTL_TC_RESERVE_BUFF`, donor name + "Accumulated Size"). Art
-  `icon\skill\etc\tc_amends_buff.ddj` / `tc_reserve_buff.ddj` (which is which OPEN).
+  READ c:0x7ff360..0x7ff382: kind 7 draws `icon\skill\etc\tc_reserve_buff.ddj`, kind 8
+  `icon\skill\etc\tc_amends_buff.ddj`.
 - Guardian and apprentices bank part of their kill exp while their buff runs: pct =
   min(30, trunc(A / B x 100 x 0.1)) (READ s:0x4eaaaf; A, B OPEN). A buff lasts 1,440
   minutes from its StartingTime; the remaining minutes go out as 0x3C86 {u32} every 10
@@ -465,7 +525,10 @@ and the window opens empty.
 
 MEASURED: the client strips the leading `&` and sends `7025 {10, u8 index, str text}`;
 the server answers `B025 {01 10 <index>}` and sends `3026 {10, str sender name, str
-text}` to **every online member including the sender**. The receiver shows
+text}` to **every online member including the sender**, the result first (MEASURED
+order). On OpenSRO's wire these are its own chat messages OpChatSend / OpChatResult /
+OpChatUpdate (0x00A5..0x00A7) with type 0x10, as for every other channel: the update's
+bytes are 3026's, the result is OpenSRO's {ok, type, index, u16 code, str}. The receiver shows
 "name(Academy):text" in 0xff64c7ff (MEASURED colour light blue; OpenSRO's chat already
 formats this). The retail client refuses to send outside an academy with
 `UIIT_MSG_TC_ERROR_NOT_POSITION` (READ 0x7ad400); the server's own refusal is 0x200f
@@ -502,6 +565,12 @@ has `server/internal/timedjob` for them.
   deducts it (payment device bit 32). Honor items cannot be disjointed or take the
   repair-count option except on honor items (`TC_ERROR_NOT_RONDO_HONOR_ITEM`,
   `TC_ERROR_ENCHANT_HONOR_ITEM` 0x5425, docs/protocol/alchemy.md).
+- **On OpenSRO's wire** (round 865 stage 2, OURS like the guild goods' refusals): the
+  NPC store's buy answers on OpenSRO's OpShopBuyResult with a reason string, so the
+  honor refusal is the client's own text for `UIIT_MSG_TC_LACK_HONOR_POINT`, "Selected
+  item cannot be purchased due to insufficient amount of honor points.", which the
+  client maps back to the key; the gold refusal comes first. The honor prices travel in
+  the mall CSV's `npchonor` rows (item id, points), as the guild goods' `npcgp`.
 - **Rank:** per camp, daily (section 2). The guardian alone gets cumulative skills by
   rank: 4 `SKILL_TC_COPPER_BUFF_01`; 3 adds `SILVER`; 2 adds `GOLD`; 1 adds `CROWN`
   (READ s:0x5dd9b0, table s:0xc6748c); re-applied at the guardian's world entry, on a
@@ -569,7 +638,10 @@ max level > 40 or an assistant > 60, else "Banish"; a member sees on its own row
 
 ### 10.3 Guardian evaluation — `ifapprenticeshipjudge.txt`, "ApprenticeShipJudge" (c:0x808740)
 
-Title `UIIT_STT_TC_APPRAISAL_GUARDIAN` "Guardian Evaluation" (OPEN: frame or static).
+A CIFMainFrame (RTTI) framed by the registry entry GDR_APPRENTICESHIP_JUDGE (ginterface ID
+155, 420 x 174, `msgbox2_window_`), whose Text `UIIT_STT_TC_APPRAISAL_GUARDIAN` "Guardian
+Evaluation" is the caption (READ). The radio's geometry (READ c:0x8087a1..0x8087d8): origin
+(0, 0), pitch 0x46, the label 0x14 right of the dot, left-aligned, 0x50 wide, five in a row.
 Controls: 1 BLACKSQUARE 15,44,391,72; 4 BG_01 10,40,394,126 `com_bg_tile_b`; 5 BG_02
 15,44,391,72 `com_bg_tile_e`; 20 RADIOBUTTON 34,59,406,40 with five items "Very
 satisfied", "Satisfied", "Average", "Disappointed", "Very disappointed" (index 1
@@ -578,6 +650,10 @@ selected at open; index -> byte 4, 3, 2, 1, 0; c:0x80867c); 30 BTN_CONFIRM 128,1
 
 ### 10.4 Honor ranking — `ifapprenticeshiphonorranking.txt`, "ApprenticeShipHonorRankWnd"
 
+Registry entry GDR_APPRENTICESHIP_HONOR_RANK (ginterface ID 154, 512 x 386, `msgbox2_window_`,
+Text `UIIT_STT_TC_HONOR_RANKING`; a CIFMainFrame). The LEVEL cell is "%d(%d)%s" with the
+`UIIT_STT_LEVEL_LV` text after the numbers (READ c:0x8082b1). MEASURED: the window's left edge
+at x 385 of 1280 (centred), its top at y 341 of 1024 (22 below centred; the rule is OPEN).
 Opened by 0xB478 success. MEASURED: title "Honor Rank", columns Rank, Grade, Guardian,
 Level, Graduate, Guild, a page spin "1", Confirm. READ: header buttons 20..25, rows
 30..39 (`ifapprenticeshiphonorslot.txt`, 475 x 24 at y 74 + 23 i), 10 rows a page
@@ -611,7 +687,10 @@ apprentices + 1; Honor Grade icon + "(%d)".
   equals the player's world) gets `interface\minimap\mm_sign_apprenticeship.ddj` inside
   the radius and `mm_sign_apprenticeshiparrow.ddj` at the edge outside it; position from
   the live object found by the display name, else the record's region and x, y, z
-  (READ c:0x663bc2..0x663f2a); the world map draws `wmap_sign_apprenticeship.ddj` the same
+  (READ c:0x663bc2..0x663f2a); the academy loop runs before the party's, with the party's
+  47.0 rim and 1920-unit tiles; the dot's corners are +-4.0 (8 x 8), the arrow's +-16.0
+  (0xda0ef8 / 0xe1b8e0: 32 x 32, where the party arrow's are +-8.0); the world map draws
+  `wmap_sign_apprenticeship.ddj` the same
   way (c:0x61eec0).
 - **Buff bar:** the type-7 / type-8 icons and tooltips (7.11).
 - **HUD hint:** an element with sound "snd_quest" shown while the player is in no academy
@@ -700,6 +779,20 @@ world map (10.6) and in the academy window.
   with the membership byte taken as 0 and "Honor Rank"; `party_map_marks.gd` leaves the
   academy marks unbuilt.
 
+**Stage 2, the server (round 865, lane AS).** `internal/academy`: `store.go` /
+`memstore.go` / `sqlstore.go` (tables `persistence.AcademySchema`, new tables only),
+`wire.go` (every record and push of sections 4-6), `board.go` (the matching board).
+`internal/session`: `academy.go` (0x7470..0x7478, 0x7483, the 0x3080 kind 9 answer),
+`academylive.go` (world entry, logout, moves, level / name / body refresh, honor rank,
+honor buffs, chat audience, lobby byte), `academyboard.go` (0x747A..0x747F),
+`academyshop.go` (the honor store). OURS: OpenSRO keeps no max level apart from the level
+(a level never falls here), so choice 2's two rules agree; the members' places are
+sampled each second for 0x3C80 0d (the party sampler's cadence); a GM's `/academytime
+<duration>` moves the academy's clock forward for QA (a bots' aid, not in the console);
+a request through the matching board that passes every refusal waits 15 s and ends as
+"no reply" (the guardian's question is OPEN); every camp counts as loaded for the honor
+list (one game server); the board's type byte is read as the shard's bits (1 and 2 agree).
+
 ## 15. Corrections to the earlier version of this page
 
 - "What role class 0 is, is not read" — class 0 is the **guardian** (sections 2, 5).
@@ -748,8 +841,9 @@ world map (10.6) and in the academy window.
 2. The exp banking formula's inputs, the buff's point cap, the server side of 0x3C82
    (which sub when) and 0xB483's non-login send (s:0x4e4580 field order).
 3. 0x747E's push to the guardian, 0x347F's fields, the board's page layout beyond an
-   empty page, MatchRow's two unstored u32s, and the 0xB47D header's byte order.
-4. The judge window's title source; which buff icon is type 7 vs 8.
+   empty page and MatchRow's two unstored u32s (the 0xB47D header is page count, page: READ).
+4. (Resolved in stage 2: the judge window's title is its registry caption; kind 7 draws
+   tc_reserve_buff, kind 8 tc_amends_buff -- 10.3, 7.11.)
 5. What `SKILL_TC_*_BUFF_01` do (skill data; OpenSRO reads it).
 6. Not measured live (READ only): success of leave, ban and disband (each needs a day
    or a week to pass), graduation of either kind, the honor shares, a matching join, the

@@ -321,6 +321,11 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if gp := guildGoodsGP(req.ItemID); gp > 0 && !free {
 		return buyGuildGoods(ctx, sess, chars, svc, characterID, req.ItemID, int(req.Quantity), gp)
 	}
+	// Round 865 (academyshop.go): an honor store good costs the buyer's
+	// academy honor points as well.
+	if hp := honorGoodsPrice(req.ItemID); hp > 0 && !free {
+		return buyHonorGoods(ctx, sess, chars, svc, characterID, req.ItemID, int(req.Quantity), hp)
+	}
 	result := &ShopBuyResult{OK: true}
 	buy := svc.Buy
 	if free {

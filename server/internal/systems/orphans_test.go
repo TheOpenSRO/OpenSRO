@@ -45,7 +45,10 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 var knownOrphans = map[string]string{
 	// Round 860 lane E: 0x304E kind 4's decoder; the Godot client decodes the
 	// message over the socket, so only the golden-bytes test calls it in Go.
-	"DecodeHwan": "round 860: 0x304E kind 4 (violet hwan orbs) wire decoder, the client's side; hwan860_test.go checks EncodeHwan with it.",
+	"ForcedGraduationLevel": "round 865: the 41 / 61 floors named by their role (0x7476's forced graduation); the handler tests them through MeetsMembershipLevel, academy_test.go holds the two together.",
+	"OffsetOf":              "round 865: persistence's column catalogue (the recovered struct offsets), read by its own tests; persistence left the parked list for AcademySchema.",
+	"ColumnAt":              "round 865: the reverse of OffsetOf, the same catalogue, read by its own tests.",
+	"DecodeHwan":            "round 860: 0x304E kind 4 (violet hwan orbs) wire decoder, the client's side; hwan860_test.go checks EncodeHwan with it.",
 	// Round 858: the metrics package's world collector implements
 	// prometheus.Collector; the registry calls these at every scrape.
 	"Collect":  "round 858: prometheus.Collector, called by the metrics registry at scrape time (internal/metrics/game.go).",
