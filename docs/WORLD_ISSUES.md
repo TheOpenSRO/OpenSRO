@@ -7488,7 +7488,7 @@ stays on the box for older revisions through `GODOT_BIN`).
 The user: "Let's add the academy system fully. Make sure you're comparing against the original
 game and make no mistakes". Stage 1 is the specification only: `docs/protocol/academy.md` is
 rewritten as the contract a server lane and a client lane build from in parallel (its section 18 is
-the build checklist), and stage 3 compares the two side by side. Labels: READ (`c:` sro_client.exe,
+the build checklist), and stage 3 checks the result. Labels: READ (`c:` sro_client.exe,
 `s:` SR_GameServer.exe, `m:` SR_ShardManager.exe; `/var/tmp/decomp_client`, `/var/tmp/decomp_server`,
 `/var/tmp/sro_client.asm`, `/var/tmp/gs_dis.txt` on the box), MEASURED, INFERRED, OURS, OPEN. Base
 `44514ae7` (v0.1.636).
