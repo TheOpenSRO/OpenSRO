@@ -756,7 +756,13 @@ world map (10.6) and in the academy window.
    buff transfer, the honor rank update. Stage 3 can measure graduation after a level-up
    inside the game; the windows need real time.
 
-**Choices for the user:**
+**Choices, decided (round 865, before stage 2): each follows the original.**
+1. Copy the 0x000E timeout code byte-exact. 2. Check the role by current level and store the
+class by max level, as the original does. 3. Keep the OURS 0xf002 server answer and add the
+retail client-side refusal (`UIIT_MSG_TC_ERROR_NOT_POSITION`). 4. Copy the stale member levels
+(refreshed only on an in-game level change).
+
+**The choices as they were put:**
 1. **The invitation timeout code.** The original sends 0x000E (a truncated 0x680e), and
    the client prints nothing. Recommend: copy it (byte-exact). The alternative is 0x680e,
    which also prints nothing.
