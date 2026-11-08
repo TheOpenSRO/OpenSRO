@@ -7483,6 +7483,110 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-fifth round, stage 2, lane AC: the academy in the client
+
+The user: "Let's add the academy system fully. Make sure you're comparing against the original
+game and make no mistakes". Stage 2's client half, built from `docs/protocol/academy.md` (the
+contract, section 18 "CLIENT"); the server half is lane AS's. Labels: READ (`c:` sro_client.exe,
+`s:` SR_GameServer.exe), MEASURED, INFERRED, OURS, OPEN. Base `fefb9077`.
+
+### What was built (checklist section 18, CLIENT)
+
+1. **Net** -- `client/scripts/net/academy_net.gd` (AcademyNet): every request's encoder and every
+   reply's and push's decoder of sections 4-7, the category-0x1d text table (c:0x7bbe14), the grade
+   rule (c:0x98e120). Test `academy_net_test.gd`: the MEASURED messages (names swapped for test names
+   of the same length; `client/scripts/net/fixtures/academy/`), a CampInfo round trip.
+2. **State** -- `academy_state.gd` (AcademyState): the camp and up to eight members by CharID, 0x3C81,
+   0xB470 and every 0x3C80 sub as c:0x8a2110 applies them, the log-on / log-off lines with the
+   guardian's once-flag (+0x560) and a member's offline-slot rule (+0x540), the invitation's pending
+   inviter, GInterface+0x509. Test `academy_state_test.gd` (45 checks).
+3. **Window** -- `client/scripts/ui/hud/academy_window.gd` (AcademyWindow) on the main popup's
+   GDR_APPRENTICESHIP pane: the reset (c:0x6e8c30), the guardian's line, the slots (assistants from
+   SLOT_0, apprentices from SLOT_2, join order), the notice line and its contents panel
+   (`academy_notice_contents.gd`), guardian-only Dismiss / Invite / pencil (0xfffff5da, else
+   0xff999999), key L, the window opening on 0x3C80 0a 01 (c:0x79af70). Test `academy_window_test.gd`.
+4. **Rows and boxes** -- the row button rule (c:0x6ead69) and the five outcomes (c:0x6eb0f0); the
+   questions are GInterface 0x788270's MsgBoxSimple sized to the text (`academy_msg_box.gd`,
+   0x6413a0: the text's width + 0x3c by its height + 0x7a, never below 360 x 151).
+5. **Evaluation** -- `academy_judge_window.gd`: the registry frame GDR_APPRENTICESHIP_JUDGE (ID 155,
+   420 x 174), the radio READ at c:0x8087a1..0x8087d8, Satisfied (3) at open, index -> 4..0.
+6. **Invitation** -- 0x3080 kind 9 routed beside the guild's and the union's (net_client.gd), the
+   "Join request sent" box with its own timer, Yes `01 01`, No `02 00 00`, the inviter's
+   `UIIT_STT_TC_PROPOSAL_PENDING` line and a COS resolving to its owner (c:0x9ce910).
+7. **Notice writer** -- GuildNoticeWrite's mode 2 (c:0x70b720: static 53 "Notice"; c:0x70b8a3: an
+   empty field prints 0x6817's text, else 0x7477).
+8. **Talk lines** -- `npc_service_reader.gd` takes the membership (`in_academy`); "Academy
+   Establishment" -> the fee box -> the 100,000-gold check (c:0x6f7b21) -> 0x7470; "Honor Rank" ->
+   0x7478 -> `academy_honor_window.gd` (GDR_APPRENTICESHIP_HONOR_RANK, ID 154).
+9. **Matching** -- `academy_match_window.gd` (AcademyMatchWindow, GDR_MENTOR_MATCH ID 153) with its
+   register box; READ addresses in the file header. Test `academy_match_window_test.gd` (64 checks).
+10. **Messages** -- `world/academy_flow.gd` (AcademyFlow): banners on GDR_WARNING_WND (0x77b580),
+    lines in the system window type 0, refusals through category 0x1d, nothing for a code without a
+    row (0x000E, 0x6808, ...).
+11. **Chat** -- the client's own '&' gate is the store (AcademyFlow.chat_allowed); the server keeps its
+    OURS 0xf002 (choice 3).
+12. **Character window** -- GDR_PI_HONOR_DATA: the own record's honor, or "N/A".
+13. **Maps** -- the academy loop before the party's (c:0x663bc2..): not the player, online, the same
+    world; the 8 x 8 dot under 47 map pixels, else the **32 x 32** arrow (corners +-16.0, where the
+    party's are +-8.0); the world map's wmap_sign_apprenticeship at the party's places.
+14. **Buffs** -- kind 7 tc_reserve_buff, kind 8 tc_amends_buff (READ c:0x7ff360..0x7ff382), times
+    minutes x 60000 + 1, kind 7's 1,440 minutes; a click on kind 7 with an hour or more asks
+    `UIIT_CTL_TC_PASS_BUFF` and sends 0x7483 {}.
+15. **Character select** -- the delete refusal from the list record's academy byte
+    (CharacterSelect.delete_refusal).
+
+### QA (real input through the client, the messages through NetClient's decode path)
+
+`OPENSRO_QA_INPUT` gained `acapkt:<fixture>` / `acahex:<op>:<hex>` (a message through
+NetClient._dispatch), `acarow:<i>` (a real click on row i's button), `acabox:yes|no` (a real click on
+the open box's button), `acajudge:<i>` and `acareport`. Three runs at 1280 x 1024 on a lane server
+(the dev server; the academy messages fed): the guardian (Guardian1) founding, a member joining and
+logging on, Banish -> box -> `7473 09004e6f76696365303031`, Dismiss -> box -> `7471`, `B471 02 1d68 ..`
+-> "Academy disbandment will not be allowed for next 7 days after Academy establishment.", the
+notice line -> the contents panel, the pencil -> the writer titled "Notice"; the apprentice
+(Novice001): the invitation box -> `3080 0101`, `0a 01` -> "Joined Academy." and the window open, the
+log-on line "Guardian [Guardian1] has logged on to the game.", Leave -> its box, max level 40 ->
+"Graduate" -> the evaluation window -> Very satisfied -> `7475 04`, Matching -> `747D 00`, `B478 01 00`
+-> the empty ranking, a guardian position -> the minimap arrow, `3C82` / `B483` -> the two buff icons.
+
+MEASURED, the original against this client at 1280 x 1024:
+- the academy window: the same layout pixel for pixel horizontally (frame edge x 80); its labels'
+  glyphs about 4 px lower and narrower -- the render box has no Tahoma, so the UI face falls back to
+  Arial (the log's `UiBuilder: UI face 'Tahoma' ... fallback ... (Arial)`), as for every window;
+- the matching window: frame edges at x 249 / 260 / 276 / 990..1006 in both; the ranking window:
+  x 385 / 388 / 402 / 876 / 879 / 892 / 896 in both;
+- the questions: 151 high for one line and 168 for two in both; their widths follow the face (the
+  disband line draws 433 px in the original's face, 377 in the box's Arial).
+
+### Differs, not changed (unsure / not academy's)
+
+- The main popup (all its tabs) sits at y 262 here; the original's at y 442 at 1280 x 1024
+  (MEASURED). The ranking and matching windows sit 22 px lower in the original than centred
+  (MEASURED; c:0x798b70 centres, so they are placed some other way: OPEN).
+- The evaluation radio's labels are 0x50 wide at a 0x46 pitch (READ); with Arial their texts overlap.
+
+### Spec changes (docs/protocol/academy.md)
+
+The joiner's entry for the others carries play state **1** (MEASURED twice); the client reads 0x3C80 05
+fields 1, 2, 3, 6, 7 only (c:0x6e9674); the own "Academy Notice" line needs a title (c:0x6e9223);
+0x3C80 0a 02 shows only the code's text (c:0x8a2fd5); where each line is drawn; the notice writer's
+mode 2 (c:0x70b720, c:0x70b8a3); the invitation box's sizing and timer; the judge window's caption
+(registry ID 155) and radio; the honor ranking's registry entry and "%d(%d)%s" level cell
+(c:0x8082b1); the buff icons' art; the map marks' sizes; the matching board's type byte, 0x747A /
+0x747B's u32s, 0xB47A's last u32, 0xB47D's header order, delete without a question, the self-delete
+on a full role, the enable rules (READ in the matching window's header).
+
+### OPEN
+
+0x747E's push to the guardian and 0x347F (the board's join question); 0x3C80 04's kind byte; the
+banking formula and when the server sends 0x3C82; kind 8's total; the HUD's under-40 hint control;
+the placement rule of the ranking and matching windows.
+
+### Gates
+
+`remote_godot.sh check`: ALL LOAD (1156 scripts). `remote_godot.sh tests`: "ran 440 suite(s), 0 failing". UI-only round (the
+minimap marks are UI): no perf gate.
+
 ## Eight-hundred-and-sixty-fifth round, stage 1 (spec): the academy
 
 The user: "Let's add the academy system fully. Make sure you're comparing against the original

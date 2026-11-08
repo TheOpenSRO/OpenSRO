@@ -220,8 +220,9 @@ static func _pp_parse_greetings(data: PackedByteArray) -> Dictionary:
 ##   * 3 -> item 3, STOREHOUSE_STRID; then item 0x2d, UIIT_STT_TC_OPEN, when
 ##     the byte at +0x20 of that block is 0 and the player's level
 ##     (+0x868) is above 0x3b, and item 0x2e, UIIT_STT_TC_HONOR_RANKING,
-##     always (0x700b73..0x700bb4). OpenSRO has no academy, so the +0x20 byte
-##     is taken as 0 (OURS: the block's writer is not read);
+##     always (0x700b73..0x700bb4). Round 865: the +0x20 byte is the camp
+##     record's valid flag (c:0x987140), set by 0x99ace0 when a camp is read
+##     -- AcademyState.in_academy(), passed as `in_academy`;
 ##   * 0x20 -> item 0x2f, UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM;
 ##   * 7 -> item 9 (the lookup of 5 before it only positions the iterator);
 ##     9 -> item 0x10; 8 -> item 10 (gate_services' three);
@@ -250,7 +251,8 @@ static func _pp_parse_greetings(data: PackedByteArray) -> Dictionary:
 ## the SN_ tokens live in the NPC text tables, so their fallback is the token
 ## and World3D resolves them (_resolve_any_text).
 static func services_from_ids(ids: PackedByteArray, store_lines: Array = [], guild_id: int = -1,
-		guild_master: bool = false, player_job_kind: int = 0, player_level: int = 0, job_alias_empty: bool = true) -> Array:
+		guild_master: bool = false, player_job_kind: int = 0, player_level: int = 0, job_alias_empty: bool = true,
+		in_academy: bool = false) -> Array:
 	var out: Array = []
 	if ids.has(2):
 		out.append(Service.new("talk", "Talk to this person.", TALKSTART_STRID))
@@ -261,7 +263,7 @@ static func services_from_ids(ids: PackedByteArray, store_lines: Array = [], gui
 				str(line.get("name_strid", ""))))
 	if ids.has(3):
 		out.append(Service.new("storage", "Storage", STOREHOUSE_STRID))
-		if player_level > ACADEMY_OPEN_ABOVE_LEVEL:
+		if not in_academy and player_level > ACADEMY_OPEN_ABOVE_LEVEL:
 			out.append(Service.new("academy_open", "Academy Establishment", ACADEMY_OPEN_STRID))
 		out.append(Service.new("honor_rank", "Honor Rank", HONOR_RANKING_STRID))
 	if ids.has(0x20):

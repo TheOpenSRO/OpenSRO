@@ -267,6 +267,15 @@ func setup(layout_data: Variant = null) -> void:
 	_marks_root.size = APERTURE_RECT.size
 	_marks_root.mouse_filter = MOUSE_FILTER_IGNORE
 	add_child(_marks_root)
+	# Round 865: the academy's marks, drawn before the party's (READ: the
+	# academy loop precedes the party loop in vslot_013).
+	_academy_root = Control.new()
+	_academy_root.name = "AcademyMarks"
+	_academy_root.mouse_filter = MOUSE_FILTER_IGNORE
+	_marks_root.add_child(_academy_root)
+	if _ui_builder != null:
+		_academy_dot_tex = _ui_builder.load_texture(PartyMapMarks.ACADEMY_DOT_DDJ)
+		_academy_arrow_tex = _ui_builder.load_texture(PartyMapMarks.ACADEMY_ARROW_DDJ)
 	_party_root = Control.new()
 	_party_root.name = "PartyMarks"
 	_party_root.mouse_filter = MOUSE_FILTER_IGNORE
@@ -588,6 +597,49 @@ func update_party(player_local: Vector2, members_local: PackedVector2Array) -> v
 		_party_dots[i].visible = false
 	for i in range(arrows, _party_arrows.size()):
 		_party_arrows[i].visible = false
+
+## Round 865: the academy's members (PartyMapMarks' academy rule): the 8 x 8
+## dot at the offset under 47 map pixels, else the 32 x 32 arrow on the rim,
+## turned toward the member. Pooled like the party's.
+var _academy_root: Control
+var _academy_dot_tex: Texture2D
+var _academy_arrow_tex: Texture2D
+var _academy_dots: Array[TextureRect] = []
+var _academy_arrows: Array[TextureRect] = []
+
+func update_academy(player_local: Vector2, members_local: PackedVector2Array) -> void:
+	if _academy_root == null:
+		return
+	var centre := APERTURE_RECT.size / 2.0
+	var dots := 0
+	var arrows := 0
+	for i in members_local.size():
+		var off := PartyMapMarks.minimap_offset(player_local, members_local[i], _tile_px)
+		if PartyMapMarks.is_arrow(off):
+			var mark := _party_mark(_academy_arrows, _academy_root, arrows, "academyarrow", _academy_arrow_tex,
+				PartyMapMarks.ACADEMY_ARROW_SIZE)
+			arrows += 1
+			mark.rotation = PartyMapMarks.arrow_rotation(off) + PartyMapMarks.TRANSPOSE_TURN
+			mark.position = centre + PartyMapMarks.arrow_centre(off) - PartyMapMarks.ACADEMY_ARROW_SIZE / 2.0
+		else:
+			var mark := _party_mark(_academy_dots, _academy_root, dots, "academydot", _academy_dot_tex, PartyMapMarks.DOT_SIZE)
+			dots += 1
+			mark.rotation = PartyMapMarks.TRANSPOSE_TURN
+			mark.position = centre + off - PartyMapMarks.DOT_SIZE / 2.0
+	for i in range(dots, _academy_dots.size()):
+		_academy_dots[i].visible = false
+	for i in range(arrows, _academy_arrows.size()):
+		_academy_arrows[i].visible = false
+
+## How many academy dots and arrows are shown (tests, the QA log).
+func academy_marks_shown() -> Vector2i:
+	var d := 0
+	var a := 0
+	for m in _academy_dots:
+		d += 1 if m.visible else 0
+	for m in _academy_arrows:
+		a += 1 if m.visible else 0
+	return Vector2i(d, a)
 
 ## The `index`th mark of `pool`, made on first use (a frame with a settled
 ## party allocates nothing), shown when it has art.

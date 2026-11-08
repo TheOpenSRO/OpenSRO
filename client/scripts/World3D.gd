@@ -2699,6 +2699,7 @@ func _try_initialize_pk2_ui() -> void:
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
 	_job_setup()
+	_academy_setup()
 	# A body dressed before the panels existed gets its paper doll now, as
 	# the portrait does above (round 695: a QA run's loadout dresses before
 	# the HUD is built, and _refresh_paper_doll returns without panels).
@@ -2899,13 +2900,17 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.is_gm = _is_gm
 	# 0x7ad400's own refusals need the groups the player is in (round 634's
 	# review): the party from the client's party state (round 711), the guild
-	# from the kept guild info; OpenSRO has no academy.
+	# from the kept guild info; round 865: the academy from its store
+	# (0x987140, the camp record's valid flag; academy.md choice 3: the
+	# server keeps its OURS 0xf002 answer as well).
 	_hud_chat.group_check = func(t: int) -> bool:
 		match t:
 			HudChat.TYPE_PARTY:
 				return NetClient.party.in_party
 			HudChat.TYPE_GUILD:
 				return NetClient.last_guild_result != null and NetClient.last_guild_result.guild_id != 0
+			HudChat.TYPE_ACADEMY:
+				return AcademyFlow.chat_allowed(NetClient.academy)
 		return false
 	# Round 844: the union's requests, boxes and chat prefix (UnionWorld).
 	_union_world = UnionWorld.new(self)
@@ -3872,6 +3877,9 @@ func _refresh_minimap() -> void:
 	_minimap_others_sync()
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others, _minimap_uniques)
 	_fill_party_marks(_minimap_region)
+	# Round 865: the academy's members, drawn before the party's.
+	_fill_academy_marks(_minimap_region)
+	_hud_minimap.update_academy(Vector2(local.x, local.z), _academy_marks_mini)
 	_hud_minimap.update_party(Vector2(local.x, local.z), _party_marks_mini)
 	_update_quest_signs(_minimap_region, Vector2(local.x, local.z))
 	# The world map every frame only while it is open; hidden, on the old
@@ -3879,6 +3887,7 @@ func _refresh_minimap() -> void:
 	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
 			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
 		_hud_worldmap.update_player(rx, ry, local, facing)
+		_hud_worldmap.update_academy(_academy_marks_regions, _academy_marks_pos)
 		_hud_worldmap.update_party(_party_marks_regions, _party_marks_pos, _party_marks_names, NetClient.party.job_party)
 	# OPENSRO_QA_WALK runs log what the minimap was told, twice a second,
 	# so a facing test is read from the log, not a frame (round 630).
@@ -19362,6 +19371,8 @@ func _qa_input_step() -> void:
 			# the map, the scroll).
 			_qa_input_report = "%s visible=%s %s" % [action, _hud_worldmap.visible if _hud_worldmap != null else false,
 				_hud_worldmap.quest_report() if _hud_worldmap != null else "(no world map)"]
+		"acapkt", "acahex", "acarow", "acabox", "acajudge", "acareport":
+			_qa_input_report = "%s -> %s" % [action, _qa_academy_step(kind, arg)]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
 			_qa_input_report = "%s %s" % [action, _hud_panels.qa_guild_report() if _hud_panels != null else "{}"]
@@ -28930,7 +28941,7 @@ func _npc_services(code: String, ids: Variant = null) -> Array:
 	if not _talk_shop_def.is_empty():
 		store_lines = NpcShopDefNet.store_lines(_talk_shop_def)
 	var out := NpcServiceReader.services_from_ids(id_set, store_lines, _guild_id, _guild_master, NetClient.job_kind,
-		_player_level, NetClient.job_alias == "")
+		_player_level, NetClient.job_alias == "", NetClient.academy.in_academy())
 	# Round 844: the guild storage's line is red below guild level 2.
 	if NetClient.guild_data.level < GuildStorageController.MIN_LEVEL:
 		NpcTalkView.line_colours["guild_storage"] = NpcTalkView.COLOUR_MENU_LOW_LEVEL
@@ -29174,6 +29185,10 @@ func _on_npc_service_selected(key: String) -> void:
 	# Round 799: a job guild's lines (JobGuildFlow; their requests name the
 	# NPC, no 0x7046 open).
 	if _job_flow != null and _job_flow.handle_service(key):
+		return
+	# Round 865: the storage keeper's academy lines (AcademyFlow: the fee
+	# box then 0x7470, or 0x7478 at once).
+	if _academy_flow != null and _academy_flow.handle_service(key):
 		return
 	# A server NPC's store, storage and talk lines (round 727): the open
 	# request 0x7046 with the line's id (CIF_NPCTalk::FUN_007020c0: kind 1 ->
@@ -41053,3 +41068,201 @@ func _select_cos(uid: int) -> void:
 		return
 	# A CICCos's ring (GroundMarkers.Kind.COS, round 698's census).
 	_ground_markers.attach("cos:%d" % uid, GroundMarkers.Kind.COS, body.global_position)
+
+# --- The academy (round 865, AcademyFlow) -----------------------------------------
+
+var _academy_flow: AcademyFlow = null
+
+func _academy_setup() -> void:
+	_academy_flow = AcademyFlow.new(self, _hud_panels)
+	_academy_flow.attach_board(_hud_buff_board)
+	_hud_panels.set_academy_hooks({
+		"own_portrait": _party_own_portrait,
+		"portrait_of": _academy_portrait_of,
+	})
+	# The store changed: the talk menu's academy line follows the membership
+	# (c:0x700b10..0x700b9d reads the store's valid flag).
+	NetClient.academy.changed.connect(_refresh_open_talk_menu)
+
+## Invite's object (c:0x821f00): the selected player, or a selected COS's
+## owner (c:0x9ce910 -> [owner+0xf8]); 0 for none or the player itself.
+func _academy_selected_target() -> int:
+	var uid := _party_selected_target()
+	if uid != 0:
+		return uid
+	if _selected_cos >= 0:
+		var rec: CosSpawnNet.Record = _cos_recs.get(_selected_cos)
+		if rec != null and rec.owner_uid != 0 and (_own_id() < 0 or rec.owner_uid != (_own_id() & 0xffffffff)):
+			return rec.owner_uid
+	return 0
+
+## A spawned player's name by uid (obj+0x114), "" when unknown.
+func _academy_name_of(uid: int) -> String:
+	return String((NetClient.user_guilds.get(uid, {}) as Dictionary).get("name", ""))
+
+## A member's 3D head from its model (0x6e8910: a 64x64 render of the
+## RefObjID's body, "Bip01 Head"), cached by model; null without one.
+var _academy_portraits := {}
+
+func _academy_portrait_of(m: AcademyNet.Member) -> Texture2D:
+	if m == null or m.ref_obj_id <= 0:
+		return null
+	var p: PlayerPortrait = _academy_portraits.get(m.ref_obj_id)
+	if p == null:
+		var got := _party_portrait_body(m.ref_obj_id)
+		if got.is_empty() or got[0] == null:
+			return null
+		p = PlayerPortrait.new()
+		p.name = "AcademyPortrait%d" % m.ref_obj_id
+		p.size = Vector2i(HudQuickParty.PORTRAIT_BUFFER, HudQuickParty.PORTRAIT_BUFFER)
+		ui_control.add_child(p)
+		p.set_character(got[0] as Skeleton3D, got[1] if got.size() > 1 else null)
+		_academy_portraits[m.ref_obj_id] = p
+	return p.get_texture()
+
+## The academy's map marks (PartyMapMarks' academy rule, c:0x663bc2..): for
+## the minimap each drawn member's ground position in the player's region,
+## for the world map its region word and position. A member's position is the
+## live body named by its record's display name (+0x28, 0x9c35e0) when one is
+## spawned, else the record's region and (x, 0, z) (0x9ecfd0). Field only:
+## a member in a dungeon is placed by its record's dungeon space (the party's
+## rule).
+var _academy_marks_mini := PackedVector2Array()
+var _academy_marks_regions := PackedInt32Array()
+var _academy_marks_pos := PackedVector3Array()
+var _academy_uid_by_name := {}
+var _academy_uid_by_name_size := -1
+
+func _academy_body_named(display_name: String) -> Node3D:
+	if display_name == "":
+		return null
+	if _academy_uid_by_name_size != NetClient.user_guilds.size():
+		_academy_uid_by_name_size = NetClient.user_guilds.size()
+		_academy_uid_by_name.clear()
+		for uid in NetClient.user_guilds:
+			_academy_uid_by_name[String((NetClient.user_guilds[uid] as Dictionary).get("name", ""))] = uid
+	var uid = _academy_uid_by_name.get(display_name)
+	if uid == null or not _other_bodies.has(uid):
+		return null
+	return _other_bodies[uid] as Node3D
+
+func _fill_academy_marks(here_region: Vector2i) -> void:
+	var st := NetClient.academy
+	_academy_marks_mini.resize(0)
+	_academy_marks_regions.resize(0)
+	_academy_marks_pos.resize(0)
+	if not st.in_academy() or here_region.x < 0 or _minimap_group == null or not is_instance_valid(_minimap_group):
+		return
+	var own := st.own_member()
+	var own_world: int = own.world_id if own != null and own.world_id != 0 else -1
+	var me := NetClient.current_character_name
+	var player_region: int = ((here_region.x & 0xFF) << 8) | (here_region.y & 0xFF)
+	for id in st.order:
+		var m: AcademyNet.Member = st.members[id]
+		if not PartyMapMarks.academy_draws(m, me, own_world):
+			continue
+		if not PartyMapMarks.region_visible(m.region, player_region, false):
+			continue
+		var at: Vector2
+		var body := _academy_body_named(m.display_name)
+		if body != null and is_instance_valid(body) and body.is_inside_tree():
+			var l := _minimap_group.to_local(body.global_position)
+			at = Vector2(l.x, l.z)
+		else:
+			at = PartyMapMarks.record_local(here_region, m.region, float(m.x), float(m.z))
+		_academy_marks_mini.append(at)
+		_academy_marks_regions.append(player_region)
+		_academy_marks_pos.append(Vector3(at.x, float(m.y), at.y))
+
+## The academy window's Matching button (c:0x6e8770 -> 0x79c420(1)).
+func _academy_open_matching() -> void:
+	if _hud_panels != null:
+		_hud_panels.open_academy_match()
+
+## OPENSRO_QA_INPUT's academy actions (round 865): a fixture through the
+## real decode path, a click on a row's button or a box's answer, a report.
+func _qa_academy_step(kind: String, arg: String) -> String:
+	match kind:
+		"acapkt":
+			var f := FileAccess.open("res://scripts/net/fixtures/academy/%s.hex" % arg, FileAccess.READ)
+			if f == null:
+				return "no fixture %s" % arg
+			var data := PackedByteArray()
+			for tok in f.get_as_text().split(" ", false):
+				if tok.strip_edges() != "":
+					data.append(tok.strip_edges().hex_to_int())
+			var op := ("0x" + arg.get_slice("_", 0)).hex_to_int()
+			NetClient.qa_receive(op, data)
+			return "fed 0x%04X (%d bytes)" % [op, data.size()]
+		"acahex":
+			var op := ("0x" + arg.get_slice(":", 0)).hex_to_int()
+			var data := arg.get_slice(":", 1).hex_decode()
+			NetClient.qa_receive(op, data)
+			return "fed 0x%04X %s" % [op, data.hex_encode()]
+		"acarow":
+			var pane := _hud_panels.academy_pane if _hud_panels != null else null
+			var b := pane.row_node(int(arg), "GDR_APPRENTICESHIPSLOT_BTN_EXITFROMAPPRENTICESHIP") if pane != null else null
+			if b == null or not b.is_visible_in_tree():
+				return "row %s button not shown" % arg
+			_qa_push_click(b.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			var rh := get_viewport().gui_get_hovered_control()
+			return "clicked row %s button '%s' at %s (hovered %s)" % [arg, AcademyWindow.text_of(b), b.get_global_rect().get_center(),
+				rh.get_path() if rh != null else "nothing"]
+		"acabox":
+			var box: AcademyMsgBox = null
+			for n in _hud_panels.get_children():
+				if n is AcademyMsgBox and (n as Control).visible and not n.is_queued_for_deletion():
+					box = n
+			if box == null:
+				return "no academy box"
+			var btn := box.yes_button() if arg == "yes" else box.no_button()
+			if btn == null:
+				return "no button"
+			_qa_push_click(btn.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			return "clicked %s on box %s (%s) size %s at %s" % [arg, box.kind, box.caption.text if box.caption != null else "", box.size, box.position]
+		"acajudge":
+			var jw: HudWindow = _hud_panels._windows.get("academy_judge") if _hud_panels != null else null
+			var j := AcademyJudgeWindow.of(jw)
+			if j == null or not jw.visible:
+				return "no judge window"
+			var dot := jw.node(AcademyJudgeWindow.RADIO).get_node_or_null("Item%s" % arg) as Control
+			if dot == null:
+				return "no item %s" % arg
+			_qa_push_click(dot.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			return "clicked judge item %s" % arg
+		"acareport":
+			return _qa_academy_report()
+	return ""
+
+func _qa_academy_report() -> String:
+	var st := NetClient.academy
+	var parts: Array = ["in=%s guardian=%s" % [st.in_academy(), st.am_guardian()]]
+	if st.camp != null:
+		parts.append("camp=%d rank=%d notice=[%s|%s]" % [st.camp.camp_id, st.camp.rank, st.camp.notice_title, st.camp.notice_content])
+	for id in st.order:
+		var m: AcademyNet.Member = st.members[id]
+		parts.append("%s(c%d g%d %d/%d st%d w%x r%d %d,%d,%d '%s')" % [m.name, m.member_class, m.grade, m.cur_level, m.max_level,
+			m.play_state, m.world_id, m.region, m.x, m.y, m.z, m.display_name])
+	var pane := _hud_panels.academy_pane if _hud_panels != null else null
+	if pane != null:
+		for n in ["GDR_APPRENTICESHIP_STATIC_NAME", "GDR_APPRENTICESHIP_STATIC_LEVEL_DATA", "GDR_APPRENTICESHIP_STATIC_RANK_NAME",
+				"GDR_APPRENTICESHIP_NOTIFY_SUBJECT"]:
+			var c := pane.node(n)
+			parts.append("%s='%s'%s" % [n.trim_prefix("GDR_APPRENTICESHIP_"), AcademyWindow.text_of(c), "" if c != null and c.visible else "(hidden)"])
+		for n in ["GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN", "GDR_APPRENTICESHIP_BTN_INVITE", "GDR_APPRENTICESHIP_NOTIFY_EDIT_BTN",
+				"GDR_APPRENTICESHIP_BTN_MATCH"]:
+			var b := pane.node(n) as BaseButton
+			parts.append("%s=%s" % [n.trim_prefix("GDR_APPRENTICESHIP_"), "off" if b == null or b.disabled else "on"])
+		for i in AcademyWindow.SLOTS:
+			var m := pane.row_member(i)
+			if m == null:
+				continue
+			var b := pane.row_node(i, "GDR_APPRENTICESHIPSLOT_BTN_EXITFROMAPPRENTICESHIP") as BaseButton
+			parts.append("row%d=%s '%s' '%s' [%s %s]" % [i, m.name, AcademyWindow.text_of(pane.row_node(i, "GDR_APPRENTICESHIPSLOT_STATIC_LEVEL_DATA")),
+				AcademyWindow.text_of(pane.row_node(i, "GDR_APPRENTICESHIPSLOT_STATIC_RANK_NAME")), AcademyWindow.text_of(b),
+				"off" if b == null or b.disabled else "on"])
+	var sent: Array = []
+	for e in NetClient.academy_sent:
+		sent.append("%04X:%s" % [int(e[0]), (e[1] as PackedByteArray).hex_encode()])
+	parts.append("sent=[%s]" % ",".join(sent))
+	return " ".join(parts)
