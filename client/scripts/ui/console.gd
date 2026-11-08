@@ -22,7 +22,10 @@ const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wi
 ## server (which refuses a non-GM). Mirrors server/internal/gm's dispatcher.
 ## server/internal/gm's TestConsoleListsEveryCommand keeps the two in step
 ## (round 837: /silk and eight older commands were missing here).
-const GM_COMMANDS := ["tp", "goto", "give", "item", "avatar", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "hwan", "notice", "invsize", "speed", "hurt", "afflict", "hour", "ban", "block", "unblock", "blockinfo", "chatban", "unchatban", "tradeban", "untradeban", "questblock", "jobexp", "jobweek", "guildlevel", "guildperm", "guildabsent", "guildgp", "union", "guildwar", "silk", "lottery"]
+## Round 865 stage 3: /academytime (OURS, QA: moves the academy's clock) is
+## run by session/gm.go ahead of the dispatcher, and forwarded like the other
+## QA commands (/hour, /jobweek, /guildabsent).
+const GM_COMMANDS := ["tp", "goto", "give", "item", "avatar", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "hwan", "notice", "invsize", "speed", "hurt", "afflict", "hour", "ban", "block", "unblock", "blockinfo", "chatban", "unchatban", "tradeban", "untradeban", "questblock", "jobexp", "jobweek", "guildlevel", "guildperm", "guildabsent", "guildgp", "union", "guildwar", "silk", "lottery", "academytime"]
 
 ## Set from the server's GM probe reply; decides whether help shows the GM
 ## line and its window shows the GM section.

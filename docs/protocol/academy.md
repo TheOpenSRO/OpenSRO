@@ -556,11 +556,22 @@ has `server/internal/timedjob` for them.
   Point" (`GDR_PI_HONOR_DATA`; `UIIT_STT_TC_CAMP_NOT_JOIN` "N/A" outside an academy;
   READ c:0x6b8aab).
 - **Spending:** the honor store. MEASURED: the storage keeper's store line "Purchase/
-  Sell Honor Items" (a normal store line from its shop tabs, offered to anyone) opens a
+  Sell Honor Items" (a normal store line from its shop tabs) opens a
   store with an "Honor ..." and an "Alchemy Stone" tab; an item's tooltip shows "Price:
   46000000Gold" and "Honor Point : 2500P", and honor items carry "Available Number of
   Repair (5time/times)". MEASURED: 32 store packages carry an honor-point price (payment
-  device 32), from 10 to 8,000 points, in `STORE_<race>_HONOR_TAB1/2`. READ: an honor
+  device 32), from 10 to 8,000 points; 16 of them are sold, in `STORE_<race>_HONOR_TAB1/2`
+  (round 865 stage 3: the other 16, the `_09_` honor weapons and one repair stone, are on no
+  store tab), so the mall CSV holds 16 `npchonor` rows. **Who sees the line** (round 865
+  stage 3): READ c:0x700a6f..0x700a93 -- at an NPC offering 1 and 3 without 0x0f (a storage
+  keeper) the store lines are added only when c:0x989d20(the player's own name) is true,
+  and c:0x989d20 compares that name with the camp record's guardian name (camp block
+  +0x18): **only the academy's guardian** gets the keeper's store lines. MEASURED: a
+  level-60 non-member at the honor keeper saw "1. Deposit into storage. 2. Academy
+  Establishment 3. Honor Rank 4. End conversation.", the guardian "1. Purchase/ Sell Honor
+  Items 2. Deposit into storage. 3. Honor Rank 4. End conversation." OpenSRO keeps a
+  keeper's store lines for everyone (OURS since round 513, `npc_service_reader.gd`); the
+  user decides. READ: an honor
   price above the member's HonorPoint refuses with 0x18d4 (s:0x617629); the store
   deducts it (payment device bit 32). Honor items cannot be disjointed or take the
   repair-count option except on honor items (`TC_ERROR_NOT_RONDO_HONOR_ITEM`,
@@ -585,8 +596,16 @@ All rects are the layout files' (`Media.pk2` `resinfo\...`).
 ### 10.1 The academy window — `ifapprenticeship.txt`, CIFApprenticeShip (Create c:0x6e9770)
 
 Opened by the key **L** (`UIIT_CTL_TC_SHORTKEY_L` "Academy ( L )"), by the main popup's
-academy pane, and automatically when the player joins (MEASURED). MEASURED at 1280x1024:
-the window "Academy" sits at (82, 442), 384 x 404 outer.
+academy pane, and automatically when the player joins (MEASURED). The pane is the main
+popup's (GDR_MAINPOPUP, registry rect 595,262,388,408), so it sits where the popup does: x by
+the tab (0x50 from the left for the academy tab), y the registry's 262 -- unless the
+client's `Setting\wndpos.dat` holds a saved place (round 865 stage 3, READ: CGInterface::Create
+c:0x78c910 calls c:0x79eb20, which reads version 3, count 10 and the screen size the file was
+written at, and only when that equals the current screen moves ten windows -- registry IDs
+0x19 the main popup, 0xf, 0x13, 0x1a, 0x1c, 0x78, 0x20, 0x2c, 0x87, 0x85 -- to their saved
+x, y; c:0x79e620 writes the file at c:0x788180). MEASURED: the popup drawn at y 416 of 1024
+where that file held y 416 for it; the earlier "(82, 442)" was a measurement 22 px off (the
+whole frame was offset). OpenSRO has no saved window places: its popup starts at 262.
 
 | id | control | rect | art / text | behaviour (READ) |
 |---:|---|---|---|---|
@@ -632,7 +651,9 @@ guardian".
 
 **The button** (READ c:0x6ead69): the guardian sees "Graduate" for an apprentice whose
 max level > 40 or an assistant > 60, else "Banish"; a member sees on its own row
-"Graduate" at >= 40 / >= 60, else "Leave"; every other button is disabled. Clicks per
+"Graduate" at >= 40 / >= 60, else "Leave"; every other row's button is **hidden**
+(ShowWindow(0) at c:0x6eaee7; MEASURED on an apprentice's view: no button on the
+assistant's row). Clicks per
 7.3, 7.4, 7.6, 7.7 (message-box types 100..103, c:0x6ea7e4). MEASURED: guardian sees
 "Banish" on a level-1 apprentice and a level-40 assistant; the apprentice sees "Leave".
 
@@ -653,7 +674,10 @@ selected at open; index -> byte 4, 3, 2, 1, 0; c:0x80867c); 30 BTN_CONFIRM 128,1
 Registry entry GDR_APPRENTICESHIP_HONOR_RANK (ginterface ID 154, 512 x 386, `msgbox2_window_`,
 Text `UIIT_STT_TC_HONOR_RANKING`; a CIFMainFrame). The LEVEL cell is "%d(%d)%s" with the
 `UIIT_STT_LEVEL_LV` text after the numbers (READ c:0x8082b1). MEASURED: the window's left edge
-at x 385 of 1280 (centred), its top at y 341 of 1024 (22 below centred; the rule is OPEN).
+centred: READ c:0x79ac50 (called by the openers c:0x79d180 and, for the matching window,
+c:0x79c420) moves the window to (screen width / 2 - width / 2, screen height / 2 - height / 2)
+from its own size. The earlier "22 below centred" was the same 22 px measuring offset as the
+academy window's (round 865 stage 3).
 Opened by 0xB478 success. MEASURED: title "Honor Rank", columns Rank, Grade, Guardian,
 Level, Graduate, Guild, a page spin "1", Confirm. READ: header buttons 20..25, rows
 30..39 (`ifapprenticeshiphonorslot.txt`, 475 x 24 at y 74 + 23 i), 10 rows a page

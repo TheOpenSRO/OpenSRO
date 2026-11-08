@@ -160,7 +160,7 @@ const ALLOWED := [
 	["scripts/ui/hud/stall_network_window.gd", "tooltip_text", 1, LT + "the stall network's scan button"],
 	["scripts/ui/hud/stall_window_view.gd", "LineEdit", 2, "references only: the original-built chat input; creates none"],
 	["scripts/ui/hud/stall_window_view.gd", "tooltip_text", 1, LT + "the stall's modify button"],
-	["scripts/ui/hud/store_message_box.gd", "LineEdit", 15, "references only: original-built edits; creates none"],
+	["scripts/ui/hud/store_message_box.gd", "LineEdit", 16, "references only: original-built edits; creates none (round 865: the honor row's)"],
 	["scripts/CharacterSelect.gd", "Button", 1, "references only: a node name string (\"Button%d\"); the select screen's buttons are CIFButtons (round 848)"],
 	# --- round 848's shared helpers (the merge) ----------------------------------
 	["scripts/ui/cif_edit.gd", "LineEdit", 2, "CifEdit itself: the original's CIFEdit (round 848) built on LineEdit, and style() for a line made elsewhere"],

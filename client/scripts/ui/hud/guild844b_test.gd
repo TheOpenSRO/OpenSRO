@@ -151,6 +151,16 @@ func _run() -> void:
 	box.build(builder, StoreMessageBox.Kind.BUY, {"name": "Crest", "count": 1, "max": 1, "unit_price": 1000000, "gp_unit_price": 20000})
 	var gp_row := box.get_node_or_null("GPRow")
 	_check(gp_row != null and box.gp_unit_price == 20000, "the buy box has the GP row")
+	# Round 865 stage 3: an honor good's row (c:0x7c43ed `test bl,0x20` ->
+	# 0x7c1a80 kind 5), below the gold row, the count times the points.
+	var hbox := StoreMessageBox.new()
+	root.add_child(hbox)
+	hbox.build(builder, StoreMessageBox.Kind.BUY, {"name": "Stone", "count": 1, "max": 5, "unit_price": 30000, "honor_unit_price": 10})
+	var honor_row := hbox.get_node_or_null("HonorRow") as Control
+	var honor_edit := honor_row.get_node_or_null("GDR_ITEMMALL_CONFIRM_EDIT") as LineEdit if honor_row != null else null
+	_check(honor_row != null and hbox.get_node_or_null("GPRow") == null and honor_edit != null and honor_edit.text == "10",
+		"the buy box has the honor row, 10 points (got %s)" % [honor_edit.text if honor_edit != null else "none"])
+	hbox.queue_free()
 
 	# 5. The vote's event box: caption UIIT_STT_EVENTGUIDE ("Alarm").
 	var ev: PartyMatchConfirm = panels.call("open_guild_event_box", "UIIT_MSG_MRELEASEERR_NOTVOTETIME")

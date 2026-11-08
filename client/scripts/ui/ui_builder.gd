@@ -629,6 +629,10 @@ const BUTTON_STYLE_REPEAT := 0x20
 const DISABLED_CAPTION := Color8(0xe6, 0xe6, 0xe6, 0xff)
 const _ENABLED_CAPTION_META := &"enabled_caption_colour"
 
+## Round 865 stage 3: the disabled caption colour a window set since
+## (set_caption_color), in place of DISABLED_CAPTION.
+const _DISABLED_CAPTION_META := &"disabled_caption_colour"
+
 ## Greys `b`'s caption while it is disabled and gives it back the colour it
 ## had (the layout's, or whatever its window set since) when enabled again.
 static func sync_disabled_caption(b: BaseButton) -> void:
@@ -638,11 +642,29 @@ static func sync_disabled_caption(b: BaseButton) -> void:
 	if b.disabled:
 		if not b.has_meta(_ENABLED_CAPTION_META):
 			b.set_meta(_ENABLED_CAPTION_META, l.get_theme_color(&"font_color"))
-		if l.get_theme_color(&"font_color") != DISABLED_CAPTION:
-			l.add_theme_color_override(&"font_color", DISABLED_CAPTION)
+		var off: Color = b.get_meta(_DISABLED_CAPTION_META, DISABLED_CAPTION)
+		if l.get_theme_color(&"font_color") != off:
+			l.add_theme_color_override(&"font_color", off)
 	elif b.has_meta(_ENABLED_CAPTION_META):
 		l.add_theme_color_override(&"font_color", b.get_meta(_ENABLED_CAPTION_META))
 		b.remove_meta(_ENABLED_CAPTION_META)
+
+## A button's caption colour as the original's text colour setter writes it
+## (round 865 stage 3, READ c:0x8b2b70: all five state colours, +0x10..+0x20,
+## take the one value -- the disabled state 3 too, which slot 40 had set to
+## 0xffe6e6e6). So a colour set while the button is disabled shows at once
+## (MEASURED: the academy window's disabled Dismiss drawn 0xff999999), and a
+## button coloured and later disabled keeps that colour rather than going
+## 0xffe6e6e6. A button never coloured this way keeps the round 848 rule.
+static func set_caption_color(b: BaseButton, c: Color) -> void:
+	var l := b.get_node_or_null("ButtonLabel") as Label
+	b.set_meta(_DISABLED_CAPTION_META, c)
+	if b.disabled:
+		b.set_meta(_ENABLED_CAPTION_META, c)
+	elif b.has_meta(_ENABLED_CAPTION_META):
+		b.remove_meta(_ENABLED_CAPTION_META)
+	if l != null:
+		l.add_theme_color_override(&"font_color", c)
 
 ## Artwork from this directory is a repeating pattern, whatever control
 ## names it. A `CIFStatic` carrying one -- ifguild's `GDR_GUILD_BG` is

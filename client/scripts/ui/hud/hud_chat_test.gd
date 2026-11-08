@@ -285,6 +285,12 @@ func _window_checks(chat_script: Script) -> void:
 	_check(req.get("type") == 4 and req.get("message") == "on my way", "request_for gives the party request")
 	chat.call("on_result", true, 4, int(req.get("index", 0)), 0, "")
 	_check(texts.call(1).back() == "Aria(Party):on my way", "an OK answer shows the player's own party line (got %s)" % [texts.call(1).back()])
+	# Round 865 stage 3: the server's copy of the sender's own party or
+	# academy line is dropped (c:0x877810 cases 4 and 0x10); others are not.
+	var drops: Callable = func(t: int, s: String) -> bool: return HudChat.drops_own_copy(t, s, "Aria")
+	_check(drops.call(0x10, "Aria") and drops.call(4, "Aria"), "the own academy and party copies are dropped")
+	_check(not drops.call(0x10, "Bram") and not drops.call(5, "Aria") and not drops.call(0x10, ""),
+		"another member's academy line, an own guild line and a nameless line are kept")
 	var wreq: Dictionary = chat.call("request_for", "$Ghost hello")
 	chat.call("on_result", false, 2, int(wreq.get("index", 0)), 3, "Ghost")
 	_check(texts.call(0).back() == "Cannot find [Ghost].", "code 3 shows 'Cannot find [Ghost].' (got %s)" % [texts.call(0).back()])

@@ -252,6 +252,11 @@ func _lines_tests() -> void:
 	_check(_texts(pl) == PackedStringArray(["HP Recovery Herb", "", "Sort of item: Potion", "", "Price : 40Gold"]),
 		"a potion: name, sort, price (got %s)" % str(_texts(pl)))
 	_check(pl[0]["color"] == L.WHITE and pl[0]["icon"], "its name is white with the icon")
+	# Round 865 stage 3: an honor store good's honor price after its gold
+	# (c:0x6784a0, 0x679166 `test bl,0x20`; MEASURED "Honor Point : 2500P").
+	var hl := L.compose(pot, {"type_name": "Potion", "price": 30000, "honor_price": 10})
+	_check(_texts(hl).slice(-2) == PackedStringArray(["Price : 30000Gold", "Honor Point : 10P"]) and hl[-1]["color"] == L.WHITE,
+		"an honor good: the honor price line, white, after the gold (got %s)" % str(_texts(hl)))
 
 ## A text file's bytes as the archive stores them: UTF-16LE with its BOM.
 ## Round 795: the COS summon items (UI_SILKMALL 0x684740, 0x6771c0). The rows

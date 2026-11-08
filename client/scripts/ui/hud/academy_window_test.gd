@@ -79,6 +79,14 @@ func _shown(n: Node) -> String:
 		return "(null)"
 	return AcademyWindow.text_of(n as Control)
 
+## A button's or static's text colour as drawn (its override, else the
+## label's theme colour).
+func _font_color(n: Node) -> Color:
+	var l := HudPartyPane._label_of(n as Control)
+	if l == null:
+		return Color(0, 0, 0, 0)
+	return l.get_theme_color("font_color")
+
 ## The pane as HudMainPopup builds it: the Create section with the two extra
 ## sections inside it.
 func _pane(st: AcademyState) -> AcademyWindow:
@@ -127,7 +135,16 @@ func _run() -> void:
 	_test_map_rule()
 	_test_buff_board()
 	_test_char_select()
+	_test_honor_refusal()
 	await _test_flow(table)
+
+## Round 865 stage 3: the honor store's refusal (the server's
+## session.HonorLackReason on OpShopBuyResult) shows the client's own text,
+## as 0x18d4 does in the original's 0xB034 switch (c:0x7b9506).
+func _test_honor_refusal() -> void:
+	var reasons: Dictionary = (load("res://scripts/World3D.gd") as GDScript).get_script_constant_map().get("GUILD_GOODS_REASONS", {})
+	_check(reasons.get("Selected item cannot be purchased due to insufficient amount of honor points.", "") == "UIIT_MSG_TC_LACK_HONOR_POINT",
+		"the honor refusal maps to UIIT_MSG_TC_LACK_HONOR_POINT")
 
 # --- 3 / 4: the academy window -------------------------------------------------------
 
@@ -203,6 +220,12 @@ func _test_window_member() -> void:
 	await process_frame
 	for n in ["GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN", "GDR_APPRENTICESHIP_BTN_INVITE", "GDR_APPRENTICESHIP_NOTIFY_EDIT_BTN"]:
 		_check((w.node(n) as BaseButton).disabled, "a member's %s is disabled (MEASURED greyed)" % n)
+	# Round 865 stage 3: the reset greys Dismiss and the pencil, not Invite
+	# (c:0x6e8c70 colours the pencil twice); MEASURED 230,230,230 on Invite.
+	_check(_font_color(w.node("GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN")) == AcademyWindow.COLOR_GREY,
+		"a member's Dismiss is drawn 0xff999999")
+	_check(_font_color(w.node("GDR_APPRENTICESHIP_BTN_INVITE")) != AcademyWindow.COLOR_GREY,
+		"a member's Invite keeps its layout colour (c:0x6e8c30 never colours it)")
 	_check(not (w.node("GDR_APPRENTICESHIP_BTN_MATCH") as BaseButton).disabled, "Matching stays enabled")
 	_check(_shown(w.row_node(2, "GDR_APPRENTICESHIPSLOT_BTN_EXITFROMAPPRENTICESHIP")) == _text("UIIT_CTL_LEAVE_PARTY"),
 		"the member's own row: Leave (MEASURED)")
@@ -215,10 +238,12 @@ func _test_window_member() -> void:
 		"max level 40: the member's Graduate (>= 40)")
 	w.press_row(2)
 	_check(acts[-1] == [AcademyWindow.ACT_JUDGE, "Novice001"], "an apprentice's Graduate opens the evaluation")
-	# Someone else's row is disabled for a member.
+	# Someone else's row has no button on a member's view (c:0x6eaee7:
+	# ShowWindow(0); round 865 stage 3, MEASURED hidden).
 	st.handle(AcademyNet.OP_PUSH, _fx("3c80_02_joined_asst"))
 	var b0 := w.row_node(0, "GDR_APPRENTICESHIPSLOT_BTN_EXITFROMAPPRENTICESHIP") as BaseButton
-	_check(b0 != null and b0.disabled, "another member's button is disabled")
+	_check(b0 != null and b0.disabled and not b0.visible, "another member's button is hidden")
+	_check(w.row_node(2, "GDR_APPRENTICESHIPSLOT_BTN_EXITFROMAPPRENTICESHIP").visible, "... the member's own is shown")
 	var n := acts.size()
 	w.press_row(0)
 	_check(acts.size() == n, "... and does nothing")
@@ -232,6 +257,15 @@ func _test_window_member() -> void:
 	wa.row_pressed.connect(func(a: String, nn: String) -> void: a2.append(a))
 	wa.press_row(0)
 	_check(a2 == [AcademyWindow.ACT_GRADUATE_ASSISTANT], "an assistant at 60: Graduate from Academy?")
+	# A pane built after the join (the popup first opened in an academy) still
+	# starts from the reset: the member's Dismiss is grey (round 865 stage 3).
+	var sl := _state("Novice001")
+	sl.handle(AcademyNet.OP_PUSH, _fx("3c80_0a_joined"))
+	var wl := _pane(sl)
+	_check(_font_color(wl.node("GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN")) == AcademyWindow.COLOR_GREY
+		and (wl.node("GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN") as BaseButton).disabled,
+		"a pane built inside an academy: the member's Dismiss disabled and grey")
+	(wl._pane as Node).queue_free()
 	(w._pane as Node).queue_free()
 	(wa._pane as Node).queue_free()
 
