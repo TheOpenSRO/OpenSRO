@@ -508,6 +508,9 @@ func reviveWith(ctx context.Context, chars character.Store, mp *mana.Tracker, hu
 		}
 		mp.Refill(characterID, mpNow)
 	}
+	// Round 865: a guardian's honor buffs come back with it (READ
+	// s:0x46cd5e, academylive.go).
+	academyRevived(ctx, characterID)
 	return c, mpNow, nil
 }
 

@@ -516,7 +516,9 @@ func findOwned(list []*character.Character, name string) *character.Character {
 // empty name 0x408 (retail also refuses a quote there: not applied, see
 // below); a name not on the account 0x40b; a guild member or master 0x402
 // (the client refuses those before sending, 0x858b40) -- and, failing closed,
-// a guild lookup that errs (OURS). Academy members cannot occur: OpenSRO has no academy. A
+// a guild lookup that errs (OURS). An academy member is not refused (the client picks its
+// delete box's text from the list's academy byte, READ c:0x858b66; the server's purge removes it,
+// academyCharactersPurged). A
 // character already pending is refused with 0x402 (OURS).
 func (d *LobbyDeps) remove(ctx context.Context, accountID int64, req *LobbyRequest) *LobbyResult {
 	r := &LobbyResult{Action: LobbyDelete}
@@ -652,7 +654,8 @@ func (d *LobbyDeps) list(ctx context.Context, sess *gateway.Session, accountID i
 //     5, each u32 RefItemID and the u8 the client discards; OpenSRO writes
 //     the OptLevel there (INFERRED: what the ShardManager writes into it is
 //     not read, AVATAR_RESEARCH.md 4.2).
-//   - Academy 0: OpenSRO has no academy.
+//   - Academy (round 865): 2 the guardian, 1 an assistant guardian or an
+//     apprentice, 0 none (MEASURED on all three; academyLobbyByte).
 func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time.Time) LobbyCharacter {
 	maxMP := c.MaxMP()
 	mp := maxMP
@@ -665,6 +668,9 @@ func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time
 		HP: uint32(maxInt(c.HP, 0)), MP: uint32(maxInt(mp, 0)),
 		Deleting: c.Deleting(), MinutesLeft: c.MinutesLeft(now),
 	}
+	// Round 865: the academy byte (academylive.go, MEASURED 2 guardian, 1
+	// assistant or apprentice, 0 none).
+	rec.AcademyClass = academyLobbyByte(ctx, c.ID)
 	if class, err := d.guildClass(ctx, c.ID); err == nil {
 		rec.GuildClass = class
 	} else {
@@ -736,6 +742,8 @@ func RunLobbyPurge(ctx context.Context, store character.LobbyStore, interval tim
 		}
 		if len(ids) > 0 {
 			logger.Info("lobby: purged characters whose 7-day deletion ended", "ids", ids)
+			// Round 865: their academy memberships go (academylive.go).
+			academyCharactersPurged(ctx, ids)
 		}
 	}
 	purge()

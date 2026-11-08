@@ -53,10 +53,11 @@ var parked = map[string]string{
 
 	// Recovered rule sets with no system in OpenSRO to attach to. Each one
 	// says so in its own package doc; this is the index of them.
-	"academy":     "recovered training-camp rules; OpenSRO has no training camp",
-	"arena":       "recovered battle-arena shape; its own doc opens 'OpenSRO has no arena'",
-	"persistence": "the recovered DB surface of the real server, a specification rather than a store",
-	"siege":       "recovered fortress-war rules; its own doc says OpenSRO 'is not about to grow one'",
+	// "academy" left this map in round 865: session/academy.go imports it
+	// (the academy, with its store); "persistence" with it (the academy's
+	// schema, persistence.AcademySchema).
+	"arena": "recovered battle-arena shape; its own doc opens 'OpenSRO has no arena'",
+	"siege": "recovered fortress-war rules; its own doc says OpenSRO 'is not about to grow one'",
 
 	// "ai" left this map in round 537: session/monsterai.go imports it and
 	// drives the state machine behind cmd/server's -monster-ai (off by

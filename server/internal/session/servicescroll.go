@@ -1430,6 +1430,8 @@ func (d *ServiceDeps) rename(ctx context.Context, sess *gateway.Session, data []
 			d.logger().Warn("rename: the friend lists kept the old name", "character_id", owned.ID, "err", err)
 		}
 	}
+	// Round 865: the academy's member row, and its members hear it.
+	academyRenamed(ctx, owned.ID, req.NewName)
 	d.logger().Info("character renamed", "character_id", owned.ID, "from", owned.Name, "to", req.NewName)
 	return reply(true, 0, req.NewName)
 }

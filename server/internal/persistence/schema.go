@@ -1015,3 +1015,67 @@ func ColumnAt(table string, offset int) (string, bool) {
 	}
 	return "", false
 }
+
+// AcademySchema is OpenSRO's PostgreSQL schema for the academy (round 865,
+// internal/academy's SQLStore): the four runtime tables with the columns
+// BoundColumns names for them (docs/protocol/academy.md section 3), the honor
+// bank (a character's points that outlive a membership) and the date of the
+// last honor-rank update. OURS: the table and column spellings (snake case)
+// and the keys; the columns and their meaning are the original's. New tables
+// only: nothing here alters a table another store owns.
+//
+//	academy_camps        _TRAININGCAMP           ID .. Comment
+//	academy_members      _TRAININGCAMPMEMBER     CampID .. HonorPoint, plus join_seq (the join order)
+//	academy_buff_status  _TRAININGCAMPBUFFSTATUS CampID .. BuffType
+//	academy_honor_rank   _TRAININGCAMPHONORRANK  Ranking, CampID, Rank
+//	academy_honor_bank   (CharID, HonorPoint)
+//	academy_rank_update  the last update's date (one row)
+const AcademySchema = `
+CREATE TABLE IF NOT EXISTS academy_camps (
+	id                     BIGSERIAL PRIMARY KEY,
+	creation_date          TIMESTAMPTZ NOT NULL,
+	rank                   INTEGER NOT NULL DEFAULT 5,
+	graduate_count         INTEGER NOT NULL DEFAULT 0,
+	evaluation_point       INTEGER NOT NULL DEFAULT 0,
+	latest_evaluation_date TIMESTAMPTZ NOT NULL,
+	comment_title          TEXT NOT NULL DEFAULT '',
+	comment                TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS academy_members (
+	camp_id           BIGINT NOT NULL REFERENCES academy_camps(id) ON DELETE CASCADE,
+	char_id           BIGINT PRIMARY KEY,
+	ref_obj_id        BIGINT NOT NULL,
+	char_name         TEXT NOT NULL,
+	join_date         TIMESTAMPTZ NOT NULL,
+	member_class      INTEGER NOT NULL,
+	char_joined_level INTEGER NOT NULL,
+	char_cur_level    INTEGER NOT NULL,
+	char_max_level    INTEGER NOT NULL,
+	honor_point       INTEGER NOT NULL DEFAULT 0,
+	join_seq          BIGSERIAL
+);
+CREATE INDEX IF NOT EXISTS academy_members_camp ON academy_members (camp_id);
+CREATE TABLE IF NOT EXISTS academy_buff_status (
+	camp_id           BIGINT NOT NULL REFERENCES academy_camps(id) ON DELETE CASCADE,
+	recipient_char_id BIGINT NOT NULL,
+	buff_slot_idx     INTEGER NOT NULL,
+	donor_char_id     BIGINT NOT NULL DEFAULT 0,
+	starting_time     TIMESTAMPTZ NOT NULL,
+	remain_buff_point INTEGER NOT NULL DEFAULT 0,
+	buff_type         INTEGER NOT NULL,
+	PRIMARY KEY (recipient_char_id, buff_type, buff_slot_idx)
+);
+CREATE TABLE IF NOT EXISTS academy_honor_rank (
+	ranking INTEGER PRIMARY KEY,
+	camp_id BIGINT NOT NULL,
+	rank    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS academy_honor_bank (
+	char_id     BIGINT PRIMARY KEY,
+	honor_point INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS academy_rank_update (
+	id         INTEGER PRIMARY KEY CHECK (id = 1),
+	updated_at TIMESTAMPTZ NOT NULL
+);
+`

@@ -581,6 +581,9 @@ func arrivePlayer(d viewDeps, arrived world.Entity) {
 	others := othersInView(d.hub, arrived)
 	spawnPlayersTo(d, arrived, others)
 	spawnPlayerToOthersAs(d, arrived, others, true, zoneNoticeFrame(zoneNoticeEntered, arrived))
+	// Round 865 (academylive.go): its academy, right after its own spawn
+	// (0x3C81), and its fellow members see it arrive.
+	academyArrived(d.ctx, arrived)
 }
 
 // othersInView is the players in view of e as the hub has them now, e's own

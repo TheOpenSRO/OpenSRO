@@ -122,6 +122,9 @@ type Catalogue struct {
 	// NPCGP is the GP price of each NPC store item with one (round 844,
 	// guildgoods.go): the guild stores' goods.
 	NPCGP map[int64]int64
+	// NPCHonor is the honor-point price of each NPC store item with one
+	// (round 865, honorgoods.go): the honor stores' goods.
+	NPCHonor map[int64]int64
 }
 
 // Shop is the registered shop at (group, index), the lookup s:0x526610 makes
@@ -284,6 +287,7 @@ func Build(t Tables, items func(code string) (Item, bool)) *Catalogue {
 		}
 	}
 	cat.NPCGP = buildNPCGPPrices(packages, npcPackages)
+	cat.NPCHonor = buildNPCHonorPrices(packages, npcPackages)
 	for _, r := range live(t.ShopGroup) {
 		id, err := strconv.Atoi(col(r, 2))
 		if err != nil || !noNPC(col(r, 4)) {

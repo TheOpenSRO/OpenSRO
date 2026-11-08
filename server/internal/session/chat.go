@@ -417,8 +417,24 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		return okResult()
 
 	case ChatAcademy:
-		// OpenSRO has no academy (internal/academy's package comment).
-		return fail(ChatErrNoAcademy, "")
+		// Round 865, READ (s:0x4b1dbf -> s:0x5de760) and MEASURED: 0xB025
+		// {1, 0x10, index} to the sender, then 0x3026 {0x10, name, text} to
+		// every member in the world, the sender included. A non-member keeps
+		// the OURS 0xf002 (the original's own is 0x200f; choice 3 of the
+		// spec: the client refuses first).
+		members := academyChatAudience(ctx, sender.CharacterID)
+		if members == nil {
+			return fail(ChatErrNoAcademy, "")
+		}
+		if err := okResult(); err != nil {
+			return err
+		}
+		for _, id := range members {
+			if e, ok := d.Hub.EntityByCharacterID(id); ok {
+				sendChatUpdate(e.Session, line)
+			}
+		}
+		return nil
 
 	default:
 		// A global or a notice is never a chat request (0x7ad400 sends

@@ -1504,6 +1504,8 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 			forgetCharacterSkillState(left.CharacterID)
 			// Round 821: its fellow guild members see it go offline.
 			guildMemberPresence(context.Background(), left.CharacterID, false)
+			// Round 865: and its academy's (academylive.go).
+			academyLeftWorld(left.CharacterID)
 		}
 		// Nor may it save where the stale session last stood, or tell the
 		// zone the character left: the live session's entity is still there,

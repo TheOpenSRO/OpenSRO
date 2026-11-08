@@ -166,6 +166,8 @@ func reviveByScroll(ctx context.Context, chars character.Store, deps RegenDeps, 
 		}
 		unlock()
 	}
+	// Round 865: a guardian's honor buffs come back with it (academylive.go).
+	academyRevived(ctx, characterID)
 	return c, mpNow, back, nil
 }
 
