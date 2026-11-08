@@ -7483,6 +7483,161 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-fifth round, stage 3: the academy's two halves against each other -- nine seams settled, the client fixed where it differed, the original side by side
+
+The user: "Let's add the academy system fully. Make sure you're comparing against the original
+game and make no mistakes". Stage 2 built the server (lane AS) and the client (lane AC) from
+`docs/protocol/academy.md`, each tested against the spec's bytes but never against each other.
+Stage 3 ran them together -- the lane server on 17661 (in memory, NPC tables, navmesh) with three
+or four real clients at 1280 x 1024, real clicks and keys through `OPENSRO_QA_INPUT` (the talk
+line, the boxes' buttons, the row buttons, the chat line, the notice writer's fields) -- and
+compared each flow with the original's. Labels: READ (`c:` sro_client.exe, `s:` SR_GameServer.exe),
+MEASURED, INFERRED, OURS, OPEN. Base `ca757968`. UI and chat only: no perf gate (no world drawing
+changed).
+
+### The nine seams
+
+1. **The talk window and 0x7470 / 0x7478.** READ: the fee box's Yes (c:0x6f79c0 case 6) sends
+   0x7470 and closes only the box (c:0x6f73d0); the talk line 0x2e sends 0x7478 at once
+   (c:0x7020c0) -- the talk stays open, so the server's "in talk with the NPC" test holds. Ours is
+   the same; in every run the server took 0x7470 and answered `B470 01`. MATCH.
+2. **0x6816 to a non-member's notice** prints category 0x1d's `UIIT_MSG_TC_ERROR_ORDER_WORK`
+   (the client's table has the row). A non-member has no pencil (the reset disables it), so only a
+   forged request meets it. MATCH.
+3. **0x3C81's own entry, 1 at a login and 0 at a teleport.** The client reads either; the member's
+   own 05 field 1 = 0 prints its notice line whatever the slot showed. Live: an apprentice's second
+   session printed `Academy Notice “Hello Academy”` and the guardian `... has logged on ...`; an
+   assistant's zone change (`/goto`) printed its own notice line and nothing to the others.
+   MEASURED in the original: a teleport prints the notice line to the member itself and no line
+   to the others; a logout prints "Novice apprentice [name] has logged out of the game." to the
+   guardian. MATCH.
+4. **The honor store's refusal** -- FIXED. 0x18d4 lands in the original's 0xB034 switch
+   (code - 0x180b = 0xc9, index byte 0x8a, case c:0x7b9506 `push UIIT_MSG_TC_LACK_HONOR_POINT`,
+   then 0x7781b0(5, text) at c:0x7b9693; READ). The client now maps the server's words
+   (`session.HonorLackReason`) to that key beside the guild goods' (`World3D.GUILD_GOODS_REASONS`),
+   and the store's own "Could not buy: ..." status no longer repeats a refusal so mapped (it came
+   twice; the original prints the one line -- this also drops the guild goods' second line).
+   Tests: `academy_window_test` (the map), `session.TestHonorLackReasonMappedByClient` (the words
+   in step with the client). With it, the honor price itself, missing in the client: the store
+   tooltip's "Honor Point : %dP" line after the gold (READ c:0x6784a0, `679166 test bl,0x20`, the
+   package's cost +0x30, white; MEASURED "Honor Point : 2500P") and the buy box's honor row (READ
+   c:0x7c43ed `test bl,0x20` -> 0x7c1a80 kind 5, UIIT_STT_TC_HONOR_POINT / UIIT_STT_SILKMALL_P_POINT),
+   both from the archive's PaymentDevice 32 rows (`HudPanels.honor_price`, read once with the GP
+   prices). Tests: `item_tooltip_lines_test`, `guild844b_test`.
+5. **Academy chat** -- FIXED: the sender saw its own line twice (the 0xB025 echo and the server's
+   0x3026 copy). READ: Chat_OnChatUpdate c:0x877810 case 0x10 compares the sender with the own
+   name (FUN_004e9530 at c:0x877f4d) and drops the copy, as case 4 does for the party; MEASURED in
+   the original: the sender sees "name(Academy):text" once, the input keeps "&".
+   `HudChat.drops_own_copy`, tested in `hud_chat_test`. Live after: one line each way.
+6. **The honor store's prices** (`-mall-csv`'s `npchonor` rows): the steps are in
+   `deploy/README.md`, "The academy (round 865)". MEASURED on the box: an archive whose honor
+   stores sell the honor weapons exports 16 rows (32 packages carry PaymentDevice 32; 16 of them,
+   the `_09_` weapons and one repair stone, are on no store tab); the box's own archive, whose
+   honor tabs are empty, exports 1 (the repair stone, 10 points).
+7. **The main popup at y 262 here, "442" there.** READ: CGInterface::Create (c:0x78c910) calls
+   c:0x79eb20, which reads `Setting\wndpos.dat` -- version 3, count 10, the screen size it was
+   written at -- and, only when that equals the current screen, moves ten windows (registry IDs
+   0x19 the main popup, 0xf, 0x13, 0x1a, 0x1c, 0x78, 0x20, 0x2c, 0x87, 0x85) to their saved x, y;
+   c:0x79e620 writes the file (called at c:0x788180). MEASURED: the popup drew at y 416 where
+   that file held 416 for it; the "442" was 22 px off (the whole frame was offset in that
+   measurement). So 262 is right for a client with no saved places, and the difference is the
+   original's saved window places, which OpenSRO does not have. Not changed (a feature for the
+   user to decide, below).
+8. **The ranking and matching windows "22 px lower".** READ: their openers (c:0x79d180, c:0x79c420)
+   call c:0x79ac50, which moves the window to (screen w / 2 - w / 2, screen h / 2 - h / 2) from
+   its own size: centred, as ours. The 22 px was the same measuring offset. MATCH.
+9. **`/academytime`** joins the console's forwarded GM words (`console.gd` GM_COMMANDS), as the
+   other QA commands are exposed (/hour, /jobweek, /guildabsent); the server runs it ahead of the
+   dispatcher (session/gm.go).
+
+### Fixed in the academy window (MEASURED against the original's views, READ for the rule)
+
+- **Another member's row button is hidden** on a member's view, not drawn disabled: the slot fill
+  (c:0x6eab30) shows the button (+0x5c(1)) for the guardian's view and the member's own row, and
+  ShowWindow(0) otherwise (c:0x6eaee7). MEASURED: no button on the assistant's row of an
+  apprentice's window.
+- **The header buttons' colours.** The reset (c:0x6e8c30, read in the disassembly) enables
+  Matching, colours the pencil 0xff999999, disables Invite, colours the pencil **again** (0x6e8c70
+  writes +0x3b0 where Invite's colour would go), disables the pencil and colours Dismiss
+  0xff999999; Create disabled Dismiss and Invite; a member's refresh never touches them. The text
+  colour setter c:0x8b2b70 writes all five state colours (+0x10..+0x20), the disabled state 3
+  (0xffe6e6e6 from slot 40) included. MEASURED on a member's and a non-member's window: Dismiss
+  grey, Invite 230,230,230 (it drew 0xff999999 here). `UiBuilder.set_caption_color` applies
+  c:0x8b2b70's rule (a colour set while disabled shows; round 848's 0xffe6e6e6 stays for a button
+  never coloured); the pane starts from the reset, as the original's built at world entry does.
+- **The ranking window's Guild head** (a CIFBarWnd on `com_bar02_`, Text `UIIT_CTL_WK_GUILD`) had
+  no word: the builder draws that bar as a 3-slice without text. MEASURED "Guild" over the last
+  column. Captioned as the matching window's Title head; `academy_honor_window_test` (new).
+
+### Flow by flow (ours with real clients; the original with the same roles)
+
+| flow | original | ours | verdict |
+|---|---|---|---|
+| founding | fee box "Confirmation window", 2 lines, Yes/No; 0 gold: "Academy cannot be established due to insufficient amound of gold." in the system log, no packet, talk stays (MEASURED) | the same text and box; 0x7470 with the talk open; B470 01, "An Academy has been established." | MATCH |
+| invite / accept | stage 1 MEASURED | 0x7472 -> box "Join request sent" -> Yes -> `0a 01`, "Joined Academy.", window opens; others "[name] has been added to the Academy." | MATCH |
+| invite / refuse | READ (both sides 0x6811) | both print "Invitation has been refused." | MATCH by READ |
+| invite / 30 s | stage 1 MEASURED (no text) | `B472 02 0e00` and `0a 02 0e00`, nothing printed, the box closes on its own timer | MATCH |
+| the window (guardian, member, non-member) | MEASURED views | the same rows, titles, levels, slot colours; fixed the hidden row button and the header colours | FIXED |
+| notice write / read | writer "Notice", empty fields, Completed/Cancel; contents panel with Confirm and a scroll bar | the same; an empty content prints "You have no notes." and sends nothing | MATCH |
+| chat | once to every member, the sender included | was twice to the sender | FIXED |
+| login / logout / teleport | the lines above | the same lines (wording: see below) | MATCH |
+| minimap / world map | not compared on screen | the members' signs drawn by the READ rule (c:0x663bc2) | not measured |
+| leave / ban / disband | refusals stage 1 MEASURED; success needs a day / a week of the camp's age (not reachable this stage) | refusals 0x6821 on 0xB473, 0x6820, 0x681d + seconds with their texts; after `/academytime 25h` the ban (EXPULSION lines both sides) and the leave (OUT_TRAININGCAMP lines), after `168h` the disband ("DISSOLUTION_SUCCESS", the window reset) | MATCH (refusals); success READ only |
+| graduation | not measured (needs a level-up in the game) | an apprentice at 40: Graduate -> the evaluation window -> 0x7475 04 -> B475 01, "Congratulations" banner, "[2000000]Experience Points gained.", the guardian "[name] has graduated." | READ only |
+| honor ranking | "Honor Rank", empty list, page 1, Confirm; centred; the talk stays | the same; the Guild head fixed | FIXED |
+| honor store | the keeper's store line only for the guardian (see below); "Honor Point : 2500P" on the tooltip (stage 1) | a guardian with 0 points buying the 10-point repair stone: "Selected item cannot be purchased due to insufficient amount of honor points." once; the tooltip and the buy box now carry the honor price; the server's prices need the re-export | FIXED |
+| matching board | "Guardian Matching", empty list; Registration lit for the guardian | the same; registered "Join us": the own row No. 1, 70, CHN, the name, the title, 0, 3/8, grade (5) | MATCH |
+| character select byte | stage 1 MEASURED | `TestLobbyRecordAcademyByte865` | MATCH (test) |
+| what others see | nothing on plates | nothing | MATCH |
+
+### Differs, not changed (OURS or the user's call)
+
+- **The storage keeper's store lines show only to the academy's guardian** in the original (READ
+  c:0x700a6f..0x700a93: with 1 and 3 and no 0x0f, the store line goes in only when c:0x989d20(own
+  name) is true, and c:0x989d20 compares it with the camp record's guardian name, +0x18 of
+  c:0x987130's block; MEASURED: a level-60 non-member at the honor keeper got "1. Deposit into
+  storage. 2. Academy Establishment 3. Honor Rank 4. End conversation.", the guardian "1.
+  Purchase/ Sell Honor Items 2. Deposit into storage. 3. Honor Rank ..."). OpenSRO keeps a
+  keeper's store lines for everyone (OURS since round 513, when neither string's writer was read).
+- **The log-on / log-off lines read "%s [%s] is now Online"** here: the box's archive carries two
+  `UIIT_MSG_TC_CONNECT2` rows and the stock English wins by the user's 2026-10-05 decision
+  (`UiTextTable.select_rows`); an archive with one table reads "... has logged on to the game.".
+- **Saved window places** (`wndpos.dat`, seam 7): the original reopens ten windows where the player
+  left them, per screen size; OpenSRO does not save window places.
+- The render box has no Tahoma: labels, box widths (the ban question 645 wide here, 754 there) and
+  the matching window's "Recruitment Condition" (its "Recruitme" hidden under the combo here,
+  wholly there) differ by the face, as in every window.
+
+### QA (box `/var/tmp/r865q/qa`, runs 3-10; frames in each run's `snap/`)
+
+Run 4: founding, an apprentice and an assistant join, the notice (`7477 0d00 "Hello Academy"
+1000 "Test notice line"` -> `B477 01`, the banner to all), chat. Run 5: a refusal (`3080 020000`
+-> 0x6811 both sides) and two 30 s timeouts. Run 6: an apprentice at 40 graduating itself
+(`7475 04`), a non-member's window. Run 7: the refusals on the clock, then the ban, the leave and
+the disband through `/academytime`. Run 8: the notice's line at a zone change and at a second
+login, the logout line, the matching registration (`747A 00000000 01000000 01 0700 "Join us"` ->
+`B47A 01`), the honor ranking. Run 9 (after the fixes): one chat line each way, no button on
+another member's row, Dismiss grey and Invite 230,230,230 (pixel-measured), the Guild head. Run 10:
+a guardian with 0 honor points at the honor keeper -- the repair stone's tooltip ends "Price :
+30000Gold", "Honor Point : 10P"; the buy box has the Honor Point row (10 P); Buy -> one line
+"Selected item cannot be purchased due to insufficient amount of honor points." (it was two).
+
+### Gates
+
+`cd server && go build ./... && go test ./...` all passing; `remote_godot.sh check` ALL LOAD (1157
+scripts); `remote_godot.sh tests` "ran 441 suite(s)" with one failing, the native-GUI guard counting
+the store box's new typed handle to its builder-made honor edit -- its allowlist raised to 16 and the
+suite re-run: ALL PASS. (An earlier full run had `buff_persist_test` fail once while four clients
+loaded the box; alone it passes, and the final full run passed it.) No perf gate: UI and chat only.
+
+### OPEN
+
+Not measured in the original this stage: leave / ban / disband success (the camp's age), a
+graduation (a level-up in the game), an invitation refused (the original's other player could
+not be selected reliably), the honor store's purchase and its tooltip, the minimap and world map
+signs on screen. Still OPEN from stage 2: 0x3C80 04's kind byte, the exp-buff banking and 0x3C82,
+0x747E's push and 0x347F.
+
 ## Eight-hundred-and-sixty-fifth round, stage 2, lane AS: the academy on the server
 
 The user: "Let's add the academy system fully. Make sure you're comparing against the original

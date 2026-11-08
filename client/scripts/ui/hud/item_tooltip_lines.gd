@@ -408,6 +408,13 @@ static func _price(lines: Array, ctx: Dictionary, t: Callable) -> void:
 	var gp: int = int(ctx.get("gp_price", 0))
 	if gp > 0:
 		_add(lines, "%s : %d%s" % [t.call("UIIT_STT_GUILD_POINT", "Guild point (GP)"), gp, t.call("UIIT_STT_GUILD_POINT_GP", "GP")], WHITE)
+	# Round 865 stage 3: an honor store good's honor-point price, after the
+	# GP's place (c:0x6784a0's `679166 test bl,0x20`: "%s : %I64d%s" of
+	# UIIT_STT_TC_HONOR_POINT, the package's cost +0x30 and
+	# UIIT_STT_SILKMALL_P_POINT, white; MEASURED "Honor Point : 2500P").
+	var honor: int = int(ctx.get("honor_price", 0))
+	if honor > 0:
+		_add(lines, "%s : %d%s" % [t.call("UIIT_STT_TC_HONOR_POINT", "Honor Point"), honor, t.call("UIIT_STT_SILKMALL_P_POINT", "P")], WHITE)
 
 ## Items outside the four equipment builders (consumables, alchemy, quest
 ## items...): their builders (other branches of 0x6860a0) are not read, so

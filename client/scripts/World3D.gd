@@ -2696,6 +2696,9 @@ func _try_initialize_pk2_ui() -> void:
 	# Every floating game window, created on demand.
 	_hud_panels = HudPanels.new(_ui_builder)
 	_hud_panels.name = "HudPanels"
+	# Round 865 stage 3: these refusals print the original's own line
+	# (_on_shop_buy_result); the store's status line stays quiet for them.
+	_hud_panels.mapped_buy_reasons = GUILD_GOODS_REASONS
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
 	_job_setup()

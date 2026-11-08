@@ -3150,6 +3150,7 @@ func _confirm_buy(item_id: int) -> void:
 		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
 		"count": 1, "max": maxi(1, item.max_stack), "unit_price": _shop_prices.get(item_id, -1),
 		"gp_unit_price": guild_gp_price(item_id),
+		"honor_unit_price": honor_price(item_id),
 	}, func(q: int) -> void: _do_buy(item_id, q))
 
 ## Opens one of the store's or the warehouse's confirm boxes on `host_id`'s
@@ -3272,8 +3273,14 @@ func _on_shop_buy_result(ok: bool, reason: String) -> void:
 		if who != "":
 			NetClient.character_stats(who)
 			NetClient.list_inventory(who)
-	else:
+	elif not mapped_buy_reasons.has(reason):
 		_set_shop_status("Could not buy: %s" % reason)
+
+## Refusal words the world prints as the original's own line (World3D's
+## GUILD_GOODS_REASONS: the guild goods' and the honor store's); no second
+## "Could not buy" line for them (round 865 stage 3: the honor refusal came
+## twice; the original's 0xB034 switch prints the one line, c:0x7b9693, READ).
+var mapped_buy_reasons: Dictionary = {}
 
 ## The sell box: CIFMessageBox mode 6, purpose 2 (round 726, StoreMessageBox),
 ## opened when a bag item is put down on the store (CIFStore::vslot_028
@@ -6680,6 +6687,7 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 	# Round 844 lane G part 2: a store good's GP price beside its gold.
 	if price >= 0:
 		ctx["gp_price"] = guild_gp_price(item_id)
+		ctx["honor_price"] = honor_price(item_id)
 	# Round 789: a devil's spirit's ability lines (AvatarTables, READ
 	# c:0x67b460) at its plus.
 	if item.is_devil_spirit():
@@ -10298,17 +10306,40 @@ var _guild_gp_prices = null
 ## goods' packages, one item each, are the only ones with a GP row).
 func guild_gp_price(item_id: int) -> int:
 	if _guild_gp_prices == null:
-		_guild_gp_prices = {}
-		var archive = _builder.media_archive() if _builder != null else null
-		if archive != null:
-			var d := MallData.new().load(func(path: String) -> PackedByteArray:
-				var e = ObjectLoader.find_file(archive, path)
-				return archive.read_file(e) if e != null else PackedByteArray())
-			for code in d.packages:
-				var pk: MallData.Package = d.packages[code]
-				if pk.costs.has(8) and pk.scraps.size() == 1:
-					_guild_gp_prices[(pk.scraps[0] as MallData.Scrap).item_code] = int(pk.costs[8])
+		_load_point_prices()
 	return int(_guild_gp_prices.get(item_code_for_id(item_id), 0))
+
+## The archive's one-item packages priced in guild points (PaymentDevice 8)
+## and in honor points (32, round 865), read once for both.
+func _load_point_prices() -> void:
+	_guild_gp_prices = {}
+	_honor_prices = {}
+	var archive = _builder.media_archive() if _builder != null else null
+	if archive == null:
+		return
+	var d := MallData.new().load(func(path: String) -> PackedByteArray:
+		var e = ObjectLoader.find_file(archive, path)
+		return archive.read_file(e) if e != null else PackedByteArray())
+	for code in d.packages:
+		var pk: MallData.Package = d.packages[code]
+		if pk.scraps.size() != 1:
+			continue
+		var item_code := (pk.scraps[0] as MallData.Scrap).item_code
+		if pk.costs.has(8):
+			_guild_gp_prices[item_code] = int(pk.costs[8])
+		if pk.costs.has(32):
+			_honor_prices[item_code] = int(pk.costs[32])
+
+## Round 865 stage 3: the honor points an NPC store good costs (0 none): the
+## archive's refpricepolicyofitem row with PaymentDevice 32 of the package
+## that holds the item (as the GP's, device 8; READ c:0x6784a0 / c:0x7c43ed
+## read the package's cost +0x30 for bit 0x20).
+func honor_price(item_id: int) -> int:
+	if _honor_prices == null:
+		_load_point_prices()
+	return int(_honor_prices.get(item_code_for_id(item_id), 0))
+
+var _honor_prices = null
 
 # --- The academy (round 865) -------------------------------------------------------
 
