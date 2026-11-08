@@ -7483,7 +7483,7 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
-## Eight-hundred-and-sixty-fifth round, stage 3: the academy's two halves against each other -- nine seams settled, the client fixed where it differed, the original side by side
+## Eight-hundred-and-sixty-fifth round, stage 3: the academy's two halves against each other -- nine seams settled, the client fixed where it differed
 
 The user: "Let's add the academy system fully. Make sure you're comparing against the original
 game and make no mistakes". Stage 2 built the server (lane AS) and the client (lane AC) from
