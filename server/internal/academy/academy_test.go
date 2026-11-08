@@ -459,3 +459,60 @@ func TestInviteAndEntryShareTheirLength(t *testing.T) {
 			"at 0x00651c81 and 86400 is also the ban/leave window", inv, ent, MemberWindowSeconds)
 	}
 }
+
+// Round 865: the guardian is class 0, the role the earlier passes left unnamed.
+func TestGuardianIsClassZero(t *testing.T) {
+	if MemberClassGuardian != 0 || MemberClassSecondGuardian != 1 || MemberClassStudent != 2 {
+		t.Fatalf("classes guardian %d, assistant %d, apprentice %d; want 0, 1, 2",
+			MemberClassGuardian, MemberClassSecondGuardian, MemberClassStudent)
+	}
+}
+
+func TestGraduationLevels(t *testing.T) {
+	cases := []struct {
+		class       int
+		self, force int
+		ok          bool
+	}{
+		{MemberClassStudent, 40, 41, true},
+		{MemberClassSecondGuardian, 60, 61, true},
+		{MemberClassGuardian, 0, 0, false},
+	}
+	for _, c := range cases {
+		self, ok := SelfGraduationLevel(c.class)
+		force, fok := ForcedGraduationLevel(c.class)
+		if self != c.self || ok != c.ok || force != c.force || fok != c.ok {
+			t.Errorf("class %d: self %d/%v forced %d/%v, want %d, %d, %v",
+				c.class, self, ok, force, fok, c.self, c.force, c.ok)
+		}
+	}
+}
+
+func TestEvaluationTable(t *testing.T) {
+	want := [5]int{-3, -1, 1, 3, 5}
+	if EvaluationPoints != want {
+		t.Fatalf("evaluation table %v, want %v", EvaluationPoints, want)
+	}
+}
+
+func TestGraduationHonor(t *testing.T) {
+	cases := []struct{ join, guardian, assistant int }{
+		{1, 39, 3},
+		{20, 20, 2},
+		{30, 10, 1},
+		{31, 0, 0},
+		{39, 0, 0},
+	}
+	for _, c := range cases {
+		g, a := GraduationHonor(c.join)
+		if g != c.guardian || a != c.assistant {
+			t.Errorf("join %d: guardian %d assistant %d, want %d, %d", c.join, g, a, c.guardian, c.assistant)
+		}
+	}
+}
+
+func TestInviteTimeoutCodeIsTruncated(t *testing.T) {
+	if ErrInviteTimeout != 0x680e&0xff {
+		t.Fatalf("timeout code %#x, want the low byte of 0x680e", ErrInviteTimeout)
+	}
+}

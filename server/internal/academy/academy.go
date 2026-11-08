@@ -131,6 +131,14 @@ func PenaltySeconds(id int) (seconds int, ok bool) {
 // (CInstanceTrainingCamp::CheckMembershipLevel), which refuses with
 // TC_ERROR_POSIBLE_41L -- code **0x6822**.
 //
+// ROUND 865: this function is the handler of request 0x7476, the GUARDIAN
+// graduating another member by name (READ from the server's message map; the
+// client sends it from the slot's "Graduate" button, c:0x825100). So these are
+// FORCED-GRADUATION floors, not membership floors: an apprentice can be made to
+// graduate from max level 41, an assistant guardian from 61, matching the text
+// "Forced graduation is possible from level 41." The names below are kept so
+// the recovery stays additive; ForcedGraduationLevel says what they are.
+//
 // CORRECTED 2026-09-17. This comment, docs/protocol/academy.md and the
 // function's Ghidra comment all gave the code as 0x6818. **0x6818 is not in the
 // client's error table at all**; the branch pushes `0x6822`, and 0x6822 is
@@ -285,7 +293,8 @@ func MeetsMembershipLevel(class, level int) bool {
 // CreateRequest is what FUN_004e4680 decides about.
 type CreateRequest struct {
 	// WrongState is the validator's first test, `char[0xc]+4 == 1` -> 0x6808.
-	// What that byte means is not read. The disband validator opens with the
+	// Round 865: that byte is the character lock (docs/protocol/char_lock.md),
+	// held while a DB query or transaction is in flight. The disband validator opens with the
 	// same test, and this field was missing here until that was read on
 	// 2026-09-17: the order below was the binary's minus its first step.
 	WrongState    bool
@@ -339,8 +348,10 @@ const (
 	// "7D" in the refusal's name -- the literal and the name agree, which is
 	// the same pair of facts that grounds ReopenCooldownDays.
 	//
-	// WHICH timestamp is not read: it is a TIMESTAMP_STRUCT at +0x1c on the
-	// camp's record, but no column layout of _TRAININGCAMP is recovered.
+	// WHICH timestamp: +0x1c is CreationDate (round 865, READ from the
+	// _TRAININGCAMP binder; docs/protocol/academy.md). MEASURED: 20 min 11 s
+	// after a founding the refusal carried 603,589 s, which is 604,800 less
+	// the time since the minute-rounded CreationDate.
 	DisbandWindowSeconds = 0x93a80
 
 	// DisbandNotInCamp is what the validator returns when the caller is in no
@@ -350,11 +361,17 @@ const (
 	DisbandNotInCamp = 3
 
 	// MemberClass0 is the only class TrainingCamp_IsMemberClass0 admits, and so
-	// the only class that may disband. It is named by value on purpose: class 1
-	// is the second guardian and class 2 the student, each read from a count
-	// function behind an engine refusal, but nothing read yet says what class
-	// 0 is. "The founder" is the obvious guess and is not recorded as a fact.
+	// the only class that may disband.
+	//
+	// Round 865: class 0 is the GUARDIAN, the founder. READ: the client titles
+	// a class-0 member UIIT_STT_TC_GUARDIAN (c:0x6e8ed0) and gives it grade 7
+	// (c:0x98e120). MEASURED: the founder's member record carries class 0, a
+	// stored member with a max level of 60 or more is class 0, and the honor
+	// ranking names each camp by its class-0 member.
 	MemberClass0 = 0
+
+	// MemberClassGuardian is MemberClass0 by its role.
+	MemberClassGuardian = MemberClass0
 )
 
 // DisbandRequest is what TrainingCamp_CheckCanDisband decides about.
@@ -413,13 +430,12 @@ func CheckDisband(r DisbandRequest) (code int, remaining int64) {
 //
 // It is seconds for the same reason DisbandWindowSeconds is: the field it is
 // added to comes from _time32. 86400 is 24 * 3600, the "24T" in both refusal
-// names. Which timestamp +0x40 is on the member record (joining is the obvious
-// guess) is not read.
+// names. Round 865: +0x40 on the member record is JoinDate (READ from the
+// _TRAININGCAMPMEMBER binder); MEASURED, a member who joined minutes earlier
+// is refused both leave (0x6821) and ban (0x6820).
 //
-// NOT covered here: TC_ERROR_NOT_INVITE_24T and NOT_ENTRY_24T. Those are not
-// clock arithmetic at the check. They look up an entry (category 2, id 8 or 9)
-// in a per-character list at +0x1dfc, as the founding check does for id 7, so
-// their durations are set wherever the entries are created, which is not read.
+// TC_ERROR_NOT_INVITE_24T and NOT_ENTRY_24T are timed penalties instead (ids 8,
+// 9 and 10; PenaltySeconds).
 const MemberWindowSeconds = 0x15180
 
 // BanRequest is what TrainingCamp_HandleBan decides about before it calls
@@ -508,3 +524,73 @@ var Tables = []string{
 	"_TRAININGCAMPHONORRANK",
 	"_TRAININGCAMPBUFFSTATUS",
 }
+
+// Graduation -- round 865 (docs/protocol/academy.md, "Graduation").
+//
+// A member graduates itself with 0x7475 {u8 evaluation} once its MAX level
+// (GetMaxLevel) reaches SelfGraduationLevel: 40 for an apprentice, 60 for an
+// assistant guardian; below that the server refuses with 0x681a
+// (TC_ERROR_GRADUATION_LEVER, READ s:0x5196e3). The guardian graduates another
+// member with 0x7476 {str name} from ForcedGraduationLevel (the member record's
+// stored CharMaxLevel: 41 / 61, else 0x6822).
+const (
+	ErrGraduationLevel = 0x681a // TC_ERROR_GRADUATION_LEVER
+
+	// GraduationExp is what a self-graduating APPRENTICE gains (READ
+	// s:0x5dfc69 `push 0x1e8480`). A forced graduation and an assistant's
+	// graduation gain nothing.
+	GraduationExp = 2_000_000
+
+	// HonorJoinLevelCeiling: only an apprentice who JOINED at this level or
+	// below earns the camp honor points and evaluation (READ s:0x5e3730 in
+	// the game server; MEASURED as the stored graduation rule).
+	HonorJoinLevelCeiling = 30
+)
+
+// SelfGraduationLevel is the max level a member needs to graduate itself.
+// ok is false for the guardian, who cannot graduate (the server answers 5).
+func SelfGraduationLevel(class int) (level int, ok bool) {
+	switch class {
+	case MemberClassStudent:
+		return 40, true
+	case MemberClassSecondGuardian:
+		return 60, true
+	}
+	return 0, false
+}
+
+// ForcedGraduationLevel is the stored max level the guardian's 0x7476 needs.
+func ForcedGraduationLevel(class int) (level int, ok bool) {
+	return MembershipLevelFloor(class)
+}
+
+// EvaluationPoints maps the evaluation byte an apprentice sends with 0x7475
+// (0 very disappointed .. 4 very satisfied; the client's judge window,
+// c:0x80867c) to the camp's EvaluationPoint delta: the table at s:0xade9a4. A
+// byte above 4 is refused with 5. An assistant sends 0 and the server passes 0
+// for it; a forced graduation passes 1 (s:0x5198a7).
+var EvaluationPoints = [5]int{-3, -1, 1, 3, 5}
+
+// GraduationHonor is what an apprentice's graduation pays: the guardian gains
+// 40 - joinLevel honor points and EACH assistant guardian a tenth of that,
+// truncated -- only when the apprentice joined at HonorJoinLevelCeiling or
+// below (READ: s:0x5e3730 with the double 0.1 at s:0xb45ec0; MEASURED as the
+// stored graduation rule). An assistant's graduation pays nothing.
+func GraduationHonor(joinLevel int) (guardian, assistant int) {
+	if joinLevel > HonorJoinLevelCeiling {
+		return 0, 0
+	}
+	guardian = 40 - joinLevel
+	return guardian, guardian / 10
+}
+
+// The invitation (round 865). The invitee gets 0x3080 kind 9 and has
+// InviteWaitSeconds to answer (READ: the float 30.0 at s:0xb45b48; MEASURED
+// 30.4 s and 30.5 s from 0x7472 to the refusal). On a timeout the engine
+// truncates its code 0x680e to the low byte (s:0x46cf0f `movzx ax,bl`), so
+// both sides receive 0x000E -- MEASURED on 0xB472 and on 0x3C80 {0x0a, 2}.
+const (
+	InviteKind        = 9
+	InviteWaitSeconds = 30
+	ErrInviteTimeout  = 0x000e
+)

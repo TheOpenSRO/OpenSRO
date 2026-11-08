@@ -95,9 +95,13 @@ func DispatchIndex(op uint16) (index uint16, dispatched bool) {
 // 0x470 TrainingCamp_HandleOpen, 0x471 HandleDisband, 0x472 HandleInvite,
 // 0x475 HandleGraduation.
 //
-// Ban and leave are NOT here. The server has handlers at 0x473 and 0x474 and
-// answers on 0xb473/0xb474, but the client senders that would give their request
-// opcodes have not been read, and 0x7473/0x7474 would be a guess from the shape.
+// Round 865: the rest are READ from both sides (the client's senders and the
+// server's message map) and MEASURED on the wire; docs/protocol/academy.md has
+// every layout. Ban is 0x7473 {str name} and leave 0x7474 {}, the guardian's
+// forced graduation 0x7476 {str name}, the notice 0x7477 {str, str}, the honor
+// rank list 0x7478 {u32 npc}, the matching board 0x747A..0x747F and the exp
+// buff transfer 0x7483 {}. 0x3C81 is the whole camp at every world entry and
+// 0x3C80 the academy's push, a sub-type byte first.
 const (
 	OpAcademyOpenRequest       uint16 = 0x7470
 	OpAcademyOpenAck           uint16 = 0xB470
@@ -105,8 +109,36 @@ const (
 	OpAcademyDisbandAck        uint16 = 0xB471
 	OpAcademyInviteRequest     uint16 = 0x7472
 	OpAcademyInviteAck         uint16 = 0xB472
+	OpAcademyBanRequest        uint16 = 0x7473
+	OpAcademyBanAck            uint16 = 0xB473
+	OpAcademyLeaveRequest      uint16 = 0x7474
+	OpAcademyLeaveAck          uint16 = 0xB474
 	OpAcademyGraduationRequest uint16 = 0x7475
 	OpAcademyGraduationAck     uint16 = 0xB475
+	OpAcademyForceGradRequest  uint16 = 0x7476
+	OpAcademyForceGradAck      uint16 = 0xB476
+	OpAcademyNoticeRequest     uint16 = 0x7477
+	OpAcademyNoticeAck         uint16 = 0xB477
+	OpAcademyHonorRankRequest  uint16 = 0x7478
+	OpAcademyHonorRankAck      uint16 = 0xB478
+	OpAcademyMatchEntry        uint16 = 0x747A
+	OpAcademyMatchEntryAck     uint16 = 0xB47A
+	OpAcademyMatchCorrect      uint16 = 0x747B
+	OpAcademyMatchCorrectAck   uint16 = 0xB47B
+	OpAcademyMatchDelete       uint16 = 0x747C
+	OpAcademyMatchDeleteAck    uint16 = 0xB47C
+	OpAcademyMatchList         uint16 = 0x747D
+	OpAcademyMatchListAck      uint16 = 0xB47D
+	OpAcademyMatchJoin         uint16 = 0x747E // also S->C: the request reaching the guardian
+	OpAcademyMatchJoinAck      uint16 = 0xB47E
+	OpAcademyMatchJoinAnswer   uint16 = 0x347F
+	OpAcademyBuffTransfer      uint16 = 0x7483
+	OpAcademyBuffTransferAck   uint16 = 0xB483
+	OpAcademyUpdate            uint16 = 0x3C80
+	OpAcademyInfo              uint16 = 0x3C81
+	OpAcademySaveBuff          uint16 = 0x3C82
+	OpAcademySaveBuffTime      uint16 = 0x3C86
+	OpAcademyReserveBuffTime   uint16 = 0x3C87
 )
 
 // ReplyOpcode is the opcode the retail server answers a request with. Measured,
