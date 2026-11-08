@@ -1089,6 +1089,14 @@ func _system_line(type: int, text: String) -> void:
 	else:
 		add_message("", text, argb(REFUSAL_COLOR))
 
+## Whether a 0x3026 line is the copy of the player's own line that the
+## server sends its sender, which the client drops (it showed the line from
+## the 0xB025 OK): Chat_OnChatUpdate 0x877810 case 4 (party) and case 0x10
+## (academy, FUN_004e9530(own name, sender) at c:0x877f4d; round 865 stage 3
+## -- MEASURED shown once to the sender).
+static func drops_own_copy(type: int, sender: String, own: String) -> bool:
+	return (type == TYPE_PARTY or type == TYPE_ACADEMY) and sender != "" and sender == own
+
 ## The line 0x7ad400 shows for a channel line with no group behind it.
 func group_refusal(type: int) -> String:
 	match type:

@@ -167,6 +167,46 @@ the avatar slots, the list (OpenSRO's own 0x0044/0x0045) and the grant window. R
 table in place, unread: the avatars worn then are invisible to an older server until it is updated
 again (nothing is lost).
 
+## The academy (round 865): its tables, and the honor store's prices in `-mall-csv`
+
+The academy's six tables (`academy_*`, `persistence.AcademySchema`) are created by the server at
+boot; nothing to run for them. **One re-export:** the honor store's prices. The storage keepers'
+"Purchase/ Sell Honor Items" goods cost gold **and** the buyer's academy honor points; the points
+come from the mall CSV's `npchonor` rows (item id, points), which only an `export-refdata` from round
+865 on writes. With an older `mall.csv` every honor good reads 0 points and sells for its gold alone.
+
+The rows come from the archive's own price table (`refpricepolicyofitem.txt`, PaymentDevice 32) for
+the goods an NPC store sells, so export from **the same client archive the current `mall.csv` came
+from** (BYO, never from this repo):
+
+```
+# 1. Build the exporter from this release for the machine that runs it, e.g.
+cd server && CGO_ENABLED=0 go build -o /tmp/export-refdata ./cmd/export-refdata
+
+# 2. Export through the archive folder (the one holding Media.pk2; "Asset packs" below):
+A=/path/to/client; E="/tmp/export-refdata -archives $A"
+$E -mode mall -out mall.csv.new refshopgroup.txt refmappingshopgroup.txt refmappingshopwithtab.txt \
+   refshoptabgroup.txt refshoptab.txt refshopgoods.txt refpackageitem.txt refscrapofpackageitem.txt \
+   refpricepolicyofitem.txt @itemdata.txt
+#    (or the loose-file form: the same nine tables extracted with pk2list, then $(order itemdata.txt)
+#     as in "Reference data" step 2)
+
+# 3. Check it before swapping it in:
+grep -c '^npchonor,' mall.csv.new        # MEASURED: 16 on an archive whose honor stores sell the
+                                          # honor weapons; 1 (the repair stone, 10 points) on one
+                                          # whose honor tabs are empty
+diff <(grep -v '^npchonor,' ~/opensro/data/mall.csv) <(grep -v '^npchonor,' mall.csv.new) && echo "only the honor rows are new"
+
+# 4. Swap it in and restart the server (-mall-csv / OPENSRO_MALL_CSV is read at boot):
+cp ~/opensro/data/mall.csv ~/opensro/data/mall.csv.bak && mv mall.csv.new ~/opensro/data/mall.csv
+```
+
+If step 3's `diff` shows more than the new rows, the archive is not the one the running catalogue
+came from (or an older exporter wrote it): the mall's goods would change with it, so stop and compare
+first. The honor goods' item ids must exist in the server's item table (the refdata database or
+`-items-csv`) from the same archive. The players need this release's client: it maps the server's
+refusal to "Selected item cannot be purchased due to insufficient amount of honor points."
+
 ## Moving an install from srrevamp to OpenSRO (round 704)
 
 The project was called srrevamp until 2026-10-03. The rename changed every name a deployed

@@ -19228,8 +19228,11 @@ func _qa_input_step() -> void:
 			heard.message_text = "tt whisper"
 			_on_chat_update(heard)
 		"type":
+			# Round 865 stage 3: a capital letter goes with Shift held, as a
+			# keyboard sends it (it came out in lower case before).
 			for i in arg.length():
-				_qa_push_key(arg[i])
+				var ch := arg[i]
+				_qa_push_key("shift+" + ch if ch != ch.to_lower() else ch)
 		"click", "rclick":
 			var xy := arg.split(",")
 			_qa_push_click(Vector2(float(xy[0]), float(xy[1])),
@@ -19848,8 +19851,12 @@ func _qa_input_step() -> void:
 					_qa_push_click(nat, MOUSE_BUTTON_LEFT)
 		"talkline":
 			# Round 841: left click the talk box's numbered menu line n where
-			# it is drawn (the label's own link hit test takes it).
-			var tl := _hud_panels.qa_talk_line_point(int(arg)) if _hud_panels != null else Vector2(-1, -1)
+			# it is drawn (the label's own link hit test takes it). Round 865
+			# stage 3: `talkline:~words` clicks the first line holding words.
+			var tn := int(arg)
+			if arg.begins_with("~") and _hud_panels != null:
+				tn = _hud_panels.qa_talk_line_number(arg.substr(1))
+			var tl := _hud_panels.qa_talk_line_point(tn) if _hud_panels != null else Vector2(-1, -1)
 			if tl.x < 0:
 				_qa_input_report = action + " (no such talk line shown)"
 			else:
@@ -26802,7 +26809,12 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 	# 0x877810, case 4: FUN_004e9530(own name, sender) skips it): the server
 	# echoes party chat to its sender (gs:0x5bef50, round 710), and the client
 	# shows its own line from the 0xB025 OK instead (0x877340, case 4).
-	if u.type == HudChat.TYPE_PARTY and u.sender_name == NetClient.current_character_name:
+	# Round 865 stage 3: an academy line too -- case 0x10 makes the same
+	# compare (FUN_004e9530(own name, sender) at c:0x877f4d, `je` at
+	# c:0x877f71 to the display, else the line is freed) and drops
+	# the copy the server sends its sender; the sender's line came twice
+	# (MEASURED once).
+	if HudChat.drops_own_copy(u.type, u.sender_name, NetClient.current_character_name):
 		return
 	# Round 839: type 9 is the stall window's chat module (0x778a10).
 	if u.type == StallNet.CHAT_TYPE:
@@ -37671,8 +37683,13 @@ func _on_guild_part2_shown(where: String, key: String, args: Array) -> void:
 					_log_system(_resolve_any_text(k, k))
 
 ## The server's guild-goods refusal words and the texts they stand for.
+## Round 865 stage 3: the honor store's refusal too (session/academyshop.go's
+## HonorLackReason). 0x18d4 lands in the same 0xB034 switch (code - 0x180b =
+## 0xc9, index byte 0x8a -> c:0x7b9506 `push UIIT_MSG_TC_LACK_HONOR_POINT`,
+## then 0x7781b0(5, text) at c:0x7b9693; READ).
 const GUILD_GOODS_REASONS := {"You are not qualified to purchase the item.": "UIIT_MSG_GUILD_STORE_BUY_LIMIT",
-	"Item cannot be purchased due to lack of guild points.": "UIIT_MSG_GUILD_LACK_GP"}
+	"Item cannot be purchased due to lack of guild points.": "UIIT_MSG_GUILD_LACK_GP",
+	"Selected item cannot be purchased due to insufficient amount of honor points.": "UIIT_MSG_TC_LACK_HONOR_POINT"}
 
 ## The recall's refusals (category 1, READ).
 const GUILD_RECALL_CODE_KEYS := {0x18c1: "UIIT_MSG_GUILD_RECALL_ERROR", 0x18c2: "UIIT_MSG_GUILD_RECALL_ERROR",

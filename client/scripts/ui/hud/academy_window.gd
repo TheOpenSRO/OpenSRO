@@ -12,8 +12,9 @@ class_name AcademyWindow
 ##   the picture (41) hidden; NOTIFY_CONTENTS (140) hidden; seven
 ##   CIFApprenticeShipSlots, each loading ifapprenticeshipslot.txt.
 ## - Refresh (c:0x6e9b00): the seven slots cleared (0x6eaa10); no academy ->
-##   the reset c:0x6e8c30: Matching enabled, Invite / the notice pencil /
-##   Dismiss disabled and drawn 0xff999999, the guardian's name, Lv, level,
+##   the reset c:0x6e8c30: Matching enabled, Invite and the pencil disabled,
+##   the pencil and Dismiss drawn 0xff999999 (Invite keeps its colour: see
+##   _reset), the guardian's name, Lv, level,
 ##   rank mark and title hidden, the notice line "", the picture hidden,
 ##   LEADER_STATUS cleared. In an academy:
 ##   - the player is the guardian (c:0x989d20): Dismiss, Invite and the
@@ -37,7 +38,7 @@ class_name AcademyWindow
 ##     (UIIT_CTL_BAN_PARTY); enabled;
 ##   - the viewer is this member: "Graduate" at >= 40 / >= 60, else "Leave"
 ##     (UIIT_CTL_LEAVE_PARTY); enabled;
-##   - anyone else: disabled.
+##   - anyone else: hidden (ShowWindow(0); round 865 stage 3, MEASURED).
 ## - The clicks (message map c:0xeb9af0): 0x30 Dismiss (c:0x6e8da0), 0x14
 ##   Invite (c:0x6e89b0), 0x16 Matching (c:0x6e8770), 0x3d the notice line
 ##   (notification 1, c:0x6e9690: toggles the contents panel when a title
@@ -94,6 +95,13 @@ func _init(builder: UiBuilder, pane: Control, academy: AcademyState) -> void:
 	_build_rows()
 	_wire_buttons()
 	state.changed.connect(refresh)
+	# Round 865 stage 3: the original builds this pane with the interface at
+	# world entry, before any camp is known, so its first refresh is the
+	# reset (c:0x6e8c30) -- Dismiss and the pencil drawn 0xff999999 -- and a
+	# member's refreshes never touch them again (MEASURED: a member's Dismiss
+	# grey). This pane is built when the popup first opens, perhaps already in
+	# an academy, so the reset runs here first.
+	_reset()
 	refresh()
 
 ## A control of the pane's own layout (its sections), not inside a row.
@@ -156,6 +164,10 @@ func _wire_buttons() -> void:
 	var invite := node("GDR_APPRENTICESHIP_BTN_INVITE") as BaseButton
 	if invite != null:
 		invite.pressed.connect(press_invite)
+	# Create disables Dismiss and Invite (c:0x6e997a / 0x6e9986, `push ebx`
+	# 0 into 0x655ec0), their text colour left as the layout has it.
+	_enable(dismiss, false)
+	_enable(invite, false)
 	var match_b := node("GDR_APPRENTICESHIP_BTN_MATCH") as BaseButton
 	if match_b != null:
 		match_b.pressed.connect(func() -> void: match_pressed.emit())
@@ -256,14 +268,18 @@ func refresh() -> void:
 		_reset()
 		return
 	var guardian_view := state.am_guardian()
-	for n in ["GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN", "GDR_APPRENTICESHIP_BTN_INVITE",
-			"GDR_APPRENTICESHIP_NOTIFY_EDIT_BTN"]:
-		var b := node(n)
-		_shown(b, true)
-		_enable(b, guardian_view)
-		_color(b, COLOR_BUTTON if guardian_view else COLOR_GREY)
-	_enable(node("GDR_APPRENTICESHIP_BTN_MATCH"), true)
-	_color(node("GDR_APPRENTICESHIP_BTN_MATCH"), COLOR_BUTTON)
+	# c:0x6e9bf8..0x6e9c90: only the guardian's refresh touches Dismiss,
+	# Invite and the pencil (each shown, enabled and drawn 0xfffff5da); a
+	# member's leaves them as Create and the reset left them (round 865 stage
+	# 3: a member's Invite kept the layout's text colour, MEASURED 230,230,230,
+	# where this drew it 0xff999999).
+	if guardian_view:
+		for n in ["GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN", "GDR_APPRENTICESHIP_BTN_INVITE",
+				"GDR_APPRENTICESHIP_NOTIFY_EDIT_BTN"]:
+			var b := node(n)
+			_shown(b, true)
+			_enable(b, true)
+			_color(b, COLOR_BUTTON)
 	# The notice line and the contents panel.
 	var title := state.camp.notice_title
 	AcademyNoticeContents.set_subject(node("GDR_APPRENTICESHIP_NOTIFY_SUBJECT"),
@@ -297,13 +313,20 @@ func refresh() -> void:
 	for i in mini(appr.size(), SLOTS - APPRENTICE_FIRST):
 		_fill_row(APPRENTICE_FIRST + i, appr[i])
 
-## c:0x6e8c30.
+## c:0x6e8c30, as its writes run (round 865 stage 3, READ in the
+## disassembly): Matching (0x16) enabled; the pencil (+0x3b0) drawn
+## 0xff999999; Invite (+0x3ac) disabled; the pencil drawn 0xff999999 again
+## (0x6e8c70 colours +0x3b0 where Invite's colour would go, so Invite keeps
+## its layout colour -- MEASURED 230,230,230 on a member's view); the pencil
+## disabled; Dismiss (+0x3a8) drawn 0xff999999 and not disabled here (Create
+## disabled it; after a guardian's refresh enabled it, it stays enabled,
+## grey, and its click does nothing outside a guardian's academy).
 func _reset() -> void:
 	_enable(node("GDR_APPRENTICESHIP_BTN_MATCH"), true)
-	for n in ["GDR_APPRENTICESHIP_BTN_INVITE", "GDR_APPRENTICESHIP_NOTIFY_EDIT_BTN",
-			"GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN"]:
-		_enable(node(n), false)
-		_color(node(n), COLOR_GREY)
+	_color(node("GDR_APPRENTICESHIP_NOTIFY_EDIT_BTN"), COLOR_GREY)
+	_enable(node("GDR_APPRENTICESHIP_BTN_INVITE"), false)
+	_enable(node("GDR_APPRENTICESHIP_NOTIFY_EDIT_BTN"), false)
+	_color(node("GDR_APPRENTICESHIP_DISSOLVE_APPRENTICESHIP_BTN"), COLOR_GREY)
 	for n in ["GDR_APPRENTICESHIP_STATIC_LEVEL", "GDR_APPRENTICESHIP_STATIC_LEVEL_DATA",
 			"GDR_APPRENTICESHIP_LEADER_RANK_MARK", "GDR_APPRENTICESHIP_STATIC_RANK_NAME",
 			"GDR_APPRENTICESHIP_STATIC_NAME", "GDR_APPRENTICESHIP_PICTURE"]:
@@ -338,9 +361,14 @@ func _fill_row(i: int, m: AcademyNet.Member) -> void:
 			label = _text("UIIT_CTL_BAN_PARTY", "Banish")
 		ACT_LEAVE:
 			label = _text("UIIT_CTL_LEAVE_PARTY", "Leave")
+	# c:0x6ead69..0x6eaeec: the guardian's view and the member's own row set
+	# the text, draw it 0xfffff5da and show the button (+0x5c(1)); another
+	# member's row on a member's view hides it (+0x5c(0) at 0x6eaee7 with 0).
+	# Round 865 stage 3: it was drawn disabled; MEASURED hidden.
 	_set_button_text(btn, label)
 	_enable(btn, act != "")
-	_color(btn, COLOR_BUTTON if act != "" else COLOR_GREY)
+	_color(btn, COLOR_BUTTON)
+	_shown(btn, act != "")
 	_face("row%d" % i, m)
 
 ## 0x6eaa10: an empty slot shows only its own art.
@@ -422,6 +450,11 @@ static func text_of(n: Control) -> String:
 	return l.text if l != null else ""
 
 static func _color(n: Control, c: Color) -> void:
+	# A button's colour is the original's 0x8b2b70: every state, the disabled
+	# one included (UiBuilder.set_caption_color).
+	if n is BaseButton and n.get_node_or_null("ButtonLabel") != null:
+		UiBuilder.set_caption_color(n as BaseButton, c)
+		return
 	HudPartyPane._color(n, c)
 
 static func _enable(n: Control, on: bool) -> void:

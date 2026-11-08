@@ -2433,6 +2433,24 @@ func qa_talk_line_point(n: int) -> Vector2:
 				return Vector2(body.global_position.x + 40.0, y)
 	return Vector2(-1, -1)
 
+## Round 865 stage 3 (QA only): the number of the talk box's first menu line
+## whose words hold `words` (case ignored), 0 when none -- `talkline:~words`.
+func qa_talk_line_number(words: String) -> int:
+	if not is_open("npctalk"):
+		return 0
+	var body := NpcTalkView.body_of(_windows["npctalk"])
+	if body == null:
+		return 0
+	var lines: PackedStringArray = body.get_meta(NpcTalkView.META_LINES, PackedStringArray())
+	var tags := RegEx.create_from_string("\\[[^\\]]*\\]")
+	var seen := 0
+	for l in lines:
+		if l.begins_with("[url="):
+			seen += 1
+			if tags.sub(l, "", true).to_lower().contains(words.to_lower()):
+				return seen
+	return 0
+
 ## OPENSRO_QA_TELEPORT (World3D): prints the talk box's lines as drawn and
 ## clicks dest_id's line through the label's own meta_clicked, the signal a
 ## click raises. False when the list is not shown or does not hold dest_id.

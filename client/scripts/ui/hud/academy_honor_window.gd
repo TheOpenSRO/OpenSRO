@@ -54,7 +54,27 @@ static func compose(w: HudWindow, builder: UiBuilder) -> AcademyHonorWindow:
 static func of(w: HudWindow) -> AcademyHonorWindow:
 	return w.get_meta(META) as AcademyHonorWindow if w != null and w.has_meta(META) else null
 
+## The Guild column's head: a CIFBarWnd on com_bar02_, which the builder
+## draws as a 3-slice bar with no text (as the matching window's Title head).
+const GUILD_HEAD := "GDR_APPRENTICESHIP_HONOR_RANKING_GUILD"
+
 func _build() -> void:
+	# Round 865 stage 3: the Guild head showed no word (MEASURED "Guild" over
+	# the last column): its authored Text UIIT_CTL_WK_GUILD goes on as the
+	# static's caption would, in the def's own alignment (HAlign 1, centred).
+	var head := window.node(GUILD_HEAD)
+	if head != null and head.get_node_or_null("HeaderText") == null and _builder != null:
+		var lbl := Label.new()
+		lbl.name = "HeaderText"
+		lbl.text = _text("UIIT_CTL_WK_GUILD", "Guild")
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if _builder.font_at(0) != null:
+			lbl.add_theme_font_override("font", _builder.font_at(0))
+		lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		head.add_child(lbl)
 	var layout: UiLayoutParser.LayoutDef = _builder.load_layout(SLOT_LAYOUT) if _builder != null else null
 	for i in ROWS:
 		var slot := window.node("GDR_APPRENTICESHIP_SLOTLIST_SLOT_%02d" % (i + 1))
