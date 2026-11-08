@@ -7483,6 +7483,83 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-fifth round, stage 1 (spec): the academy
+
+The user: "Let's add the academy system fully. Make sure you're comparing against the original
+game and make no mistakes". Stage 1 is the specification only: `docs/protocol/academy.md` is
+rewritten as the contract a server lane and a client lane build from in parallel (its section 18 is
+the build checklist), and stage 3 compares the two side by side. Labels: READ (`c:` sro_client.exe,
+`s:` SR_GameServer.exe, `m:` SR_ShardManager.exe; `/var/tmp/decomp_client`, `/var/tmp/decomp_server`,
+`/var/tmp/sro_client.asm`, `/var/tmp/gs_dis.txt` on the box), MEASURED, INFERRED, OURS, OPEN. Base
+`44514ae7` (v0.1.636).
+
+### What was measured
+
+Four characters (a level-70 guardian, a level-40 and two level-1 / level-41 others), packets of every
+step decoded field by field:
+
+- **Founding** at a storage keeper: the "Academy Establishment" line, the fee box, `7470 {u32 npc}` ->
+  `304E {01, gold - 100,000}` -> `B470 {01, CampInfo}` -> `3C80 {05, id, 01, 00}`. A level-60 character
+  with no gold is refused by the client itself (no packet).
+- **The camp record** (CampInfo / MemberEntry): every field placed, dates as 16-byte TIMESTAMP_STRUCTs
+  rounded to the minute (founded at :08:02 -> :08:00, joined at :24:41 -> :25:00).
+- **Invitation**: `7472 {u32 target}` -> the invitee's `3080 {09, u32 inviter, str name}`, a "Join
+  request sent" box; Yes `3080 {01 01}` -> `3C80 02` to the others, `3C80 0a 01 + CampInfo` to the
+  joiner ("Joined Academy." banner, the window opens), `3C80 0d` and `05` after. No answer for 30.4 s /
+  30.5 s -> `B472 {02, 0e 00}` and `3C80 {0a, 02, 0e 00}` at once, no text either side (the engine's
+  0x680e cut to its low byte, READ s:0x46cf0f). A level-60 target: `B472 {02, 03 00}`, "Invalid object".
+- **Roles**: level 1 joins as class 2 "New apprentice" (slot 3 onward), level 40 as class 1 "Novice
+  guardian" (the two blue slots); the founder is class 0, "Guardian".
+- **Refusals on the clock**: leave `B473 {02, 21 68}` (leave's refusal on ban's opcode), ban
+  `B473 {02, 20 68}`, disband `B471 {02, 1d 68, u32 603,589}` 20 min 11 s after founding: 604,800 s from
+  the minute-rounded CreationDate.
+- **Notice**: `7477 {str, str}` -> `3C80 07` to every member including the writer -> `B477 01`; "The
+  Academy notice has been updated."; at the next world entry the member's system line shows "Academy
+  Notice “title”".
+- **Online state**: `3C80 {05, id, 01, 00}` at every world entry (login and each teleport, with a fresh
+  `3C81` to the member) and `{.., 01, 01}` at logout: **0 is online, 1 offline**, the reverse of what the
+  shard manager's two call sites suggested. "Novice apprentice [name] has logged on to the game." /
+  "... logged out of the game." / "Asst. guardian [name] has logged on to the game."
+- **Chat**: `7025 {10, idx, str}` -> `B025 {01 10 idx}` and `3026 {10, str name, str text}` to every
+  online member including the sender.
+- **Honor rank** (`7478` -> `B478 01 00`, the empty "Honor Rank" window), the **honor store** at the
+  other storage keeper (gold and honor-point prices), the **matching board** (`747D 00` -> `B47D 01 00 00
+  00`; `747A {0, camp, 01, "Join us"}` -> `B47A {01, 1, camp, 01, str, 0}`; `747C 1` -> `B47C 01 1`).
+- **Character select**: the list record's academy byte is 2 for the guardian, 1 for an assistant **and**
+  for an apprentice.
+- **Nothing on name plates** for any role.
+
+### What was read
+
+- Server: every handler's order and codes (0x7470..0x7478, 0x747A..0x747F, 0x7483), CampInfo
+  s:0x5e4230, MemberEntry s:0x5e3620, every 0x3C80 sub (s:0x5dd4f0..0x5de340), the world-entry push
+  s:0x4dfc5d, graduation (self 40 / 60 by live max level -> 0x681a; forced 41 / 61 by stored max level
+  -> 0x6822; 2,000,000 exp for a self-graduating apprentice s:0x5dfc69; evaluation {-3,-1,1,3,5}
+  s:0xade9a4; honor 40 - joinLevel and a tenth, s:0x5e3730), the penalties given at disband / ban /
+  leave, the honor-rank buffs `SKILL_TC_*` by rank, the 600-unit invite range, the 15 s board wait.
+- Client: three registration lists (0x8a4010, 0x8980e0, the 0x3080 list), every request's bytes, every
+  handler's parse, the error table c:0x7bbe14, the grade rule c:0x98e120, the slot button rule
+  c:0x6ead69, the five windows' controls, the minimap / world map signs, the buff icons.
+
+### Corrected
+
+- Class 0 is the guardian (was "not read"). `CheckMembershipLevel` is the handler of 0x7476, the
+  guardian's forced graduation, so 41 / 61 are graduation floors, not membership floors. Ban is 0x7473
+  {str}, leave 0x7474 {}. The disband window runs from CreationDate, ban / leave from JoinDate.
+- `server/internal/academy`: comments corrected; `MemberClassGuardian`, `SelfGraduationLevel`,
+  `ForcedGraduationLevel`, `EvaluationPoints`, `GraduationHonor`, the invitation's wait and timeout code,
+  with tests. `proto/opcodes.go` names every academy opcode; the metrics opcode table regenerated.
+  `go build ./...`; `go test ./internal/academy/ ./internal/proto/ ./internal/metrics/` pass.
+- UI and world drawing untouched: no perf gate (docs and server constants only).
+
+### OPEN and choices
+
+OPEN (doc section 17): the graduation push's kind byte, the exp-buff banking formula and 0x3C82's
+sends, the matching board's guardian push / 0x347F / page layout. Not measured live because they need
+a day or a week to pass or a level-up: leave / ban / disband success and graduation. Four choices for
+the user (timeout code, role by current or max level, the no-academy chat refusal, stale member
+levels), each with a recommendation.
+
 ## Eight-hundred-and-sixty-fourth round, lane P: the premium's third icon -- one icon per composite, grants that last the premium and refill daily, the free resurrection
 
 The user: "also the premium item doesn't show all 3 icons at the top left. It's missing the premium
