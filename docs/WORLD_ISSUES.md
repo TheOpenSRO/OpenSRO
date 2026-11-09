@@ -7483,6 +7483,142 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-sixth round: the academy's matching join, both sides -- the guardian's question box and its answer, the joiner's own joining window, every academy request logged
+
+The user, on v0.1.637: "I tried joining the academy and I didn't see a popup on the academy
+leader to accept. Also on the joiner side it was showing lines from failing to join a party.
+Please make a round over the academy and make sure everything works as expectedf". The two
+characters: a level-110 guardian in Jangan who had just founded an academy, and a level-1
+character entering the world in Donwhang. The server logged no academy request at all, so the
+path had to be reproduced: with the guardian in another town, the only way to apply is the
+matching board. Labels: READ (`c:` sro_client.exe, `s:` SR_GameServer.exe, `m:`
+SR_ShardManager.exe), MEASURED, INFERRED, OURS, OPEN. Base `75cd648d` (v0.1.637). UI, server
+and logging only: no perf gate (no world drawing changed).
+
+### The two causes
+
+1. **No popup on the guardian.** Round 865 stage 2 left the board's question OPEN: the server
+   never sent 0x747E down and the client did not read it, so a join request waited 15 s and
+   ended `0xB47E {01 02}` ("Reply time has passed, thus registration has been cancelled.")
+   with nothing on the guardian's screen. Reproduced on the lane server with two real clients
+   (run1: the guardian in Jangan, the requester `/goto donwhang`, Matching -> the row -> Join).
+2. **The party lines on the joiner.** Join opened the party's joining window (CIFPartyJoinProgress
+   kind 1): "[]You [] has requested to join this party." (`UIIT_STT_PARTYMATCH_JOIN_PROGRESS`
+   with two empty names), 10 s. READ: the matching window opens it in kind 2 (c:0x77011d
+   `push 0x2` -> c:0x732000), whose text is `UIIT_MSG_TC_JOIN_ERROR_DUPLE` "Registration is in
+   process." (c:0x73201c, string c:0xdb3674) and whose gauge runs 0x3a98 ms = 15 s
+   (c:0x7323fa..0x732422); MEASURED: "Registration is in process." with the gauge.
+
+### The join, MEASURED both sides and READ (docs/protocol/academy.md 7.10)
+
+- Requester `747E {entry}`; the guardian gets 0x747E down `{u32 job, u32 key, u32 entry, u32
+  key, u8 level, u8 max level, u32 RefObjID, str name}` -- the game server's record
+  (s:0x5df260 -> s:0x5e2c80) behind the shard's job id and requester (m:0x422230). MEASURED: the
+  two keys equal (the requester's account id), job ids counting up by one.
+- The guardian's box is CMessageBoxManager kind 0xe (c:0x890fa0 -> 0x77f0a0; case c:0x6458c6):
+  "Join request sent", 360 x 215, a one-line text control (0x140 x 0x10 at (0xe, 0x3b)) with
+  `UIIT_STT_TC_JOIN_REQUEST`, "Level" / "Race" with two `msgbox_blackbox.ddj` fields ("30(30)",
+  "CHN"), Yes (0x65, 0xae) / No (0xbd, 0xae), timer 0xa of 15 s. MEASURED: "[name] has requested
+  for Academy" (the rest of the line cut by the one-line control), "Level 30(30)", "Race CHN".
+- Its answer 0x347F `{job, key, u8}`: Yes 1, No 0, and the box's own 15 s timer 0 (c:0x63bf40
+  -> 0x797d90 case 0xe, c:0x798081..0x7980c2). MEASURED: No -> `{.., 00}` -> the requester
+  `B47E 01 00`, "Request has been cancelled." (system line); no click -> the box sends
+  `{.., 00}` 15.0 s after the question and the requester gets the same `01 00` and line -- the
+  shard's own 15 s (m:0x79b018) did not end first. Yes -> the guardian `3C80 02`, `0d`, `05`,
+  `B47E 01 01`; the requester `3C80 0a 01 + CampInfo`, `05`, `B47E 01 01`; "Registration has
+  been completed." on both banners; the guardian also "[name] has been added to the Academy."
+  and "Novice apprentice [name] has logged on to the game.", the requester "Academy Notice
+  “title”" and its academy window opens (the new member "Junior apprentice"/"New apprentice" by
+  grade). The guardian's matching row was not refreshed (still "3/8").
+- A board row's u32 after the title is the entry's registration time in Unix seconds
+  (MEASURED: a row read back seconds after its 0x747A carried that moment); the server sent
+  the graduate count there (INFERRED in stage 2). The client reads neither u32.
+
+### What changed
+
+- **Server** (`session/academyboard.go`, `academy/wire.go`, `academy/board.go`): the question
+  goes to the guardian with a job id (OURS counter from 1) and `party.JIDOf` as the key, as the
+  party matching does; 0x347F is acted on (only the camp's guardian answering its own job with
+  the job's requester echoed, OURS as the party's); 0 / 2 answer the requester `B47E {01, s}`;
+  1 adds the member with the invitation's sequence and `B47E 01 01` to both; a failed accept
+  `B47E {02, code}` to both (INFERRED from m:0x459b30's two sends). The backstop for a
+  guardian whose client never answers is 17 s (OURS: the shard's 15 s plus 2 s, so the box's own
+  15 s answer wins as MEASURED). Tests `academy866_test.go` (refused, timed out, a forged answer
+  dropped and the backstop, accepted with both sides' order), `wire_test.go` (0x747E down,
+  0x347F, the row's time).
+- **Logging**: every academy request (`academy request` character, name, opcode, length), every
+  reply 0xB470..0xB483 and a joiner's 0x3C80 0a (`academy reply` with result and code, or the
+  join's state), the invitation's answer and timeout, and each join question and answer are
+  logged at INFO, so prod shows what a player did.
+- **Client**: `AcademyJoinAskBox` (box kind 0xe, its 15 s timer), AcademyNet's 0x747E down
+  decoder and 0x347F encoder, AcademyState's `join_asked`, AcademyFlow opening the box and
+  sending the answer, and printing 0xB47E's texts itself (c:0x892c50 needs no window: the
+  guardian gets the banner too); `PartyJoinProgress.build_academy` (kind 2: the text, 15 s).
+  QA input `acaask:yes|no|report`. Tests `academy_join_ask_test.gd` (new),
+  `academy_match_window_test.gd`.
+
+### Flow by flow (ours: the lane server, real clients, real clicks and keys)
+
+| flow | original | ours | verdict |
+|---|---|---|---|
+| matching: register, browse | MEASURED (stage 1 and this round) | run2/2b: "Join us", own row, the requester's page | MATCH (+ the row's time u32) |
+| matching: apply -> guardian's box | MEASURED, READ | run2: the box "Join request sent", "[ArNovice] has requested for Academy registration.", Level 1(1), Race CHN, Yes / No, at (486, 438) | FIXED (was no box) |
+| matching: refuse | MEASURED | run2b/2c: `347F .. 00` -> "Request has been cancelled." on the requester | FIXED |
+| matching: no answer | MEASURED | run2: the box closed itself 15.3 s after the question, `347F .. 00`, "Request has been cancelled." | FIXED |
+| matching: accept | MEASURED | run2b/2c: the requester in Donwhang joined, its academy window opened; `B47E 01 01` both sides | FIXED |
+| the joiner's joining window | MEASURED, READ | "Joining", "Registration is in process.", 15 s | FIXED (was the party's line) |
+| matching: delete | MEASURED (stage 1) | stage 3 and `TestAcademy865MatchingBoard` | MATCH |
+| found | MEASURED (stage 1) | reg run4..7 | MATCH |
+| invite: accept | MEASURED (stage 1) | reg run4: "[ArAppr] has been added to the Academy." | MATCH |
+| invite: refuse | MEASURED this round: code **0** both ways (`B472 02 0000`, `3C80 0a 02 0000`), no text either side | READ s:0x5df910: 0x6811 -> "Invitation has been refused." both sides (reg run5) | DIFFERS, not changed (the user's call, below) |
+| invite: 30 s | MEASURED (stage 1) | reg run5 | MATCH |
+| notice, chat | MEASURED (stages 1, 3) | reg run4 / run9 | MATCH |
+| the window from each role | MEASURED (stage 3) | reg run9 | MATCH |
+| login / logout / teleport lines | MEASURED (stage 3; this round again "Novice apprentice [name] has logged out of the game." and "... has logged on ...") | reg run8 | MATCH |
+| leave, ban, disband | refusals MEASURED (stage 1); success not measured (it needs a day / a week of a membership's or a camp's age) | reg run7 with `/academytime`: refusals, then the ban, the leave, the disband | MATCH (refusals); success READ only |
+| graduation, self | not measured (see OPEN) | reg run5/6: the evaluation window, `7475`, "Congratulations" banner, 2,000,000 exp | READ only |
+| graduation, forced | not measured | reg run11: the apprentice at 41 (`/level 41` in the game), the guardian's row button "Graduate" -> the question -> Yes -> `7476` -> `B476 01`; "[ArAppr] has graduated." / the "Congratulations" banner; points 1 | READ only |
+| honor store purchase | not measured | reg run11: with the points that graduation gave, the 10-point stone ("Honor Point : 10P" on its tooltip) bought: "Purchased." | READ only |
+| honor rank | MEASURED (stage 1) | reg run8/9 | MATCH |
+| char select byte | MEASURED (stage 1) | `TestLobbyRecordAcademyByte865` | MATCH |
+
+QA on the box (`/var/tmp/r866r/qa`): run1 (the base build, the user's case reproduced: no
+box on the guardian, the party's joining window on the requester), run2 / run2c (this round's
+build: the box, No, the box's own timeout, Yes; every client log, frame and the server log in
+`keep2c/`), and round 865 stage 3's runs 3..10 re-run on this round's build plus a new run 11
+(`reg/run<N>/`, each run's client logs, frames and server log): every line printed matches
+stage 3's table, and the server now logs each request and reply (e.g. `academy request
+character_id=2 name=ArNovice opcode=0x747e`, `academy reply ... opcode=0xb47e result=1
+state=0x0001`, `academy joined ... by=matching`).
+
+### Differs, not changed (the user's call)
+
+- **Refusing an invitation**: MEASURED this round (twice), the original sends code 0 to both
+  sides and neither prints a line; the binary READ (s:0x5df910 `mov eax,0x6811` for an answer
+  byte other than 1) sends 0x6811, and OpenSRO (built from the READ) prints "Invitation has
+  been refused." on both sides. The two disagree; not changed.
+
+### OPEN
+
+- Graduation (self and forced) and the honor store purchase are not MEASURED (READ only): the
+  client offers "Graduate" only from the member record's stored max level, which follows an
+  in-game level-up, so measuring them needs an apprentice levelled in the game. Leave / ban /
+  disband success need a day / a week of a membership's or a camp's age.
+- The board's page size beyond a one-row page; what the shard does to the entry when an
+  accept fills the recruited role (m:0x45ab50; OpenSRO keeps the client's own pull delete).
+- Carried: 0x3C80 04's kind byte, the exp-buff banking and 0x3C82, the minimap / world map
+  signs on screen (not compared).
+
+### Gates
+
+`cd server && go build ./... && go test ./...` all passing, `go vet` clean on the changed
+packages; `remote_godot.sh check` ALL LOAD (1159 scripts); `remote_godot.sh tests` "ran 442
+suite(s), 0 failing". No perf gate: UI, server and logging only.
+
+Deploy: server and client together. A new server with an old client: the old client drops
+0x747E down, so the guardian still sees no box and the request ends "no reply" after 17 s. An
+old server with a new client: no question is sent. No new server flags or data.
+
 ## Eight-hundred-and-sixty-fifth round, stage 3: the academy's two halves against each other -- nine seams settled, the client fixed where it differed
 
 The user: "Let's add the academy system fully. Make sure you're comparing against the original

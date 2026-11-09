@@ -178,8 +178,15 @@ func logAcademyReply(sess *gateway.Session, op uint16, data []byte) {
 			who = academyActor{id: e.CharacterID, name: e.Name}
 		}
 	}
-	slog.Info("academy reply", "character_id", who.id, "name", who.name, "opcode", fmt.Sprintf("%#04x", op),
-		"result", result, "code", fmt.Sprintf("%#04x", code))
+	attrs := []any{"character_id", who.id, "name", who.name, "opcode", fmt.Sprintf("%#04x", op), "result", result}
+	if code >= 0 {
+		key := "code"
+		if op == proto.OpAcademyMatchJoinAck && result == int(academy.ResultOK) {
+			key = "state"
+		}
+		attrs = append(attrs, key, fmt.Sprintf("%#04x", code))
+	}
+	slog.Info("academy reply", attrs...)
 }
 
 func acFail(sess *gateway.Session, op uint16, code uint16) {
