@@ -7483,6 +7483,162 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-seventh round: gear requirements as the original's -- a robe refused without a caster mastery, a worn item that fails its requirement counts for nothing until it is published again, and armour does not mix with a robe
+
+Round 875's D8: the original refuses a European robe to a character without Wizard, Warlock,
+Bard or Cleric at the robe's degree level, and a robe worn anyway counts for nothing (phy def 93
+for the player's set). OpenSRO never checked a mastery. The user: "yah let's get all of that
+fixed". So the original's rule is built, at equip time and in every stat sum.
+
+### READ: what the original checks, and when (SR_GameServer.exe)
+
+- **`CGItemEquip::CheckEquipRequirements` (s:0x4919e0)**, the four `(ReqLevelType, ReqLevel)`
+  pairs (`docs/protocol/item_requirements.md`): type 1 the character's level (vtable 0x124), type
+  0x201..0x206 a mastery, 0x301 a job tier (refused at once with 0x18f7), 2/3/4/0x10 accepted.
+  **The mastery is the requirement's own type** (s:0x491b25..0x491b40: `mov eax,edi` -- the
+  type -- then `Mastery_GetLevel` s:0x59e750 on the character's mastery container +0xa30, which
+  answers 0 for a mastery it does not hold). The categories are bits: any one slot of a category
+  meets it; every category that appears must be met; an unmet one is **0x186c**.
+- **At equip, `CGItemEquip::CanBeEquipedAt` (s:0x497070)**: slot past 12 0x1806, an expired
+  rental 0x183c, ReqGender 0x1816, razed 0x1837, then CheckEquipRequirements (0x186c / 0x18f7),
+  ReqStr 0x1830, ReqInt 0x1831, Country 0x182f, then the slot (0x180d / 0x180e).
+- **`CGObjPC::AttachEquipItem` (s:0x524cd0) adds the armour mix** after CanBeEquipedAt: a body
+  piece (CGItemEquip vtable slot 39, s:0x4834c0 -> 0x488eb0: TypeID3 1, 2, 3, 9, 10, 11) is
+  compared with the first worn armour piece (`CGStorage::GetFirstItem(6)`) by
+  `CGItemEquip::vslot_318` (s:0x4972c0): accepted when either is not body armour, or both are
+  cloth (slot 38, s:0x4834e0: TypeID3 1 or 9) or both are not. Otherwise **0x1832** -- unless
+  that piece is the only one worn and sits in the destination slot (they swap). Heavy and light
+  armour mix; a robe or a garment mixes with neither.
+- **The client's words** (the error switch c:0x7b8b40): 0x186c is
+  `UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM` for a level and a mastery alike;
+  0x1832 is `UIIT_MSG_STRGERR_CANT_MIX_EXCLUSIVE_ARMOR_TYPE` for a Chinese player and
+  `UIIT_MSG_STRGERR_EU_CANT_MIX_EXCLUSIVE_ARMOR_TYPE` for a European one (the player's Country,
+  c:0x7b8e01..0x7b8e57). Both jump to c:0x7b8ccc: the warning banner (c:0x77b580) and the system
+  line (c:0x7781b0). INFERRED: the client never raises 0x186c itself (no `0x186c` immediate
+  anywhere in sro_client.exe), so the refusal is the server's.
+- **What counts: `GObjPC::PublishEquipItemParams` (s:0x4e3760)** adds a worn item's params --
+  its defences, parry, attack, absorption, then its blues and plus -- only when
+  CheckEquipRequirements passes. It runs:
+  - at a login (`CGObjPC::Create` s:0x4e0dc0 -> `CGStorage::RefreshEquipParamEntryForPC(0)`);
+  - **on every level change, up or down** (`GObjPC_SetLevel` s:0x4e4d90 ->
+    `RefreshEquipParamEntryForPC(1)` at s:0x4e5207 / 0x4e5214, the inventory's
+    s:0x4bb3e0: each worn item's entry removed and published again through the test);
+  - for the one item an equip attaches (it passed CanBeEquipedAt) or a durability change re-adds
+    (`CGObjPC::ChangeItemDurability` s:0x4e7100).
+  - **Not after a mastery raise**: `Mastery_LevelUp` (s:0x59c4e0) recomputes the level ratios
+    (FUN_004e30d0) and tells the client; nothing is published again.
+- **A worn item that fails stays worn**: `CGPCInventoryOP::CheckEquipsetIntegrity` (s:0x4bb020)
+  gives up on a login only for CanBeEquipedAt's 0x180e, not for 0x186c. Nothing unequips it.
+- **Correction to round 874**: "the worn items' params with NO level test (s:0x4bb3e0): gear
+  above the new level stays worn and counts" -- it stays worn and **counts for nothing**: the
+  refresh publishes through PublishEquipItemParams, whose test includes the level.
+- No mastery-lowering path exists in this server besides the skill withdrawal
+  (`SkillWithdraw_Execute` s:0x59f8b0, skills only, not built in OpenSRO).
+
+### MEASURED
+
+A European created for this, level 110 (Str / Int 129), Warrior 110, Cleric 100, and the Seal of
+Nova robe's chest piece (ITEM_EU_M_CLOTHES_11_BA_A: Wizard, Warlock, Bard or Cleric 101; its
+tooltip shows the four lines red at Cleric 100); the character window:
+
+| state | phy def | mag def | parry |
+|---|---|---|---|
+| naked (light starter pieces taken off) | 24 | 39 | 120 |
+| robe put on at Cleric 100 | refused: banner and system line "The selected item is unusable because your character's level is too low." | | |
+| Cleric raised to 101 (the skill window), robe put on (light pieces on) | refused: "Armor and robe cannot be equipped at the same time." | | |
+| robe put on at Cleric 101 | 286 | 561 | 141 |
+| logged in wearing it with Cleric 100 (the robe drawn, worn, no message) | **24** | **39** | **120** |
+| then Cleric raised to 101 in the skill window, robe still on | **24** | **39** | **120** |
+| the robe taken off and put on again | 286 | 561 | 141 |
+
+A Chinese level 69 putting on a level-81 garment (ITEM_CH_M_CLOTHES_09_BA_A): the same banner
+and system line. **No Chinese item, and no weapon or accessory of either race, asks for a
+mastery** (prod's item table: Chinese armour `(1, -1, -1, -1)` on 4,610 rows; European robes
+`(514, 516, 517, 518)`, light `(513, 515, 518)`, heavy `(513)`, 970 rows each; European weapons
+and accessories the level only). The starter (`_DEF`) pieces ask for mastery 0, so a new character
+wears them. Not measured: a level lost to the death penalty (READ only, above).
+
+### What changed
+
+- `equipment.Refusal(c, it, slot, mastery)` passes a mastery lookup to `CheckRequirements`
+  (`gearMastery`: `Mastery_GetLevel`, 0 for a mastery the Country does not hold);
+  `equipment.ArmourMixRefusal` (0x1832) runs after it in `equipRefusal`. The refusals are worded
+  by the client's keys (`equipRefusalText`): 0x186c's for a level or a mastery (the level refusal
+  said "your level is too low" before, now the original's line), 0x1832's by Country.
+- `session/gearcount.go`: per character, the worn slots whose item failed CheckEquipRequirements
+  when last published ("held"). Taken at a world entry (`gearAtEntry`, as CGObjPC::Create) and on a
+  level write that changes the level (`character.SetLevelHook`, both stores' `SetLeveling`); an
+  equip or unequip clears its slot (the job suit's too); a mastery raise leaves it. Every stat sum
+  reads the worn items through `countedWorn`: the Str/Int/HP/MP/evasion blues (`equipBonus`,
+  `wornOptionSum`), the accessories' absorption, the weapon's attack, attack rate, critical and
+  range, the armour's defences, reinforce and parry, the shield's block -- a held item is treated
+  as a broken one (a held weapon swings bare-fisted, a held body piece leaves its naked reinforce).
+- Client: `EquipmentNet.REFUSAL_BANNER_KEYS` -- the two refusals raise the warning banner as well
+  as the system line.
+- GM `/mastery <id> <level>` (OURS, a test tool with no retail counterpart: the original's
+  masteries only rise): writes a mastery outright, up or down; what counts follows at the next
+  publish, as after a raise.
+
+### QA (the real client on the lane server, prod's flags; input through the client's own path)
+
+`/var/tmp/r877m/run877m.sh`, runs `lane/r1..r5`, `lane/r4b`; the character window's log line
+after each step, frames in each run's `snaps/`:
+
+| run | step | phy / mag def |
+|---|---|---|
+| r1 (fresh, Warrior 110, Cleric rising) | robe put on, Cleric below 101: refused, banner "The selected item is unusable because your character's level is too low." and the system line | 34 / 64 |
+| r1 | Cleric 101, robe put on (bag click, worn-slot click): worn | 296 / 581 |
+| r2 | Cleric set to 100 while worn: still counts (nothing published) | 296 / 581 |
+| r3 | **logged in wearing it with Cleric 100**: worn and drawn, no message | **31 / 56** |
+| r3 | Cleric set to 101: still nothing | 31 / 56 |
+| r3 | taken off and put on again | 296 / 581 |
+| r3 | heavy trousers onto the robe-wearer: refused, "Armor and robe cannot be equipped at the same time." | 296 / 581 |
+| r4b | a pure Warrior (Warrior 110 only) puts the robe on: refused, the same banner | (unchanged) |
+| r5 | Cleric 100, robe counting, a level up (110 -> 111): published again, the robe stops counting | 296 / 581 -> **31 / 56** |
+
+(The robe's numbers differ from the measured 286 / 561 by the instance's own roll; the shape is
+the point.) Another client sees the robe as before: it stays worn and drawn.
+
+### Tests
+
+`equipment/mastery877_test.go` (the robe refused to a Warrior and to Cleric 100, allowed with any
+one caster at 101; heavy wants the Warrior; the mix rule's seven cases);
+`session/gearcount877_test.go` (round 875's measured 93 / 50 for the Warrior in robes and 2602 /
+3984 with the requirement met; the raise that waits for the next publish; a level lost below a
+level requirement; the refusal keys); `gm_test.go` TestMastery; the client's
+`equipment_test.gd` (the banner keys); `equipment_test.go`'s level refusal now expects the key.
+`go test ./...`, `remote_godot.sh check` (ALL LOAD) and `tests` pass. UI and server only: perf
+gate skipped.
+
+### Prod: who is affected (read-only count)
+
+19 non-bot characters wear gear; **2 wear items they do not qualify for**: peesucker900 (level
+110, every mastery 0, a heavy 11th-degree set: the six body pieces need Warrior 101) and tybug360
+(level 140, Warrior 7, a heavy 11th-degree set needing Warrior 111). 12 items in all, every one a
+mastery requirement. **Pain is not affected**: he now holds Cleric 110 (and Warrior 110), so his
+robes qualify. Of the 16,888 load-test bots (`swarm*`), 8,593 wear 51,559 unqualified items
+(50,550 by mastery, 1,009 by level). No prod character wears cloth and armour together.
+
+What an affected character sees after the deploy: at its next login the gear stays on and drawn,
+no message; the character window's defences, parry, attack (for a held weapon) and the blues'
+Str / Int / HP / MP fall as if those pieces were off; putting such a piece back on shows the
+banner "The selected item is unusable because your character's level is too low." Raising the
+mastery to the item's level makes it count at the next login, level change, or when the piece is
+taken off and put back on.
+
+### Differs on purpose / OPEN
+
+- `/mastery` is OURS (a test tool).
+- OPEN: the bag's red mark for an item that fails the usable check (MEASURED: the robe's cell red
+  at Cleric 100, the light pieces' red while a robe is worn; `icon\icon_disable.ddj`, round 829's
+  DurabilityMark note). Not built.
+- OPEN: a held weapon still sets the base attack skill by its type (`baseAttackOf`); only its
+  numbers are left out. Whether the original's default attack follows the published params was
+  not read.
+- OPEN: a durability repair does not re-test the repaired piece (ChangeItemDurability publishes
+  through the test); OpenSRO keeps the snapshot.
+- Not measured: the death penalty's level loss on the original (READ only).
+
 ## Eight-hundred-and-seventy-fifth round: combat numbers at level 101-110 as the original's -- Strength and Intellect in the armour's defence, a monster's magical skills on magic defence with their percentage, the defence curses, the monsters' own hit and parry rates, truncated panels; and why a warrior in a robe was dying
 
 The user: "101+ mobs can easily kill me. I have the highest end gear that should tank even 110 mobs

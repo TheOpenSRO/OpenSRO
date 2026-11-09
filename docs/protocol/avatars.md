@@ -75,7 +75,7 @@ the sub-op `0x23 attachmentSlot bagSlot 0`.
 | 1 | `src` outside 13..0x6f | `3` |
 | 2 | the bag slot empty | `0x1809` |
 | 3 | the item's serial 0 (every OpenSRO row has one) | `3` |
-| 4 | `CanBeEquipedAt(pc, dst)` (`s:0x497070`): dst past 12 `0x1806`; (an expired rental `0x183c`: OpenSRO has no rentals); ReqGender != the character's and != 2 `0x1816`; (razed `0x1837`: not modelled); the four requirement pairs `0x186c` (the character level; masteries carried, not enforced, as for equipment); ReqStr `0x1830`; ReqInt `0x1831`; Country != the character's and != 3 `0x182f` | as listed |
+| 4 | `CanBeEquipedAt(pc, dst)` (`s:0x497070`): dst past 12 `0x1806`; (an expired rental `0x183c`: OpenSRO has no rentals); ReqGender != the character's and != 2 `0x1816`; (razed `0x1837`: not modelled); the four requirement pairs `0x186c` (the character level; masteries carried, not enforced: no avatar row carries one; equipment enforces them from round 877); ReqStr `0x1830`; ReqInt `0x1831`; Country != the character's and != 3 `0x182f` | as listed |
 | 5 | not 3/1/13 and not 3/1/14 | `0x180e` |
 | 6 | an item of the same TypeID1..4 already worn (`s:0x4ba130`; cash/bionic bits ignored) -- **no swap** | `0x180e` |
 | 7 | an attachment (13/3) without a worn dress whose `ChildItemCount` (itemdata col 159, ref `+0x53d`) is non-zero | `0x180e` |
