@@ -126,6 +126,7 @@ func _run() -> void:
 	_builder = UiBuilder.new(pk2, table)
 	await _test_window_guardian()
 	await _test_window_member()
+	await _test_notice867()
 	_test_window_reset()
 	_test_boxes()
 	await _test_judge()
@@ -147,6 +148,86 @@ func _test_honor_refusal() -> void:
 		"the honor refusal maps to UIIT_MSG_TC_LACK_HONOR_POINT")
 
 # --- 3 / 4: the academy window -------------------------------------------------------
+
+## A 0x3C80 07 notice push with this title and content.
+func _notice_push(title: String, content: String) -> PackedByteArray:
+	var out := PackedByteArray([7])
+	for s in [title, content]:
+		var b: PackedByteArray = (s as String).to_utf8_buffer()
+		out.append(b.size() & 0xff)
+		out.append(b.size() >> 8)
+		out.append_array(b)
+	return out
+
+## Round 867: the notice line and its contents panel as the original draws
+## them (AcademyNoticeContents' header: READ c:0x70b210, c:0x6e99f0..,
+## MEASURED at 1280 x 1024).
+func _test_notice867() -> void:
+	var st := _state("Guardian1")
+	var w := _pane(st)
+	st.handle(AcademyNet.OP_OPEN_RESULT, _fx("b470_founded"))
+	await process_frame
+	var subject := w.node("GDR_APPRENTICESHIP_NOTIFY_SUBJECT")
+	var art := subject.get_node_or_null("Art") as TextureRect
+	_check(art != null and art.texture == _builder.load_texture(AcademyNoticeContents.SUBJECT_NORMAL_ART)
+		and art.size == subject.size and art.get_index() == 0,
+		"the notice line wears gil_windo02_off over its whole rect, under its text")
+	_check(_shown(subject.get_node("Text")) == _text("UIIT_MSG_GUILD_COMMON_NOTEXIST")
+		and (subject.get_node("Text") as Control).position == Vector2(0x50, 7),
+		"no title: You have no notes. at the line's text inset 0x50, 7")
+	AcademyNoticeContents.set_hovered(subject, true)
+	_check(art.texture == _builder.load_texture(AcademyNoticeContents.SUBJECT_HOVER_ART), "the pointer on the line: gil_windo02_on")
+	AcademyNoticeContents.set_hovered(subject, false)
+	_check(art.texture == _builder.load_texture(AcademyNoticeContents.SUBJECT_NORMAL_ART), "... and off again")
+	# Eleven lines, one wrapping: more than the six shown.
+	var lines := PackedStringArray(["Line one of the notice", "Line two",
+		"A long line that should wrap across the width of the notice contents panel to show how the original wraps its text"])
+	for n in ["four", "five", "six", "seven", "eight", "nine", "ten"]:
+		lines.append("Line " + n)
+	lines.append("Last line")
+	st.handle(AcademyNet.OP_PUSH, _notice_push("Lane Notice Test", "\n".join(lines)))
+	await process_frame
+	w.press_notice_line()
+	await process_frame
+	var contents := w.node("GDR_APPRENTICESHIP_NOTIFY_CONTENTS")
+	_check(w.notice_open and contents.visible, "the line opens the contents panel")
+	_check(art.texture == _builder.load_texture(AcademyNoticeContents.SUBJECT_NORMAL_ART),
+		"an open panel leaves the line unselected (no orange)")
+	for n in AcademyNoticeContents.RECTS:
+		var c := contents.find_child(n, true, false) as Control
+		_check(c != null and Rect2(c.position, c.size) == AcademyNoticeContents.RECTS[n], "%s at its READ rect" % n)
+	var ok := contents.find_child("GDR_GUILD_NOTIFY_CON_BUTTON", true, false) as Control
+	_check(ok != null and ok.position == AcademyNoticeContents.BUTTON_AT, "Confirm at 0x8e, 0xa8")
+	var body := contents.find_child(AcademyNoticeContents.BODY, true, false) as Label
+	var total := AcademyNoticeContents.line_count(contents)
+	_check(total > AcademyNoticeContents.SHOWN_LINES and body.max_lines_visible == AcademyNoticeContents.SHOWN_LINES,
+		"the long notice runs past the six lines shown (%d lines)" % total)
+	var font := body.get_theme_font("font")
+	var fs := body.get_theme_font_size("font_size")
+	_check(roundi(font.get_height(fs)) + body.get_theme_constant("line_spacing") == AcademyNoticeContents.LINE_PITCH,
+		"the text's lines 18 apart")
+	var bar := AcademyNoticeContents.scroll_of(contents)
+	_check(bar != null and bar.maximum == total - AcademyNoticeContents.SHOWN_LINES and bar.pos == 0
+		and bar.length == AcademyNoticeContents.SCROLL_LENGTH, "the scroll's range is the lines past six, at the top")
+	bar._step(1)
+	_check(AcademyNoticeContents.first_line(contents) == 1 and bar.pos == 1, "a step of the scroll shows from the second line")
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	wheel.pressed = true
+	body.gui_input.emit(wheel)
+	_check(AcademyNoticeContents.first_line(contents) == 2 and bar.pos == 2, "the wheel over the text scrolls one line")
+	for i in 20:
+		bar._step(1)
+	_check(AcademyNoticeContents.first_line(contents) == total - AcademyNoticeContents.SHOWN_LINES, "the last step shows the last six lines")
+	w.press_notice_line()
+	w.press_notice_line()
+	_check(w.notice_open and AcademyNoticeContents.first_line(contents) == 0 and bar.pos == 0,
+		"reopened, the panel starts at its first line")
+	bar._step(3)
+	st.handle(AcademyNet.OP_PUSH, _notice_push("Lane Notice Test", "Short"))
+	_check(AcademyNoticeContents.first_line(contents) == 0 and bar.maximum == 0 and bar.pos == 0,
+		"a new content puts the panel back at the top; a short one has no range")
+	(w._pane as Node).queue_free()
 
 func _test_window_guardian() -> void:
 	var st := _state("Guardian1")

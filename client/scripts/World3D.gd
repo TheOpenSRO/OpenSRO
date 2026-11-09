@@ -19387,7 +19387,7 @@ func _qa_input_step() -> void:
 			# the map, the scroll).
 			_qa_input_report = "%s visible=%s %s" % [action, _hud_worldmap.visible if _hud_worldmap != null else false,
 				_hud_worldmap.quest_report() if _hud_worldmap != null else "(no world map)"]
-		"acapkt", "acahex", "acarow", "acabox", "acajudge", "acareport", "acaask":
+		"acapkt", "acahex", "acarow", "acabox", "acajudge", "acareport", "acaask", "acanotice":
 			_qa_input_report = "%s -> %s" % [action, _qa_academy_step(kind, arg)]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
@@ -41267,6 +41267,29 @@ func _qa_academy_step(kind: String, arg: String) -> String:
 			return "clicked judge item %s" % arg
 		"acareport":
 			return _qa_academy_report()
+		"acanotice":
+			# Round 867: the notice panel's scroll, through the pointer:
+			# acanotice:down / up click that arrow, wheeldown / wheelup turn
+			# the wheel over the text, report prints the panel and the line.
+			var npane := _hud_panels.academy_pane if _hud_panels != null else null
+			var contents := npane.node("GDR_APPRENTICESHIP_NOTIFY_CONTENTS") if npane != null else null
+			var bar := AcademyNoticeContents.scroll_of(contents)
+			var body := contents.find_child(AcademyNoticeContents.BODY, true, false) as Control if contents != null else null
+			if arg == "report":
+				return _qa_academy_notice_report()
+			if bar == null or body == null or not bar.is_visible_in_tree():
+				return "no notice panel shown"
+			var gr := bar.get_global_rect()
+			match arg:
+				"down":
+					_qa_push_click(Vector2(gr.get_center().x, gr.position.y + bar.down_y() + 8.0), MOUSE_BUTTON_LEFT)
+				"up":
+					_qa_push_click(Vector2(gr.get_center().x, gr.position.y + 8.0), MOUSE_BUTTON_LEFT)
+				"wheeldown", "wheelup":
+					var at := body.get_global_rect().get_center()
+					_qa_push_mouse(at, MOUSE_BUTTON_WHEEL_DOWN if arg == "wheeldown" else MOUSE_BUTTON_WHEEL_UP, true, true)
+					_qa_push_mouse(at, MOUSE_BUTTON_WHEEL_DOWN if arg == "wheeldown" else MOUSE_BUTTON_WHEEL_UP, false, true)
+			return "%s; %s" % [arg, _qa_academy_notice_report()]
 		"acaask":
 			# Round 866: the guardian's join question (box kind 0xe):
 			# acaask:yes / acaask:no click its button; acaask:report prints it.
@@ -41281,6 +41304,29 @@ func _qa_academy_step(kind: String, arg: String) -> String:
 			_qa_push_click(ab.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
 			return "clicked %s on the join question at %s" % [arg, ab.get_global_rect().get_center()]
 	return ""
+
+## Round 867: the notice line and panel as drawn: the line's art and text,
+## the panel shown, its text's lines, the first shown, the scroll's range,
+## position and thumb, and the rects in window pixels.
+func _qa_academy_notice_report() -> String:
+	var pane := _hud_panels.academy_pane if _hud_panels != null else null
+	if pane == null:
+		return "no academy pane"
+	var subject := pane.node("GDR_APPRENTICESHIP_NOTIFY_SUBJECT")
+	var art := subject.get_node_or_null("Art") as TextureRect if subject != null else null
+	var art_name := "none"
+	if art != null and art.texture != null:
+		art_name = "hover" if art.texture == art.get_meta("hover") else ("normal" if art.texture == art.get_meta("normal") else "other")
+	var contents := pane.node("GDR_APPRENTICESHIP_NOTIFY_CONTENTS")
+	var bar := AcademyNoticeContents.scroll_of(contents)
+	var body := contents.find_child(AcademyNoticeContents.BODY, true, false) as Control if contents != null else null
+	return "line art=%s hovered=%s text='%s' line_rect=%s panel=%s panel_rect=%s lines=%d first=%d scroll=%s thumb_y=%s text_rect=%s" % [
+		art_name, AcademyNoticeContents.is_hovered(subject), AcademyWindow.text_of(subject.get_node_or_null("Text") as Control) if subject != null else "",
+		subject.get_global_rect() if subject != null else Rect2(), contents.visible if contents != null else false,
+		contents.get_global_rect() if contents != null else Rect2(),
+		AcademyNoticeContents.line_count(contents), AcademyNoticeContents.first_line(contents),
+		("%d/%d" % [bar.pos, bar.maximum]) if bar != null else "-", str(bar.thumb_y()) if bar != null else "-",
+		body.get_global_rect() if body != null else Rect2()]
 
 func _qa_academy_report() -> String:
 	var st := NetClient.academy
@@ -41313,4 +41359,6 @@ func _qa_academy_report() -> String:
 	for e in NetClient.academy_sent:
 		sent.append("%04X:%s" % [int(e[0]), (e[1] as PackedByteArray).hex_encode()])
 	parts.append("sent=[%s]" % ",".join(sent))
+	if pane != null:
+		parts.append("notice{%s}" % _qa_academy_notice_report())
 	return " ".join(parts)
