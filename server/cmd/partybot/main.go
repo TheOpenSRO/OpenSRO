@@ -1289,6 +1289,9 @@ func main() {
 		err = jobScenario(*addr, *name, *level, jobRun)
 	case "academy":
 		err = academyRun(*addr, *prefix)
+	case "honor":
+		// Round 873: an academy at honor rank 1 for a real client (honor873.go).
+		err = honorRun(*addr, *prefix)
 	case "instance":
 		// Round 869: the game worlds' live check (instance.go).
 		err = instanceRun(*addr, *name, *level, *instanceWorld)

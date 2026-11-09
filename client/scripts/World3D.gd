@@ -19862,6 +19862,9 @@ func _qa_input_step() -> void:
 			_qa_input_report = "%s at %s" % [action, ok_at]
 			if ok_at.x >= 0:
 				_qa_push_click(ok_at, MOUSE_BUTTON_LEFT)
+		"boardreport":
+			# Round 873: the buff board's skill icons (HudBuffBoard.qa_report).
+			_qa_input_report = "%s %s" % [action, _hud_buff_board.qa_report() if _hud_buff_board != null else "(no board)"]
 		"board":
 			# Round 838: left click a buff-board icon by token (the Gold Time
 			# is GOLD_TIME_TOKEN; a composite grant -item id).

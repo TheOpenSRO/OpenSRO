@@ -642,7 +642,28 @@ has `server/internal/timedjob` for them.
   rank: 4 `SKILL_TC_COPPER_BUFF_01`; 3 adds `SILVER`; 2 adds `GOLD`; 1 adds `CROWN`
   (READ s:0x5dd9b0, table s:0xc6748c); re-applied at the guardian's world entry, on a
   rank change (0x3C80 0c) and on revival; cancelled at disband. Their effects are the
-  skill rows' own params (OpenSRO's skill data). Shown as the honor grade mark
+  skill rows' own params (OpenSRO's skill data).
+- **Each engage is a cancel then an engage** (round 873, READ): s:0x5dd8b0 finds the
+  guardian's member record and, when its +0x38 is set (INFERRED: the member's PC), calls
+  s:0x5dd8f0 (GObjPC::FUN_0059f0c0 for every row of the table, the cancel) then s:0x5dd9b0
+  (FUN_0059b8d0 per row down to the camp's rank, the engage), so the client sees the old
+  tokens end and new ones start. Its four callers: CGObjPC::vslot_391 (s:0x4df9e0, the
+  world entry: a login and every teleport's re-entry), the rank change (s:0x5dd830), the
+  resurrection's answer (trs_wait_response::vslot_002, s:0x46cb30, after Revive(1)) and the
+  resurrection scroll (s:0x49ff20, after Revive(1)). **The 0x3053 revive (s:0x50fee0)
+  calls none**: option 1 is GObjPC::Revive(0), the return point, whose re-entry engages
+  them; option 2 is Revive(1) in place with no engage (OPEN for OpenSRO: it re-engages
+  on every revive in place).
+- **The client's board adds a slot for every start** (READ c:0x8a59e0, the 0xB0BD
+  handler, -> c:0x8048c0: 0x803cd0 builds the slot and 0x803ec0 inserts it, no search
+  by skill or token), so one buff shows once only while the server ends the old token
+  before it starts a new one. OpenSRO's board replaces a token already held (OURS, the
+  zone change's buff list re-sends tokens).
+- **OpenSRO** (round 873): the engage and the cancel go to the guardian's own client
+  even while its arrival holds it out of the world (`honorAudience`); the return point's
+  revive engages nothing while held (the arrival does, as vslot_391); the daily update
+  finds a guardian in an instance. Before, a death in an instance and the return point
+  left every honor icon twice on the board. Shown as the honor grade mark
   `com_honor_level_<rank>.ddj` in the academy window, the ranking and the matching list.
 
 ## 10. Client windows
