@@ -64,6 +64,28 @@ func _init() -> void:
 		quit(1)
 		return
 	var table := ObjidxReader.parse(archive.read_file(idx))
+	if _arg("--compounds") != "":
+		# Round 869: every .cpd the index names and whether its navigation
+		# mesh resolves (NavObjectSource: the .bsr its header word 0x0C names).
+		var cc := {"compounds": 0, "with a mesh": 0, "no .bsr named": 0, "named .bsr has no mesh": 0}
+		var with_mesh: Array[String] = []
+		for entry in table.entries:
+			if entry == null or not entry.path.to_lower().ends_with(".cpd"):
+				continue
+			cc["compounds"] += 1
+			var ce := ObjectLoader.find_file(archive, entry.path)
+			var bsr_path := NavObjectSource.navmesh_bsr_of_cpd(archive.read_file(ce)) if ce != null else ""
+			if bsr_path == "":
+				cc["no .bsr named"] += 1
+			elif NavObjectSource.load_collision(archive, entry.path) == null:
+				cc["named .bsr has no mesh"] += 1
+			else:
+				cc["with a mesh"] += 1
+				with_mesh.append(entry.path.get_file())
+		print("COMPOUNDS %s" % str(cc))
+		print("COMPOUNDS with a mesh: %s" % ", ".join(with_mesh))
+		quit(0)
+		return
 	var counts := {}
 	var shown := 0
 	for entry in table.entries:
