@@ -156,10 +156,10 @@ manager's query strings):
 | 0xB47C | S>C | its result | 01, u32 entry id / 02 code | c:0x88df80 | yes |
 | 0x747D | C>S | matching list page | u8 page | c:0x81d3b0 / s:0x519c70 | yes |
 | 0xB47D | S>C | its result | 01, u8 page count, u8 page, u8 n, n x MatchRow / 02 code | c:0x890ab0 | yes (empty: 01 00 00 00) |
-| 0x747E | C>S | matching join request | u32 entry id | c:0x81d470 / s:0x519cc0 | — |
-| 0x747E | S>C | the request reaching the guardian | see 5.10 | c:0x890fa0 | — |
-| 0x347F | C>S | guardian's answer to it | u32, u32, u8 | c:0x81d530 / s:0x519d10 | — |
-| 0xB47E | S>C | join result | 01 u8 s / 02 code | c:0x892c50 / s:0x5e0940 | — |
+| 0x747E | C>S | matching join request | u32 entry id | c:0x81d470 / s:0x519cc0 | yes (round 866) |
+| 0x747E | S>C | the request reaching the guardian | u32 job, u32 requester, u32 entry, u32 requester, u8 level, u8 max level, u32 RefObjID, str name (7.10) | c:0x890fa0 / s:0x5df260, m:0x422230 | yes (round 866) |
+| 0x347F | C>S | guardian's answer to it | u32 job, u32 requester, u8 answer (1 Yes, 0 No or the box's 15 s) | c:0x81d530 / s:0x519d10 | yes (round 866) |
+| 0xB47E | S>C | join result | 01 u8 s / 02 code | c:0x892c50 / s:0x5e0940 | yes (round 866: 01 00 and 01 01) |
 | 0x7483 | C>S | transfer cumulated exp buff | — | c:0x788840 case 9 / s:0x519d40 | — |
 | 0xB483 | S>C | accumulated buff list / transfer result | see 5.11 | c:0x89b7b0 / s:0x4e4580 | — |
 | 0x3C80 | S>C | academy push (sub-type) | section 6 | c:0x8a2110 | yes (01-0d except 04, 0c) |
@@ -233,13 +233,17 @@ Only camps loaded on that game server are listed (READ s:0x5e17f0 patches the co
 
 ### MatchRow (0xB47D; READ c:0x890ab0, consumer c:0x773320)
 
-u32 entry id, u32 (OPEN, not stored), u8 type, str title, u32 (OPEN), u8 level, u8
+u32 entry id, u32 camp id (MEASURED round 866; not stored), u8 type, str title, u32 the
+entry's registration time in Unix seconds (MEASURED round 866: a row read back seconds after
+its 0x747A carried that moment; not shown), u8 level, u8
 max level, u32 guardian RefObjID (race from it), str guardian name, u32 GraduateCount,
 u8 honor rank, u32 assistants, u32 apprentices. The list header before the rows is u8,
 u8, u8 n: page count, then page (READ c:0x7738c0 stores them crossed). The server's page layout is
-built in the shard manager (OPEN beyond the empty reply). OpenSRO (stage 2) sends 12 rows
-a page (the window's rows 70..81, INFERRED), and in the two unread u32s the camp id and
-the graduate count, as 0xB47A's record carries them (INFERRED; the client reads neither).
+built in the shard manager (OPEN beyond the empty reply and a one-row page). OpenSRO
+(stage 2) sends 12 rows a page (the window's rows 70..81, INFERRED); round 866 puts the
+camp id and the registration time in the two unread u32s, as MEASURED. MEASURED one-row
+page: `01 01 00 01 | <entry> <camp> 01 <title> <time> 46 46 <body> <name> 00000000 05
+01000000 01000000` (a level-70 guardian, rank 5, one assistant, one apprentice).
 
 ## 6. The 0x3C80 push (READ s:0x5dd4f0.., c:0x8a2110; MEASURED where marked)
 
@@ -357,8 +361,17 @@ server's 0x000E ends it). MEASURED boxes of this kind: the invitation 402 x 167,
 disband question 498 x 168, the leave question 618 x 151, the ban question 754 x 151 (one
 text line 151 high, two 167 / 168). Server on the answer (READ
 s:0x5df910): inviter gone 0x680c; target gone 3; refused (answer byte != 1) -> 0xB472
-{02, 0x6811} to the inviter and 0x3C80 {0a, 02, 0x6811} to the invitee; accepted -> the
-store adds the member; success per section 6.
+{02, 0x6811} to the inviter and 0x3C80 {0a, 02, 0x6811} to the invitee (READ; not what
+was MEASURED, below); accepted -> the store adds the member; success per section 6.
+
+MEASURED (round 866, twice): a No answers `3080 {02 00 00}`, and both sides got code **0**,
+not 0x6811 -- the inviter `B472 {02 00 00}`, the invitee `3C80 {0a 02 00 00}` in the same
+instant -- so neither printed anything (code 0 has no row); the inviter's last line stays
+"Request for Academy registration to [name] is in process.". The READ above (s:0x5df910's
+`mov eax,0x6811` for an answer byte other than 1) is not what was sent. **OpenSRO follows
+the measurement** (round 866, the user's decision): a refusal answers code 0 both ways
+(`academy.InviteRefusedCode`) and neither client prints anything; the client's 0x1d table
+keeps 0x6811's row ("Invitation has been refused.") as READ.
 
 ### 7.3 Leave — 0x7474 {}
 
@@ -477,7 +490,50 @@ and the window opens empty.
   (0x6827), guardian online (0x680c), then a 15 s wait for the guardian's 0x347F. The
   result 0xB47E {01, u8 s}: 1 `UIIT_STT_TC_MACHING_COMPLETE`, 0 `UIIT_MSG_TC_JOIN_CANCEL`,
   2 `UIIT_MSG_TC_JOIN_NOREPLY`. The joiner then gets 0x3C80 {0a 01, CampInfo} as in an
-  invitation. The guardian's question push and 0x347F's fields are OPEN (section 17).
+  invitation.
+- **The guardian's question (round 866, READ and MEASURED both sides).**
+  - Requester: Join sends 0x747E {entry} and opens the joining window in the academy's
+    mode (c:0x77011d pushes kind 2 to c:0x732000): caption "Joining"
+    (`UIIT_PAG_PARTYMATCH_JOINPROGRESS`), text `UIIT_MSG_TC_JOIN_ERROR_DUPLE` "Registration
+    is in process." (c:0x73201c), the gauge 0x3a98 ms = 15 s (c:0x7323fa), not the party's
+    `UIIT_STT_PARTYMATCH_JOIN_PROGRESS` (kind 1, 10 s). MEASURED: "Registration is in
+    process." with the gauge.
+  - The game server writes {u32 entry, u32 requester, u8 level, u8 max level, u32 RefObjID,
+    str name} (s:0x5df260 -> s:0x5e2c80) and the shard puts its job id and the requester in
+    front (m:0x422230, as for a party's 0x706d). MEASURED: `<job> <key> <entry> <key> 1e 1e
+    <body> <name>` for a level-30 requester, the two keys equal (the requester's account
+    id) and the job ids counting up by one per request. OpenSRO's key is
+    `party.JIDOf(CharID)`, as its party matching's.
+  - Guardian: c:0x890fa0 reads it (the two u32s into the record's +0x2c / +0x30, then
+    c:0x88f4d0) and opens CMessageBoxManager box kind 0xe (c:0x77f0a0; UI_SILKMALL::
+    FUN_00644c90 case c:0x6458c6): section MsgBoxINIF at screen w / 2 - 0x9a, h / 2 - 0x4a,
+    titled `UIIT_PAG_PARTYMATCH_JOINREQUEST` "Join request sent", 0x168 x 0xd7; OK (0x65,
+    0xae), Cancel (0xbd, 0xae), +0x808 hidden; a one-line text control 0x140 x 0x10 at (0xe,
+    0x3b) with `UIIT_STT_TC_JOIN_REQUEST` and the name; "Level" (`UIIT_CTL_WARENETWORK_
+    RESULT_LEVEL`) at (0xf, 0x79) and "Race" (`UIIT_CTL_PARTYMATCH_PSEARCH_LIST_RACE`) at
+    (0xb5, 0x79); two `msgbox_blackbox.ddj` fields 0x3a x 0x14 at (0x62, 0x79) "%d(%d)" and
+    (0x108, 0x79) the race; timer 0xa, 15 s. MEASURED: "[name] has requested for Academy"
+    (the line's rest and "Approve?" cut by the one-line control), "Level 30(30)", "Race
+    CHN", Yes / No. One box of a kind at a time (c:0x6ec400).
+  - The answer 0x347F {job, requester, u8}: Yes 1; No and the box's own timer 0
+    (c:0x63bf40 -> 0x777dd0 -> 0x797d90 case 0xe, c:0x798081..0x7980c2). MEASURED: No ->
+    0x347F {.., 00}; no click -> 0x347F {.., 00} 15.0 s after the question.
+  - Results (MEASURED): 0 -> the requester 0xB47E {01 00}, "Request has been cancelled."
+    (type 4), the joining window closed; the guardian nothing. The no-reply case therefore
+    shows "Request has been cancelled." too, because the guardian's box answers before the
+    shard's 15 s (m:0x79b018) end; the shard's own `{01 02}` reaches a requester only when
+    the guardian's client does not answer. 1 -> the guardian gets 0x3C80 02 (the new
+    member), 0d, 05 (field 1 = 0) and then 0xB47E {01 01}; the requester 0x3C80 {0a 01,
+    CampInfo}, 05 and then 0xB47E {01 01}; both show "Registration has been completed."
+    on the banner, the guardian also "[name] has been added to the Academy." and "Novice
+    apprentice [name] has logged on to the game.", the requester "Academy Notice “title”"
+    and its academy window opens. The matching window's rows are not refreshed (the
+    guardian's own row kept "3/8").
+  - OpenSRO (round 866): the server sends the question and acts on 0x347F
+    (`session/academyboard.go`); only the camp's guardian may answer its job, with the
+    job's requester echoed (OURS, as the party matching); a failed accept answers 0xB47E
+    {02, code} to both (INFERRED from m:0x459b30's two sends). Its own backstop is 17 s
+    (OURS: the shard's 15 s plus 2 s, so the guardian's box answers first, as MEASURED).
 - The client's side, READ in stage 2 (CIFMentorMatch, Create c:0x770910; the register box
   c:0x7693d0 / c:0x640660, its OK c:0x76fcc0):
   - the register box's two checkboxes are exclusive (0x63c150 / 0x63c170), the apprentice
@@ -813,8 +869,8 @@ honor buffs, chat audience, lobby byte), `academyboard.go` (0x747A..0x747F),
 (a level never falls here), so choice 2's two rules agree; the members' places are
 sampled each second for 0x3C80 0d (the party sampler's cadence); a GM's `/academytime
 <duration>` moves the academy's clock forward for QA (a bots' aid, not in the console);
-a request through the matching board that passes every refusal waits 15 s and ends as
-"no reply" (the guardian's question is OPEN); every camp counts as loaded for the honor
+a request through the matching board that passes every refusal waited 15 s and ended as
+"no reply" (the guardian's question was OPEN; round 866 sends it, 7.10); every camp counts as loaded for the honor
 list (one game server); the board's type byte is read as the shard's bits (1 and 2 agree).
 
 ## 15. Corrections to the earlier version of this page
@@ -864,8 +920,10 @@ list (one game server); the board's type byte is read as the shard's bits (1 and
    print the same text).
 2. The exp banking formula's inputs, the buff's point cap, the server side of 0x3C82
    (which sub when) and 0xB483's non-login send (s:0x4e4580 field order).
-3. 0x747E's push to the guardian, 0x347F's fields, the board's page layout beyond an
-   empty page and MatchRow's two unstored u32s (the 0xB47D header is page count, page: READ).
+3. (Round 866: 0x747E's push to the guardian, 0x347F's fields and MatchRow's two
+   unstored u32s are READ and MEASURED, 7.10 and 5.) Still OPEN: the board's page size
+   beyond a one-row page, and what the shard does to the entry when an accept fills the
+   recruited role (m:0x45ab50; OpenSRO keeps the client's own pull delete).
 4. (Resolved in stage 2: the judge window's title is its registry caption; kind 7 draws
    tc_reserve_buff, kind 8 tc_amends_buff -- 10.3, 7.11.)
 5. What `SKILL_TC_*_BUFF_01` do (skill data; OpenSRO reads it).

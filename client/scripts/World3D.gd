@@ -19377,7 +19377,7 @@ func _qa_input_step() -> void:
 			# the map, the scroll).
 			_qa_input_report = "%s visible=%s %s" % [action, _hud_worldmap.visible if _hud_worldmap != null else false,
 				_hud_worldmap.quest_report() if _hud_worldmap != null else "(no world map)"]
-		"acapkt", "acahex", "acarow", "acabox", "acajudge", "acareport":
+		"acapkt", "acahex", "acarow", "acabox", "acajudge", "acareport", "acaask":
 			_qa_input_report = "%s -> %s" % [action, _qa_academy_step(kind, arg)]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
@@ -41252,6 +41252,19 @@ func _qa_academy_step(kind: String, arg: String) -> String:
 			return "clicked judge item %s" % arg
 		"acareport":
 			return _qa_academy_report()
+		"acaask":
+			# Round 866: the guardian's join question (box kind 0xe):
+			# acaask:yes / acaask:no click its button; acaask:report prints it.
+			var ask := _hud_panels.academy_join_ask if _hud_panels != null else null
+			if ask == null or not is_instance_valid(ask) or ask.is_queued_for_deletion():
+				return "no join question"
+			if arg == "report":
+				return "join question '%s' at %s size %s" % [ask.shown_text(), ask.position, ask.size]
+			var ab := ask.node("GDR_MBIN_BTN_OK" if arg == "yes" else "GDR_MBIN_BTN_CANCEL")
+			if ab == null:
+				return "no button"
+			_qa_push_click(ab.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			return "clicked %s on the join question at %s" % [arg, ab.get_global_rect().get_center()]
 	return ""
 
 func _qa_academy_report() -> String:

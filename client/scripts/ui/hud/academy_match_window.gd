@@ -77,8 +77,9 @@ class_name AcademyMatchWindow
 ##   0x88dff6); the banner UIIT_STT_TC_MACHING_PULL_DELETE when the client
 ##   deleted it itself (flag 0xeebf20 = 1 or 2) else _DELETE, the flag cleared;
 ##   0xB47E {s}: 1 banner UIIT_STT_TC_MACHING_COMPLETE, 0 UIIT_MSG_TC_JOIN_
-##   CANCEL, 2 UIIT_MSG_TC_JOIN_NOREPLY (both system lines type 4), the
-##   joining window closed; a refusal -> category 0x1d (AcademyState.refused);
+##   CANCEL, 2 UIIT_MSG_TC_JOIN_NOREPLY (both system lines type 4; round 866:
+##   AcademyFlow prints them, as c:0x892c50 needs no window), the joining
+##   window closed; a refusal -> category 0x1d (AcademyState.refused);
 ## - the full camp's own delete (c:0x76f7b0, run when a member joins, 0x3C80
 ##   02 at c:0x8a242b): the guardian with an own entry deletes it (0x747C, flag
 ##   1) when the assistants are full and the entry recruits assistants (flags
@@ -102,10 +103,11 @@ class_name AcademyMatchWindow
 ## high). OURS: modify mode starts empty, as the original's (it does not
 ## pre-fill: nothing sets the edit or the checks there, c:0x769470).
 ##
-## OPEN, not built: the guardian's question when someone asks to join (0x747E
-## down, c:0x890fa0) and its answer 0x347F; the column headers' sorting
-## (60..67 -> 0x7727c0 and the comparers 0x769550..0x7698d0); the joining
-## window's own text in this mode (0x770050 passes two empty strings).
+## Round 866: the guardian's question (0x747E down, c:0x890fa0) is
+## AcademyJoinAskBox and its answer 0x347F AcademyFlow's; the joining window
+## runs in the academy's mode (PartyJoinProgress.build_academy).
+## OPEN, not built: the column headers' sorting (60..67 -> 0x7727c0 and the
+## comparers 0x769550..0x7698d0).
 
 const ROWS := 12
 const SLOT_LAYOUT := "resinfo\\ifmentormatchslot.txt"
@@ -671,13 +673,9 @@ func on_reply(op: int, ok: bool, body: Dictionary) -> void:
 				return
 			_on_page(body)
 		AcademyNet.OP_MATCH_JOIN_RESULT:
-			match int(body.get("state", -1)):
-				1:
-					banner.emit("UIIT_STT_TC_MACHING_COMPLETE")
-				0:
-					notice.emit("UIIT_MSG_TC_JOIN_CANCEL", 4)
-				2:
-					notice.emit("UIIT_MSG_TC_JOIN_NOREPLY", 4)
+			# Round 866: the texts are AcademyFlow's (UI_TC::FUN_00892c50
+			# prints them with no window, the guardian's included); the
+			# window only closes its joining window.
 			_close_progress()
 
 ## c:0x890ab0: the header (page count, page) and the rows.
@@ -781,7 +779,11 @@ func _on_register_ok(kind: int, title: String, modify: bool) -> void:
 func _open_progress() -> void:
 	_close_box(progress_box)
 	progress_box = PartyJoinProgress.new()
-	if not progress_box.build(_builder, "", ""):
+	# Round 866: the academy's mode, kind 2 (c:0x77011d `push 0x2` ->
+	# 0x732000): "Registration is in process." for 15 s. Round 865 built the
+	# party's kind 1, whose line ("[]You [] has requested to join this
+	# party.") the joiner then saw.
+	if not progress_box.build_academy(_builder):
 		progress_box.queue_free()
 		progress_box = null
 		return

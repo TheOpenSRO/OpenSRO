@@ -3,6 +3,7 @@ package academy
 import (
 	"sort"
 	"sync"
+	"time"
 )
 
 // Board is the guardian matching board (docs/protocol/academy.md 7.10): held
@@ -29,8 +30,19 @@ const (
 const BoardPageRows = 12
 
 // MatchJoinWaitSeconds is how long a join request waits for the guardian
-// (READ m:0x79b018, 15.0f).
+// (READ m:0x79b018, 15.0f). The guardian's question box answers 0 on its
+// own 15 s timer (READ c:0x645c46 `push 0x3a98; push 0xa`, c:0x63bf40;
+// MEASURED: its 0x347F {.., 0} 15.0 s after the push), and the shard's wait
+// did not end first (MEASURED: the requester got 0xB47E {01 00}, "Request
+// has been cancelled.", not {01 02}).
 const MatchJoinWaitSeconds = 15
+
+// MatchJoinBackstop is OpenSRO's own wait for a guardian's answer before it
+// answers the requester "no reply" (OURS): the shard's 15 s plus 2 s, so the
+// guardian's box, whose 15 s start when the question arrives, answers first
+// as it did in the original, and the backstop only ends a request the
+// guardian's client never answers.
+const MatchJoinBackstop = MatchJoinWaitSeconds*time.Second + 2*time.Second
 
 // NewBoard is an empty board.
 func NewBoard() *Board {
@@ -40,13 +52,18 @@ func NewBoard() *Board {
 // Register lists campID; entry ids count from 1 (MEASURED: the first entry
 // is 1). A camp already listed is refused ErrBoardRegistered.
 func (b *Board) Register(campID uint32, flags byte, title string) (MatchEntry, uint16) {
+	return b.RegisterAt(campID, flags, title, time.Now())
+}
+
+// RegisterAt is Register at the time at (the entry's Registered).
+func (b *Board) RegisterAt(campID uint32, flags byte, title string, at time.Time) (MatchEntry, uint16) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, in := b.byCamp[campID]; in {
 		return MatchEntry{}, ErrBoardRegistered
 	}
 	b.next++
-	e := MatchEntry{ID: b.next, CampID: campID, Flags: flags, Title: title}
+	e := MatchEntry{ID: b.next, CampID: campID, Flags: flags, Title: title, Registered: uint32(at.Unix())}
 	b.byID[e.ID] = e
 	b.byCamp[campID] = e.ID
 	return e, 0

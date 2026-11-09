@@ -5,10 +5,11 @@ package session
 // manager keeps it, and loses a camp's entry when its guardian logs out, the
 // camp fills or disbands.
 //
-// OPEN, labelled: the push that puts a join request to the guardian and the
-// fields of its answer (0x347F). Without the question the guardian is never
-// asked, so a request that passes every refusal waits the 15 s and ends as
-// "no reply" (0xB47E {01, 02}, READ c:0x892c50 UIIT_MSG_TC_JOIN_NOREPLY).
+// Round 866: a join request is put to the camp's guardian (0x747E down, its
+// question box) and the guardian's 0x347F settles it (READ c:0x890fa0,
+// c:0x645c46, c:0x81d530; MEASURED on both sides, docs/protocol/academy.md
+// 7.10). Before, the question was OPEN and never sent: a request waited 15 s
+// and ended "no reply" with no box on the guardian's side.
 
 import (
 	"context"
@@ -16,18 +17,24 @@ import (
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/academy"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/party"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
-// acJoin is a join request waiting for its guardian.
+// acJoin is a join request waiting for its guardian's answer.
 type acJoin struct {
-	entry uint32
-	timer *time.Timer
+	id        uint32 // the job id the question and its answer carry
+	entry     uint32
+	requester int64
+	guardian  int64
+	campID    int64
+	timer     *time.Timer
 }
 
-// academyJoinWait is the join request's wait (READ m:0x79b018, 15.0f).
-var academyJoinWait = academy.MatchJoinWaitSeconds * time.Second
+// academyJoinWait is how long a join request waits for its guardian's answer
+// before it ends "no reply" (academy.MatchJoinBackstop; tests shorten it).
+var academyJoinWait = academy.MatchJoinBackstop
 
 func (rt *academyRuntime) handleBoard(ctx context.Context, sess *gateway.Session, e world.Entity, p *proto.Packet) {
 	switch p.Opcode {
@@ -42,8 +49,7 @@ func (rt *academyRuntime) handleBoard(ctx context.Context, sess *gateway.Session
 	case proto.OpAcademyMatchJoin:
 		rt.handleMatchJoin(ctx, sess, e, p.Data)
 	case proto.OpAcademyMatchJoinAnswer:
-		// OPEN: the guardian's answer's fields (relayed raw to the shard,
-		// s:0x4168f0). Not acted on.
+		rt.handleMatchJoinAnswer(ctx, e, p.Data)
 	}
 }
 
@@ -92,7 +98,7 @@ func (rt *academyRuntime) handleMatchEntry(ctx context.Context, sess *gateway.Se
 		acFail(sess, op, academy.ErrNotInvite24T)
 		return
 	}
-	entry, code := rt.board.Register(uint32(c.ID), req.Flags, req.Title)
+	entry, code := rt.board.RegisterAt(uint32(c.ID), req.Flags, req.Title, rt.now())
 	if code != 0 {
 		acFail(sess, op, code)
 		return
@@ -175,8 +181,11 @@ func (rt *academyRuntime) handleMatchList(ctx context.Context, sess *gateway.Ses
 // camp 0x6812 -- then the shard's: the entry 0x6826, the role by the max
 // level (60 or more 3), the apprentices full 0x6828, not recruiting
 // apprentices 0x682a, the assistants full 0x6810, not recruiting assistants
-// 0x682a, a request already waiting 0x6827, the guardian offline 0x680c;
-// then the 15 s wait (see the file's OPEN note).
+// 0x682a, a request already waiting 0x6827, the guardian offline 0x680c.
+// Then the question goes to the guardian (round 866): 0x747E down with the
+// job id and the requester (academy.EncodeMatchJoinAsk), and the requester
+// waits for its 0x347F; nothing goes to the requester yet (MEASURED: its
+// next message is the 0xB47E the answer brings).
 func (rt *academyRuntime) handleMatchJoin(ctx context.Context, sess *gateway.Session, e world.Entity, data []byte) {
 	const op = proto.OpAcademyMatchJoinAck
 	id, err := academy.DecodeU32(data)
@@ -230,20 +239,123 @@ func (rt *academyRuntime) handleMatchJoin(ctx context.Context, sess *gateway.Ses
 		acFail(sess, op, academy.ErrBoardPending)
 		return
 	}
-	if _, online := entityOf(rt.Hub, g.CharID); !ok || !online {
+	ge, online := entityOf(rt.Hub, g.CharID)
+	if !ok || !online {
 		rt.board.Release(id)
 		acFail(sess, op, ErrAcademyInviterGone)
 		return
 	}
-	j := &acJoin{entry: id}
-	j.timer = time.AfterFunc(academyJoinWait, func() { rt.joinNoReply(e.CharacterID, j) })
+	rt.dropJoins(e.CharacterID)
+	joiner := rt.joinerOf(ctx, e)
+	j := &acJoin{entry: id, requester: e.CharacterID, guardian: g.CharID, campID: c.ID}
 	rt.mu.Lock()
+	rt.joinSeq++
+	j.id = rt.joinSeq
+	j.timer = time.AfterFunc(academyJoinWait, func() { rt.joinNoReply(e.CharacterID, j) })
 	rt.joins[e.CharacterID] = j
 	rt.mu.Unlock()
+	acSend(ge.Session, proto.OpAcademyMatchJoin, academy.EncodeMatchJoinAsk(academy.MatchJoinAsk{
+		JobID: j.id, Requester: party.JIDOf(e.CharacterID), Entry: id, Level: byte(e.Level), MaxLevel: byte(e.Level),
+		RefObjID: uint32(joiner.RefObjID), Name: e.Name}))
+	rt.log().Info("academy match join asked", "character_id", e.CharacterID, "name", e.Name, "camp_id", c.ID,
+		"entry", id, "job", j.id, "guardian", g.CharID)
 }
 
-// joinNoReply ends a join request the guardian did not answer: 0xB47E {01,
-// 02}.
+// handleMatchJoinAnswer is the guardian's 0x347F {u32 job, u32 requester, u8
+// answer} (READ c:0x81d530; s:0x519d10 relays it to the shard, whose
+// m:0x459b30 acts on the answer: 0 and 2 end the request, 1 joins). OURS, as
+// the party matching's answer (partymatch.go): only the camp's guardian may
+// answer its own job, and the echoed requester must be the job's; an answer
+// that fails either is dropped and the request keeps waiting.
+func (rt *academyRuntime) handleMatchJoinAnswer(ctx context.Context, e world.Entity, data []byte) {
+	jobID, requester, answer, err := academy.DecodeMatchJoinAnswer(data)
+	if err != nil {
+		return
+	}
+	rt.mu.Lock()
+	var j *acJoin
+	for _, w := range rt.joins {
+		if w.id == jobID {
+			j = w
+			break
+		}
+	}
+	if j == nil || j.guardian != e.CharacterID || requester != party.JIDOf(j.requester) {
+		rt.mu.Unlock()
+		rt.log().Info("academy match answer dropped", "character_id", e.CharacterID, "job", jobID, "answer", answer)
+		return
+	}
+	delete(rt.joins, j.requester)
+	rt.mu.Unlock()
+	j.timer.Stop()
+	rt.board.Release(j.entry)
+	rt.resolveMatchJoin(ctx, j, answer)
+}
+
+// resolveMatchJoin carries out the guardian's answer (MEASURED, each step's
+// messages on each side):
+//   - 0 (No, or the guardian's box timing out at 15 s): the requester gets
+//     0xB47E {01 00} ("Request has been cancelled."); the guardian nothing.
+//   - 2: the requester gets 0xB47E {01 02} (the shard's own no-reply; its
+//     client prints "Reply time has passed, ...").
+//   - 1: the requester joins: the guardian gets 0x3C80 02, 0d, 05 and then
+//     0xB47E {01 01}; the requester 0x3C80 {0a 01, CampInfo}, 05 and then
+//     0xB47E {01 01} -- both print "Registration has been completed." on the
+//     banner (MEASURED, the same instant). A failed accept (the requester
+//     gone, joined elsewhere meanwhile, the role filled) answers 0xB47E {02,
+//     code} to both (INFERRED from m:0x459b30's two sends on that path; the
+//     codes are the store's, as an invitation's).
+//
+// Any other answer is dropped, as the shard asserts on it.
+func (rt *academyRuntime) resolveMatchJoin(ctx context.Context, j *acJoin, answer byte) {
+	const op = proto.OpAcademyMatchJoinAck
+	req, rok := entityOf(rt.Hub, j.requester)
+	guard, gok := entityOf(rt.Hub, j.guardian)
+	log := rt.log().With("requester", j.requester, "guardian", j.guardian, "camp_id", j.campID, "job", j.id)
+	switch answer {
+	case academy.MatchJoinRefused, academy.MatchJoinNoReply:
+		if rok {
+			acSend(req.Session, op, academy.EncodeMatchJoinResult(answer))
+		}
+		log.Info("academy match join answered", "answer", answer)
+		return
+	case academy.MatchJoinDone:
+	default:
+		log.Info("academy match join answer ignored", "answer", answer)
+		return
+	}
+	fail := func(code uint16) {
+		if rok {
+			acFail(req.Session, op, code)
+		}
+		if gok {
+			acFail(guard.Session, op, code)
+		}
+		log.Info("academy match join refused", "code", code)
+	}
+	if !rok {
+		fail(ErrAcademyRequesterGone)
+		return
+	}
+	if rt.campOf(ctx, j.requester) != nil {
+		fail(academy.ErrAlreadyInCamp)
+		return
+	}
+	c, err := rt.Store.AddMember(ctx, j.campID, rt.joinerOf(ctx, req), rt.now())
+	if err != nil {
+		fail(storeCode(err))
+		return
+	}
+	rt.announceJoin(ctx, c, req)
+	if gok {
+		acSend(guard.Session, op, academy.EncodeMatchJoinResult(academy.MatchJoinDone))
+	}
+	acSend(req.Session, op, academy.EncodeMatchJoinResult(academy.MatchJoinDone))
+	log.Info("academy joined", "character_id", j.requester, "by", "matching")
+}
+
+// joinNoReply ends a join request no answer came for in academy.
+// MatchJoinBackstop: 0xB47E {01, 02} to the requester.
 func (rt *academyRuntime) joinNoReply(requester int64, j *acJoin) {
 	rt.mu.Lock()
 	if rt.joins[requester] != j {
@@ -256,9 +368,11 @@ func (rt *academyRuntime) joinNoReply(requester int64, j *acJoin) {
 	if e, ok := entityOf(rt.Hub, requester); ok {
 		acSend(e.Session, proto.OpAcademyMatchJoinAck, academy.EncodeMatchJoinResult(academy.MatchJoinNoReply))
 	}
+	rt.log().Info("academy match join no reply", "requester", requester, "guardian", j.guardian, "job", j.id)
 }
 
-// dropJoins ends characterID's waiting join request (it left the world).
+// dropJoins ends characterID's waiting join request (it left the world, or
+// asked again).
 func (rt *academyRuntime) dropJoins(characterID int64) {
 	rt.mu.Lock()
 	j := rt.joins[characterID]

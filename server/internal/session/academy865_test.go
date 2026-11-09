@@ -330,13 +330,13 @@ func TestAcademy865InviteRefusals(t *testing.T) {
 	f.invite(t, "Bram")
 	acWant(t, "in this camp", inv(a, br.id), acFailB(0x680f))
 	acWant(t, "not the guardian", inv(br, f.p["Cora"].id), acFailB(academy.ErrOrderWork))
-	// A refusal: 0x6811 both ways.
+	// A refusal: code 0 both ways (round 866, MEASURED).
 	c := f.p["Cora"]
 	f.send(t, a, proto.OpAcademyInviteRequest, acU32(uint32(c.id)))
 	nextOp(t, c.conn, c.r, party.OpInvitation)
 	f.send(t, c, party.OpInvitation, acB(2, 0, 0))
-	acWant(t, "refused (inviter)", nextOp(t, a.conn, a.r, proto.OpAcademyInviteAck).Data, acFailB(academy.ErrInviteRejection))
-	acWant(t, "refused (invitee)", f.push(t, c), academy.EncodeJoinFail(academy.ErrInviteRejection))
+	acWant(t, "refused (inviter)", nextOp(t, a.conn, a.r, proto.OpAcademyInviteAck).Data, acFailB(academy.InviteRefusedCode))
+	acWant(t, "refused (invitee)", f.push(t, c), academy.EncodeJoinFail(academy.InviteRefusedCode))
 	// The timeout: 0x000E both ways.
 	f.send(t, a, proto.OpAcademyInviteRequest, acU32(uint32(c.id)))
 	nextOp(t, c.conn, c.r, party.OpInvitation)

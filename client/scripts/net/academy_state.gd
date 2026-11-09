@@ -35,6 +35,9 @@ signal invitation(inviter_uid: int, inviter_name: String)
 signal invitation_closed
 ## 0xB478 success: the honor ranking opens with these rows (c:0x79d180(1)).
 signal honor_rows(rows: Array)
+## Round 866: a board join request put to this guardian (0x747E down;
+## AcademyNet.decode_join_ask's keys).
+signal join_asked(ask: Dictionary)
 ## The matching board's replies (MentorMatch): op, ok, the decoded body.
 signal match_reply(op: int, ok: bool, body: Dictionary)
 ## A buff message (academy.md 7.11): op and its decoded fields.
@@ -146,6 +149,13 @@ func handle(op: int, data: PackedByteArray) -> bool:
 				return false
 			pending_inviter = int(inv[0])
 			invitation.emit(int(inv[0]), String(inv[1]))
+			return true
+		AcademyNet.OP_MATCH_JOIN:
+			# Round 866: 0x747E down (c:0x890fa0) -- the guardian's question
+			# box, CMessageBoxManager kind 0xe (AcademyFlow opens it).
+			var ask := AcademyNet.decode_join_ask(data)
+			if not ask.is_empty():
+				join_asked.emit(ask)
 			return true
 		AcademyNet.OP_CAMP:
 			# 0x3C81 (c:0x8986c0): clear, read, refresh.

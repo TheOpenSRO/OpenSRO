@@ -200,10 +200,30 @@ func TestWireReplies(t *testing.T) {
 	same(t, "B478 row", EncodeHonorList([]HonorRow{{Ranking: 1, Rank: 1, Guardian: "Ab", CurLevel: 70, MaxLevel: 70, GraduateCount: 3, GuildName: ""}}),
 		h(t, "01 01 01000000 01 0200 4162 46 46 03000000 0000"))
 	same(t, "B47D one row (page count 1, page 0)", EncodeMatchList(1, 0, []MatchRow{{
-		Entry: MatchEntry{ID: 1, CampID: 0x65, Flags: 1, Title: "x"}, Level: 70, MaxLevel: 70, RefObjID: 0x773,
+		Entry: MatchEntry{ID: 1, CampID: 0x65, Flags: 1, Title: "x", Registered: 0x6a000000}, Level: 70, MaxLevel: 70, RefObjID: 0x773,
 		Guardian: "Ab", GraduateCount: 2, Rank: 5, Assistants: 1, Apprentices: 3}}),
-		h(t, "01 01 00 01 01000000 "+camp+" 01 0100 78 02000000 46 46 "+refObj+" 0200 4162 02000000 05 01000000 03000000"))
+		h(t, "01 01 00 01 01000000 "+camp+" 01 0100 78 0000006a 46 46 "+refObj+" 0200 4162 02000000 05 01000000 03000000"))
 	same(t, "B47E", EncodeMatchJoinResult(MatchJoinNoReply), h(t, "01 02"))
+	same(t, "B47E refused", EncodeMatchJoinResult(MatchJoinRefused), h(t, "01 00"))
+	same(t, "B47E joined", EncodeMatchJoinResult(MatchJoinDone), h(t, "01 01"))
+	// Round 866: the question to the guardian, the MEASURED layout with
+	// synthetic values (job 0x123, requester key 0x101, entry 2, a level-30
+	// requester).
+	same(t, "747E down", EncodeMatchJoinAsk(MatchJoinAsk{JobID: 0x123, Requester: 0x101, Entry: 2, Level: 30, MaxLevel: 30,
+		RefObjID: 0x773, Name: "Ab"}), h(t, "23010000 01010000 02000000 01010000 1e 1e "+refObj+" 0200 4162"))
+}
+
+func TestMatchJoinAnswerDecode866(t *testing.T) {
+	job, req, ans, err := DecodeMatchJoinAnswer(h(t, "23010000 01010000 01"))
+	if err != nil || job != 0x123 || req != 0x101 || ans != 1 {
+		t.Errorf("347F yes: %x %x %d %v", job, req, ans, err)
+	}
+	if _, _, ans, err := DecodeMatchJoinAnswer(h(t, "23010000 01010000 00")); err != nil || ans != 0 {
+		t.Errorf("347F no: %d %v", ans, err)
+	}
+	if _, _, _, err := DecodeMatchJoinAnswer(h(t, "23010000 0101")); err == nil {
+		t.Error("347F short: no error")
+	}
 }
 
 func TestWireDecoders(t *testing.T) {

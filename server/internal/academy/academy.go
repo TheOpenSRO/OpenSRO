@@ -19,10 +19,16 @@ const (
 	ErrOpenGold        = 0x680a // TC_ERROR_OPEN_GOLD
 	ErrNoCamp          = 0x680b // TC_ERROR_TRAININGCAMP_NOTHING
 	ErrInviteRejection = 0x6811 // TC_ERROR_INVITE_REJECTION
-	ErrAlreadyInCamp   = 0x6812 // TC_ERROR_OTHER_TRAININGCAMP_ENTRY
-	ErrOrderWork       = 0x6816 // TC_ERROR_ORDER_WORK
-	ErrNotOpen7D       = 0x681c // TC_ERROR_NOT_OPEN_7D
-	ErrNotInvite24T    = 0x681f // TC_ERROR_NOT_INVITE_24T
+	// InviteRefusedCode is what a refused invitation answers both sides
+	// (round 866, MEASURED twice: B472 {02 00 00} and 3C80 {0a 02 00 00},
+	// no text either side). READ s:0x5df910 sends ErrInviteRejection for an
+	// answer byte other than 1; the measured behaviour is followed (the
+	// user's decision, round 866).
+	InviteRefusedCode = 0
+	ErrAlreadyInCamp  = 0x6812 // TC_ERROR_OTHER_TRAININGCAMP_ENTRY
+	ErrOrderWork      = 0x6816 // TC_ERROR_ORDER_WORK
+	ErrNotOpen7D      = 0x681c // TC_ERROR_NOT_OPEN_7D
+	ErrNotInvite24T   = 0x681f // TC_ERROR_NOT_INVITE_24T
 
 	// ErrNotDisorganization7D is TC_ERROR_NOT_DISORGANIZATION_7D, the disband
 	// window refusal. The validator never contains the literal: it computes

@@ -10406,6 +10406,30 @@ func open_academy_box(markup: String, caption_key: String, kind: String) -> Acad
 	move_to_front()
 	return box
 
+## Round 866: the guardian's question for a board join request (box kind
+## 0xe, AcademyJoinAskBox). CMessageBoxManager holds one box of a kind at a
+## time (c:0x6ec400 refuses a second, READ c:0x6ec60c): null while one is up.
+var academy_join_ask: AcademyJoinAskBox = null
+
+func open_academy_join_ask(ask: Dictionary) -> AcademyJoinAskBox:
+	if _builder == null:
+		return null
+	if academy_join_ask != null and is_instance_valid(academy_join_ask) and not academy_join_ask.is_queued_for_deletion():
+		return null
+	var race := -1
+	var c: Callable = party_hooks.get("race_of_model", Callable())
+	if c.is_valid():
+		race = int(c.call(int(ask.get("ref_obj_id", 0))))
+	var box := AcademyJoinAskBox.new()
+	if not box.build_join_ask(_builder, ask, race):
+		box.free()
+		return null
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	move_to_front()
+	academy_join_ask = box
+	return box
+
 ## The notice writer in academy mode (c:0x79b380(1, 2) -> 0x70b720(2)).
 var academy_notice_write: GuildNoticeWrite
 signal academy_notice_submitted(title: String, body: String)

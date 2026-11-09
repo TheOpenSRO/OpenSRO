@@ -8,7 +8,7 @@ package main
 //
 // G (70) founds a camp at the storage keeper (-keeper, its reference id;
 // the server needs -npcs-csv / -npcpos-csv), invites X (60, refused 3), A
-// (1), S (40) -- a refusal 0x6811, a 30 s timeout 0x000E, an acceptance --,
+// (1), S (40) -- a refusal (code 0, round 866), a 30 s timeout 0x000E, an acceptance --,
 // chats, writes the notice, logs A out and in again and walks it, takes the
 // 24 h refusals, moves the academy clock with the GM's /academytime, bans A
 // (and meets its invite penalty), lets S leave, graduates P (1 -> 40), lists
@@ -240,16 +240,16 @@ func academyRun(addr, prefix string) error {
 			}
 			return g.acQuiet("no 0xB472 on success", proto.OpAcademyInviteAck)
 		}},
-		{"S refuses: 0x6811 both ways", func() error {
+		{"S refuses: code 0 both ways (MEASURED)", func() error {
 			g.send(proto.OpAcademyInviteRequest, le32(uint32(s.id)))
 			if _, err := s.acWant("0x3080", party.OpInvitation, nil); err != nil {
 				return err
 			}
 			s.send(party.OpInvitation, []byte{2, 0, 0})
-			if err := g.acExact("0xB472 0x6811", proto.OpAcademyInviteAck, fail(0x6811)); err != nil {
+			if err := g.acExact("0xB472 code 0", proto.OpAcademyInviteAck, fail(academy.InviteRefusedCode)); err != nil {
 				return err
 			}
-			return s.acExact("0a 02 0x6811", proto.OpAcademyUpdate, academy.EncodeJoinFail(0x6811))
+			return s.acExact("0a 02 code 0", proto.OpAcademyUpdate, academy.EncodeJoinFail(academy.InviteRefusedCode))
 		}},
 		{"S does not answer: 0x000E both ways after 30 s", func() error {
 			g.send(proto.OpAcademyInviteRequest, le32(uint32(s.id)))
