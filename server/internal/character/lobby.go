@@ -145,7 +145,7 @@ func (m *MemStore) PurgeDeleted(_ context.Context, cutoff time.Time) ([]int64, e
 
 // characterColumns is every column a Character is read from, in scanCharacter's
 // order.
-const characterColumns = `id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count, latest_zone, latest_frame, pos_x, pos_y, pos_z, ref_obj_id, scale, deleted_at, start_zone, start_x, start_y, start_z`
+const characterColumns = `id, account_id, name, gold, hp, gender, level, max_level, exp, stat_points, str, intel, storage_gold, hwan_count, latest_zone, latest_frame, pos_x, pos_y, pos_z, ref_obj_id, scale, deleted_at, start_zone, start_x, start_y, start_z`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -154,7 +154,7 @@ type rowScanner interface {
 func scanCharacter(r rowScanner) (*Character, error) {
 	var c Character
 	var deleted sql.NullTime
-	if err := r.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount,
+	if err := r.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.MaxLevel, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount,
 		&c.Zone, &c.Frame, &c.PosX, &c.PosY, &c.PosZ,
 		&c.RefObjID, &c.Scale, &deleted, &c.StartZone, &c.StartX, &c.StartY, &c.StartZ); err != nil {
 		return nil, err

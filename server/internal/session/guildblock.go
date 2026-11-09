@@ -145,6 +145,33 @@ func guildMemberPresence(ctx context.Context, characterID int64, online bool) {
 	}
 }
 
+// guildMemberLevelChanged tells characterID's guild in the world its new
+// level (round 874): 0x38F5 type 6, field 0x01, to every member in the world,
+// the character included. READ: GObjPC_SetLevel (s:0x4e4d90) calls
+// FUN_005c3540(guild, name, level) whenever the PC has a guild (+0x72f),
+// whichever way the level went. MEASURED on a death that took level 20 to 19:
+// 0x38F5 {06, id, 01, 13} to the character itself, 30 ms after the dead
+// window. Until this round no level change reached the guild window live.
+func guildMemberLevelChanged(characterID int64, _ int) {
+	box := guildPlateStore.Load()
+	d := guildOps.Load()
+	if box == nil || d == nil || d.hub == nil {
+		return
+	}
+	ctx := context.Background()
+	g, err := box.s.GetByCharacter(ctx, characterID)
+	if err != nil || g == nil {
+		return
+	}
+	for _, m := range g.Members {
+		if m.CharacterID != characterID {
+			continue
+		}
+		d.toMembers(g, guild.OpUpdate, guild.EncodeMemberFields(guild.MemberFieldLevel, m, d.guildLive(ctx, characterID)), 0)
+		return
+	}
+}
+
 // guildPointsChanged tells the members in the world a GP credit: the
 // guild's GP (0x38F5 type 5, bit 0x08) and the earner's donation (type 6,
 // bit 0x08).

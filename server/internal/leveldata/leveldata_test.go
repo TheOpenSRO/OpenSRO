@@ -267,36 +267,106 @@ func TestDeathPenaltyExp(t *testing.T) {
 	// Levels 1-10 die free: the real gate is `10 < level`, so 10 itself is
 	// still inside the grace period and 11 is the first level that pays.
 	for _, lvl := range []int{1, 10} {
-		loss, ok := tbl.DeathPenaltyExp(lvl, DeathPenaltyKilledByMonster)
+		loss, ok := tbl.DeathPenaltyExp(lvl, DeathPenaltyKilledByMonster, false)
 		if !ok || loss != 0 {
 			t.Errorf("level %d: loss %d ok %v, want a free death", lvl, loss, ok)
 		}
 	}
 
-	// Level 11 is the first that costs anything, and it costs the EXP unit
-	// times 100.
-	unit, ok := tbl.ExpUnit(11)
-	if !ok {
-		t.Fatal("the test table must know level 11")
-	}
+	// Level 11 is the first that costs anything: the EXP unit times the
+	// branch's multiplier, clamped (round 874) to the branch's share of the
+	// level's requirement -- 34,898 x float32 0.02 / 0.06 / 0.004, truncated.
+	// At 11 the cap is what every branch costs.
 	for _, tc := range []struct {
 		name       string
 		multiplier int
+		want       int64
 	}{
-		{"killed by a monster", DeathPenaltyKilledByMonster},
-		{"killed by a monster, PK-flagged", DeathPenaltyKilledByMonsterFlagged},
-		{"killed by a player", DeathPenaltyKilledByPlayer},
-		{"killed by a player, PK-flagged", DeathPenaltyKilledByPlayerFlagged},
+		{"killed by a monster", DeathPenaltyKilledByMonster, 697},                     // 25,900 capped
+		{"killed by a monster, PK-flagged", DeathPenaltyKilledByMonsterFlagged, 2093}, // 77,700 capped
+		{"killed by a player", DeathPenaltyKilledByPlayer, 139},                       // 5,180 capped
+		{"killed by a player, PK-flagged", DeathPenaltyKilledByPlayerFlagged, 697},    // 25,900 capped
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			loss, ok := tbl.DeathPenaltyExp(11, tc.multiplier)
+			loss, ok := tbl.DeathPenaltyExp(11, tc.multiplier, false)
 			if !ok {
 				t.Fatal("level 11 must be known")
 			}
-			if want := unit * int64(tc.multiplier); loss != want {
-				t.Errorf("loss = %d, want %d (unit %d * %d)", loss, want, unit, tc.multiplier)
+			if loss != tc.want {
+				t.Errorf("loss = %d, want %d", loss, tc.want)
 			}
 		})
+	}
+}
+
+// TestDeathPenaltyCap is round 874's cap (GObjPC_OnDeath s:0x4e6a5e..0x4e6b74,
+// READ) against the original's own numbers, MEASURED: a PK-flagged level-20
+// victim with no killer lost 16,919 = trunc(282,000 x float32 0.06) -- not
+// 470 x 300 = 141,000, and not the 16,920 an exact 0.06 would give; a level-69
+// one lost 3,735 x 300 = 1,120,500 (under its cap); a level-65 player's kill
+// cost 3,319 x 20 = 66,380 (under trunc(51,493,509 x float32 0.004)).
+func TestDeathPenaltyCap(t *testing.T) {
+	const csv = `level,exp,mastery_sp,exp_unit
+19,238878,47,447
+20,282000,53,470
+65,51493509,1358,3319
+69,68606389,1607,3735
+`
+	tbl, err := ParseCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		level, mult int
+		thief       bool
+		want        int64
+	}{
+		{20, DeathPenaltyKilledByMonsterFlagged, false, 16919},
+		{20, DeathPenaltyKilledByMonster, false, 5639}, // trunc(282,000 x 0.0199999995...)
+		{20, DeathPenaltyKilledByPlayer, false, 1128},
+		{69, DeathPenaltyKilledByMonsterFlagged, false, 1120500},
+		{65, DeathPenaltyKilledByPlayer, false, 66380},
+		{65, DeathPenaltyKilledByMonster, false, 331900},
+		// A thief NPC's kill halves the product before the cap.
+		{65, DeathPenaltyKilledByMonster, true, 165950},
+		{20, DeathPenaltyKilledByMonster, true, 5639},
+	} {
+		got, ok := tbl.DeathPenaltyExp(tc.level, tc.mult, tc.thief)
+		if !ok || got != tc.want {
+			t.Errorf("level %d x%d thief %v: %d,%v, want %d", tc.level, tc.mult, tc.thief, got, ok, tc.want)
+		}
+	}
+	if DeathPenaltyCapMonster != 0.019999999552965164 || DeathPenaltyCapMonsterFlagged != 0.05999999865889549 ||
+		DeathPenaltyCapPlayer != 0.004000000189989805 || DeathPenaltyThiefFactor != 0.5 {
+		t.Error("the caps are the binary's float32 constants widened (0xb45ec8, 0xb460f8, 0xb46100) and the thief's 0.5 (0xb45c50)")
+	}
+}
+
+// TestLoseExp is GObjPC_GainExpAndLevel's negative branch (round 874, READ
+// s:0x4e569c), against the MEASURED level-20 death: 1,000 EXP less 16,919 is
+// level 19 at 222,959 (93.34 % of 238,878).
+func TestLoseExp(t *testing.T) {
+	tbl, err := ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n1,118,1,24\n18,198810,40,423\n19,238878,47,447\n20,282000,53,470\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		level     int
+		exp, loss int64
+		wantLevel int
+		wantExp   int64
+	}{
+		{"within the level", 20, 50000, 16919, 20, 33081},
+		{"exactly to zero", 20, 16919, 16919, 20, 0},
+		{"one level down (MEASURED)", 20, 1000, 16919, 19, 222959},
+		{"only one level per loss, the rest floored at 0", 20, 0, 600000, 19, 0},
+		{"level 1 stays 1 at 0", 1, 10, 50, 1, 0},
+	} {
+		l, e := tbl.LoseExp(tc.level, tc.exp, tc.loss)
+		if l != tc.wantLevel || e != tc.wantExp {
+			t.Errorf("%s: LoseExp(%d, %d, %d) = %d, %d; want %d, %d", tc.name, tc.level, tc.exp, tc.loss, l, e, tc.wantLevel, tc.wantExp)
+		}
 	}
 }
 
@@ -330,7 +400,7 @@ func TestDeathPenaltyUnknownLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
-	if _, ok := tbl.DeathPenaltyExp(9999, DeathPenaltyKilledByMonster); ok {
+	if _, ok := tbl.DeathPenaltyExp(9999, DeathPenaltyKilledByMonster, false); ok {
 		t.Error("a level the table does not know must report !ok")
 	}
 }
@@ -497,12 +567,13 @@ func TestApplyDeathPenaltyReduction(t *testing.T) {
 	}
 
 	// And it must not have changed what a death costs. A level-20 character's
-	// loss is still the bare 470 * 100.
-	tbl, err := ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n20,72700,53,470\n"))
+	// loss is still the bare 470 * 100 -- under a requirement whose 2 % cap
+	// (round 874) does not bite: trunc(2,400,000 x float32 0.02) = 47,999.
+	tbl, err := ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n20,2400000,53,470\n"))
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
-	got, ok := tbl.DeathPenaltyExp(20, DeathPenaltyKilledByMonster)
+	got, ok := tbl.DeathPenaltyExp(20, DeathPenaltyKilledByMonster, false)
 	if !ok || got != 470*100 {
 		t.Errorf("DeathPenaltyExp(20, monster) = %d,%v; want %d unchanged by the zero reduction",
 			got, ok, 470*100)

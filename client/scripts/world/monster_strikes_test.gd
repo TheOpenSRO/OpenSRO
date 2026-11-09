@@ -492,11 +492,35 @@ func _test_hud_revive_prompt() -> void:
 	var help: BaseButton = prompt.find_child("ReviveHelp", true, false) as BaseButton if prompt != null else null
 	_check(prompt != null and prompt.find_child("ReviveHere", true, false) == null,
 		"level 11: no present-point button (the handler honours option 2 only up to 10)")
-	_check(help != null and help.disabled and _caption(help) == "<UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON>",
-		"level 11: the second button is UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON, and it sends nothing")
+	_check(help != null and not help.disabled and _caption(help) == "<UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON>",
+		"level 11: the second button is UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON, enabled (round 874)")
+	# Round 874, MEASURED: "Waiting for other player's help." closes the box
+	# and sends nothing.
+	if help != null:
+		help.pressed.emit()
+	_check(panels.get_node_or_null("RevivePrompt") == null and options.is_empty(),
+		"level 11: the help button closes the box and sends nothing (options %s)" % str(options))
+	panels.call("show_revive_prompt", "You were killed.", 11)
+	prompt = panels.get_node_or_null("RevivePrompt")
+	point = prompt.find_child("RevivePoint", true, false) as BaseButton if prompt != null else null
 	if point != null:
 		point.pressed.emit()
 	_check(options == [1], "level 11: the return point still sends option 1 (got %s)" % str(options))
+	# Round 874 (READ 0x6449d0; MEASURED above level 10): Enter and Escape
+	# press the second button -- nothing at 11, the present point at 10.
+	for lv in [11, 10]:
+		for code in [KEY_ESCAPE, KEY_ENTER]:
+			options.clear()
+			panels.call("show_revive_prompt", "You were killed.", lv)
+			var box := panels.get_node_or_null("RevivePrompt") as ReviveBox
+			var ev := InputEventKey.new()
+			ev.keycode = code
+			ev.pressed = true
+			if box != null:
+				box.call("_shortcut_input", ev)
+			var want: Array = [] if lv > 10 else [2]
+			_check(panels.get_node_or_null("RevivePrompt") == null and options == want,
+				"level %d, %s: the box closes and sends %s (got %s)" % [lv, OS.get_keycode_string(code), str(want), str(options)])
 	panels.call("show_revive_prompt", "You were killed.")
 	var prompts := panels.get_children().filter(func(c: Node) -> bool: return c.name == "RevivePrompt")
 	_check(prompts.size() == 1, "a second show replaces the first (%d prompt(s) on the HUD)" % prompts.size())

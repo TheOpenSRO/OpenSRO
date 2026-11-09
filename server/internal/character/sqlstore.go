@@ -31,6 +31,12 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS hp INTEGER NOT NULL DEFAULT 100;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT 'china_man';
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS exp BIGINT NOT NULL DEFAULT 0;
+-- The highest level reached (round 874), the engine's _CHAR.MaxLevel
+-- (charData +0x66): a death can take a level away and this stays, so a level
+-- regained pays no stat points twice (character.LevelsRewarded). Existing rows
+-- take their level, which is the most they can be known to have reached.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS max_level INTEGER NOT NULL DEFAULT 0;
+UPDATE characters SET max_level = level WHERE max_level < level;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS stat_points INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS storage_gold BIGINT NOT NULL DEFAULT 0;
 -- The berserk orbs, the engine's _CHAR.RemainHwanCount (charData+0x86). A
@@ -466,7 +472,7 @@ func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, 
 // SetLeveling implements Store.
 func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints, str, intel int) error {
 	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		`UPDATE characters SET level = $1, exp = $2, stat_points = $3, str = $4, intel = $5 WHERE id = $6`,
+		`UPDATE characters SET max_level = GREATEST(max_level, level, $1), level = $1, exp = $2, stat_points = $3, str = $4, intel = $5 WHERE id = $6`,
 		level, exp, statPoints, str, intel, characterID)
 	if err != nil {
 		return fmt.Errorf("character: setting leveling: %w", err)

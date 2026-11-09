@@ -975,10 +975,13 @@ func (d *Deps) level(ctx context.Context, actor Actor, args []string) Result {
 		unlock()
 		return refuse(fmt.Sprintf("already level %d; /level only goes up (levelling down would have to unwind stats)", c.Level))
 	}
-	gained := want - c.Level
-	newStatPoints := c.StatPoints + gained*leveldata.StatPointsPerLevel
-	newStr := c.Str + gained*character.StatGrowthPerLevel
-	newInt := c.Int + gained*character.StatGrowthPerLevel
+	// Round 874: a level's points, Str and Int are paid above the max level
+	// only (GObjPC_SetLevel s:0x4e4d90), so a level a death took pays nothing
+	// when it comes back.
+	paid := character.LevelsRewarded(c.Level, want, c.HighestLevel())
+	newStatPoints := c.StatPoints + paid*leveldata.StatPointsPerLevel
+	newStr := c.Str + paid*character.StatGrowthPerLevel
+	newInt := c.Int + paid*character.StatGrowthPerLevel
 	err = d.Chars.SetLeveling(ctx, actor.CharacterID, want, 0, newStatPoints, newStr, newInt)
 	unlock()
 	if err != nil {
@@ -999,7 +1002,7 @@ func (d *Deps) level(ctx context.Context, actor Actor, args []string) Result {
 	bonus := character.BonusOf(actor.CharacterID)
 	return Result{
 		Text: fmt.Sprintf("level %d -> %d: +%d stat points (%d unspent), Str %d, Int %d, HP %d, MP %d",
-			c.Level, want, gained*leveldata.StatPointsPerLevel, newStatPoints, newStr+bonus.Str, newInt+bonus.Int,
+			c.Level, want, paid*leveldata.StatPointsPerLevel, newStatPoints, newStr+bonus.Str, newInt+bonus.Int,
 			character.MaxHPWith(newStr, want, bonus), character.MaxMPWith(newInt, want, bonus)),
 		RefreshStats: true,
 		LevelUp:      &LevelUp{NewLevel: want, StatPoints: newStatPoints},

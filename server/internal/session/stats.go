@@ -112,11 +112,17 @@ type CharacterStatsResult struct {
 	// not: buffs, masteries and the per-plus increments).
 	HitRate   int32
 	ParryRate int32
+
+	// MaxLevel is the highest level reached, _CHAR.MaxLevel (round 874; the
+	// seventh tail). The dead window's second button follows it, not the
+	// current level (c:0x645688 asks FUN_009d4d70, the player's max level
+	// byte), and a death can now leave the two apart.
+	MaxLevel int32
 }
 
 func (r *CharacterStatsResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 96)
+	buf := make([]byte, 100)
 	binary.LittleEndian.PutUint64(buf[0:8], uint64(r.Gold))
 	binary.LittleEndian.PutUint32(buf[8:12], uint32(r.HP))
 	binary.LittleEndian.PutUint32(buf[12:16], uint32(r.MaxHP))
@@ -138,6 +144,7 @@ func (r *CharacterStatsResult) Encode() []byte {
 	binary.LittleEndian.PutUint32(buf[84:88], uint32(r.HwanCount))
 	binary.LittleEndian.PutUint32(buf[88:92], uint32(r.HitRate))
 	binary.LittleEndian.PutUint32(buf[92:96], uint32(r.ParryRate))
+	binary.LittleEndian.PutUint32(buf[96:100], uint32(r.MaxLevel))
 	return append(out, buf...)
 }
 
@@ -190,6 +197,10 @@ func DecodeCharacterStatsResult(data []byte) (*CharacterStatsResult, error) {
 	if len(rest) >= 96 {
 		r.HitRate = int32(binary.LittleEndian.Uint32(rest[88:92]))
 		r.ParryRate = int32(binary.LittleEndian.Uint32(rest[92:96]))
+	}
+	// The max level is the seventh tail; a 96-byte result decodes with it 0.
+	if len(rest) >= 100 {
+		r.MaxLevel = int32(binary.LittleEndian.Uint32(rest[96:100]))
 	}
 	return r, nil
 }
@@ -319,12 +330,13 @@ func buildCharacterStats(ctx context.Context, owned *character.Character, charac
 		// No more than the max (round 769): taking off, swapping or breaking
 		// a piece with an 'hp' option lowers it, and the handlers clamp the
 		// stored HP then (clampHP); this guards any path that does not.
-		HP:    int32(min(owned.HP, owned.MaxHP())),
-		MaxHP: int32(owned.MaxHP()),
-		Level: int32(owned.Level),
-		Exp:   owned.Exp,
-		MP:    int32(curMP),
-		MaxMP: int32(maxMP),
+		HP:       int32(min(owned.HP, owned.MaxHP())),
+		MaxHP:    int32(owned.MaxHP()),
+		Level:    int32(owned.Level),
+		MaxLevel: int32(owned.HighestLevel()),
+		Exp:      owned.Exp,
+		MP:       int32(curMP),
+		MaxMP:    int32(maxMP),
 		// Round 769: param 1 / 2, the TOTAL -- the character's own and its
 		// worn items' options (the 0x303D builder sends round(GetParam(1));
 		// the panel prints that one number).

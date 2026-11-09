@@ -159,7 +159,7 @@ func TestReviveByResurrectionScroll(t *testing.T) {
 		t.Errorf("HP %d/%d MP %d/%d, want both full", after.HP, after.MaxHP(), mpNow, after.MaxMP())
 	}
 	stored, _ := chars.GetByID(ctx, c.ID)
-	if back != 180 || stored.Exp != 680 {
-		t.Errorf("EXP given back %d (now %d), want 180 (60 %% of 300) on top of 500", back, stored.Exp)
+	if back.added != 180 || stored.Exp != 680 {
+		t.Errorf("EXP given back %d (now %d), want 180 (60 %% of 300) on top of 500", back.added, stored.Exp)
 	}
 }

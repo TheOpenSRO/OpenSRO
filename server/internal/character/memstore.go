@@ -314,6 +314,7 @@ func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, 
 	if !ok {
 		return ErrNotFound
 	}
+	c.MaxLevel = max(c.MaxLevel, c.Level, level)
 	c.Level = level
 	c.Exp = exp
 	c.StatPoints = statPoints

@@ -1553,6 +1553,10 @@ var _recently_left: Dictionary = {}
 ## the respawned HP, above 0. Its server half is -player-dead-state, off by
 ## default; docs/protocol/monster_ai.md, "The player's dead state".
 var _player_dead := false
+## The highest level reached, _CHAR.MaxLevel (round 874, the stats' seventh
+## tail; the level itself from an older server). The dead window's second
+## button follows it (c:0x645688).
+var _player_max_level := 0
 ## Holds the player's one-shot on its last frame once it has run -- the die
 ## clip -- instead of returning to the stand or run loop. Cleared with
 ## _player_dead.
@@ -2295,6 +2299,7 @@ func _ready() -> void:
 
 	# Round 834: the exchange on the retail wire (the exchange section).
 	NetClient.exchange_requested.connect(_on_exchange_requested)
+	NetClient.resurrect_offered.connect(_on_resurrect_offered)
 	NetClient.exchange_request_result.connect(_on_exchange_request_result)
 	NetClient.exchange_started.connect(_on_exchange_started)
 	NetClient.exchange_closed.connect(_on_exchange_closed)
@@ -2845,6 +2850,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.teleport_requested.connect(_on_teleport_requested)
 	# The Revive button (round 548): the one click a dead player has.
 	_hud_panels.revive_requested.connect(_on_revive_requested)
+	# Round 874: another player's resurrection skill (0x3080 kind 4/8).
+	_hud_panels.resurrect_answered.connect(_on_resurrect_answered)
 	# A server refusal the panels hear about (a mastery raise) goes to the system window (round 639).
 	_hud_panels.system_notice.connect(_log_system)
 	# Round 869: the Dimension hole's re-use check asks this player's timers.
@@ -14880,6 +14887,20 @@ func _target_window_shows(monster_id: int) -> bool:
 		return true
 	return _hud_target.visible and _hud_target.shown_key == _fx_owner_key(monster_id, SkillNet.OWNER_MONSTER)
 
+## Whether a ray from the cursor meets this player's own click body first
+## (round 874: the dead player's world click, _dispatch_left_click).
+func _pick_own_body(screen_pos: Vector2) -> bool:
+	if player == null or camera_3d == null:
+		return false
+	_ensure_self_click_body()
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = SELF_CLICK_COLLISION_LAYER
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	return not hit.is_empty() and (hit["collider"] as Node) != null and (hit["collider"] as Node).has_meta("self_click")
+
 ## The player's own click body (layer 9), made on first need: a capsule the
 ## body's height, a child of the player so it follows.
 func _ensure_self_click_body() -> void:
@@ -14922,6 +14943,20 @@ func _select_self() -> void:
 			_hud_target.show_player(NetClient.current_character_name,
 				_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_body(_player_body))
 	print("World3D: selected this player (%d, %s)" % [own, NetClient.current_character_name])
+	# Round 874: selecting oneself while dead brings the dead window back --
+	# FUN_00780ee0 (READ) opens message box kind 3 when the selected id is the
+	# player's own, the player is dead (+0x65c bit 0 clear), no time-driven
+	# window is up (DAT_00ee75a0, a war's; none here) and the box is not
+	# already open (0x6ec400(3)). MEASURED: after "Waiting for other player's
+	# help." a press on the player block showed the box again, nothing sent.
+	if _player_dead and _hud_panels != null and _hud_panels.get_node_or_null(HudPanels.REVIVE_PROMPT) == null:
+		print("World3D: dead and selected itself -- the dead window again")
+		_hud_panels.show_revive_prompt(_death_line(0), _revive_box_level())
+
+## The level the dead window's second button is chosen by: the max level
+## (round 874), never below the level.
+func _revive_box_level() -> int:
+	return max(_player_level, _player_max_level)
 
 func _select_character(character_id: int, char_name: String) -> void:
 	_last_attack_target = -1
@@ -28403,9 +28438,15 @@ func _dispatch_double_click(screen_pos: Vector2) -> String:
 func _dispatch_left_click(screen_pos: Vector2) -> String:
 	if _player_dead:
 		# Dead (round 548): a click on the world does nothing -- no pick-up,
-		# attack, talk or walk; the Revive button is what there is to click.
-		# Logged (round 675): a click lost to a dead state the player cannot
-		# see must show in the tester's log.
+		# attack, talk or walk. Logged (round 675): a click lost to a dead
+		# state the player cannot see must show in the tester's log.
+		# Round 874: except on the player's own body -- the world click
+		# (0x793570) includes oneself while dead (+0x65c bit 0 clear) and
+		# selecting oneself brings the dead window back (_select_self). READ;
+		# not reproduced on a GM's see-through body, whose pick missed.
+		if _pick_own_body(screen_pos):
+			_select_self()
+			return "select_self"
 		print("CLICK: at %s ignored -- the player is dead" % str(screen_pos))
 		return "dead"
 	# Any new click ends a talk approach still walking (round 701; OURS in
@@ -33983,7 +34024,11 @@ func _enter_dead_state(exp_lost: int) -> void:
 	print("World3D: %s" % line)
 	if _hud_panels != null:
 		_hud_panels.player_dead = true # the bag's right-click use (round 550)
-		_hud_panels.show_revive_prompt(line, _player_level)
+		_hud_panels.show_revive_prompt(line, _revive_box_level())
+	# Round 874: the death's penalty can take a level away (the original's
+	# 0x303D stats and 0x3056 come with the death, MEASURED): the level, the
+	# EXP gauge and the lower maxima come from fresh stats.
+	_request_world_stats()
 	print("World3D: left dead (HP 0) t=%.2f -- input locked until the revive" % _idle_anim_time)
 
 ## Back on its feet: an OpReviveResult with no error (_on_revive_result). The
@@ -34010,6 +34055,21 @@ func _on_revive_requested(option: int = 1) -> void:
 	NetClient.revive(option)
 	print("World3D: revive requested (option %d)" % option)
 
+## Round 874: a resurrection offer (0x3080 kind 4/8, from `caster`): the
+## dead window gives way to the offer's box (HudPanels.show_resurrect_offer,
+## ReviveBox.build_offer has the READ).
+func _on_resurrect_offered(kind: int, caster: int) -> void:
+	print("World3D: resurrection offer kind %d from %d (dead %s)" % [kind, caster, str(_player_dead)])
+	if _hud_panels != null:
+		_hud_panels.show_resurrect_offer(kind)
+
+## The offer's answer: 0x3080 {01, yes 1 / no 0}. A yes is followed by the
+## revive (OpReviveResult); a no leaves the player dead with no window.
+func _on_resurrect_answered(accept: bool) -> void:
+	print("World3D: resurrection offer answered %s" % ("yes" if accept else "no"))
+	if NetClient.is_connected_to_server():
+		NetClient.resurrect_answer(accept)
+
 ## OpReviveResult 0x0029: the character is back at character.RespawnFraction
 ## of each maximum (WorldNet.ReviveResult), or the server refused. The HP is
 ## painted from the result; the MP through the stats refresh, which carries
@@ -34026,7 +34086,7 @@ func _on_revive_result(result: WorldNet.ReviveResult) -> void:
 		# the box comes back for a player still dead -- OURS, so a refused
 		# request never leaves one dead with no way to choose.
 		if _player_dead and _hud_panels != null and _hud_panels.get_node_or_null(HudPanels.REVIVE_PROMPT) == null:
-			_hud_panels.show_revive_prompt(_death_line(0), _player_level)
+			_hud_panels.show_revive_prompt(_death_line(0), _revive_box_level())
 		return
 	_leave_dead_state()
 	_own_hp_told()
@@ -37440,6 +37500,8 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if _hud_target != null:
 		_hud_target.set_player_level(stats.level)
 	_player_level = stats.level
+	# Round 874: the max level, which a death can leave above the level.
+	_player_max_level = stats.max_level if stats.has_max_level else stats.level
 	_orb_level = stats.level
 	if _hud_panels != null:
 		# Round 837: the item mall's info block shows it.
@@ -37448,6 +37510,12 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
 		if take_hp:
 			_hud_player_info.set_hp(stats.hp, stats.max_hp)
+		elif _player_dead and stats.max_hp > 0:
+			# Round 874: a death that takes a level lowers the maximum at
+			# once (MEASURED: 0x303D's 1,296 -> 1,271 with the death); the HP
+			# stays 0.
+			_last_enter_world_max_hp = stats.max_hp
+			_hud_player_info.set_hp(0, stats.max_hp)
 		# The mana bar drew blank while the server had no mana to report.
 		# It does now -- the game's own base curve -- so show the real
 		# number; a server too old to send it still gets the blank bar.

@@ -118,28 +118,40 @@ func resurrectionPools(maxHP, maxMP, pct int) (hp, mp int) {
 // reviveByScroll is FUN_0049ff20 on a dead character: the life state first
 // (under the kill lock, as every revive), Revive(1)'s one HP plus the scroll's
 // share of the maximum, the MP added, the EXP given back. It returns the
-// character as it stands, its MP and the EXP given back.
-func reviveByScroll(ctx context.Context, chars character.Store, deps RegenDeps, hub *world.Hub, characterID int64, hpPct, expPct int) (*character.Character, int, int64, error) {
+// character as it stands, its MP and what the EXP's return did (round 874:
+// through GainExpAndLevel, so a level the death took comes back, returnExp).
+//
+// MEASURED (round 874): a murderer's 100 % scroll gave back 8,460 of a
+// 16,919 loss -- ceil(16,919 x 0.5), the halving under (pc+0x30)+0xc == 2,
+// which is the PK state CGObjPC::vslot_321 (s:0x4e2990) tests for 1 or 2
+// (FUN_004e2940 sets it with a 0x30BF broadcast); INFERRED murderer = 2.
+// OpenSRO has no murderers, so no halving (n/a). A level-65 victim's scroll
+// gave the full 66,380 back and the level with it.
+func reviveByScroll(ctx context.Context, chars character.Store, deps RegenDeps, hub *world.Hub, characterID int64, hpPct, expPct int) (*character.Character, int, expReturned, error) {
+	var none expReturned
 	if hub == nil {
-		return nil, 0, 0, errNotDead
+		return nil, 0, none, errNotDead
 	}
 	// Round 873: the hub the character is in, whichever world.
 	hub = hubOfChar(hub, characterID)
 	e, ok := hub.EntityByCharacterID(characterID)
 	if !ok || e.Life != world.LifeDead {
-		return nil, 0, 0, errNotDead
+		return nil, 0, none, errNotDead
 	}
 	l := killLock(characterID)
 	l.Lock()
 	defer l.Unlock()
 	if !hub.SetLifeState(characterID, world.LifeDead, world.LifeAlive, time.Time{}) {
-		return nil, 0, 0, errNotDead
+		return nil, 0, none, errNotDead
 	}
 	dropResurrectOffer(characterID)
-	stillDead := func(err error) (*character.Character, int, int64, error) {
+	stillDead := func(err error) (*character.Character, int, expReturned, error) {
 		hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, e.DiedAt)
-		return nil, 0, 0, fmt.Errorf("session: scroll revive of %d: %w", characterID, err)
+		return nil, 0, none, fmt.Errorf("session: scroll revive of %d: %w", characterID, err)
 	}
+	// The loss is read before Revive(1) clears it (s:0x49ff43, s:0x4df2e8).
+	lost := deathLossOf(characterID)
+	noteDeathLoss(characterID, 0)
 	c, err := chars.GetByID(ctx, characterID)
 	if err != nil {
 		return stillDead(err)
@@ -156,22 +168,20 @@ func reviveByScroll(ctx context.Context, chars character.Store, deps RegenDeps, 
 	if deps.Mana != nil {
 		mpNow = deps.Mana.Restore(characterID, c.MaxMP(), addMP)
 	}
-	back := resurrectionExp(deathLossOf(characterID), expPct)
-	if back > 0 {
-		unlock := character.LockLeveling(characterID)
-		if fresh, err := chars.GetByID(ctx, characterID); err == nil {
-			c.Level, c.Exp, c.StatPoints, c.Str, c.Int = fresh.Level, fresh.Exp, fresh.StatPoints, fresh.Str, fresh.Int
-		}
-		if err := chars.SetLeveling(ctx, characterID, c.Level, c.Exp+back, c.StatPoints, c.Str, c.Int); err != nil {
-			back = 0
-		} else {
-			c.Exp += back
-		}
-		unlock()
+	back := resurrectionExp(lost, expPct)
+	ret, err := returnExp(ctx, chars, hub, deps.Mana, characterID, back)
+	if err != nil {
+		slog.Warn("resurrection scroll: the EXP was not given back", "character_id", characterID, "exp", back, "err", err)
+	}
+	if fresh, err := chars.GetByID(ctx, characterID); err == nil {
+		c = fresh
+	}
+	if ret.levelUp != nil && deps.Mana != nil {
+		mpNow = deps.Mana.Current(characterID, c.MaxMP())
 	}
 	// Round 865: a guardian's honor buffs come back with it (academylive.go).
 	academyRevived(ctx, characterID)
-	return c, mpNow, back, nil
+	return c, mpNow, ret, nil
 }
 
 // resurrectDeps are what a resurrection fill's answer needs (the stats push,
@@ -207,7 +217,7 @@ func useResurrectionFill(ctx context.Context, sess *gateway.Session, chars chara
 		return fail(resurrectionOnlyDeadRefusal, req.ItemID)
 	}
 	deps := resurrectDepsNow()
-	c, mpNow, back, err := reviveByScroll(ctx, chars, deps, hub, characterID, fill.RestoreHPPct, fill.RestoreMP)
+	c, mpNow, ret, err := reviveByScroll(ctx, chars, deps, hub, characterID, fill.RestoreHPPct, fill.RestoreMP)
 	if errors.Is(err, errNotDead) {
 		return fail(resurrectionOnlyDeadRefusal, req.ItemID)
 	}
@@ -222,7 +232,7 @@ func useResurrectionFill(ctx context.Context, sess *gateway.Session, chars chara
 		startProtection(hub, characterID, sess, "resurrection scroll")
 	}
 	slog.Info("composite: resurrection fill", "character_id", characterID, "item", fill.ID, "hp", c.HP, "mp", mpNow,
-		"exp_back", back, "hp_pct", fill.RestoreHPPct, "exp_pct", fill.RestoreMP, "left", g.remaining-1)
+		"exp_back", ret.added, "level", c.Level, "hp_pct", fill.RestoreHPPct, "exp_pct", fill.RestoreMP, "left", g.remaining-1)
 	if err := sess.Send(&proto.Packet{Opcode: OpCompositeUseResult, Data: (&CompositeUseResult{
 		ItemID: req.ItemID, Remaining: int32(g.remaining - 1)}).Encode()}); err != nil {
 		return err
@@ -230,6 +240,7 @@ func useResurrectionFill(ctx context.Context, sess *gateway.Session, chars chara
 	if err := sendRevived(ctx, sess, c, mpNow, deps); err != nil {
 		return err
 	}
+	tellExpReturned(sess, hub, characterID, ret)
 	zerk := deps.Berserk
 	if zerk == nil {
 		return nil
@@ -276,7 +287,7 @@ func useResurrectionScroll(ctx context.Context, sess *gateway.Session, fail func
 		return fail(reuseDelayRefusal)
 	}
 	deps := resurrectDepsNow()
-	c, mpNow, back, err := reviveByScroll(ctx, chars, deps, hub, characterID, it.RestoreHPPct, it.RestoreMP)
+	c, mpNow, ret, err := reviveByScroll(ctx, chars, deps, hub, characterID, it.RestoreHPPct, it.RestoreMP)
 	if errors.Is(err, errNotDead) {
 		return fail(resurrectionOnlyDeadRefusal)
 	}
@@ -294,9 +305,13 @@ func useResurrectionScroll(ctx context.Context, sess *gateway.Session, fail func
 		startProtection(hub, characterID, sess, "resurrection scroll")
 	}
 	slog.Info("resurrection scroll", "character_id", characterID, "item", it.ID, "hp", c.HP, "mp", mpNow,
-		"exp_back", back, "hp_pct", it.RestoreHPPct, "exp_pct", it.RestoreMP, "left", have-1)
+		"exp_back", ret.added, "level", c.Level, "hp_pct", it.RestoreHPPct, "exp_pct", it.RestoreMP, "left", have-1)
 	if err := sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Remaining: int32(have - 1)}).Encode()}); err != nil {
 		return err
 	}
-	return sendRevived(ctx, sess, c, mpNow, deps)
+	if err := sendRevived(ctx, sess, c, mpNow, deps); err != nil {
+		return err
+	}
+	tellExpReturned(sess, hub, characterID, ret)
+	return nil
 }

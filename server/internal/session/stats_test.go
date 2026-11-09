@@ -77,8 +77,8 @@ func TestCharacterStatsResultCarriesCharacterRows(t *testing.T) {
 		PhysAttackMin: 12, MagAttackMin: 0, MagAttackMax: 0, MagDefense: 4,
 	}
 	encoded := in.Encode()
-	if got := len(encoded) - 2; got != 96 {
-		t.Fatalf("body is %d bytes, want 96", got)
+	if got := len(encoded) - 2; got != 100 {
+		t.Fatalf("body is %d bytes, want 100 (round 874: the max level tail)", got)
 	}
 	out, err := DecodeCharacterStatsResult(encoded)
 	if err != nil {

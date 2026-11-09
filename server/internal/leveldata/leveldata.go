@@ -887,8 +887,68 @@ const (
 	DeathPenaltySkillPointsPlayerFlagged  = 20
 )
 
+// The death penalty's CAP (round 874): the loss is clamped to a fraction of the
+// level's EXP requirement (the level entry's +0x8, the int64 exp-to-next),
+// one fraction per branch. READ, GObjPC_OnDeath s:0x4e6a5e..0x4e6aff: each
+// branch loads `fild QWORD [entry+0x8]; fmul QWORD [k]; call 0x9fbb40` (the
+// truncating conversion, whose low 32 bits are kept in EBX), and the clamp at
+// s:0x4e6b30..0x4e6b74 is CLAMP(loss, 1, that) -- the assert's text names it,
+// "CLAMP() ==> min(%.3f) exceeded max(%.3f)", with min 1.0 and max the
+// product. The four doubles are float32 constants widened:
+//
+//	monster, unflagged   0xb45ec8 = 0.019999999552965164 (float32 0.02)
+//	monster, flagged     0xb460f8 = 0.05999999865889549  (float32 0.06)
+//	player, unflagged    0xb46100 = 0.004000000189989805 (float32 0.004)
+//	player, flagged      0xb45ec8 = 0.019999999552965164 (float32 0.02)
+//
+// So a death costs at most 2 % of the level (0.4 % at a player's hand), and
+// below level 49 that cap is what a monster's kill really takes: level 20's
+// 470 x 100 = 47,000 is clamped to trunc(282,000 x 0.0199999995...) = 5,639.
+// MEASURED: a PK-flagged level-20 character's death cost 16,919 =
+// trunc(282,000 x float32 0.06) -- the widened float, not an exact 0.06
+// (16,920). Until round 874 OpenSRO took the uncapped product (74 % of level
+// 11).
+var (
+	DeathPenaltyCapMonster        = float64(float32(0.02))
+	DeathPenaltyCapMonsterFlagged = float64(float32(0.06))
+	DeathPenaltyCapPlayer         = float64(float32(0.004))
+	DeathPenaltyCapPlayerFlagged  = float64(float32(0.02))
+)
+
+// DeathPenaltyThiefFactor halves a monster branch's loss when the killer is a
+// thief NPC (round 874). READ, s:0x4e6b06..0x4e6b2a: the killer's vtable slot
+// 0x3b4 -- CGObjCOS_Summoned::FUN_00482640 (s:0x482640), shared by every
+// object class, true for TID 1/2/1/2 (the MOB_THIEF_NPC_* rows) -- answering
+// 1 multiplies the product by 0xb45c50 = 0.5 and truncates, before the cap.
+const DeathPenaltyThiefFactor = 0.5
+
+// deathPenaltyCapFor is the cap fraction of a multiplier: the four branches'
+// multipliers name their caps (100 -> 0.02 for both the unflagged monster
+// and the flagged player branch, 300 -> 0.06, 20 -> 0.004).
+func deathPenaltyCapFor(multiplier int) float64 {
+	switch multiplier {
+	case DeathPenaltyKilledByMonsterFlagged:
+		return DeathPenaltyCapMonsterFlagged
+	case DeathPenaltyKilledByPlayer:
+		return DeathPenaltyCapPlayer
+	default:
+		return DeathPenaltyCapMonster
+	}
+}
+
+// ftol32 is the engine's float-to-int conversion as GObjPC_OnDeath keeps it:
+// truncated toward zero to 64 bits (FUN_009fbb40), of which only EAX -- the
+// low 32 bits, signed -- is used.
+func ftol32(v float64) int64 {
+	return int64(int32(int64(v)))
+}
+
 // DeathPenaltyExp is the experience a death costs a character of this level,
 // and whether the table knows the level.
+//
+// Round 874: the product is now clamped to the branch's cap (above), so this
+// is CLAMP(unit x multiplier, 1, trunc(exp-to-next x cap)), with the thief
+// killer's halving first.
 //
 // RECOVERED 2026-09-15 from GObjPC_OnDeath (004e6980), which the binary itself
 // places at D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC.cpp
@@ -911,15 +971,20 @@ const (
 // KillExp already implements -- so one function confirms both the field and a
 // rule this project had recovered separately.
 //
-// What this costs is steeply regressive, and that is the real curve, checked
-// against the ORIGINAL client's own leveldata.txt (identical to the pserver's
-// at every level sampled, so it is not a private-server edit): 74% of a level
-// at 11, 17% at 20, 1.9% at 50, and effectively nothing by 110. Dying is
-// brutal just after the level-10 grace period and shrugged off at cap.
+// The uncapped product is steeply regressive (74 % of a level at 11, 17 % at
+// 20, 1.9 % at 50), which is why the cap above bites below level 49: a
+// monster's kill costs 2 % of the level there, and the product only above.
+// (Before round 874 this comment called the uncapped curve the real one.)
 //
 // The reduction the engine applies before the loss lands IS modelled, and it is
 // a proven zero rather than an omission -- see DeathPenaltyReductionPercent.
-func (t *Table) DeathPenaltyExp(level, multiplier int) (int64, bool) {
+//
+// thief is the killer's thief test (round 874, DeathPenaltyThiefFactor): it
+// halves a monster branch's product before the cap. The order is
+// GObjPC_OnDeath's (s:0x4e6a5e..0x4e6b9b): product, the thief's halving,
+// CLAMP(product, 1, cap) -- where a cap under 1 asserts, sets 1 and then
+// takes the cap anyway, so nothing is lost -- and the premium reduction.
+func (t *Table) DeathPenaltyExp(level, multiplier int, thief bool) (int64, bool) {
 	if level <= DeathPenaltyMinLevel {
 		return 0, true
 	}
@@ -928,12 +993,57 @@ func (t *Table) DeathPenaltyExp(level, multiplier int) (int64, bool) {
 		return 0, false
 	}
 	loss := unit * int64(multiplier)
-	if loss < 1 {
-		// The real formula clamps at 1 -- its own assert spells the minimum
-		// out as 1.0.
+	if thief {
+		// Only the monster branches ask (the killer is no player there);
+		// callers pass thief for a monster killer alone.
+		loss = ftol32(float64(loss) * DeathPenaltyThiefFactor)
+	}
+	// The cap: trunc(exp-to-next x the branch's fraction). A level with no
+	// requirement row (none in a loaded table) leaves the product uncapped.
+	if need, ok := t.ExpToNext(level); ok {
+		capped := ftol32(float64(need) * deathPenaltyCapFor(multiplier))
+		if capped < 1 {
+			// s:0x4e6b39..0x4e6b74: the assert, 1, then min(1, cap) = cap.
+			return 0, true
+		}
+		if loss < 1 {
+			loss = 1
+		}
+		if loss > capped {
+			loss = capped
+		}
+	} else if loss < 1 {
 		loss = 1
 	}
 	return ApplyDeathPenaltyReduction(loss, DeathPenaltyReductionPercent), true
+}
+
+// LoseExp is GObjPC_GainExpAndLevel's negative branch (round 874; READ,
+// s:0x4e5406..0x4e5546 and s:0x4e569c..0x4e56f5): the loss comes off the
+// level's EXP, and when that goes below zero the character drops ONE level
+// and the previous level's requirement is added back (RefLevel_GetEntry of
+// the new level, s:0x4e56c3 -> +0x8). Still below zero after that -- a loss
+// bigger than a whole level -- the server logs "RemainExpOffset is minus after
+// Level down" and the EXP is 0 at the lower level (s:0x4e5508..0x4e5539).
+// At level 1 the result is level 1 with 0 EXP (s:0x4e56e3). The engine moves
+// at most one level per loss; the client's own display loops (c:0x8a97c0),
+// which the server's single step never exercises.
+func (t *Table) LoseExp(level int, exp, loss int64) (newLevel int, newExp int64) {
+	newExp = exp - loss
+	if newExp >= 0 {
+		return level, newExp
+	}
+	newLevel = level - 1
+	if newLevel <= 0 {
+		return 1, 0
+	}
+	if need, ok := t.ExpToNext(newLevel); ok {
+		newExp += need
+	}
+	if newExp < 0 {
+		newExp = 0
+	}
+	return newLevel, newExp
 }
 
 // DeathPenaltyReductionPercent is the percentage a character's own stat takes

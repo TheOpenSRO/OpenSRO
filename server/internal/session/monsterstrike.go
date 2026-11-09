@@ -515,6 +515,10 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// job death (ResolveDeathCause s:0x4e6590, cause 1).
 	if kind := jobMobKind(monster.CodeName); kind != 0 && jobs.JobDeathByMonster(jobStateNow(ctx, characterID), kind) {
 		setDeathCause(characterID, deathCause{job: true, killerLevel: monster.Level})
+	} else if kind == jobs.MobNPCThief {
+		// Round 874: a thief NPC's kill outside a job halves the penalty
+		// (leveldata.DeathPenaltyThiefFactor, the killer's slot 0x3b4).
+		setDeathCause(characterID, deathCause{thief: true, killerLevel: monster.Level})
 	}
 	return finishKill(ctx, deps, characterID, out)
 }
@@ -558,7 +562,11 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 	// reduction stat is left out.
 	cause, hasCause := takeDeathCause(characterID)
 	// Round 864: this death's loss replaces the last one's (0 until the
-	// penalty below says otherwise; resurrectfill.go).
+	// penalty below says otherwise; resurrectfill.go). Round 874: the
+	// original clears its record (pc+0x1ce0) at every revive
+	// (GObjPC::Revive s:0x4df2e8) and sets it at a negative
+	// GainExpAndLevel (s:0x4e5710, loseExp), so a death that costs nothing
+	// finds it 0 here as there.
 	noteDeathLoss(characterID, 0)
 	if levelTable != nil && hasCause && cause.job {
 		// A job death (round 802, jobpvp.go): the cause-1 handler's penalty
@@ -567,8 +575,7 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 		if fresh, err := chars.GetByID(ctx, characterID); err == nil {
 			c = fresh
 		}
-		out.deathExpLost = jobDeathPenalty(ctx, chars, c, cause.killerLevel)
-		noteDeathLoss(characterID, out.deathExpLost)
+		out.deathExpLost = jobDeathPenalty(ctx, chars, deps.hub, mp, c, cause.killerLevel)
 		unlock()
 	} else if levelTable != nil {
 		// The EXP is re-read under the leveling lock (round 712: a party
@@ -584,27 +591,17 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 		if hasCause && cause.byPlayer {
 			mult = leveldata.DeathPenaltyKilledByPlayer
 		}
-		loss, ok := levelTable.DeathPenaltyExp(c.Level, mult)
+		// Round 874: capped at the level's share (leveldata.DeathPenaltyExpBy)
+		// and halved for a thief NPC's kill.
+		loss, ok := levelTable.DeathPenaltyExp(c.Level, mult, hasCause && cause.thief && !cause.byPlayer)
 		if ok && loss > 0 {
-			exp := c.Exp - loss
-			if exp < 0 {
-				// The real formula clamps the LOSS so it cannot
-				// exceed what is there; clamping the result to
-				// zero is the same thing from this side. A death
-				// never costs a level -- nothing in
-				// GObjPC_OnDeath touches CurLevel.
-				exp = 0
-			}
-			// A death penalty takes experience only: level, stat
-			// points, Str and Int are carried through unchanged.
-			if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints, c.Str, c.Int); err != nil {
+			// GObjPC_GainExpAndLevel(-loss) (slot 0x170): the loss can take
+			// a level away (round 874, loseExp).
+			if _, err := loseExp(ctx, chars, deps.hub, mp, c, loss); err != nil {
 				unlock()
 				return monsterStrikeOutcome{}, fmt.Errorf("combat: applying death penalty: %w", err)
 			}
 			out.deathExpLost = loss
-			// pc+0x1ce0, the loss a resurrection scroll gives back (round
-			// 864): what the death really took, the clamped loss.
-			noteDeathLoss(characterID, c.Exp-exp)
 		}
 		unlock()
 	}

@@ -396,9 +396,37 @@ mode 2 there for the world's own time (its slot `0x70`: 6.0 s in the open world,
 - A character leaving dead is saved at the return point (READ above), under `-persist-position`.
 - With `-player-dead-state` off, a kill still respawns at once, but the respawn is moved to the
   return point after the kill's messages (OURS: the dead state compressed with option 1).
-- The window is drawn as the talk prompts' box, not retail's message box art; the help button is
+- ~~The window is drawn as the talk prompts' box, not retail's message box art; the help button is
   shown disabled and the box stays up (retail's click closes it, INFERRED) -- no one can
-  resurrect another player in OpenSRO yet (OURS).
+  resurrect another player in OpenSRO yet (OURS).~~ Round 848 drew the original's box; round 874
+  made the help button the original's (below).
+
+### Waiting for help, the box again, another player's offer (round 874)
+
+- **The help button** (control 0xca above level 10): `FUN_0063b8b0` records result 0 and
+  `FUN_00797d90`'s kind-3 entry sends nothing; `FUN_00777dd0` then closes the box
+  (`FUN_006ec860`). MEASURED: the box closes, nothing goes out, the character stays dead with no
+  box. **Enter and Escape** are the same button: the box's key handler `0x6449d0` (case 1) calls
+  `FUN_0063b8b0` for Enter on a kind-3 box (`0x644a1e`) and for Escape while `+0x804` is shown
+  (`0x6449ff`) -- MEASURED both close it and send nothing above level 10; at max level 10 or under
+  they ask for the present point (READ).
+- **The box again**: `FUN_00780ee0`, the selection of an object, opens box kind 3 when the
+  selected id is the player's own (`DAT_00eef5e8`, written by `CICPlayer::vslot_018`), the player
+  is dead (`+0x65c` bit 0 clear), no time-driven window is up (`DAT_00ee75a0`, a
+  `CIFTimeDrivenWnd`) and box 3 is not already open (`0x6ec400(3)`). Its callers include the
+  player block's left press (`CIFPlayerMiniInfo::vslot_030`, MEASURED: the box comes back, nothing
+  is sent) and the world click `0x793570` on one's own body (READ; a press on a GM's see-through
+  body did not reopen it -- its pick, not the rule, is the likely difference).
+- **Another player's offer**: 0x3080 kind 4 (kind 8 with `rmut`) closes box 3 (and 4) and opens
+  box kind 4 (`0x88af3a`; built at `0x6456d5`: `UIIT_STT_AGREEMENT_BOX`, 400 x 210, the three
+  lines `UIIT_MSG_MSGBOX_ASK_SKL_RESURRECTION_0/1/2`). Its answer is 0x3080 {01, 1 OK / 0
+  Cancel} (`0x798101`); Enter is OK, Escape Cancel. The server's transaction reads the result
+  after the 01 (`trs_wait_response::vslot_002`).
+- **Logged out dead**: MEASURED the character enters alive at its return point with 40 % HP and
+  its MP, as READ above.
+- **The max level**: the present point, the box's second button and the empty request's choice
+  follow `_CHAR.MaxLevel`, which a death's level loss leaves above the level (round 874,
+  `server/internal/session/levelloss.go`).
 
 ## Life-state 2 is the character's DEAD state, closed with a typed receiver (round 413)
 

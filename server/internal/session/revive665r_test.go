@@ -227,7 +227,7 @@ func TestOptionOneChargesNoSecondPenalty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
-	loss, _ := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster)
+	loss, _ := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster, false)
 	deadStateForTest(t, true)
 	prev := levelTable
 	SetLevelTable(tbl)

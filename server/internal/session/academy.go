@@ -94,13 +94,23 @@ var academyRT atomic.Pointer[academyRuntime]
 func SetAcademy(d AcademyDeps) {
 	if d.Store == nil {
 		academyRT.Store(nil)
-		world.SetLevelHook(nil)
 		return
 	}
 	academyRT.Store(&academyRuntime{AcademyDeps: d, board: academy.NewBoard(),
 		live: map[int64]*acLive{}, invites: map[int64]*acInvite{}, joins: map[int64]*acJoin{}})
-	world.SetLevelHook(academyLevelChanged)
 }
+
+// characterLevelChanged is world.Hub.SetLevel's hook: GObjPC_SetLevel's
+// refreshes on every level change, up or down (s:0x4e4d90) -- the academy
+// member's (academyLevelChanged, round 865) and, since round 874, the guild
+// member's (guildMemberLevelChanged). Each does nothing while its system is
+// off.
+func characterLevelChanged(characterID int64, level int) {
+	academyLevelChanged(characterID, level)
+	guildMemberLevelChanged(characterID, level)
+}
+
+func init() { world.SetLevelHook(characterLevelChanged) }
 
 func (rt *academyRuntime) now() time.Time {
 	if rt.Now != nil {
@@ -957,9 +967,13 @@ func (rt *academyRuntime) giveExp(ctx context.Context, e world.Entity, exp int64
 		return
 	}
 	newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, exp)
-	newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
-	newStr := char.Str + gained*character.StatGrowthPerLevel
-	newInt := char.Int + gained*character.StatGrowthPerLevel
+	// Round 874: a level's points, Str and Int are paid above the max level
+	// only (GObjPC_SetLevel s:0x4e4d90), so a level a death took pays nothing
+	// when it comes back.
+	paid := character.LevelsRewarded(char.Level, newLevel, char.HighestLevel())
+	newStatPoints := char.StatPoints + paid*leveldata.StatPointsPerLevel
+	newStr := char.Str + paid*character.StatGrowthPerLevel
+	newInt := char.Int + paid*character.StatGrowthPerLevel
 	if err := rt.Chars.SetLeveling(ctx, id, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
 		unlock()
 		rt.log().Warn("academy: paying the graduation exp failed", "character_id", id, "err", err)

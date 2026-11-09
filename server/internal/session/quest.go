@@ -1023,9 +1023,13 @@ func (rt *questRuntime) payExp(ctx context.Context, sess *gateway.Session, e wor
 		return
 	}
 	newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, exp)
-	newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
-	newStr := char.Str + gained*character.StatGrowthPerLevel
-	newInt := char.Int + gained*character.StatGrowthPerLevel
+	// Round 874: a level's points, Str and Int are paid above the max level
+	// only (GObjPC_SetLevel s:0x4e4d90), so a level a death took pays nothing
+	// when it comes back.
+	paid := character.LevelsRewarded(char.Level, newLevel, char.HighestLevel())
+	newStatPoints := char.StatPoints + paid*leveldata.StatPointsPerLevel
+	newStr := char.Str + paid*character.StatGrowthPerLevel
+	newInt := char.Int + paid*character.StatGrowthPerLevel
 	if err := rt.deps.Chars.SetLeveling(ctx, id, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
 		unlock()
 		rt.deps.Logger.Warn("quest: paying EXP failed", "character_id", id, "err", err)

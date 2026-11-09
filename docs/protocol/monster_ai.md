@@ -2829,7 +2829,9 @@ with its last stored position as the fallback.
   where it fell, a stand-in. No level test is made: both cases take the one in-place path, and
   `GetMaxLevel` is not modelled (OpenSRO's `Level` would equal it -- a death never costs a level,
   `GObjPC_OnDeath` leaves `CurLevel` alone -- but nothing reads it; round 550 corrected the prose
-  that read as if a test existed). No wire field distinguishes them; the client message already
+  that read as if a test existed). [Round 874: superseded -- the penalty goes through
+  `GObjPC_GainExpAndLevel`'s negative branch, which can drop one level, and the max level is kept
+  and read; `server/internal/session/levelloss.go`.] No wire field distinguishes them; the client message already
   says "in place at any level" (round 548).
 - **The revived MP** (round 550). Retail ADDS `trunc(0.4 x MaxMP)` to the MP the character died
   with (`ApplyHPMPDelta` is additive on both pools; no MP write was found in `GObjPC_OnDeath`

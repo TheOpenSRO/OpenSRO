@@ -7,6 +7,7 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"math/rand"
 	"sort"
@@ -280,9 +281,13 @@ func rowHasResu(row *refdata.Skill) bool {
 // on its "yes" (a non-zero u8 on 0x3080, while it is still dead) it is
 // revived where it lies with hp = v0 + trunc(MaxHP x v1/100), mp = v2 +
 // trunc(MaxMP x v3/100) (the row's 'heal'), and ceil(the EXP its death took x
-// resu[1]/100) back (OPEN: OpenSRO keeps no per-death EXP record; not
-// returned). The offer waits 30 s (the transaction's timeout, party
-// invitations' 0xb45b48, INFERRED the same box).
+// resu[1]/100) back. Round 874: that EXP is given back now -- read from the
+// death's record when the offer is made (s:0x59483c, pc+0x1ce0 into the
+// transaction's +0x34) and added after Revive(1) through GainExpAndLevel
+// (trs_wait_response::vslot_002 s:0x46cb30, returnExp), so a level the death
+// took comes back with it; the halving under the PK state 2 (s:0x594824) is
+// n/a (no murderers here). The offer waits 30 s (the transaction's timeout,
+// party invitations' 0xb45b48, INFERRED the same box).
 //
 // Round 785 review: an offer lives until its answer, its 30 s, the target's
 // revive by any path, or its logout -- whichever comes first -- and an
@@ -298,6 +303,8 @@ type resurrectOffer struct {
 	row      *refdata.Skill
 	expires  time.Time
 	seq      uint64
+	// exp is the EXP the revive gives back, fixed at the offer (round 874).
+	exp int64
 }
 
 var resurrectOffers = struct {
@@ -331,7 +338,8 @@ func offerResurrection(ctx context.Context, d combatDeps, casterID int64, row *r
 	resurrectOffers.Lock()
 	resurrectOffers.seq++
 	seq, id := resurrectOffers.seq, target.CharacterID
-	resurrectOffers.m[id] = resurrectOffer{casterID: casterID, row: row, expires: time.Now().Add(resurrectOfferTimeout), seq: seq}
+	exp := resurrectionExp(deathLossOf(id), int(row.Runs().Value("resu", 1)))
+	resurrectOffers.m[id] = resurrectOffer{casterID: casterID, row: row, expires: time.Now().Add(resurrectOfferTimeout), seq: seq, exp: exp}
 	resurrectOffers.Unlock()
 	// The timeout frees the entry (a newer offer is left alone).
 	time.AfterFunc(resurrectOfferTimeout, func() {
@@ -344,6 +352,20 @@ func offerResurrection(ctx context.Context, d combatDeps, casterID int64, row *r
 	data := []byte{kind, byte(casterID), byte(casterID >> 8), byte(casterID >> 16), byte(casterID >> 24)}
 	_ = target.Session.Send(&proto.Packet{Opcode: party.OpInvitation, Data: data})
 	return true
+}
+
+// resurrectAnswerAccepts reads the offer box's answer (round 874): the
+// original client sends 0x3080 {01, result} -- 1 from the box's OK, 0 from
+// its Cancel (READ c:0x798101) -- and the server's transaction reads the
+// result after the 01 (trs_wait_response::vslot_002 s:0x46cb30, `bVar1 !=
+// 0`). Until round 874 OpenSRO took the first byte alone, so a "no" ({01,
+// 00}) revived. A one-byte answer (a client before round 874 had no box) is
+// read as before.
+func resurrectAnswerAccepts(data []byte, first bool) bool {
+	if len(data) >= 2 {
+		return data[0] == 1 && data[1] != 0
+	}
+	return first
 }
 
 // takeResurrection answers a pending offer to the session's character: it
@@ -368,9 +390,25 @@ func takeResurrection(ctx context.Context, sess *gateway.Session, characterID in
 	}
 	// Round 873: the hub the dead character is in (a layer's, inside an
 	// instanced world); the deps' is the open world's.
-	c, mpNow, err := reviveWith(ctx, d.chars, d.mp, d.hub.For(sess), characterID, false)
+	hub := d.hub.For(sess)
+	c, mpNow, err := reviveWith(ctx, d.chars, d.mp, hub, characterID, false)
 	if err != nil || c == nil {
 		return true
+	}
+	noteDeathLoss(characterID, 0) // Revive clears the record (s:0x4df2e8)
+	// The EXP back (round 874): GainExpAndLevel after Revive(1), before the
+	// row's heal, as vslot_002 does.
+	ret, err := returnExp(ctx, d.chars, hub, d.mp, characterID, o.exp)
+	if err != nil {
+		slog.Warn("resurrection: the EXP was not given back", "character_id", characterID, "exp", o.exp, "err", err)
+	}
+	if ret.levelUp != nil {
+		if fresh, err := d.chars.GetByID(ctx, characterID); err == nil {
+			c = fresh
+		}
+		if d.mp != nil {
+			mpNow = d.mp.Current(characterID, c.MaxMP())
+		}
 	}
 	// The row's own amounts on top of Revive(1)'s, through ApplyHPMPDelta
 	// (flag 8, READ); the pools clamp at their maxima.
@@ -385,5 +423,6 @@ func takeResurrection(ctx context.Context, sess *gateway.Session, characterID in
 		mpNow = d.mp.Restore(characterID, c.MaxMP(), mp)
 	}
 	_ = sendRevived(ctx, sess, c, mpNow, RegenDeps{Equipment: d.eq, Items: d.items, Skills: d.skills, Mana: d.mp})
+	tellExpReturned(sess, hub, characterID, ret)
 	return true
 }

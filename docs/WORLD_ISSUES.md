@@ -7483,6 +7483,216 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-fourth round: the death penalty and "Waiting for other player's help." as the original's -- the loss capped at the level's share, one level lost and the max level kept, the EXP and the level back with a scroll or another player's resurrection, the help button that closes and sends nothing, the box again by selecting oneself
+
+Round 873 (lane DX) left two differences: the dead window's "Waiting for other player's help." was
+drawn disabled and kept the window (OURS since round 665), and a death took EXP only where a
+level-65 victim dropped to 64. The user: "Please check what the original game does and match it
+exactly and make no mistakes." Lane DP, base `78762921`. Labels: READ (`s:` the game server, `c:`
+the client), MEASURED, INFERRED, OURS, OPEN.
+
+### The original's rules
+
+**The penalty** (READ, `GObjPC_OnDeath` s:0x4e6980 and the job death s:0x4e6820):
+
+- Above level 10 (`10 < GetLevel`, the current level), the loss is the level's EXP unit times 100
+  (a monster), 300 (a monster, PK-flagged), 20 (a player) or 100 (a player, flagged) -- as round 549
+  read -- **clamped to a share of the level's requirement**: each branch loads the level entry's
+  int64 requirement (+0x8) and multiplies it by a float32 constant widened to a double (0xb45ec8 =
+  0.019999999552965164, 0xb460f8 = 0.05999999865889549, 0xb46100 = 0.004000000189989805), the
+  truncated product being the max of `CLAMP(loss, 1, max)` (the assert names the clamp,
+  s:0x4e6b30..0x4e6b74). So a monster's kill costs at most 2 % of the level (6 % flagged, 0.4 % at a
+  player's hand, 2 % flagged), and below level 49 the cap IS the loss: level 11 loses 697, not
+  25,900 (74 % of the level, which OpenSRO took).
+- A **thief NPC's** kill halves the monster branches' product before the cap: the killer's slot
+  0x3b4 (s:0x482640, TID 1/2/1/2, the `MOB_THIEF_NPC_*` rows) and `fmul 0.5` (s:0x4e6b06..0x4e6b2a).
+- The loss goes through `GObjPC_GainExpAndLevel` (slot 0x170, s:0x4e5250) as a negative amount.
+  Below zero the character **drops one level** and the lower level's requirement is added back
+  (s:0x4e569c..0x4e56de); still below zero the server logs "RemainExpOffset is minus after Level
+  down" and the EXP is 0 (s:0x4e5508..0x4e5539). At most one level per death.
+- `GObjPC_SetLevel` (s:0x4e4d90) on the way down writes CurLevel only: **MaxLevel** (+0x66), the
+  stat points (+0x84), Str and Int change only inside `MaxLevel < new` (+5 points a level, then
+  `GObjPC_SpendStatPoints(levels)` = +1 Str, +1 Int each, s:0x511470) -- so a level lost and
+  regained pays nothing twice. It refreshes the guild member's level (FUN_005c3540) and the academy
+  member's (FUN_005de6c0 field 6) on every change, the level params, and the worn items' params
+  with no level test (s:0x4bb3e0): gear above the new level stays worn and counts. Only a level UP
+  heals to full and sends 0x3054.
+- The mastery raise tests the current level (s:0x59c5ed `0x124`, 0x3804; the Chinese total
+  `2 x level`, 0x3805), so a lost level lowers the mastery cap; skills test masteries, not the
+  level.
+- The loss is kept (pc+0x1ce0, s:0x4e5710: the requested amount, whatever the clamp did), and
+  `GObjPC::Revive` clears it (s:0x4df2e8). A resurrection scroll (s:0x49ff43) and a resurrection
+  skill's offer (s:0x59483c, into the transaction's +0x34) read it before their revive and give
+  back ceil(loss x pct / 100), halved when the PK state (pc+0x30)+0xc is 2 (s:0x49ff74,
+  s:0x594824; `CGObjPC::vslot_321` s:0x4e2990 tests it for 1 or 2) -- through `GainExpAndLevel`,
+  so a level lost comes back with its level-up, heal and 0x3054. The skill's revive is
+  `trs_wait_response::vslot_002` (s:0x46cb30): Revive(1), the EXP, then the row's heal.
+
+**The dead window** (READ, client):
+
+- "Waiting for other player's help." (control 0xca above max level 10): `FUN_0063b8b0`, result 0,
+  `FUN_00797d90` kind 3 sends nothing, `FUN_00777dd0` closes the box. **Enter and Escape are the
+  same button** (the box's key handler c:0x6449d0: Enter on a kind-3 box at 0x644a1e, Escape while
+  +0x804 is shown at 0x6449ff); at max level 10 or under they ask for the present point.
+- **The box comes back** when the dead player selects itself: `FUN_00780ee0` (the selection) opens
+  box 3 when the id is the player's own, the player is dead (+0x65c bit 0 clear), no time-driven
+  window is up (`DAT_00ee75a0`, a war's) and box 3 is not open. Its callers: the player block's
+  left press (`CIFPlayerMiniInfo::vslot_030`) and the world click on one's own body (0x793570,
+  which includes oneself while dead). No key and no timer brings it back.
+- **Another player's resurrection** (0x3080 kind 4, kind 8 with `rmut`; c:0x88aa60, jump table
+  0x88b1d4): closes box 3 and opens box kind 4 (built at c:0x6456d5: `UIIT_STT_AGREEMENT_BOX`, 400 x
+  210, `UIIT_MSG_MSGBOX_ASK_SKL_RESURRECTION_0/1/2`); its answer is 0x3080 {01, 1 OK / 0 Cancel}
+  (c:0x798101). Kind 8 asks through a generic agreement box with
+  `UIIT_MSG_MSGBOX_ASK_REBIRTH_MUTATION` (c:0x88b11c, not read further).
+- The box's second button and the present point follow the **max level** (c:0x645688, s:0x51017f),
+  which a lost level leaves above the level.
+
+**MEASURED** (a PK-flagged level-20 character with 1,000 EXP, killed by the town's drain with no
+killer):
+
+- The death: 0x30BF {00 02}, six 0x303D stat pushes, 0x3056 with -16,919, 0x3011, then 0x38F5
+  {06, id, 01, 13} (the guild member's level, 19) and 0x3C80 {05, id, 06, 13} (the academy's) 30 ms
+  later. "[16919]Experience Points lost." -- **trunc(282,000 x float32 0.06) = 16,919**, not
+  470 x 300 = 141,000 and not the 16,920 an exact 0.06 gives. Level 20 -> **19 at 93.34 %**
+  (1,000 - 16,919 + 238,878 = 222,959 of 238,878); HP/MP maxima 1,296 -> 1,271, MP clamped to
+  1,271; the dead window the help one (max level 70). Afterwards the character kept **max level
+  70**, Str/Int 89 and 207 stat points; the character select showed level 19.
+- A level-69 death of the same kind lost 1,120,500 = 3,735 x 300 (under its cap, 69 stayed); round
+  873's level-65 player kill lost 66,380 = 3,319 x 20 and dropped to 64, and its 100 % scroll
+  brought 65 back with the level-up pillar, "You have advanced to level [65]." in the centre,
+  "[66380]Experience Points gained." and full HP.
+- A murderer's 100 % scroll gave back **8,460 = ceil(16,919 x 0.5)** and the level stayed 19
+  (231,419 of 238,878, 96.88 %): the halving under the PK state, which the revive then cleared
+  (0x30BF {07 00}).
+- "Waiting for other player's help.", **Enter** and **Escape** each closed the box and sent nothing
+  (a capture of the client's traffic); a **press on the player block** brought the box back,
+  nothing sent; a press on the GM's see-through body did not (its pick; the rule is READ).
+- **Logged out dead** (saved with HP 0 at the return point): entered alive at the return point in
+  Jangan at 40 % HP (1,368 of 3,421, then a murderer's drain) with its MP -- as OpenSRO already
+  does (`savedPlace`, the entry revive).
+- Escape with no window up while dead opened nothing (OPEN below: alive it opens the System
+  window).
+
+### What OpenSRO did, and the fix
+
+- **The penalty** (`leveldata.DeathPenaltyExp`): the cap (the four float32 fractions,
+  `ftol32` keeping the low 32 bits as the engine does), the thief's halving (`deathCause.thief`,
+  set for a `MOB_THIEF_NPC_*` / `MOB_EU_THIEF_NPC_*` kill outside a job). Level 11 now loses 697
+  where it lost 25,900.
+- **The level loss** (`leveldata.LoseExp`, `session/levelloss.go` `loseExp`): one level, the
+  lower level's requirement added back, 0 beneath that; the death's record is the requested loss;
+  the hub's level follows (and with it the academy refresh and, new, the guild member's 0x38F5
+  field 0x01 -- `guildMemberLevelChanged`, on every level change, which no level-up sent either);
+  the MP clamps to the lower maximum. The job death (cause 1) takes the same path (it was floored
+  at the level's 0, OURS).
+- **The max level**: `Character.MaxLevel` (the `max_level` column, existing rows take their level;
+  `SetLeveling` never lowers it; `HighestLevel` for an older row). Every level-up path -- a kill's
+  share, a quest, the academy's graduation, a job kill, `/level`, the EXP returned -- pays stat
+  points, Str and Int only above it (`character.LevelsRewarded`). The present point, the empty
+  request's choice and the dead window's second button follow it (the stats' new seventh tail,
+  `MaxLevel`).
+- **The EXP back** (`returnExp`, `tellExpReturned`): the scroll and, new, the resurrection skill
+  (the share fixed at the offer, `resurrectOffer.exp`) give their share back through Advance, so a
+  lost level comes back with its full heal, 0x3054 to the view, OpLevelUp and the 0x3056 line;
+  the record is cleared at the revive. The skill's EXP return was OPEN since round 785.
+- **The dead window** (client): the help button closes the box and sends nothing (option 0);
+  Enter and Escape press the second button (the box takes them in the shortcut pass, before the
+  chat's Enter and the HUD's Escape); selecting oneself while dead -- a press on the player block,
+  or a click on one's own body, which a dead player's world click now tests -- brings it back; the
+  death asks for fresh stats, so the level, the EXP gauge and the maxima drop with it.
+- **Another player's resurrection** (client and server): 0x3080 kinds 4/8 were dropped by the
+  client, so an offer could never be accepted from OpenSRO's client. They now close the dead window
+  and open the offer's box (`ReviveBox.build_offer`, `HudPanels.show_resurrect_offer`); its answer
+  is {01, 1|0}, and the server reads the second byte (`resurrectAnswerAccepts`; it took the first,
+  so a "no" would have revived).
+
+### QA (real clients, real clicks and keys, the lane server with prod's flags)
+
+Lane server: `-full-map -test-items-npc`, the dead state, monster AI/aggro/battle/strike push on
+(`/var/tmp/r874p/lane/srv.sh`, round 873's). Two real clients (`run2.sh`): Dp874a, the victim, made
+level 20 with 0 EXP by `/level 20` and given two 100 % scrolls; Dp874b, the caster, level 100 with
+Resurrection A (skill 152) learned and on quick slot 1. The victim stands at a Mangyang nest, takes
+`/hurt` to 1 HP and a spawned Bandit kills it (run `q12`; q1..q11 found a working script).
+
+| step (input) | the victim's client | the server |
+|---|---|---|
+| killed at level 20, 0 EXP | "[5639]Experience Points lost.", Lv 19, EXP 97.64 %, HP 0/557, MP 557/557 (both maxima level 19's); the box with "Waiting for other player's help." | `death: level lost from=20 to=19 exp=233239 loss=5639` |
+| `node:ReviveHelp` (a real click) | "the box closed, nothing sent"; still dead, no box | no request |
+| `node:HudPlayerInfo` (a press on the player block) | "dead and selected itself -- the dead window again" | nothing |
+| `key:Escape` | "Escape presses the second button (option 0)", the box closed | nothing |
+| `rbagitem:3783` (the 100 % scroll) | "Revived.", the level-up pillar, "You have advanced to level [20].", "[5639]Experience Points gained.", Lv 20, EXP 0.00 %, HP/MP 568 | `resurrection: level regained from=19 to=20 paid_levels=0`, `exp_back=5639`, protection 6 s |
+| killed again | Lv 19 again | the same loss |
+| `key:Enter` | "Enter presses the second button (option 0)", the box closed, the chat line not opened | nothing |
+| the caster's cast (`playerclick` + key 1) | "resurrection offer kind 4", the Agreement window ("A warm light is hovering around your body. ... Will you resurrect yourself to continue the adventure?") | the offer |
+| `node:GDR_MBIN_BTN_CANCEL` | "answered no"; still dead, no box | no revive |
+| the second cast, `node:GDR_MBIN_BTN_OK` | "answered yes", "Revived." (HP 278, MP 277), "[57]Experience Points gained." (Resurrection A's 1 % of 5,639, rounded up), the effect | the revive |
+| the Bandit's next kill at 19 | "[4777]Experience Points lost." = trunc(238,878 x float32 0.02) | |
+
+Frames (box `/var/tmp/r874p/frames`): `d1_dead.png`, `d1_help_closed.png`, `d1_reopened.png`,
+`d1_escaped.png`, `d1_scroll_fx.png`, `d1_scroll_revived.png`, `d2_dead.png`,
+`d2_enter_closed.png`, `d2_offer.png`, `d2_declined.png`, `d2_offer2.png`, `d2_accept_fx.png`;
+before: round 873's `/var/tmp/r873d/frames/dead_inside.png` (the disabled help button). Runs:
+`/var/tmp/r874p/lane/q*.log`, `q*b.log`, `q*.server.log`.
+
+### Tests
+
+- `server/internal/leveldata/leveldata_test.go`: `TestDeathPenaltyCap` (the MEASURED 16,919,
+  1,120,500 and 66,380; level 20's 5,639 and 1,128; the thief's halving; the constants),
+  `TestLoseExp` (the MEASURED 222,959 at 19; one level at most; level 1), `TestDeathPenaltyExp`
+  (level 11 is now the cap in every branch).
+- `server/internal/session/death874_test.go`: `TestDeathTakesALevelAndTheScrollGivesItBack` (a
+  monster's kill through the real strike path: 20 -> 19 at 233,239, max level 20, points/Str/Int
+  unchanged, the entity at 19, the record 5,639; the scroll: 20 at 1,000 with the level-up, nothing
+  paid twice, full HP, the record cleared), `TestLevelsRewardedOnlyAboveTheMaxLevel`,
+  `TestPresentPointFollowsTheMaxLevel`, `TestResurrectionSkillShare`,
+  `TestResurrectAnswerIsTheSecondByte`.
+- Updated for the cap: `TestDeathPenaltyAppliedInCombat` (697), `TestMonsterStrikePushCarriesTheFlags`;
+  for the max level: `TestGuildWorkIsRefusedWhileDead` (its level-20 founder's empty revive is the
+  return point), `TestCharacterStatsResultCarriesCharacterRows` (100 bytes);
+  `TestReviveByResurrectionScroll` (the return's shape).
+- Client: `monster_strikes_test.gd` (the help button closes the box and sends nothing; Enter and
+  Escape at 11 send nothing and at 10 the present point), `native_gui848h_test.gd` (the help button
+  enabled, choosing 0).
+
+### Gates
+
+UI, network and server only -- no world drawing changed, so the perf gate is skipped.
+`cd server && go build ./... && go vet ./... && go test ./...`: pass (100 packages). `remote_godot.sh
+check`: ALL LOAD (1,175 scripts, 9 scenes). `remote_godot.sh tests`: "ran 450 suite(s), 0 failing".
+
+### Differs on purpose / unsure (not changed)
+
+- Escape with no window up while dead: MEASURED the original opened nothing; OpenSRO opens the
+  System window as it does alive. Not read; left.
+- The death's item drop: READ, `GObjPC_OnDeath` rolls `rand() % 101 <= FUN_004e6930()` (5 for a
+  character with no PK points, more with them) and drops a random bag item
+  (`CGPCInventoryOP::RandomSelectNonEmptySlotForDeathPenalty` s:0x4bb460); MEASURED a murderer's
+  death said "only Chinese equipment items are dropped". OpenSRO drops nothing. A user decision.
+- Round 873's OURS rule stays: a refusal from OpenSRO's own server shows the box again.
+
+### OPEN
+
+- Kind 8 (`rmut`) offers are shown in kind 4's box with `UIIT_MSG_MSGBOX_ASK_REBIRTH_MUTATION`
+  (OURS); the original's generic agreement box (c:0x788270) was not read.
+- The world click on one's own dead body reopening the box is READ only (the measured press was on
+  a GM's see-through body and did not pick it).
+- Enter/Escape at max level 10 or under (the present point) is READ, not measured.
+- The resurrection skill's level cap (`resu` value 0) is tested against the current level; the
+  original's test (s:0x5946c1..) was not checked for the max level.
+- The stat reset scroll (`servicescroll.go resetStats`) rebuilds Str, Int and the points from the
+  current level; whether the original uses the max level was not read.
+- The murderer's halving of the returned EXP and the PK-flagged branches wait for a PK system.
+
+### Changelog lines (draft)
+
+- Dying can now cost you a level, as in the original; the EXP lost is at most 2 % of your level (0.4 % when another player kills you), and a Thief NPC takes half.
+- Your stat points, Strength and Intelligence are kept when a death takes a level, and getting the level back does not give them twice.
+- A resurrection scroll or another player's resurrection gives the lost EXP back -- and the lost level with it.
+- "Waiting for other player's help." now closes the resurrection window and waits, as in the original; click your character's portrait to open the window again.
+- Enter and Escape on the resurrection window act as its second button.
+- Another player's resurrection now asks you to accept or decline, and accepting revives you.
+- Your guild sees your level change at once.
+
 ## Eight-hundred-and-seventy-third round: combat and death inside the Forgotten World -- a sprint's landing taken at the wire's height (the deck, not the sea floor), the return-point revive done in one request, the resurrection scroll in place, the gate's ten minutes measured
 
 The user on prod (v0.1.643, a level-110 warrior in a Wreck-inside 101-110 layer): "so I tried to
