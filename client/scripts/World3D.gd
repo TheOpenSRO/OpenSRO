@@ -37510,6 +37510,12 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
 		if take_hp:
 			_hud_player_info.set_hp(stats.hp, stats.max_hp)
+		elif _player_dead and stats.max_hp > 0:
+			# Round 874: a death that takes a level lowers the maximum at
+			# once (MEASURED: 0x303D's 1,296 -> 1,271 with the death); the HP
+			# stays 0.
+			_last_enter_world_max_hp = stats.max_hp
+			_hud_player_info.set_hp(0, stats.max_hp)
 		# The mana bar drew blank while the server had no mana to report.
 		# It does now -- the game's own base curve -- so show the real
 		# number; a server too old to send it still gets the blank bar.

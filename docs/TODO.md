@@ -307,7 +307,8 @@ Find all the effects this applies to and what exact times they trigger."
 - [ ] **Defensive links** (`dmgr`, `lkdr`, `lkdd`, `lkag`, `abnb`, `lkdh`): act on blows a
       character takes (FUN_005a0b80); need the monster-strike path's hook.
 - [ ] **Weapon-scaled heals** (`mwhh`/`mwmh`/`mwhs`, Formula_WeaponAvgDamagePercent), the `eshp`
-      group aura, the resurrection's EXP return and `rmut` buff, the `defp` cap, `pdmg`.
+      group aura, ~~the resurrection's EXP return~~ (round 874) and the `rmut` buff, the `defp`
+      cap, `pdmg`.
 - [ ] **The plain swing's blocked hit with a percentage** (below) is fixed for skills
       (skillhit.go: a blocked hit is kind 2, 0 damage); `performAttack` (the combat lane) keeps it.
 - [ ] **Client (r785-skill-cli)**: draw the 0xAB action block (skill_hit_block.md): per-target
@@ -638,8 +639,8 @@ In order. Each is checked off here when it ships in a release, with its round in
         (2) ~~body mode 2 after a revive and the world entry~~ -- DONE in round 786 (6.0 s, the
         world's slot `0x70` = `0x5eb2d0`; held until 0x3012 first; `protocol/arrival_guard.md`); (3) resurrection by
         another player and by scroll (`trs_wait_response::vslot_002`, `FUN_0049ff20`), which the
-        "Waiting for other player's help." button stands for -- shown disabled today, while
-        retail's click closes the box; (4) the retail message box art
+        "Waiting for other player's help." button stands for -- DONE: the scroll (rounds
+        864/873), the offer's box and the help button's close (round 874); (4) the retail message box art
         (`msgbox_rebirth_button.ddj`) for the window; (5) whether to default `-player-dead-state`
         on -- retail has one death, the dead state (a user decision); (6) with the flag off, a
         death writes no `[n]Experience Points lost.` line to the system window -- the status
@@ -3255,7 +3256,8 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       `heal` value[0] (columns 62/63). A cast is announced to the zone (OpSkillCast 0x00FA, start
       and act). Still open:
       - selecting oneself: done in the review (the player block's left press, Shift-click on the
-        body); still open, the type-3 box FUN_00780ee0 opens when a dead player selects itself;
+        body); the type-3 box FUN_00780ee0 opens when a dead player selects itself: the dead
+        window again, done in round 874;
       - the client's CICUser checks (PK/job flags, the guild compare, vslot 0xa8): no states here;
       - resurrections (SelectDeadBody, `resu`) and the other 249 `heal` rows (heal.md);
       - monster casts in OpSkillCast (casterKind 1 is carried; the monster AI's strikes do not
