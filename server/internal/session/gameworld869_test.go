@@ -40,6 +40,23 @@ import (
 // 300 minutes, the start 0x7EE4 (1063, 693, 1125) and a few of its regions.
 func gwRef(t *testing.T) *gameworld.Ref {
 	t.Helper()
+	tabs := gwTables()
+	// Round 870: a test's own tables on top (fgw870_test.go).
+	if gwRefExtra != nil {
+		gwRefExtra(tabs)
+	}
+	ref, err := gameworld.Build(func(n string) *reftable.Table { return tabs[n] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ref
+}
+
+// gwRefExtra, when set, adds tables to the next gwRef.
+var gwRefExtra func(tabs map[string]*reftable.Table)
+
+// gwTables is gwRef's tables.
+func gwTables() map[string]*reftable.Table {
 	tabs := map[string]*reftable.Table{}
 	w := reftable.New("ID", "WorldCodeName128", "Type", "WorldMaxCount", "WorldMaxUserCount", "WorldEntryType",
 		"WorldEntranceType", "WorldLeaveType", "WorldDurationTime", "WorldEmptyRemainTime", "ConfigGroupCodeName128")
@@ -71,11 +88,7 @@ func gwRef(t *testing.T) *gameworld.Ref {
 	sp := reftable.New("WorldID", "RegionID", "PosX", "PosY", "PosZ", "Param")
 	sp.Append("63", fmt.Sprint(0x7EE4), "1063", "693", "1125", "0")
 	tabs[gameworld.TableStartPos] = sp
-	ref, err := gameworld.Build(func(n string) *reftable.Table { return tabs[n] })
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ref
+	return tabs
 }
 
 type gwPlayer struct {

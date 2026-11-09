@@ -338,10 +338,16 @@ binaries and the data, **not measured**.
 - **NPCs**: the world's NPC hive spawns with the layer: "Dungeon Exit" (`NPC_INS_EXIT_TELEPORT`, a
   blue crystal with lightning) 160 units west of the start and "Pillar of Party Member Recall"
   (`NPC_FWORLD_RECALL_PARTY`, a dark stone pillar with red light) 200 units south-east of it.
-  - Selecting the exit NPC: `B045 {01, npc, 00 00 00 01 29 00}` (one interaction, 0x29); the talk
-    window "Dungeon Exit": "1. Exit Dungeon", "2. End conversation."
-  - Selecting the recall pillar: `B045 {01, npc, 00 00 00 01 27 00}` (0x27); "Pillar of Party Member
+  - Selecting the exit NPC: `B045 {01, u32 npc, 00, 01, 29, 00}` (9 bytes: the flag byte 0, one
+    interaction 0x29, the CICNPC's u8 0); the talk window "Dungeon Exit": "1. Exit Dungeon", "2. End
+    conversation."
+  - Selecting the recall pillar: `B045 {01, u32 npc, 00, 01, 27, 00}` (0x27); "Pillar of Party Member
     Recall": "1. Summon Party member", "2. End conversation."
+  - Round 870: the raw payload is `01 4e090000 00 01 29 00` (and `01 4d090000 00 01 27 00`); round
+    869's "00 00 00 01 29 00" counted the npc id's two high zero bytes twice. It is exactly the order
+    READ in c:0x88b200's CICharactor branch (u8 1, u32 id, u8 flag, u32 when its bit 0 is set, u8 n, n
+    ids, u16 when 0x1f is among them, the CICNPC's u8 (`FUN_00b94b70(0xef1ac4)`), u16 when 0x21 is, u16
+    when the ref's +0x120 is set) and what OpenSRO's shared encoder (`npctalk.EncodeSelectNPC`) sends.
 - **Monsters: none appeared.** In this layer none of world 67's 116 monster nests (hives 838..854)
   spawned anything -- no monster spawn reached either player at the start, at the camp-1 nest
   (0x7EE3 (1066, 820, 512)) or at camp 2, over 35 minutes; the area map's monster option showed

@@ -406,8 +406,21 @@ func _test_world() -> void:
 	_buff_start(CARL, GRASS, 31)
 	_check(_body(world, CARL) == null, "Carl has no body yet")
 	world.call("_spawn_or_update_other", CARL, "Carl", Vector3(-3, 0, 0))
+	# Round 870: the dressing has a frame budget (OtherCrowd.BuildQueue, round
+	# 739): on a loaded box Bram's dressing earlier in this frame can spend it
+	# and leave Carl's for the next frame (round 869 saw 3 of 6 runs fail at
+	# a load average of 35; 6 of 6 pass at 3). The aura comes with the
+	# dressing (_dress_other -> _fx_resync_owner), so the check pumps the
+	# dressing -- this subclass's _process does not -- until Carl is dressed,
+	# and then asks for the aura.
+	var dress_frames := 0
+	while (world.get("_other_build_args") as Dictionary).has(CARL) and dress_frames < 120:
+		await process_frame
+		world.call("_pump_other_builds")
+		dress_frames += 1
 	var carl := _body(world, CARL)
-	_check(_live_on("grass_keep.efp", carl) == 1, "a body built after its owner's buff arrived takes the aura at once (got %d)" % _live_on("grass_keep.efp", carl))
+	_check(not (world.get("_other_build_args") as Dictionary).has(CARL), "Carl's body is dressed (after %d frame(s))" % dress_frames)
+	_check(_live_on("grass_keep.efp", carl) == 1, "a body built after its owner's buff arrived takes the aura when it is dressed (got %d, dressed after %d frame(s))" % [_live_on("grass_keep.efp", carl), dress_frames])
 	_check(_book_tokens(world, CARL) == [31], "and the book has it (got %s)" % str(_book_tokens(world, CARL)))
 
 	# --- 4. OpEntityLeft then a new body with the re-sent starts (a warp in the
