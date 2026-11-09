@@ -548,6 +548,8 @@ func sendGoldTimeRefusal(sess *gateway.Session, code uint16, refID int64) error 
 // GoldTimePauseHandler serves 0x34BF (FUN_0051a840 -> FUN_00653560).
 func GoldTimePauseHandler(hub *world.Hub, scrolls *ScrollCaster) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode != OpGoldTimePause || hub == nil {
 			return nil
 		}

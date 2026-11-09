@@ -139,6 +139,8 @@ func scrollHolds(sess *gateway.Session) bool {
 // mover hears 0xB023 at the position the server has it. A leg still running
 // (none should: the use stopped it) ends there and the window hears it too.
 func scrollHoldAnswer(sess *gateway.Session, hub *world.Hub) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if hub == nil || sess == nil {
 		return
 	}

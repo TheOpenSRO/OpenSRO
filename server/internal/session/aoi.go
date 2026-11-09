@@ -195,6 +195,7 @@ func (view *aoiView) clearPending() {
 func RunMonsterAOI(ctx context.Context, hub *world.Hub, monsters *combat.Hub, logger *slog.Logger) {
 	v := newMonsterAOI(hub, monsters, logger)
 	monsterAOIRuntime.Store(v)
+	aoiLogger.Store(logger)
 	go func() {
 		ticker := time.NewTicker(AOITick)
 		defer ticker.Stop()
@@ -218,6 +219,10 @@ func newMonsterAOI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger) *m
 
 // aoiFor is the installed runtime when it serves monsters, else nil.
 func aoiFor(monsters *combat.Hub) *monsterAOI {
+	// Round 869: an instance's own runtime serves its monsters.
+	if rt := runtimeOfMonsters(monsters); rt != nil {
+		return rt.aoi
+	}
 	if v := monsterAOIRuntime.Load(); v != nil && v.monsters == monsters {
 		return v
 	}
@@ -365,7 +370,7 @@ func (v *monsterAOI) reconcile() {
 	}
 	// The NPCs' spawns and despawns (round 708, npcworld.go) ride this tick:
 	// the same entities, the same window.
-	if w := npcWorldRuntime.Load(); w != nil {
+	if w := npcWorldFor(v.world); w != nil {
 		w.reconcile(ents)
 	}
 }

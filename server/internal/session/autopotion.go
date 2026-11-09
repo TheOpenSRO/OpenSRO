@@ -52,6 +52,8 @@ const (
 // answered, as retail answers nothing.
 func AutoPotionHandler(store character.AutoPotionStore, hub *world.Hub, logger *slog.Logger) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode == OpAutoPotionLoad {
 			return autoPotionLoad(ctx, sess, store, hub)
 		}
@@ -78,6 +80,8 @@ func AutoPotionHandler(store character.AutoPotionStore, hub *world.Hub, logger *
 // defaults as 0x8a7c0d..0x8a7c44 does for a zero delay byte. A session not
 // in the world is not answered.
 func autoPotionLoad(ctx context.Context, sess *gateway.Session, store character.AutoPotionStore, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if hub == nil {
 		return nil
 	}

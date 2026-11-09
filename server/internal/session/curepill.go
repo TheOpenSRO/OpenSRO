@@ -111,6 +111,8 @@ func curePillRule(it *refdata.Item) (rule statuseffect.CureRule, lockBit uint32,
 // with the stack left. MaxHP 0 tells the client to leave its bars alone.
 func useCurePill(ctx context.Context, sess *gateway.Session, fail func(string) error, inv inventory.Store,
 	hub *world.Hub, locks *itemCooldownTracker, characterID int64, it *refdata.Item, held inventory.Slot, have int, now time.Time) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if it.CooltimeMs > 0 && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
 		return fail(reuseDelayRefusal)
 	}

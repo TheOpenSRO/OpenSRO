@@ -574,6 +574,8 @@ var tickPushHook func()
 func RunMonsterAI(ctx context.Context, hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg MonsterAIConfig) {
 	a := newMonsterAI(hub, monsters, logger, cfg, rand.New(rand.NewSource(time.Now().UnixNano())), nil)
 	monsterAIRuntime.Store(a)
+	// Round 869: each instance runs its own AI with the same configuration.
+	aiSetup.Store(&aiSetupBox{cfg: cfg, logger: logger})
 	go a.run(ctx, cfg.TickStats)
 }
 
@@ -686,7 +688,7 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 func noteStruck(monsters *combat.Hub, monsterID, characterID int64) {
 	// Round 800: a blow given is the battle state (jobsuit.go).
 	markBattle(jobDepsNow().hub, characterID, time.Now())
-	a := monsterAIRuntime.Load()
+	a := aiOf(monsters)
 	if a == nil || monsters == nil || monsters != a.monsters {
 		return
 	}

@@ -442,11 +442,27 @@ func (s *ScrollCaster) Casting(characterID int64) bool {
 // point OpenSRO cannot place: another game world, a dungeon it does not
 // serve, a region of 0.
 func placeArrival(region int, x, y, z float64, worldID int) (zone, bucket string, pos world.Position, frame string, ok bool) {
-	if region == 0 || (worldID != 0 && worldID != teleport.MainWorld) {
+	if region == 0 {
 		return "", "", world.Position{}, "", false
 	}
+	// Round 869: a point of an instanced world places when the region is one
+	// of that world's (_RefInstance_World_Region); every other world's is
+	// still no place.
+	if worldID != 0 && worldID != teleport.MainWorld {
+		if !instanceRegion(worldID, region) {
+			return "", "", world.Position{}, "", false
+		}
+		return placeRegion(region, x, y, z, true)
+	}
+	return placeRegion(region, x, y, z, false)
+}
+
+// placeRegion is placeArrival's placing: a dungeon region at its own height,
+// a field region in teleportZoneFor's zone at its frame. anyDungeon places a
+// dungeon OpenSRO does not serve in the open world (an instance's: round 869).
+func placeRegion(region int, x, y, z float64, anyDungeon bool) (zone, bucket string, pos world.Position, frame string, ok bool) {
 	if worldmap.IsDungeonRegion(region) {
-		if !ServedDungeon(region) {
+		if !anyDungeon && !ServedDungeon(region) {
 			return "", "", world.Position{}, "", false
 		}
 		zone = worldmap.DungeonZone(region)

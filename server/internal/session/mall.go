@@ -96,6 +96,9 @@ func MallHandler(d MallDeps) gateway.Handler {
 	dd := d
 	mallRT.Store(&dd)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case mall.OpOpen:
 			return dd.open(sess, p.Data)

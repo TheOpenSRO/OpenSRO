@@ -86,7 +86,7 @@ func unionCrestChanged(ctx context.Context, hub *world.Hub, u *guild.Union, rev 
 		return
 	}
 	msg := &proto.Packet{Opcode: OpGuildCrestUpdate, Data: guild.EncodeUnionCrestUpdate(uint32(u.ID), names, rev)}
-	for _, e := range hub.AllEntities() {
+	for _, e := range allEntitiesAnywhere(hub) {
 		if e.Session != nil {
 			e.Session.Send(msg)
 		}

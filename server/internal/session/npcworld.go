@@ -88,6 +88,14 @@ func InstallNPCs(npcs []npcspawn.NPC, logger *slog.Logger) int {
 		npcWorldRuntime.Store(nil)
 		return 0
 	}
+	w := newNPCWorld(npcs, logger)
+	npcWorldRuntime.Store(w)
+	return w.placed
+}
+
+// newNPCWorld files npcs as InstallNPCs does, into a runtime of their own:
+// the open world's, or an instance's (round 869, SetInstanceNPCs).
+func newNPCWorld(npcs []npcspawn.NPC, logger *slog.Logger) *npcWorld {
 	w := &npcWorld{logger: logger, byCell: map[combat.Cell][]*npcspawn.NPC{}, sent: map[uint64]combat.Cell{},
 		byUID: map[uint32][]npcPlacement{}}
 	zones := make([]string, 0, len(worldmap.ZoneCentre))
@@ -134,8 +142,33 @@ func InstallNPCs(npcs []npcspawn.NPC, logger *slog.Logger) int {
 	for _, list := range w.byCell {
 		sort.Slice(list, func(i, j int) bool { return list[i].UID < list[j].UID })
 	}
-	npcWorldRuntime.Store(w)
-	return w.placed
+	return w
+}
+
+// newNPCWorldAt files npcs in one bucket and frame: an instance's (round
+// 869), whose regions all share the frame its start position is named in
+// (fx, fy). A dungeon region's NPC is filed as InstallNPCs files one.
+func newNPCWorldAt(npcs []npcspawn.NPC, logger *slog.Logger, bucket string, fx, fy int) *npcWorld {
+	w := &npcWorld{logger: logger, byCell: map[combat.Cell][]*npcspawn.NPC{}, sent: map[uint64]combat.Cell{},
+		byUID: map[uint32][]npcPlacement{}}
+	for i := range npcs {
+		n := &npcs[i]
+		var x, z float64
+		zone := bucket
+		if worldmap.IsDungeonRegion(int(n.Region)) {
+			zone = worldmap.DungeonZone(int(n.Region))
+			x, _, z = worldmap.DungeonToWorld(float64(n.X), float64(n.Y), float64(n.Z))
+		} else {
+			rx, ry := worldmap.RegionXY(int(n.Region))
+			x, z = worldmap.ToWorld(rx, ry, float64(n.X), float64(n.Z), fx, fy)
+		}
+		w.file(combat.CellOf(zone, x, z), n)
+		w.byUID[n.UID] = append(w.byUID[n.UID], npcPlacement{zone: zone, x: x, z: z, npc: n})
+	}
+	for _, list := range w.byCell {
+		sort.Slice(list, func(i, j int) bool { return list[i].UID < list[j].UID })
+	}
+	return w
 }
 
 func abs(v int) int {
@@ -296,6 +329,16 @@ func forgetNPCWindow(id uint64) {
 		w.mu.Lock()
 		delete(w.sent, id)
 		w.mu.Unlock()
+	}
+	// Round 869: and every instance's (the session may arrive in one).
+	if m := GameWorlds(); m != nil {
+		for _, gw := range m.List() {
+			if rt := runtimeOfWorld(gw); rt != nil && rt.npc != nil {
+				rt.npc.mu.Lock()
+				delete(rt.npc.sent, id)
+				rt.npc.mu.Unlock()
+			}
+		}
 	}
 }
 

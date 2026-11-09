@@ -153,6 +153,8 @@ func registerCaravan(ctx context.Context, characterID int64, why string) {
 // 0xc; the engine asks the NPC's quotation map) while the player's transport
 // holds goods. Any job.
 func caravanOnEnd(ctx context.Context, sess *gateway.Session, hub *world.Hub, npcUID uint32, mode byte) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if mode != 5 && mode != 6 || hub == nil || caravanRT.Load() == nil {
 		return
 	}

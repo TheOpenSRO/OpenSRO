@@ -91,6 +91,9 @@ func sendParty(sess *gateway.Session, op uint16, data []byte) {
 // create, 0x7061 leave, 0x7062 invite, 0x7063 kick and the 0x3080 answer.
 func PartyHandler(d PartyDeps) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case party.OpCreate:
 			handlePartyCreate(ctx, sess, p.Data, d)
@@ -526,6 +529,9 @@ func (d PartyDeps) removeMember(characterID int64, reason uint8) {
 // to the inviter.
 func PartyDisconnectHandler(d PartyDeps) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		if d.Parties == nil {
 			return
 		}
@@ -579,7 +585,8 @@ func (d PartyDeps) sample(ctx context.Context, m party.Member, prev *memberSampl
 		r.Job = m.Job
 	}
 	if d.Hub != nil {
-		if e, ok := d.Hub.EntityByCharacterID(m.CharacterID); ok {
+		// Round 869: a member is sampled in whichever world it is in.
+		if e, ok := hubOfChar(d.Hub, m.CharacterID).EntityByCharacterID(m.CharacterID); ok {
 			r.Name, r.Level = e.Name, uint8(e.Level)
 			r.Region, r.X, r.Y, r.Z, s.hasPos = partyPosition(e)
 		}

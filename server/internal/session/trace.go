@@ -252,6 +252,8 @@ func (b *traceBook) tick(hub *world.Hub, characterID int64, r *traceRun) {
 // ActionHandler answers 0x7074 (see the header).
 func ActionHandler(hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode != OpCharacterActionRequest || hub == nil || len(p.Data) < 1 {
 			return nil
 		}

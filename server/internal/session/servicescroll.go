@@ -147,6 +147,9 @@ func ServiceHandler(d ServiceDeps) gateway.Handler {
 	dd := d
 	serviceRT.Store(&dd)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		if p.Opcode == OpRename {
 			return dd.rename(ctx, sess, p.Data)
 		}

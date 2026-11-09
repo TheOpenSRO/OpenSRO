@@ -375,6 +375,8 @@ func bagItem(ctx context.Context, d suitDeps, characterID int64, slot int) *refd
 // storage operation while a suit change is pending cancels it and is refused
 // 0x180e. True when it refused.
 func storageOpDuringChange(sess *gateway.Session, hub *world.Hub, characterID int64) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if !jobChangePending(characterID) {
 		return false
 	}

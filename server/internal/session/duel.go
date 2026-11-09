@@ -271,6 +271,8 @@ func DecodeDuelEnded(data []byte) (*DuelEnded, error) {
 // OpDuelChallenge/OpDuelRespond/OpDuelAttack.
 func DuelHandler(chars character.Store, eq equipment.Store, items combat.ItemLookup, hub *world.Hub, duels *duel.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		case OpDuelChallenge:
 			return handleDuelChallenge(ctx, sess, p, chars, hub, duels)
@@ -285,6 +287,8 @@ func DuelHandler(chars character.Store, eq equipment.Store, items combat.ItemLoo
 }
 
 func handleDuelChallenge(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, duels *duel.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeDuelChallengeRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelChallengeResult, Data: (&DuelChallengeResult{Reason: "malformed request"}).Encode()})
@@ -313,6 +317,8 @@ func handleDuelChallenge(ctx context.Context, sess *gateway.Session, p *proto.Pa
 }
 
 func handleDuelRespond(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, duels *duel.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeDuelRespondRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelRespondResult, Data: (&DuelRespondResult{Reason: "malformed request"}).Encode()})
@@ -346,6 +352,8 @@ func handleDuelRespond(ctx context.Context, sess *gateway.Session, p *proto.Pack
 }
 
 func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, items combat.ItemLookup, hub *world.Hub, duels *duel.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeDuelAttackRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "malformed request"}).Encode()})
@@ -528,6 +536,8 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // their opponent.
 func DuelDisconnectHandler(hub *world.Hub, duels *duel.Hub) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		entity, ok := hub.EntityBySession(sess.ID())
 		if !ok {
 			return

@@ -465,6 +465,9 @@ func samePartyFunc(parties *party.Hub) func(a, b int64) bool {
 // and OpPickUp.
 func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem.Hub, inv inventory.Store, parties *party.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
+		ground := groundFor(sess, ground)
 		switch p.Opcode {
 		case OpGroundItemList:
 			entity, ok := hub.EntityBySession(sess.ID())

@@ -175,6 +175,9 @@ func ExchangeHandler(d ExchangeDeps) gateway.Handler {
 	dd := d
 	exchangeRT.Store(&dd)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case OpExchangeRequest:
 			dd.request(sess, p.Data)
@@ -296,6 +299,8 @@ func exchangeEstablished(characterID int64) bool {
 // (s:FUN_004def00). It must run before WorldDisconnectHandler.
 func ExchangeDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if e, ok := hub.EntityBySession(sess.ID()); ok {
 			exchangeEnd(e.CharacterID, ExchangeErrCancel)
 		}

@@ -365,7 +365,8 @@ func zoneOf(hub *world.Hub, characterID int64) []world.Entity {
 	if hub == nil {
 		return nil
 	}
-	return hub.ViewOfCharacter(characterID)
+	// Round 869: whoever sees the character in its own world.
+	return hubOfChar(hub, characterID).ViewOfCharacter(characterID)
 }
 
 // sendAboutOwner sends one packet about owner, encoded once, to each of to:
@@ -614,6 +615,8 @@ func sendOwnBuffs(arriving world.Entity, now time.Time) {
 // zero skill id, which OpenSRO's request cannot carry meaningfully).
 func BuffHandler(chars character.Store, hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode != OpBuffCancel {
 			return nil
 		}
@@ -671,6 +674,8 @@ func finitePosition(x, y, z float32) bool {
 // point is the clamped point, and the client stands the player on its own
 // walkable graph there, as it does for every move.
 func moveBySkill(sess *gateway.Session, hub *world.Hub, chars character.Store, skillID int64, pos world.Position, now time.Time) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
 		if accepted, _ := motions.moved(e.CharacterID, now); !accepted {
 			return false

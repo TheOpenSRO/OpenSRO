@@ -198,6 +198,8 @@ func resurrectDepsNow() RegenDeps {
 // 0). The answer: the composite result, the revive's own, the state.
 func useResurrectionFill(ctx context.Context, sess *gateway.Session, chars character.Store, hub *world.Hub, keeper *CompositeKeeper,
 	characterID int64, fill *refdata.Item, g *compositeGrant, req *CompositeUseRequest, fail func(string, int64) error) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if !deadBySession(hub, sess) {
 		return fail(resurrectionOnlyDeadRefusal, req.ItemID)
 	}

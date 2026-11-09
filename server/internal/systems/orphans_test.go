@@ -43,6 +43,18 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 869: the game worlds' seams for the lanes after W1 -- W3's gate
+	// (RegisterPortal / UnregisterPortal), the doors' placements once their
+	// source is found (SetZonePlaces; OPEN), W2's registry rows (Word) -- and
+	// the tests' clock.
+	"RegisterPortal":   "internal/session/gameworlds_run.go",
+	"UnregisterPortal": "internal/session/gameworlds_run.go",
+	"SetZonePlaces":    "internal/gameworld/manager.go",
+	"Word":             "internal/registry/registry.go",
+	"NewFakeClock":     "internal/gameworld/clock.go",
+	// W2's re-route carries a character's runtime between processes.
+	"SnapshotCarried": "internal/session/carried.go",
+	"RestoreCarried":  "internal/session/carried.go",
 	// Round 860 lane E: 0x304E kind 4's decoder; the Godot client decodes the
 	// message over the socket, so only the golden-bytes test calls it in Go.
 	"ForcedGraduationLevel": "round 865: the 41 / 61 floors named by their role (0x7476's forced graduation); the handler tests them through MeetsMembershipLevel, academy_test.go holds the two together.",
@@ -232,7 +244,6 @@ var baseline = map[string]string{
 	"SetBlocked":          "internal/account/memstore.go",
 	"SetSecurity":         "internal/gateway/gateway.go",
 	"SetsWorn":            "internal/equipment/itemset.go",
-	"Spawn":               "internal/combat/combat.go",
 	"StrForMaxRatio":      "internal/combat/statratio.go",
 	"StrLevelDamageRatio": "internal/combat/statratio.go",
 	"TruncateForTest":     "internal/equipment/sqlstore.go",

@@ -171,8 +171,10 @@ type Hub struct {
 	byChar map[int64]*Entity
 	byName map[string]*Entity
 	// byCell is every entity by the block it stands in (Entity.Cell).
-	byCell   map[combat.Cell]map[uint64]*Entity
-	arrivals uint64
+	byCell map[combat.Cell]map[uint64]*Entity
+	// unit is the game-world unit owning this hub (round 869,
+	// internal/gameworld), nil for a bare hub.
+	unit atomic.Pointer[unitBox]
 	// moving is every entity with a leg (Entity.Move), by session: the
 	// periodic pass's work list (round 749).
 	moving map[uint64]*Entity
@@ -219,9 +221,9 @@ func (h *Hub) enter(sess *gateway.Session, characterID int64, name string, level
 
 	h.removeLocked(sess.ID())
 
-	h.arrivals++
-	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: h.arrivals, Trusted: pos, allowAt: h.clock(), Held: held}
+	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: nextArrival(), Trusted: pos, allowAt: h.clock(), Held: held}
 	h.insertLocked(e)
+	sess.SetPlace(h)
 	return h.viewOthersLocked(e)
 }
 
@@ -231,6 +233,9 @@ func (h *Hub) enter(sess *gateway.Session, characterID int64, name string, level
 // of it (for its spawns, session.arrivePlayer); ok is false when the
 // session is not in the world or was not held.
 func (h *Hub) Release(sess *gateway.Session) (released Entity, others []Entity, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.Release(sess)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	e, exists := h.bySession[sess.ID()]
@@ -254,6 +259,9 @@ func (h *Hub) Release(sess *gateway.Session) (released Entity, others []Entity, 
 // swarm's 3,000 dropping together held the lock for seconds (MEASURED,
 // BenchmarkLeaveInCrowd; docs/WORLD_ISSUES.md, "The swarm lane's lag hunt").
 func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Watcher, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.Leave(sess)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -346,6 +354,9 @@ func (h *Hub) Relocate(sess *gateway.Session, pos Position, kind MoveKind, headi
 // it, so those players are in both lists: they hear it leave and then arrive
 // at pos.
 func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.ChangeZone(sess, newZone, pos)
+	}
 	return h.changeZone(sess, newZone, pos, false)
 }
 
@@ -353,6 +364,9 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 // (Entity.Held) at its arrival until Release (round 786, session/arrival.go):
 // the old window loses it at once, the new one gains it only on Release.
 func (h *Hub) ChangeZoneHeld(sess *gateway.Session, newZone string, pos Position) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.ChangeZoneHeld(sess, newZone, pos)
+	}
 	return h.changeZone(sess, newZone, pos, true)
 }
 
@@ -379,8 +393,7 @@ func (h *Hub) changeZone(sess *gateway.Session, newZone string, pos Position, he
 	// is refused while dead (session.handleChangeZone), but the return to the
 	// return point moves a dead character before it revives it (round 665,
 	// session.ReviveHandler), and a state is never reset by a move.
-	h.arrivals++
-	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading, Trusted: pos, allowAt: h.clock(), allowSpeed: old.allowSpeed, Held: held}
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: nextArrival(), Heading: old.Heading, Trusted: pos, allowAt: h.clock(), allowSpeed: old.allowSpeed, Held: held}
 	h.insertLocked(next)
 	if stale {
 		if live != nil {
@@ -467,6 +480,9 @@ func SetLevelHook(f func(characterID int64, level int)) {
 // (round 637's review follow-up; character.HeadingStore). Reports whether the
 // session is in the world.
 func (h *Hub) SetHeading(sess *gateway.Session, heading float64) bool {
+	if o := h.routed(sess); o != nil {
+		return o.SetHeading(sess, heading)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -613,6 +629,7 @@ func (h *Hub) insertLocked(e *Entity) {
 	h.byChar[e.CharacterID] = e
 	h.byName[e.Name] = e
 	h.cellLocked(e)
+	presence.Store(e.CharacterID, h)
 }
 
 // removeLocked removes a session's entity from every index. Caller must
@@ -631,6 +648,7 @@ func (h *Hub) removeLocked(sessionID uint64) {
 	}
 	if h.byChar[e.CharacterID] == e {
 		delete(h.byChar, e.CharacterID)
+		presence.CompareAndDelete(e.CharacterID, h)
 	}
 	if h.byName[e.Name] == e {
 		delete(h.byName, e.Name)

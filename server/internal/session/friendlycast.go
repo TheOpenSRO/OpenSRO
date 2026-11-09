@@ -427,6 +427,8 @@ func startBuffOnLocked(hub *world.Hub, ref *refdata.Skill, casterID, ownerID int
 
 // sessionEntity is the session's entity (its character in the world).
 func sessionEntity(hub *world.Hub, sess *gateway.Session) (world.Entity, bool) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if hub == nil || sess == nil {
 		return world.Entity{}, false
 	}

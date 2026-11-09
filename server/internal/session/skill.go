@@ -683,6 +683,10 @@ func useSkillHandler(
 	setPassiveSource(skills, skillRef)
 	noteSkillDeps(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions})
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
+		monsters := monstersFor(sess, monsters)
+		ground := groundFor(sess, ground)
 		if p.Opcode != OpUseSkill {
 			return nil
 		}

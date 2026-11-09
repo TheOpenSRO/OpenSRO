@@ -263,6 +263,9 @@ type ChatDeps struct {
 // ChatHandler returns the gateway.Handler for OpChatSend and OpChatGlobal.
 func ChatHandler(d ChatDeps) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case OpChatSend:
 			return handleChatSend(ctx, sess, p, d)
@@ -333,7 +336,7 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		return okResult()
 
 	case ChatWhisper:
-		target, ok := d.Hub.FindByName(req.Target)
+		target, ok := findByNameAnywhere(d.Hub, req.Target)
 		if !ok {
 			return fail(ChatErrCantFindTarget, req.Target)
 		}
@@ -505,7 +508,7 @@ func BroadcastChatAll(hub *world.Hub, u *ChatUpdate) int {
 		return 0
 	}
 	n := 0
-	for _, e := range hub.AllEntities() {
+	for _, e := range allEntitiesAnywhere(hub) {
 		if e.Session == nil {
 			continue
 		}

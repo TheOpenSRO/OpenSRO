@@ -110,6 +110,8 @@ func releaseArrival(sess *gateway.Session, arrival uint64, why string) bool {
 // and to the character itself (broadcastBodyMode), and body mode 0 at the
 // time's end unless something ended it first (endProtection).
 func startProtection(hub *world.Hub, characterID int64, sess *gateway.Session, why string) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	arrivals.Lock()
 	e := arrivals.byChar[characterID]
 	if e == nil {

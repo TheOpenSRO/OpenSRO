@@ -99,6 +99,8 @@ func safeTradeOnSelect(ctx context.Context, characterID int64, ids []byte) {
 // safeTradeOnEnd is EndInteraction's grant (s:0x510833): a trader closing
 // a dialog (mode 5 or 6) at an NPC with 0xc.
 func safeTradeOnEnd(ctx context.Context, sess *gateway.Session, hub *world.Hub, npcUID uint32, mode byte) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if mode != 5 && mode != 6 || hub == nil {
 		return
 	}

@@ -707,13 +707,14 @@ func TestRound786EveryRelocationGoesThroughWarpVia(t *testing.T) {
 					switch x := n.(type) {
 					case *ast.SelectorExpr:
 						switch x.Sel.Name {
-						case "Enter", "EnterHeld", "ChangeZone", "ChangeZoneHeld", "Relocate", "Release":
-							if id, ok := x.X.(*ast.Ident); ok && id.Name == "hub" {
+						case "Enter", "EnterHeld", "ChangeZone", "ChangeZoneHeld", "Relocate", "Release", "Transfer":
+							// Round 869: warpAcross moves from the hub `from`.
+							if id, ok := x.X.(*ast.Ident); ok && (id.Name == "hub" || id.Name == "from") {
 								got[x.Sel.Name] = append(got[x.Sel.Name], fn.Name.Name)
 							}
 						}
 					case *ast.CallExpr:
-						if id, ok := x.Fun.(*ast.Ident); ok && (id.Name == "warpVia" || id.Name == "warpHome" || id.Name == "warpTo") {
+						if id, ok := x.Fun.(*ast.Ident); ok && (id.Name == "warpVia" || id.Name == "warpHome" || id.Name == "warpTo" || id.Name == "warpAcross") {
 							label := ""
 							if last, ok := x.Args[len(x.Args)-1].(*ast.BasicLit); ok && id.Name != "warpTo" {
 								label = ":" + strings.Trim(last.Value, `"`)
@@ -727,8 +728,12 @@ func TestRound786EveryRelocationGoesThroughWarpVia(t *testing.T) {
 		}
 	}
 	want := map[string][]string{
-		"ChangeZone":     {"warpVia"},
-		"ChangeZoneHeld": {"warpVia"},
+		// Round 869: warpVia is warpAcross within one world; a move between
+		// world units is warpAcross's Transfer.
+		"ChangeZone":     {"warpAcross"},
+		"ChangeZoneHeld": {"warpAcross"},
+		"Transfer":       {"warpAcross"},
+		"warpAcross":     {"warpVia", "EnterInstance", "returnFromInstance"},
 		"Enter":          {"enterOwned"},
 		"EnterHeld":      {"enterOwned"},
 		"Release":        {"releaseArrival"},

@@ -790,6 +790,8 @@ type Hub struct {
 	// loss without polling every monster it keeps.
 	deathLog bool
 	deaths   []int64
+	// unit is the game-world unit owning the hub (round 869), nil for none.
+	unit atomic.Pointer[unitBox]
 }
 
 // LogDeaths turns the death log on: from now on every monster ApplyDamage
@@ -833,6 +835,29 @@ func NewHub() *Hub {
 	return &Hub{byID: make(map[int64]*Monster), lastBlow: make(map[int64]time.Time), hits: make(map[int64][]Hit),
 		cells: make(map[Cell]cellSet), zoneCells: make(map[string]map[Cell]struct{}), cellOf: make(map[int64]Cell),
 		moving: make(map[int64]*Monster), facing: make(map[int64]float64)}
+}
+
+// NewHubAt is NewHub whose monster ids start after base (round 869, OURS): an
+// instance layer's hub (internal/gameworld), so no two layers of one process
+// hand out the same monster id.
+func NewHubAt(base int64) *Hub {
+	h := NewHub()
+	h.nextID.Store(base)
+	return h
+}
+
+type unitBox struct{ v any }
+
+// SetUnit records the game-world unit owning h (round 869,
+// internal/gameworld.World).
+func (h *Hub) SetUnit(u any) { h.unit.Store(&unitBox{u}) }
+
+// Unit is what SetUnit recorded, nil for none.
+func (h *Hub) Unit() any {
+	if b := h.unit.Load(); b != nil {
+		return b.v
+	}
+	return nil
 }
 
 // SetSpawnHeadingRoll installs the roll SpawnSpecies draws each monster's

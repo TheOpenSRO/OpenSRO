@@ -206,6 +206,8 @@ func itemSkillRefusal(ctx context.Context, refs SkillRefStore, characterID int64
 // the bound skill, the gate above, the spend, the job, the COOLTIME arm.
 func useSkillItem(ctx context.Context, sess *gateway.Session, fail func(string) error, inv inventory.Store,
 	items combat.ItemLookup, hub *world.Hub, characterID int64, it *refdata.Item, held inventory.Slot, have int) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	now := useItemClock()
 	if it.CooltimeMs > 0 && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
 		return fail(reuseDelayRefusal)

@@ -107,6 +107,10 @@ type Session struct {
 	stalled atomic.Bool
 	// tap is the observer Tap installed (round 859), or nil.
 	tap atomic.Pointer[sendTap]
+	// place is the game world the session's character is in (round 869,
+	// internal/gameworld: the *world.Hub of its world unit), nil before it
+	// enters one. Read lock-free by every handler (world.Hub.For).
+	place atomic.Pointer[placeBox]
 	// blocked is the writer's blocking debt (SendBlockBudget): the time its
 	// writes have spent on the socket, less SendBlockBudget per
 	// SendBlockWindow since, as of blockedAt. Only the writer touches them.
@@ -250,6 +254,26 @@ func (s *Session) security() (sendRoll *proto.RollingByte, sendSum *proto.Packet
 // pointers directly.
 func (s *Session) ID() uint64 {
 	return s.id
+}
+
+type placeBox struct{ v any }
+
+// Place is the session's game-world place (round 869): what SetPlace stored,
+// nil for none.
+func (s *Session) Place() any {
+	if b := s.place.Load(); b != nil {
+		return b.v
+	}
+	return nil
+}
+
+// SetPlace records the session's game-world place (nil clears it).
+func (s *Session) SetPlace(v any) {
+	if v == nil {
+		s.place.Store(nil)
+		return
+	}
+	s.place.Store(&placeBox{v})
 }
 
 // RemoteAddr returns the client's address, mainly for logging.

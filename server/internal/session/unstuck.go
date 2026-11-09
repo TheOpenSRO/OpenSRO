@@ -84,6 +84,8 @@ func unstuckTarget(sess *gateway.Session, e world.Entity) (zone string, pos worl
 }
 
 func handleUnstuck(ctx context.Context, sess *gateway.Session, hub *world.Hub, chars character.Store, eq equipment.Store, zerk *berserk.Tracker) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	answer := func(r UnstuckResult) error {
 		return sess.Send(&proto.Packet{Opcode: OpUnstuckResult, Data: r.Encode()})
 	}

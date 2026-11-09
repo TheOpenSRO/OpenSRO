@@ -763,6 +763,8 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(string) error,
 	inv inventory.Store, items combat.ItemLookup, keeper *CompositeKeeper, zerk *berserk.Tracker, hub *world.Hub, isGM bool,
 	characterID int64, it *refdata.Item, held inventory.Slot, have int) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if keeper == nil || zerk == nil {
 		return fail("that cannot be used")
 	}
@@ -999,6 +1001,8 @@ func sendCompositeState(sess *gateway.Session, keeper *CompositeKeeper, zerk *be
 func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *CompositeKeeper, zerk *berserk.Tracker,
 	gate *gm.Gate, hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		case OpCompositeList:
 			req, err := DecodeCharacterNameRequest(p.Data)
@@ -1148,6 +1152,8 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 // character still live on another session is left alone.
 func BerserkDisconnectHandler(hub *world.Hub, zerk *berserk.Tracker, keeper *CompositeKeeper) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if hub == nil || sess == nil {
 			return
 		}

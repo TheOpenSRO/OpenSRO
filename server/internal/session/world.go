@@ -1425,6 +1425,8 @@ type EnterHook func(ctx context.Context, c *character.Character) error
 // tracker a zone change ends a running berserk in (endBerserk; nil leaves it).
 func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		case OpEnterWorld:
 			return handleEnterWorld(ctx, sess, p, chars, eq, hub, onEnter, zerk)
@@ -1462,12 +1464,19 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 // then.
 func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		left, remaining, ok := hub.Leave(sess)
 		if ok {
 			forgetPlayerView(left.CharacterID, sess)
 		}
 		if !ok {
 			return
+		}
+		// Round 869: an instance counts the character out (its empty close
+		// starts with the last one).
+		if w := instanceOf(hub); w != nil {
+			w.Leave(left.CharacterID)
 		}
 		// A character may be in the world on a second session (a reconnect
 		// before the old one's disconnect was seen): its state belongs to the
@@ -1540,6 +1549,10 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 }
 
 func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) error {
+	// Round 869: a world entry is the open world's (a re-login lands at the
+	// return point when the character was in an instance: its position was
+	// never saved there).
+	hub = openHub(hub)
 	accountID, ok := AuthenticatedAccountID(sess)
 	if !ok {
 		return sess.Send(&proto.Packet{
@@ -1601,6 +1614,10 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // pending" refusal (0x40e) has nothing to guard here: one request is handled
 // at a time on a session.
 func handleStart(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) error {
+	// Round 869: a world entry is the open world's (a re-login lands at the
+	// return point when the character was in an instance: its position was
+	// never saved there).
+	hub = openHub(hub)
 	refuse := func(code uint16) error {
 		return sess.Send(&proto.Packet{Opcode: OpStartResult, Data: (&StartResult{Code: code}).Encode()})
 	}
@@ -1816,6 +1833,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	serviceAfterEnter(sess, owned)
 	// Round 838: its own title (retail's 0x3013 HwanLevel; OURS 0x30DF).
 	titleAfterEnter(sess, owned.ID)
+	// Round 869: a running group re-entry limit's buff-bar icon (0x320C kind
+	// 0x0C at world entry, game_worlds.md 5).
+	sendGroupCoolTimes(ctx, sess, owned.ID)
 	metrics.WorldEntry()
 	username, _ := AuthenticatedUsername(sess)
 	slog.Info("entered world", "character", owned.Name, "character_id", owned.ID, "account", username,
@@ -1903,12 +1923,32 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 // protection come with the release (holdArrival); off, it arrives at once
 // as before.
 func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame, via string) (moved bool, err error) {
+	// Round 869: from the session's own world; a place outside an instance's
+	// regions is the open world's (warpTarget).
+	from := hub.For(sess)
+	return warpAcross(ctx, sess, eq, chars, from, warpTarget(from, zone, pos), zerk, zone, bucket, pos, frame, via)
+}
+
+// warpAcross is warpVia between two world units (round 869,
+// game_worlds.md 14 item 4): from the hub the character is in to the hub `to`
+// -- the same one for a warp within a world, the open world's or an
+// instance's when it crosses. The client hears the ordinary zone change
+// (OpChangeZoneResult with the region label), never a world id.
+func warpAcross(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, from, to *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame, via string) (moved bool, err error) {
+	hub := to
 	guard := arrivalGuardOn.Load()
-	change := hub.ChangeZone
-	if guard {
-		change = hub.ChangeZoneHeld
+	var old world.Entity
+	var remainingOld []world.Entity
+	var ok bool
+	if from == to {
+		change := from.ChangeZone
+		if guard {
+			change = from.ChangeZoneHeld
+		}
+		old, remainingOld, _, ok = change(sess, bucket, pos)
+	} else {
+		old, remainingOld, _, ok = from.Transfer(sess, to, bucket, pos, guard)
 	}
-	old, remainingOld, _, ok := change(sess, bucket, pos)
 	if !ok {
 		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
@@ -1992,7 +2032,17 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 	// of again: it was taken out and put back, as retail's block removal and
 	// insertion are, and its new spawn follows. Each client sent the 0x3016
 	// hears the OURS zone notice (left) ahead of it, and only those.
-	departPlayer(hub, old, world.WatchersOf(remainingOld))
+	departPlayer(from, old, world.WatchersOf(remainingOld))
+	// Round 869: the instances count who is in them (the shard manager's
+	// user count, m:0x658e30 / m:0x658f10).
+	if from != to {
+		if w := instanceOf(from); w != nil {
+			w.Leave(old.CharacterID)
+		}
+		if w := instanceOf(to); w != nil {
+			w.Enter(old.CharacterID, old.Level)
+		}
+	}
 
 	// The arrival faces the way the character last moved: the hub carries
 	// the heading through the change (world.Hub.ChangeZone). A zone change
@@ -2020,6 +2070,8 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 }
 
 func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars character.Store) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeMoveRequest(p.Data)
 	if err != nil {
 		return nil // malformed move: drop it, don't kill the connection

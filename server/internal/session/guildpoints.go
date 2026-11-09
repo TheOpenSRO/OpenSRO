@@ -234,6 +234,8 @@ func (s *GuildPointSkills) request(ctx context.Context, guildID, characterID int
 // character's next flush, or FlushAllPending, sends.
 func GuildPointsDisconnectHandler(hub *world.Hub, gp *GuildPointSkills) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		entity, ok := hub.EntityBySession(sess.ID())
 		if !ok {
 			return

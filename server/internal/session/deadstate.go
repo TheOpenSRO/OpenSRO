@@ -346,6 +346,8 @@ func DecodeReviveResult(data []byte) (*ReviveResult, error) {
 // dead: the "must be alive" test every refusing handler makes, on the O(1)
 // session index.
 func deadBySession(hub *world.Hub, sess *gateway.Session) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if hub == nil || sess == nil {
 		return false
 	}
@@ -558,6 +560,8 @@ func sendRevived(ctx context.Context, sess *gateway.Session, c *character.Charac
 // return point's zone holds.
 func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode != OpRevive {
 			return nil
 		}

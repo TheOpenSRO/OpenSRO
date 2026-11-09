@@ -138,6 +138,9 @@ func GachaHandler(d GachaDeps) gateway.Handler {
 		}
 	}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case OpGachaPlay:
 			res := d.play(ctx, sess, p.Data, rnd)
@@ -155,6 +158,8 @@ func GachaHandler(d GachaDeps) gateway.Handler {
 // gachaNPC resolves the NPC the request names and tests the range and the
 // interaction id: 0x1c0f when it does not offer id.
 func gachaNPC(hub *world.Hub, sess *gateway.Session, uid uint32, id byte) (world.Entity, npcPlacement, uint16, bool) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if hub == nil {
 		return world.Entity{}, npcPlacement{}, 0, false
 	}

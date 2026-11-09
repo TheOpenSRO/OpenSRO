@@ -278,7 +278,9 @@ dungeon." While it runs, the same instance can be re-entered; another is refused
 ## 6. Inside: the trigger scripts
 
 Every world: on entry, after **20 s**, the entering player (`TARGET_PLAYER_EVENT_USER`) gets the
-banner, and at once the system line, "In the dungeons of the Forgotten World, all monsters must be
+banner, and at once the system line (MEASURED in the data: the banner's action has Delay 20,000 and the
+system line's 0 -- read per action, round 869's engine sends the system line at the entry and the banner
+20 s later; the cumulative reading of this sentence is OPEN, `game_worlds.md` 14 notes), "In the dungeons of the Forgotten World, all monsters must be
 eliminated before the next passageway opens and the players can go on."
 (`UIIT_MGS_GOD_TRIGGER_NOTICE_COMMON_MONSTER_KILL`; IsRepeat 1, the only repeating trigger). Every
 other notice goes to all players in the layer, as banner **and** system line.
