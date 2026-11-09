@@ -2,12 +2,15 @@ package session
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/navmesh"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // TestReviveAtReturnPointFromALayer (round 873): a character dead inside an
@@ -84,4 +87,21 @@ func TestReviveAtReturnPointFromALayer(t *testing.T) {
 		}
 	}
 	SetSingleFrame(false)
+}
+
+// TestSprintLandsOnTheSurface (round 873): a sprint's landing takes the
+// target's height, and a monster here keeps its nest's height -- 81 above the
+// Wrecked Ship's deck at the measured landing -- so the landing is put on the
+// walkable surface nearest that height; with no mesh it is kept.
+func TestSprintLandsOnTheSurface(t *testing.T) {
+	SetNavmesh(navmesh.NewWorld(nil, map[int]*navmesh.Region{worldmap.RegionID(97, 168): wallRegion(1900)}))
+	t.Cleanup(func() { SetNavmesh(nil) })
+	p := sprintLandingOnSurface("jangan", world.Position{X: 10, Y: 81, Z: 20})
+	if p.X != 10 || p.Z != 20 || math.Abs(p.Y) > 1e-6 {
+		t.Errorf("landing %+v, want (10, 0, 20) on the flat mesh", p)
+	}
+	SetNavmesh(nil)
+	if p := sprintLandingOnSurface("jangan", world.Position{X: 10, Y: 81, Z: 20}); p.Y != 81 {
+		t.Errorf("no mesh: %+v, want the height kept", p)
+	}
 }

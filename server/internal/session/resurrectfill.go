@@ -12,6 +12,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
@@ -232,4 +233,68 @@ func useResurrectionFill(ctx context.Context, sess *gateway.Session, chars chara
 		return nil
 	}
 	return sendCompositeState(sess, keeper, zerk, characterID, useItemClock())
+}
+
+// resurrectionScrollAt reports whether the bag slot of characterID holds a
+// resurrection scroll (round 873): the one item a dead user may use.
+func resurrectionScrollAt(ctx context.Context, inv inventory.Store, items ItemLookup, characterID int64, slot int) bool {
+	if inv == nil || items == nil {
+		return false
+	}
+	slots, err := inv.List(ctx, characterID)
+	if err != nil {
+		return false
+	}
+	for _, sl := range slots {
+		if sl.Index == slot && sl.Quantity > 0 {
+			it, err := items.GetItem(ctx, sl.ItemID)
+			return err == nil && isResurrectionScroll(it)
+		}
+	}
+	return false
+}
+
+// useResurrectionScroll is a resurrection scroll used from the bag (round
+// 873; UseByKind case 6 -> FUN_0049ff20, READ in this file's header): the user
+// must be dead (0x1887 otherwise), is revived where it lies -- in whatever
+// world it lies in -- with the row's pools (Param2 % of each maximum) and its
+// share (Param3 %) of the EXP the death took, and one scroll is spent. The
+// answer: the use's result, then the revive's, as the composite fill's.
+// MEASURED (a 100 % scroll used dead inside a Forgotten World layer): the
+// character comes back on its spot in the layer, alive, at full HP and MP,
+// with the lost EXP back, protected for 6 s, and the item's effect is shown.
+func useResurrectionScroll(ctx context.Context, sess *gateway.Session, fail func(string) error, inv inventory.Store,
+	chars character.Store, hub *world.Hub, characterID int64, it *refdata.Item, held inventory.Slot, have int) error {
+	hub = hub.For(sess)
+	if !deadBySession(hub, sess) {
+		return fail(resurrectionOnlyDeadRefusal)
+	}
+	now := useItemClock()
+	if it.CooltimeMs > 0 && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
+		return fail(reuseDelayRefusal)
+	}
+	deps := resurrectDepsNow()
+	c, mpNow, back, err := reviveByScroll(ctx, chars, deps, hub, characterID, it.RestoreHPPct, it.RestoreMP)
+	if errors.Is(err, errNotDead) {
+		return fail(resurrectionOnlyDeadRefusal)
+	}
+	if err != nil {
+		return fail("using failed")
+	}
+	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
+		slog.Error("resurrection scroll: revived, but the scroll was not spent", "character_id", characterID, "item", it.ID, "err", err)
+	}
+	if it.CooltimeMs > 0 {
+		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
+	}
+	endBerserk(hub, deps.Berserk, characterID)
+	if arrivalGuardOn.Load() && !arrivalHeld(characterID) {
+		startProtection(hub, characterID, sess, "resurrection scroll")
+	}
+	slog.Info("resurrection scroll", "character_id", characterID, "item", it.ID, "hp", c.HP, "mp", mpNow,
+		"exp_back", back, "hp_pct", it.RestoreHPPct, "exp_pct", it.RestoreMP, "left", have-1)
+	if err := sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Remaining: int32(have - 1)}).Encode()}); err != nil {
+		return err
+	}
+	return sendRevived(ctx, sess, c, mpNow, deps)
 }
