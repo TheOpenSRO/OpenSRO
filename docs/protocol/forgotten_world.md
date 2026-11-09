@@ -714,6 +714,25 @@ is the round's WORLD_ISSUES entry):**
   and the empty closes 601.0 s and 604.9 s: INFERRED the shard manager's tick phase, not a rule;
   not copied.
 
+**Round 871 notes (two bugs the user hit on prod, v0.1.642):**
+- **A Wreck entry landed in a void.** Prod runs `-full-map`, so `-single-frame`: the layer's start was
+  named in the open world's one frame (97/168, the zone change's FrameRegion; prod's log: `zone=world
+  x=143304 z=-33425`), and the deck (local -779.12) reached the client at scene height -776.63 (Jangan's
+  anchor -2.49), under the client's void line `WORLD_FLOOR_Y` (-500). The deck is an object, so the
+  ground ray found the sea floor's terrain ~1,020 below -- not grounded -- and the void recovery put the
+  player back on its last ground, the spot it had left in Jangan, on every step: the ship's regions left
+  the window and were unloaded. Round 870's lane server ran without `-full-map` (each zone its own
+  frame: the Wreck's anchor -1800, the deck at scene 1020.88), so its runs did not see it. Fixed on the
+  server (a layer keeps its own zone, frame and bucket under `-single-frame`; a warp inside reads its
+  region in its own bucket) and in the client (the void recovery fires only where no terrain lies
+  below at all; its last ground is the arrival after a zone change). The server fix alone lets a
+  v0.1.642 client in (MEASURED, the release export).
+- **`/unstuck` inside a layer** (OURS, as `/unstuck` is) goes to the layer's start, placed as the entry
+  places it (on the walkable surface: the deck), not to the zone's landing -- the middle of its centre
+  region, open sea over the sea floor.
+- **The gate** stands 50 units before its maker (READ, section 4) and draws the crystal (OURS over this
+  archive's row, section 4); so does the exit NPC.
+
 ## 12. Stage 2: size (estimate)
 
 The foundation is the larger half. Suggested lanes (each with its own tests; the scaling work can
