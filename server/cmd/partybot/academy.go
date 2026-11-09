@@ -41,6 +41,7 @@ var (
 func isAcademyOp(op uint16) bool {
 	switch {
 	case op >= 0xB470 && op <= 0xB483, op == proto.OpAcademyUpdate, op == proto.OpAcademyInfo,
+		op == proto.OpAcademyMatchJoin, // round 866: the join request reaching the guardian
 		op == proto.OpAcademySaveBuff, op == proto.OpAcademySaveBuffTime, op == proto.OpAcademyReserveBuffTime,
 		op == party.OpInvitation, op == charmsg.OpCharInfo, op == npctalk.OpSelectResult,
 		op == session.OpChatResult, op == session.OpChatUpdate:

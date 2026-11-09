@@ -1276,6 +1276,10 @@ func main() {
 		err = jobScenario(*addr, *name, *level, jobRun)
 	case "academy":
 		err = academyRun(*addr, *prefix)
+	case "academyfill":
+		err = academyFillRun(*addr, *prefix)
+	case "academyguardian":
+		err = academyGuardianRun(*addr, *prefix)
 	case "quest":
 		err = questScenario(*addr, *name, *questRace, *level, *questsDir, *npcsCSV, *npcposCSV, flag.Args())
 	default:
