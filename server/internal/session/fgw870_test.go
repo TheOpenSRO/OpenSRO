@@ -13,6 +13,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npctalk"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/reftable"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/timedjob"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trigger"
 )
 
@@ -186,6 +187,36 @@ func TestRestoredHeight(t *testing.T) {
 	}
 	if got := restoredHeight(5, 100, func(float64) (float64, bool) { return 0, false }); got != 5 {
 		t.Errorf("no surface: %.2f, want the saved 5", got)
+	}
+}
+
+// TestLoginCoolTimeAfterReady: a login inside a running re-entry limit gets
+// its 0x320C with the arrival -- after the client's 0x3012 (MEASURED), not
+// before its world exists to hear it.
+func TestLoginCoolTimeAfterReady(t *testing.T) {
+	timed := timedjob.NewMemStore()
+	now := time.Now()
+	// The rig's first character is id 1 (character.MemStore).
+	if err := timed.Put(context.Background(), timedjob.Job{CharID: 1, Type: TimedJobWorldGroup, Ref: 1, Key: 77,
+		Start: now.Add(-time.Hour), End: now.Add(4 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	arrivalGuardOn.Store(true)
+	defer arrivalGuardOn.Store(false)
+	rig := newGWRig(t, timed, map[string]int{"Aria": 40})
+	if rig.players["Aria"].charID != 1 {
+		t.Skipf("the rig's character id is %d", rig.players["Aria"].charID)
+	}
+	if early := rig.collect("Aria", 200*time.Millisecond, proto.OpTimedJobPush); len(early) != 0 {
+		t.Fatalf("0x320C before the 0x3012: %d", len(early))
+	}
+	rig.send("Aria", OpReadyToPlay, nil)
+	got := rig.collect("Aria", 400*time.Millisecond, proto.OpTimedJobPush)
+	if len(got) != 1 || got[0].Data[0] != 0x0C || binary.LittleEndian.Uint32(got[0].Data[1:]) != 1 {
+		t.Fatalf("after the 0x3012: %d 0x320C (want 1 for group 1)", len(got))
+	}
+	if left := binary.LittleEndian.Uint32(got[0].Data[5:]); left < 14390 || left > 14400 {
+		t.Errorf("remaining %d s, want about 4 h", left)
 	}
 }
 

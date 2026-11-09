@@ -535,14 +535,6 @@ func coolTimesOf(ctx context.Context, characterID int64, now time.Time) []gamewo
 	return out
 }
 
-// sendGroupCoolTimes pushes every running group limit at a world entry
-// (game_worlds.md 14 item 7: 0x320C at entry and at world entry).
-func sendGroupCoolTimes(ctx context.Context, sess *gateway.Session, characterID int64) {
-	for _, p := range groupCoolTimePackets(ctx, characterID, time.Now()) {
-		sess.Send(p)
-	}
-}
-
 // groupCoolTimePackets is a 0x320C {0x0C, group, remaining s} for each of
 // characterID's running group limits.
 func groupCoolTimePackets(ctx context.Context, characterID int64, now time.Time) []*proto.Packet {

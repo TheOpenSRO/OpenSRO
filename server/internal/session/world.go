@@ -1847,8 +1847,13 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// Round 838: its own title (retail's 0x3013 HwanLevel; OURS 0x30DF).
 	titleAfterEnter(sess, owned.ID)
 	// Round 869: a running group re-entry limit's buff-bar icon (0x320C kind
-	// 0x0C at world entry, game_worlds.md 5).
-	sendGroupCoolTimes(ctx, sess, owned.ID)
+	// 0x0C at world entry, game_worlds.md 5). Round 870: with the arrival --
+	// MEASURED right after the client's 0x3012 at a login; sent before it, the
+	// client's world did not exist yet to hear it, and a login inside the
+	// limit showed no icon.
+	for _, p := range groupCoolTimePackets(ctx, owned.ID, time.Now()) {
+		sendAfterArrival(owned.ID, sess, p, true)
+	}
 	// Round 869 lane W3: a Dimension hole's cool time kept across the relog
 	// (fgw.go, the timed job of category 6).
 	restoreItemCoolTimes(ctx, owned.ID, time.Now())
