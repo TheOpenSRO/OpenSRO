@@ -271,7 +271,9 @@ close (the decompiler drops them).
   same layer**, and `320C` then carries the remaining time. A member dismissed from the party inside
   stays in the layer. The arrival in a layer sends the same `34B5`/`34A5`/`3013`/`34A6` sequence
   as any teleport; `34B5`'s u16 was 0x61A8 (the return-point region) on the way in and on the way
-  out. OPEN: where a player revives after dying inside; a disconnect inside.
+  out. A death inside revives at the designated return point in the open world (option 1) or in
+  place by a resurrection scroll (MEASURED round 873, `forgotten_world.md` 8). OPEN: a disconnect
+  inside.
 
 ## 6. Persistence
 
@@ -613,8 +615,8 @@ sixty-ninth round, lane W2"). Where it differs from the design above, this is wh
 5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
    process until the user says otherwise.
 
-OPEN (not read, not measured): the close messages' kind bytes (the close itself: MEASURED, section 4); where a player revives after dying
-inside (re-login and a member leaving the party inside: MEASURED, section 5); the trigger chain
+OPEN (not read, not measured): the close messages' kind bytes (the close itself: MEASURED, section 4); (where a player revives after dying
+inside, re-login and a member leaving the party inside: MEASURED, section 5); the trigger chain
 rule (OnTrue/OnFalse), Delay and IsRepeat in the binary; `NUM_INPUT_1` of LOAD_MONSTER; the door's
 server-side block; the loading backdrop and world map inside
 Wreck (Togui: the ordinary loading screen, no world-map page -- MEASURED, `forgotten_world.md` 5); whether neighbouring unlisted regions are drawn; `MAX_SQUAD_MEMBER_COUNT` and
