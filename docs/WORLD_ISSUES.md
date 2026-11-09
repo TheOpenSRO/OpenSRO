@@ -7667,7 +7667,9 @@ check`: ALL LOAD (1,175 scripts, 9 scenes). `remote_godot.sh tests`: "ran 450 su
 - The death's item drop: READ, `GObjPC_OnDeath` rolls `rand() % 101 <= FUN_004e6930()` (5 for a
   character with no PK points, more with them) and drops a random bag item
   (`CGPCInventoryOP::RandomSelectNonEmptySlotForDeathPenalty` s:0x4bb460); MEASURED a murderer's
-  death said "only Chinese equipment items are dropped". OpenSRO drops nothing. A user decision.
+  death said "only Chinese equipment items are dropped". OpenSRO drops nothing. **Decided, OURS (the
+  user, 2026-11-09): "no, that's an original behavior we don't want."** A death never drops an item;
+  do not build the roll.
 - Round 873's OURS rule stays: a refusal from OpenSRO's own server shows the box again.
 
 ### OPEN
