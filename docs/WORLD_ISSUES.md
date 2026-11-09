@@ -7483,6 +7483,102 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-seventh round: the academy window's notice line and contents panel, as the original draws them -- the guild notice bar's art, orange under the pointer, the panel's children where the client moves them, eighteen-pixel lines that scroll
+
+The user, on v0.1.639: "also the academy notice area should look like the guild notice but it's
+bugged out. Compare to the original and fix." Labels: READ (`c:` sro_client.exe), MEASURED,
+OURS, OPEN. Base `60b40fca` (v0.1.639). UI only: no perf gate (no world drawing changed); no
+server change.
+
+### What the original does (READ, and MEASURED at 1280 x 1024 with a title and an eleven-line content, one line long enough to wrap)
+
+- **The notice line** (GDR_APPRENTICESHIP_NOTIFY_SUBJECT, a CIFSelectableArea at 4,306,358,28):
+  CIFApprenticeShip::Create gives it the guild notice bar's art -- c:0x6e99f8..0x6e9a65 0x64ce30
+  with `guild\gil_windo02_on.ddj` (selected, +0x380), `gil_windo02_off.ddj` (normal, +0x384), none
+  (disabled); c:0x6e9a75 0x655770 with `gil_windo02_on.ddj` as the art under the pointer (+0x13c,
+  swapped in and out by CIFSelectableArea::vslot_019 c:0x64cbb0 on 0x4009 / 0x400a) -- draws it
+  normal (c:0x6e9aa1 0x64cc30(0)) and insets its text by 0x50, 7 (c:0x6e9ac0 0x6527d0; 0x652800
+  adds it). Nothing in the window selects it: 0x64cc30 is called only with 0 (Create, and the reset
+  at c:0x6e8d26). The 504 x 28 art fills the 358 x 28 line. MEASURED: the line's black field
+  83..337 x 309..327 of the pane with its grey frame; orange (140, 82, 0) over 84..337 x 310..326
+  only while the pointer is on the line -- not while the contents panel is open, and not with the
+  pointer on the pencil; the title's and "You have no notes."'s capitals from (85, 315); the art
+  point-sampled (a row of the line matches the texture's nearest texel at each pixel's centre:
+  757 summed error against 1,959 for a linear blend).
+- **The guild's bar, for comparison** (the same art): selected while its notice view is open
+  (orange with the pointer away), and not orange under the pointer. So the two bars look alike
+  and act differently; this round builds the academy's as the academy's.
+- **The contents panel** (NOTIFY_CONTENTS, CIFGuildNotifyContents at 0,102,364,201):
+  CIFGuildNotifyContents::Create (c:0x70b210) loads `ifguildnotifycontents.txt` and, under the
+  academy window (c:0x70b2a4), moves each child from the panel's own place (c:0x70b2c6 0xb8f460):
+  the black square (1) to 12,13, 342 x 149; BG_01 (2) 10,8, 344 x 180; BG_02 (3, black) 10,11,
+  332 x 139; the scroll (5) 326,28, 16 x 92, length 0x5c; Confirm (4) 142,168; the text (6) 23,27,
+  293 x 109 (c:0x70b2d6..0x70b438); the text's line pitch 0x12 (c:0x70b440 -> 0x638c20) and 6 at
+  +0x3a4. Drawn last-listed first, the black square lies under BG_01. The content
+  (c:0x70b050): the text set, its line count n read back, the scroll's range 0..n-6 for n > 6
+  (0x65a390(0x5c, 0, n-6, 1)) else 0..0, the text back to its first line. The line's click
+  (c:0x6e9690) makes the NotifyContents section anew (0x8b5580, then 0x70b050) or destroys it
+  (0x8b59f0), so each opening starts at the top. MEASURED: the black field 10..341 x 11..149 of
+  the panel; the scroll's arrows at 12..27 and 136..151, the thumb at 28, 41, 54, 67 .. 120 for
+  the first lines 0, 1, 2, 3 .. 7 of 13 (28 + n * 92 / 7); six lines shown, each 18 below the
+  last, the first's capitals from (24, 29); the text wrapped at words to the box; an arrow or a
+  wheel notch (over the text or the bar) one line; a member logging on put an open panel back to
+  its first line; the member's view the same as the guardian's.
+
+### OpenSRO before (v0.1.639, the lane server, real clients) and the fix
+
+| | before | original | after |
+|---|---|---|---|
+| the line's art | none (the board's grey `pt_msg` only; no black field, no frame) | `gil_windo02_off` over the line | the same; 3 of 12,452 non-text pixels of the bar differ |
+| the title | glyphs from (83, 312) | (85, 315) | (85, 315) |
+| under the pointer | nothing | orange 84..337 x 310..326 | the same rect, same colour |
+| panel open | the line orange (82..335 x 306..322) | the line as it was | the line as it was |
+| the panel's children | black square 2,2 (its frame showing in an L at the top left), BG_01 10,10, BG_02 7,7, scroll 324,25, text 20,21, Confirm 140,164 | READ above | READ above; 70 of 68,912 non-text pixels differ (Confirm's caption) |
+| the text | 14 px lines, seven shown, clipped | 18 px, six | 18 px, six; capitals from y 29 |
+| the scroll | drawn, never moved, the text never scrolled | one line per arrow / notch | 13 lines -> range 7, thumb 41, 54, 67 .. 120 as measured; the wheel over the text too |
+| reopen / new content | kept its place | first line | first line |
+
+The code: `academy_notice_contents.gd` (the panel built at the READ rects, the text a Label with
+the 18 px pitch, `max_lines_visible` 6 and `lines_skipped` from the scroll; `dress_subject` puts
+the line's art on and swaps it with the pointer, point-sampled; the title at the 0x50, 7 inset);
+`academy_window.gd` (no selected look; the panel back at its first line when it opens). The
+guild window's own bar is untouched (it is selected while open, as measured).
+
+QA input (OURS): `acanotice:down|up|wheeldown|wheelup|report` (a real click on the scroll's arrow
+or a wheel notch over the text; the report prints the line's art and hover, the panel, its lines,
+first line, the scroll's range and thumb), and `acareport` ends with the same `notice{...}`.
+
+### QA (lane server, real clients, 1280 x 1024)
+
+- Two clients (the guardian and an apprentice joined by invitation): the empty line ("You have no
+  notes."), the notice written through the writer (title + eleven lines), the line closed /
+  hovered / clicked open, six steps of the down arrow (first line 1..7, thumb 41..120), two wheel
+  notches up (7 -> 5), Confirm, reopened (first line 0); the apprentice: hovered, opened, two
+  notches down (first line 2, thumb 54). Box: `/var/tmp/r867n/qa/keep/{base1,after2}` (frames,
+  client and server logs).
+- **After a world re-entry** (round 866's crash came from one): the guardian made the academy and
+  the notice in one process; a second process entered, left the world at tick 200 and came back
+  (OPENSRO_QA_RECONNECT, World3D -> World3D), then opened the window: the title on the line, the
+  panel at line 0 of 13, two arrow steps and a notch to line 3 (thumb 67), the hover art, Confirm;
+  every academy line printed once, no script error (`keep/reent1`).
+- Pixel diffs against the original's frames (non-text pixels differing by more than 12):
+  the bar 7,940 -> 3 of ~12,450; the open panel 13,109 -> 70 of ~68,900; the panel at its last
+  line and the member's two lines down: 70 each. The rest is the box's font (Arial for Tahoma, as
+  in every window).
+- Gates: `check` ALL LOAD (1162 scripts), `tests` 444 suites, 0 failing
+  (`academy_window_test.gd`: the art, the hover swap, no selected look, the five READ rects and
+  Confirm's, 13 lines, the 18 px pitch, the scroll's range, an arrow step, a wheel notch, the end,
+  a reopen and a new content back at the top).
+
+### OPEN
+
+- The guild window's bar (round 844) stretches the same art 504 -> 412 with the default (linear)
+  filter; the original's academy line is point-sampled; the guild's was not measured for it.
+- Not measured: the line under the pointer while there is no notice ("You have no notes."; READ:
+  the hover art is not tied to the title) and on a non-member's empty line.
+- A QA run (after1) logged ten `!is_inside_tree()` errors from `character_blobs.gd` right after
+  the guardian's `/tp` zone change, not in the other runs: not this round's code.
+
 ## Eight-hundred-and-sixty-sixth round, the guardian's crash: an academy flow left over from an earlier world entry called the freed HUD
 
 The user, on the v0.1.638 Linux release (an AMD Steam Machine, RADV NAVI33, native readers on):

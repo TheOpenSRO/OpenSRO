@@ -677,9 +677,9 @@ whole frame was offset). OpenSRO has no saved window places: its popup starts at
 | 30..36 | SLOT_0..SLOT_6 CIFApprenticeShipSlot | 2, 69 + 33 i, 360, 36 | SLOT_0/1 `pt_slot_co.ddj` (blue), SLOT_2..6 `pt_slot_re.ddj` | assistants fill SLOT_0.., apprentices SLOT_2.. in join order (MEASURED) |
 | 40 | SLOT_MSGBOARD | 0,304 | `party\pt_msg` | |
 | 63 | NOTIFY_SUBJECT_STATIC | 12,315,38,13 | `UIIT_CTL_TC_COMMON` "Notice" | |
-| 61 | NOTIFY_SUBJECT | 4,306,358,28 | the title, or `UIIT_MSG_GUILD_COMMON_NOTEXIST` "You have no notes." | click toggles 140 when a title exists (MEASURED: highlighted orange, the content panel opens over the list with a Confirm button) |
+| 61 | NOTIFY_SUBJECT CIFSelectableArea | 4,306,358,28 | `guild\gil_windo02_off.ddj` over the whole rect, `gil_windo02_on.ddj` under the pointer (round 867, READ c:0x6e99f8..0x6e9aa1; selected art `_on` too, never used); text inset 0x50,7 (c:0x6e9ac0): the title, or `UIIT_MSG_GUILD_COMMON_NOTEXIST` "You have no notes.", "" after the reset | click toggles 140 when a title exists (c:0x6e9690: the NotifyContents section made, or destroyed); MEASURED: orange (140,82,0) at 84..337 x 310..326 only while the pointer is on it, not while 140 is open |
 | 62 | NOTIFY_EDIT_BTN | 338,308 | `stall\stl_edit_button` | guardian only; 7.8 |
-| 140 | NOTIFY_CONTENTS CIFGuildNotifyContents | 0,102,364,201 | `inventory\int_window_` | hidden at create |
+| 140 | NOTIFY_CONTENTS CIFGuildNotifyContents | 0,102,364,201 | `inventory\int_window_` | hidden at create; its children moved by Create for the academy (c:0x70b210, round 867): black square (1) 12,13,342,149 (under BG_01, not seen); BG_01 (2) 10,8,344,180; BG_02 (3, black) 10,11,332,139; scroll (5) 326,28,16,92, length 0x5c; Confirm (4) 142,168; text (6) 23,27,293,109, pitch 18, 6 lines shown; content (c:0x70b050) sets the scroll's range to lines - 6 and the first line shown to 0; one line per arrow or wheel step (MEASURED) |
 | 20 | BTN_INVITE | 56,339 | `com_button`, "Invite" | guardian only enabled; 7.2 |
 | 22 | BTN_MATCH | 230,339 | `com_button`, "Matching" | opens 10.5 |
 

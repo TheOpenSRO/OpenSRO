@@ -177,6 +177,8 @@ func _wire_buttons() -> void:
 	var subject := node("GDR_APPRENTICESHIP_NOTIFY_SUBJECT")
 	if subject != null:
 		subject.mouse_filter = Control.MOUSE_FILTER_STOP
+		# Round 867: the guild notice bar's art, orange under the pointer.
+		AcademyNoticeContents.dress_subject(subject, _builder)
 		subject.gui_input.connect(func(ev: InputEvent) -> void:
 			var mb := ev as InputEventMouseButton
 			if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
@@ -207,7 +209,10 @@ func press_notice_edit() -> void:
 		notice_edit_pressed.emit()
 
 ## c:0x6e9690: the notice line toggles the contents panel when a title
-## exists; the line is drawn selected (orange, MEASURED) while it is open.
+## exists. Round 867: the original makes the panel anew on each opening
+## (0x8b5580 on the NotifyContents section, then 0x70b050), so it opens at its
+## first line; the line itself is never drawn selected (its orange is the
+## pointer's, AcademyNoticeContents).
 func press_notice_line() -> void:
 	if state.camp == null or state.camp.notice_title == "":
 		return
@@ -218,9 +223,8 @@ func set_notice_open(on: bool) -> void:
 	var contents := node("GDR_APPRENTICESHIP_NOTIFY_CONTENTS")
 	if contents != null:
 		contents.visible = on
-	var subject := node("GDR_APPRENTICESHIP_NOTIFY_SUBJECT")
-	if subject != null:
-		AcademyNoticeContents.mark_selected(subject, on, _builder)
+		if on:
+			AcademyNoticeContents.scroll_to_top(contents)
 
 ## c:0x6eb0f0: a row's button by the viewer and the member's eligibility.
 func press_row(i: int) -> void:
