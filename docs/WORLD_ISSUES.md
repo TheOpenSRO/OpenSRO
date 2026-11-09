@@ -7483,6 +7483,85 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-ninth round, lane FX: why every Forgotten World entry was refused -- the four GOD areas are bound to no game server
+
+Stage 1 measured every entry refused: `B05A {02, 0x0001}`, then `B05A {02, 0x0003}`, with no text.
+Lane FX looked for the cause and, if entry could be made to work, was to measure the inside. Labels:
+READ (`s:` SR_GameServer.exe, `m:` SR_ShardManager.exe), MEASURED, INFERRED, OURS, OPEN. Base
+`3df5a0fe`. Docs only: no perf gate (nothing drawn changed), no server or client code touched.
+
+### The cause (READ, with the data MEASURED)
+
+- **A game server loads only the regions whose area is bound to it.**
+  - The `_RefRegion` row reader (s:0x6a2e40) replaces the row's `AssocServer` with the value that
+    `_RefRegionBindAssocServer` gives the row's `ContinentName` (s:0x5fba80).
+  - The loader (s:0x6e33b0) silently drops a row whose value is 0, or whose area is missing from the
+    bind list.
+  - The value is the 1-based index of the shard's `SR_GameServer` nodes: s:0x412360 numbers them,
+    s:0x412530 gives the running server its own index (kept by `InitializeGame`, s:0x412c20), and
+    s:0x412590 / s:0x411780 test an index.
+  - The game server gets the bind list from the shard manager at start (`LoadReferenceData` case 2,
+    s:0x6bd920). The shard manager has the same table class and fortress-area consistency checks.
+- **An instance world with no regions left still opens.** Its regions are its
+  `_RefInstance_World_Region` rows that the server kept (s:0x530f40, s:0x533030); with none,
+  s:0x53b4b0 prints "There is no assigned region!!!" at console level and goes on.
+  - So the hole still makes the layer and the gate, and selecting the gate still works.
+  - The warp to the start region (0x7EE4) fails in `CGObjPC::vslot_222` (s:0x4df5d8: the region is
+    not in the table), and the warp handler answers **{02, 0x0003}** (s:0x4f365c -> s:0x4f369a).
+  - The first reply, {02, 0x0001}, always comes from the 0x705A handler `GObjPC::HandleTeleportUse`
+    (s:0x513590), which posts 0x7CE6 to the warp handler.
+- **MEASURED (the data the entries were measured against):**
+  - `_RefRegionBindAssocServer` binds `GOD_TOGUI`, `GOD_FLAME`, `GOD_WRECK_IN` and `GOD_WRECK_OUT` to
+    **0**. The same goes for every `ARENA_*`, `FORT_*_AREA`, `PRISON`, `GM_EVENT`, `JUPITER`,
+    `SIEGE_DUNGEON` and `EVENT_GHOST` area.
+  - The open-world areas and Egypt (`TEMPLE`, `KingsValley`, `Pharaoh`, `SD`, `DELTA`) are bound to
+    **1**.
+  - Every `_RefRegion.AssocServer` is 0; the binding overrides it.
+  - Every Forgotten World region is in `_RefRegion` and `_RefInstance_World_Region`: 48 Togui, Flame
+    0x8012, and 224 + 224 Wreck.
+  - The server's own map data has all their navmeshes (48/48, 224/224, 224/224, `ainavdata_32786`,
+    `flame.dof`), and its `mapinfo.mfo` sets every one of their bits.
+  - **So the binding is the only thing missing.** No other instance-world switch was found in the
+    game world configs.
+- **MEASURED (reproduced):** level 41, alone, band 35-50, a new grade-1 hole in Jangan:
+  1. `B04C {01, slot, 00 00, 3E6C}`, then the gate's `3015` 41 ms later (access 6, the creator's
+     name, 35883).
+  2. Selecting the gate: `B045 {01, gate, 01 1c 01 02, 0x7EE4, 1063, 693, 1125}`.
+  3. Clicking line 1: `B04B {02, 0x1c0d}`, then `B05A {02, 0x0001}`, then `B05A {02, 0x0003}` 38 ms
+     later.
+  4. No text on screen and no other packet.
+- INFERRED: every band and theme is refused the same way, because all four `GOD_*` areas are bound
+  to 0. Not re-tried for the other bands: the five-hour hole cool time is shared, and the data
+  settles it.
+
+### What it would take to measure the inside (not done)
+
+- A data change: bind the four `GOD_*` areas to the game server's index (1 for a single game server).
+- Then restart the shard manager and the game server, because the binding is read at start.
+- Nothing else is missing.
+- Until then sections 6-8 of `forgotten_world.md` stay READ, and stage 3's measurement waits on that
+  change.
+
+### Docs
+
+- `forgotten_world.md` 5: the cause (READ chain, MEASURED data and reproduction); the OPEN "why
+  code 3" is closed; choice 4 updated.
+- `game_worlds.md` 1.1: regions are loaded by area binding.
+- `game_worlds.md` 5 item 7: the region table's rule. READ: it is the original's static sharding of
+  areas over game servers (OpenSRO's OURS placement, section 12, places whole instances instead).
+- `game_worlds.md` choice 4 updated.
+
+### OPEN
+
+Everything inside a Forgotten World stays unmeasured:
+- trigger notices, doors (0x351E), kill-all progression, the boss and the rewards;
+- the recall and exit NPCs, the re-entry icon (0x320C), the close warnings (0x300C 0x0C1A);
+- death, logout and party loss inside;
+- the loading screen and the minimap inside.
+
+Also OPEN: the type-6 gate's client test; the gate record's +0x260; the category-0xd texts of 0x1c28,
+0x1c2a..0x1c2c and 0x1c2f; the hole's "24 hours"; the talisman drops and the treasure boxes.
+
 ## Eight-hundred-and-sixty-eighth round, stage 1 (spec): the Forgotten World
 
 The user: "while working on fixing academy stuff, let's start forgotten world work", with the standing
