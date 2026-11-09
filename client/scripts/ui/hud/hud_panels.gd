@@ -1244,9 +1244,14 @@ signal auto_potion_confirmed(values: Dictionary)
 var auto_potion: AutoPotion = null
 
 func _auto_potion_opened(window: HudWindow) -> void:
+	var first := AutoPotionWindow.of(window) == null
 	var c := AutoPotionWindow.compose(window, _builder)
 	if c == null:
 		return
+	if first and c.vigor_pitch > 0:
+		# Round 876 (OURS): the vigor row grew the window after open() centred
+		# it; centred again at its new height.
+		window.centre()
 	if not c.on_confirm.is_valid():
 		c.on_confirm = func(values: Dictionary) -> void: auto_potion_confirmed.emit(values)
 	if auto_potion != null:
