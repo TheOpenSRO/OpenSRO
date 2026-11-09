@@ -303,3 +303,42 @@ const (
 	OpBerserkRequest  uint16 = 0x70A7
 	OpBerserkResponse uint16 = 0xB0A7
 )
+
+// Game worlds and the Forgotten World (round 868, docs/protocol/game_worlds.md
+// and forgotten_world.md). The requests are read from the client's senders and
+// the replies from both sides; the layouts are in those pages.
+//
+//   - 0x705A {u32 object, u8 kind, ...}: the teleport; kind 3 is a portal (the
+//     Dimension-hole gate) with a u8 destination index. Its reply 0xB05A comes
+//     twice on success: {2, 1} "accepted" (s:0x513a33) and then {1} from the
+//     warp (s:0x4f2cae); a refusal is {2, code}.
+//   - 0x751D {u32 npc}: the instance exit NPC (interaction 0x29), 0xB51D.
+//   - 0x7519 {u32 npc}: the recall NPC's party list (interaction 0x27), 0xB519;
+//     0x751A {u32 char}: summon one member (also the push to that member);
+//     0x751C {u32 requester, u32 own, u8 accept}: the member's answer.
+//   - 0x351E {u32 object, u8 0x10, u8 state}: an event-zone object's state
+//     (the trigger doors).
+//   - 0x320C {u8 kind, ...}: the timed-job push; kind 0x0C is the world
+//     group's re-entry limit {u32 group, u32 remaining seconds}.
+//   - 0x300C sub-words 0x0C1A {u8 minutes} (the instance close warning) and
+//     0x0C1C {u8 1|2, str key} (a trigger notice: banner | system line).
+const (
+	OpTeleportUse              uint16 = 0x705A
+	OpTeleportUseAck           uint16 = 0xB05A
+	OpInstanceExit             uint16 = 0x751D
+	OpInstanceExitAck          uint16 = 0xB51D
+	OpPartyRecallList          uint16 = 0x7519
+	OpPartyRecallListAck       uint16 = 0xB519
+	OpPartyRecallSummon        uint16 = 0x751A
+	OpPartyRecallSummonAck     uint16 = 0xB51A
+	OpPartyRecallAnswer        uint16 = 0x751C
+	OpPartyRecallAnswerAck     uint16 = 0xB51C
+	OpEventZoneState           uint16 = 0x351E
+	OpTimedJobPush             uint16 = 0x320C
+	TimedJobKindWorldGroup     uint8  = 0x0C
+	NoticeWordInstanceCloses   uint16 = 0x0C1A
+	NoticeWordTriggerMessage   uint16 = 0x0C1C
+	TriggerMessageBanner       uint8  = 1
+	TriggerMessageSystemLine   uint8  = 2
+	EventZoneStateFieldTrigger uint8  = 0x10
+)
