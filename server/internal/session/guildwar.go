@@ -187,7 +187,7 @@ func (d *guildWarDeps) toGuild(ctx context.Context, guildID int64, op uint16, da
 		return
 	}
 	for _, m := range g.Members {
-		if e, ok := entityOf(d.hub, m.CharacterID); ok {
+		if e, ok := reachOf(d.hub, m.CharacterID); ok {
 			sendGuild(e.Session, op, data)
 		}
 	}
@@ -307,7 +307,7 @@ func (d *guildWarDeps) warDeclareCode(ctx context.Context, me world.Entity, dec 
 	if target == nil {
 		return guild.ErrWarCantFindTargetGuild, nil, nil, world.Entity{}
 	}
-	tm, ok := entityOf(d.hub, target.LeaderID)
+	tm, ok := reachOf(d.hub, target.LeaderID)
 	if !ok || tm.Zone != me.Zone || dist3(tm.Pos, me.Pos) > guild.WarRange {
 		return guild.ErrWarTooFar, nil, target, tm
 	}
@@ -372,7 +372,7 @@ func handleWarDeclare(ctx context.Context, sess *gateway.Session, data []byte, d
 	req.timer = time.AfterFunc(guild.WarRequestTimeout, func() {
 		if r := takeWarRequest(req.target); r == req {
 			// s:0x46ce51 -> s:0x5ccd00: the declarer is told 0x4c10.
-			if e, ok := entityOf(d.hub, req.declarer); ok {
+			if e, ok := reachOf(d.hub, req.declarer); ok {
 				sendGuild(e.Session, guild.OpWarDeclareR, guild.EncodeFail(guild.ErrWarTimedOut))
 			}
 		}
@@ -405,7 +405,7 @@ func guildWarAnswer(ctx context.Context, sess *gateway.Session, me world.Entity,
 	if req == nil {
 		return true
 	}
-	declarer, ok := entityOf(d.hub, req.declarer)
+	declarer, ok := reachOf(d.hub, req.declarer)
 	if !ok {
 		return true // 0x4c0e, with no one to tell
 	}

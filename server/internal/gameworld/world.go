@@ -9,6 +9,7 @@ import (
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/registry"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trigger"
@@ -102,6 +103,10 @@ type World struct {
 	// external is the open world, whose monsters, nests and passes
 	// cmd/server's own loops run: its goroutine carries the triggers only.
 	external bool
+	// host is the process running a proxy (remote.go): a layer this
+	// process placed on another host. A proxy has no hub, no goroutine and
+	// no timers; its members and its state are the registry's.
+	host string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -144,6 +149,9 @@ func Of(h *world.Hub) *World {
 
 // Members is who is inside, in the order they entered.
 func (w *World) Members() []int64 {
+	if w.host != "" {
+		return w.proxyMembers()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return append([]int64(nil), w.members...)
@@ -162,6 +170,9 @@ func (w *World) EmptySince() time.Time {
 
 // Closed reports a torn-down world.
 func (w *World) Closed() bool {
+	if w.host != "" {
+		return w.proxyClosed()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.closed
@@ -178,6 +189,9 @@ func (w *World) Clock() Clock { return w.clock }
 
 // Post runs f on the world's goroutine (dropped once the world is closed).
 func (w *World) Post(f func()) {
+	if w.host != "" {
+		return
+	}
 	select {
 	case <-w.done:
 	case w.inbox <- f:
@@ -186,6 +200,9 @@ func (w *World) Post(f func()) {
 
 // Sync waits until everything posted before it has run.
 func (w *World) Sync() {
+	if w.host != "" {
+		return
+	}
 	ch := make(chan struct{})
 	select {
 	case <-w.done:
@@ -263,7 +280,9 @@ func (w *World) run(ready chan struct{}) {
 		case f := <-w.inbox:
 			f()
 		case <-tc:
+			start := time.Now()
 			w.pass(w.clock.Now())
+			metrics.WorldTick(w.Ref.Code, time.Since(start))
 		}
 	}
 }

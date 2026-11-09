@@ -143,7 +143,7 @@ func takeUnionRequest(target int64) *unionRequest {
 // failUnionRequest is trs_wait_response::FUN_005cccd0: 0xB0FB {2, code} to
 // the requester only (the target's box closes by its own timer).
 func failUnionRequest(d *guildOpsDeps, r *unionRequest, code uint16) {
-	if e, ok := entityOf(d.hub, r.requester); ok {
+	if e, ok := reachOf(d.hub, r.requester); ok {
 		sendGuild(e.Session, guild.OpUnionRequestResult, guild.EncodeFail(code))
 	}
 }
@@ -186,7 +186,7 @@ func unionRequestAnswer(ctx context.Context, sess *gateway.Session, me world.Ent
 	if r == nil {
 		return true
 	}
-	if _, online := entityOf(d.hub, r.requester); !online {
+	if _, online := reachOf(d.hub, r.requester); !online {
 		return true
 	}
 	if !accept {
@@ -403,7 +403,7 @@ func unionChat(ctx context.Context, guilds guild.Store, hub *world.Hub, sender w
 			if m.CharacterID == sender.CharacterID {
 				continue
 			}
-			if e, ok := hub.EntityByCharacterID(m.CharacterID); ok && e.Session != nil {
+			if e, ok := reachOf(hub, m.CharacterID); ok && e.Session != nil {
 				sendChatUpdate(e.Session, line)
 			}
 		}

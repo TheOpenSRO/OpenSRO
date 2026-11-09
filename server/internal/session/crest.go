@@ -183,6 +183,8 @@ func guildCrestChanged(hub *world.Hub, guildID uint32, name string, rev uint32) 
 			e.Session.Send(msg)
 		}
 	}
+	// Round 869 lane W2: and on every other process (clustersocial.go).
+	crestEverywhere(guildID, false, rev, msg.Data)
 }
 
 // handleCrestGet answers OpCrestGet with the crest's bytes when the

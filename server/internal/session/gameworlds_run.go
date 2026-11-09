@@ -413,32 +413,48 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 	// saves nothing: savePosition skips an instance).
 	if instanceOf(from) == nil {
 		p, _ := placeOf(sess)
-		instanceReturns.Store(e.CharacterID, returnPoint{zone: p.zone, bucket: e.Zone, frame: p.frame, pos: e.Pos})
+		rp := returnPoint{zone: p.zone, bucket: e.Zone, frame: p.frame, pos: e.Pos}
+		instanceReturns.Store(e.CharacterID, rp)
 		savePosition(d.Chars, sess, e)
+		// Round 869 lane W2: the registry keeps it too, for a recovery
+		// when the instance's host dies (handoff.go).
+		clusterSetReturn(ctx, e.CharacterID, rp)
 	}
 	// Round 869 lane W3: the re-entry limit's 0x320C is queued for the
 	// arrival before the warp (MEASURED: it comes after the arrival state,
-	// behind the entry notices), so it cannot overtake them.
+	// behind the entry notices), so it cannot overtake them. A layer on
+	// another process (lane W2) sends its own at the hand-off's arrival.
 	now := w.Clock().Now()
 	coolPkt, fresh := startGroupCoolTime(ctx, e.CharacterID, w, now)
 	guarded := arrivalGuardOn.Load()
-	if coolPkt != nil && guarded {
+	remote := w.Remote()
+	if coolPkt != nil && guarded && !remote {
 		queueForArrival(e.CharacterID, coolPkt, true)
 	}
-	if _, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, w.Hub, d.Zerk, zone, bucket, pos, frame, via); err != nil {
+	if remote {
+		// Round 869 lane W2: a layer another process runs: the hand-off
+		// there (handoff.go), the same zone change for the client.
+		if err := handOffToInstance(sess, w, zone, bucket, pos, frame, via); err != nil {
+			return err
+		}
+	} else if _, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, w.Hub, d.Zerk, zone, bucket, pos, frame, via); err != nil {
 		dropArrivalSends(e.CharacterID)
 		return err
 	}
 	// Round 870, MEASURED: a new limit's 0x320C comes twice -- right after
 	// the entry notice pair and again in the arrival state -- and a running
-	// one's (a re-entry) once, in the arrival state. The first is posted to
-	// the layer behind the entry's triggers (World.Enter fires them), so it
-	// follows their notices into the arrival's early sends.
-	if coolPkt != nil && fresh {
-		id := e.CharacterID
-		w.Post(func() { sendAfterArrival(id, sess, coolPkt, false) })
+	// one's (a re-entry) once, in the arrival state. Held, the first goes
+	// out right after the arrival's early sends (the notices); unheld, it is
+	// posted to the layer behind the entry's triggers (World.Enter fired
+	// them). A layer on another process sends its own (lane W2's hand-off).
+	if coolPkt != nil && fresh && !remote {
+		if guarded {
+			queueAfterEarly(e.CharacterID, coolPkt)
+		} else {
+			w.Post(func() { _ = sess.Send(coolPkt) })
+		}
 	}
-	if coolPkt != nil && !guarded {
+	if coolPkt != nil && !guarded && !remote {
 		w.Sync()
 		_ = sess.Send(coolPkt)
 	}
@@ -522,10 +538,19 @@ func coolTimesOf(ctx context.Context, characterID int64, now time.Time) []gamewo
 // sendGroupCoolTimes pushes every running group limit at a world entry
 // (game_worlds.md 14 item 7: 0x320C at entry and at world entry).
 func sendGroupCoolTimes(ctx context.Context, sess *gateway.Session, characterID int64) {
-	now := time.Now()
-	for _, ct := range coolTimesOf(ctx, characterID, now) {
-		sess.Send(&proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(ct.Group), ct.End.Sub(now))})
+	for _, p := range groupCoolTimePackets(ctx, characterID, time.Now()) {
+		sess.Send(p)
 	}
+}
+
+// groupCoolTimePackets is a 0x320C {0x0C, group, remaining s} for each of
+// characterID's running group limits.
+func groupCoolTimePackets(ctx context.Context, characterID int64, now time.Time) []*proto.Packet {
+	var out []*proto.Packet
+	for _, ct := range coolTimesOf(ctx, characterID, now) {
+		out = append(out, &proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(ct.Group), ct.End.Sub(now))})
+	}
+	return out
 }
 
 // returnFromInstance warps sess's character from the instance hub `from` to
@@ -544,8 +569,26 @@ func returnFromInstance(ctx context.Context, sess *gateway.Session, from *world.
 	if to == from {
 		return fmt.Errorf("no open world")
 	}
+	// Round 870, MEASURED: the arrival back in town (the exit NPC's and the
+	// close's) carries the running limit's 0x320C in its arrival state, as
+	// every arrival does; the icon stays.
+	cool := groupCoolTimePackets(ctx, e.CharacterID, time.Now())
+	guarded := arrivalGuardOn.Load()
+	if guarded {
+		for _, p := range cool {
+			queueForArrival(e.CharacterID, p, true)
+		}
+	}
 	_, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, to, d.Zerk, rp.zone, rp.bucket, rp.pos, rp.frame, via)
+	if err != nil {
+		dropArrivalSends(e.CharacterID)
+	} else if !guarded {
+		for _, p := range cool {
+			_ = sess.Send(p)
+		}
+	}
 	instanceReturns.Delete(e.CharacterID)
+	clusterClearReturn(ctx, e.CharacterID)
 	return err
 }
 

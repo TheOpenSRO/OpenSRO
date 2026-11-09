@@ -141,3 +141,58 @@ func ipOf(addr net.Addr) string {
 	}
 	return host
 }
+
+// Rebind holds accountID's login on sess (round 869 lane W2: a character
+// moving between processes -- a remote session on the open world's host
+// while it plays elsewhere, its new stream's session when it comes back).
+// The address its per-IP count is kept under stays the login's.
+func (o *OnlineAccounts) Rebind(accountID int64, sess *gateway.Session) {
+	if o == nil || sess == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	ip := ""
+	if e, ok := o.byAccount[accountID]; ok {
+		delete(o.bySession, e.sess.ID())
+		ip = e.ip
+	}
+	if ip == "" && !sess.Remote() {
+		ip = ipOf(sess.RemoteAddr())
+	}
+	o.byAccount[accountID] = onlineEntry{sess: sess, ip: ip}
+	o.bySession[sess.ID()] = accountID
+}
+
+// ReleaseRemote frees accountID when a remote session holds it (its
+// character logged out on another process).
+func (o *OnlineAccounts) ReleaseRemote(accountID int64) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if e, ok := o.byAccount[accountID]; ok && e.sess.Remote() {
+		delete(o.bySession, e.sess.ID())
+		delete(o.byAccount, accountID)
+	}
+}
+
+// ReleaseHost frees every account a remote session of host holds (the host
+// died: its characters' logins end unless a recovery claims them again).
+func (o *OnlineAccounts) ReleaseHost(remoteOf func(*gateway.Session) (string, bool), host string) int {
+	if o == nil {
+		return 0
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	n := 0
+	for acc, e := range o.byAccount {
+		if h, ok := remoteOf(e.sess); ok && h == host {
+			delete(o.bySession, e.sess.ID())
+			delete(o.byAccount, acc)
+			n++
+		}
+	}
+	return n
+}

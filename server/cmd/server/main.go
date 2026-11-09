@@ -1327,6 +1327,9 @@ func main() {
 	retailOpts := registerRetailFlags()
 	// The log's destination and level, and /metrics (round 858, observe.go).
 	observe := registerObserveFlags()
+	// Several processes (round 869 lane W2, cluster.go): -role and its
+	// companions. The default, -role all, is one process as before.
+	clusterOpts := registerClusterFlags()
 	flag.Parse()
 
 	logger, closeLog, err := newLogger(observe)
@@ -1336,6 +1339,15 @@ func main() {
 	}
 	defer closeLog()
 	logger.Info("OpenSRO server starting", "version", version, "pid", os.Getpid())
+	if err := clusterOpts.check(*inMemory); err != nil {
+		logger.Error("the process's role", "err", err)
+		os.Exit(2)
+	}
+	if *clusterOpts.role == "front" {
+		// A front loads no game: it relays the clients (cluster.go).
+		runFront(clusterOpts, *addr, *postgresDSN, logger)
+		return
+	}
 	if maxPlayersEnvErr != nil {
 		logger.Warn("OPENSRO_MAX_PLAYERS is not a number; the capacity keeps its default unless -max-players is given",
 			"err", maxPlayersEnvErr, "default", defaultMaxPlayers)
@@ -1453,8 +1465,16 @@ func main() {
 		logger.Info("no leveldata CSV set (OPENSRO_LEVELDATA_CSV) -- characters will not level")
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Round 869 lane W2: a world host's SIGTERM is its drain
+	// (cluster.go drainOnSignal), which cancels ctx when it is done.
+	stopSignals := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if *clusterOpts.role == "world" {
+		stopSignals = []os.Signal{os.Interrupt}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
 	defer stop()
+	ctx, cancelAll := context.WithCancel(ctx)
+	defer cancelAll()
 	if err := startDebug(ctx, *pprofAddr, logger); err != nil {
 		logger.Error("pprof listener (-pprof-addr / OPENSRO_PPROF_ADDR)", "addr", *pprofAddr, "err", err)
 		os.Exit(1)
@@ -2669,8 +2689,17 @@ func main() {
 	loginService := &session.LoginService{Accounts: accounts, Status: serverStatus, Staff: gmGate.Allows,
 		Online: session.NewOnlineAccounts(), Rules: loginRules, Logger: logger}
 	gmDeps.Sessions = session.GMSessions{Hub: hub, Online: loginService.Online}
+	// Round 869 lane W2: what a character carries to another process, and
+	// -role world's cluster (cluster.go).
+	session.SetLoginOnline(loginService.Online)
+	session.SetCarriedMana(manaTracker)
+	var wc *worldCluster
+	if *clusterOpts.role == "world" {
+		wc = startWorldCluster(ctx, clusterOpts, *postgresDSN, logger, hub, session.ClusterStats)
+		session.SetClusterParties(parties)
+	}
 	// Round 869: the game worlds (cmd/server/gameworlds.go).
-	installGameWorlds(logger, *gameWorldDir, *npcsCSV, hub, monsters, ground, nestDB, speciesTable, speciesSkills,
+	installGameWorlds(logger, wc, *gameWorldDir, *npcsCSV, hub, monsters, ground, nestDB, speciesTable, speciesSkills,
 		session.GameWorldDeps{Chars: chars, Equipment: eq, Zerk: zerkTracker, Timed: timedJobs, Instances: instanceRows,
 			Parties: parties, Logger: logger})
 	// Round 869 lane W3: which hole item names each Forgotten World (the GM
@@ -2960,6 +2989,11 @@ func main() {
 	// Round 862: what a return scroll's cast refuses beyond the moves, the
 	// action and the attacks (session/scrollhold.go, retail's filter).
 	handle = session.ScrollHoldGate(handle)
+	// Round 869 lane W2: a front's stream that opens with a hand-off or a
+	// recovery (session/handoff.go).
+	if wc != nil {
+		handle = gateway.Chain(session.AdoptHandler(chars, eq, hub, zerkTracker), handle)
+	}
 	// The original client's agent gets the same gate: it has no PIN window, so
 	// on an account with a PIN its delete and restore are refused like ours
 	// (docs/protocol/pin.md, "Retail clients").
@@ -3031,6 +3065,9 @@ func main() {
 				}()
 				f()
 			}
+			// Round 869 lane W2: a character moving to another process
+			// takes its carried runtime first (session/handoff.go).
+			step("handoff prepare", func() { session.HandoffPrepare(sess) })
 			step("duel", func() { duelDisconnect(sess) })
 			step("trade", func() { tradeDisconnect(sess) })
 			step("stall", func() { stallDisconnect(sess) })
@@ -3053,7 +3090,9 @@ func main() {
 			step("world", func() { worldDisconnect(sess) })
 			// Last (round 788): the account may log in again only once the
 			// world has saved and let go of its character.
-			step("login", func() { loginService.SessionEnded(sess) })
+			step("login", func() { session.SessionEndedInCluster(sess, loginService.SessionEnded) })
+			// Round 869 lane W2: and last, the re-route to the front.
+			step("handoff send", func() { session.HandoffSend(sess) })
 		},
 	}
 
@@ -3062,9 +3101,30 @@ func main() {
 	// unique across listeners).
 	startRetail(ctx, retailOpts, retailDeps{login: loginService, lobby: retailLobby, status: serverStatus, onDisconnect: srv.OnDisconnect}, logger)
 
-	if err := srv.ListenAndServe(ctx); err != nil {
-		logger.Error("gateway server exited", "err", err)
-		os.Exit(1)
+	// Round 869 lane W2: -role world joins the cluster and serves the
+	// fronts' streams; a host without the open world takes no client of its
+	// own.
+	serveClients := true
+	if wc != nil {
+		wc.start(ctx)
+		wc.syncClock(ctx, clockHour, clockMinute)
+		rs := wc.relayServer(srv.Handle, srv.OnDisconnect)
+		go func() {
+			if err := rs.ListenAndServe(ctx); err != nil {
+				logger.Error("relay listener exited", "addr", rs.Addr, "err", err)
+				os.Exit(1)
+			}
+		}()
+		wc.drainOnSignal(cancelAll)
+		serveClients = wc.home
+	}
+	if serveClients {
+		if err := srv.ListenAndServe(ctx); err != nil {
+			logger.Error("gateway server exited", "err", err)
+			os.Exit(1)
+		}
+	} else {
+		<-ctx.Done()
 	}
 
 	// The gateway does not run OnDisconnect for sessions still open when it

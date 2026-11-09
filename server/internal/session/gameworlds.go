@@ -131,3 +131,19 @@ func hubOfChar(def *world.Hub, characterID int64) *world.Hub {
 	}
 	return world.HubOf(def, characterID)
 }
+
+// findByNameCluster is findByNameAnywhere, then the characters of the other
+// processes (round 869 lane W2: a whisper, a friend request, a GM's kick --
+// the answer reaches the character there through its remote session).
+func findByNameCluster(def *world.Hub, name string) (world.Entity, bool) {
+	if e, ok := findByNameAnywhere(def, name); ok {
+		return e, true
+	}
+	return remoteByName(name)
+}
+
+// everyoneCluster is allEntitiesAnywhere and every character of the other
+// processes (a GM's look-up by account or by name without case).
+func everyoneCluster(def *world.Hub) []world.Entity {
+	return append(allEntitiesAnywhere(def), remoteEveryone()...)
+}

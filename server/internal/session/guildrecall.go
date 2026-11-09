@@ -168,7 +168,7 @@ func useGuildRecall(ctx context.Context, sess *gateway.Session, inv inventory.St
 		if m.CharacterID == g.LeaderID {
 			continue
 		}
-		if t, ok := entityOf(d.hub, m.CharacterID); ok && t.Session != nil {
+		if t, ok := reachOf(d.hub, m.CharacterID); ok && t.Session != nil {
 			sendGuild(t.Session, OpRecallAsk, ask)
 		}
 	}

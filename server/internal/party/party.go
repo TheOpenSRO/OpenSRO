@@ -390,6 +390,8 @@ type Hub struct {
 	Timeout time.Duration
 	// afterFunc schedules the timeout; time.AfterFunc unless a test swaps it.
 	afterFunc func(time.Duration, func()) stopper
+	// cl is the hub's part in several processes (cluster.go), nil in one.
+	cl *clusterHook
 }
 
 // NewHub returns an empty Hub.
@@ -426,6 +428,8 @@ func (h *Hub) newIDLocked() uint32 {
 // entry has other flags. A member that is gone (0x2c0f) is the caller's test:
 // the hub does not know who is online.
 func (h *Hub) Form(inviter, invitee Member, flags Flags) (*Party, error) {
+	var snap *Snapshot
+	defer func() { h.notify(snap) }()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -454,6 +458,7 @@ func (h *Hub) Form(inviter, invitee Member, flags Flags) (*Party, error) {
 			h.bySession[m.Session.ID()] = m.CharacterID
 		}
 	}
+	snap = h.snapLocked(id)
 	return p.clone(), nil
 }
 
@@ -463,6 +468,8 @@ func (h *Hub) Form(inviter, invitee Member, flags Flags) (*Party, error) {
 // m is already a member (of this or another party: the hub keeps one party per
 // character), 0x2c13/0x2c14 full.
 func (h *Hub) Add(partyID uint32, m Member) (*Party, error) {
+	var snap *Snapshot
+	defer func() { h.notify(snap) }()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -488,6 +495,7 @@ func (h *Hub) Add(partyID uint32, m Member) (*Party, error) {
 	if m.Session != nil {
 		h.bySession[m.Session.ID()] = m.CharacterID
 	}
+	snap = h.snapLocked(partyID)
 	return p.clone(), nil
 }
 
@@ -498,9 +506,15 @@ func (h *Hub) Add(partyID uint32, m Member) (*Party, error) {
 // listing (SM 0x44eb30 deletes it); a departing leader's listing moves to the
 // new leader (SM 0x44e1a0, kind 0x12).
 func (h *Hub) Remove(characterID int64, reason uint8) (Removal, error) {
+	var snap *Snapshot
+	defer func() { h.notify(snap) }()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.removeLocked(characterID)
+	r, err := h.removeLocked(characterID)
+	if err == nil && r.Before != nil {
+		snap = h.snapLocked(r.Before.ID)
+	}
+	return r, err
 }
 
 func (h *Hub) removeLocked(characterID int64) (Removal, error) {

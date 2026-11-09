@@ -473,6 +473,12 @@ func PartyMatchDisconnectHandler(d PartyMatchDeps) func(sess *gateway.Session) {
 		if d.Match == nil || d.Hub == nil {
 			return
 		}
+		// Round 869 lane W2: a character moving to another process keeps
+		// its entry (OPEN: the match list itself is the open world's
+		// process's).
+		if HandingOff(sess) {
+			return
+		}
 		e, ok := d.Hub.EntityBySession(sess.ID())
 		if !ok {
 			return

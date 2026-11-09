@@ -45,14 +45,14 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 var knownOrphans = map[string]string{
 	// Round 869: the game worlds' seams for the lanes after W1 -- the
 	// doors' placements once their source is found (SetZonePlaces; OPEN),
-	// W2's registry rows (Word) -- and the tests' clock. (W3's gate now
-	// calls RegisterPortal / UnregisterPortal.)
+	// W2's registry rows (Word) -- and the tests' clock. (W3's gate calls
+	// RegisterPortal / UnregisterPortal.)
 	"SetZonePlaces": "internal/gameworld/manager.go",
 	"Word":          "internal/registry/registry.go",
 	"NewFakeClock":  "internal/gameworld/clock.go",
-	// W2's re-route carries a character's runtime between processes.
-	"SnapshotCarried": "internal/session/carried.go",
-	"RestoreCarried":  "internal/session/carried.go",
+	// Round 869 lane W2: the in-memory registry's lease, which the cluster
+	// tests shorten (a process runs on the default or PostgreSQL's).
+	"SetLease": "internal/registry/cluster.go",
 	// Round 860 lane E: 0x304E kind 4's decoder; the Godot client decodes the
 	// message over the socket, so only the golden-bytes test calls it in Go.
 	"ForcedGraduationLevel": "round 865: the 41 / 61 floors named by their role (0x7476's forced graduation); the handler tests them through MeetsMembershipLevel, academy_test.go holds the two together.",

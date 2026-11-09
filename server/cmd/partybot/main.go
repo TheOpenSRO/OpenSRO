@@ -1177,6 +1177,10 @@ func main() {
 	flag.Float64Var(&fgw.fieldDX, "fgw-field-dx", -3000, "fgw: how far west of the town spawn a field point lies")
 	flag.IntVar(&fgw.level, "fgw-level", 65, "fgw: the two players' level")
 	flag.StringVar(&fgw.only, "fgw-only", "", "fgw: \"pillar\" runs the pillar step alone")
+	// Round 869 lane W2: -mode instload, the multi-process load test (instload.go).
+	loadParties := flag.Int("parties", 10, "instload: the parties that enter instances")
+	loadSize := flag.Int("party-size", 4, "instload: the bots of each party")
+	loadFor := flag.Duration("duration", 2*time.Minute, "instload: how long the bots fight inside")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	flag.StringVar(&botGuild.create, "guild-create", "", "bot: found a guild of this name once in the world (raises itself to the founder's level and gold; a GM account)")
 	flag.Int64Var(&botGuild.join, "guild-join", 0, "bot: join this guild id once in the world")
@@ -1291,6 +1295,8 @@ func main() {
 	case "fgw":
 		// Round 869 lane W3: the Forgotten World's live check (fgw.go).
 		err = fgwRun(*addr, *prefix, fgw)
+	case "instload":
+		err = instLoadRun(*addr, *prefix, *level, *loadParties, *loadSize, *instanceWorld, *loadFor)
 	case "academyfill":
 		err = academyFillRun(*addr, *prefix)
 	case "academyguardian":
