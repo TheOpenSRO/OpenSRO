@@ -287,7 +287,12 @@ close (the decompiler drops them).
   then u32 +0x25c; a 0x3015 ends with one more u8 (slot 26, c:0x9c2180). A door's object is 36513
   `STORE_EVENTZONE_DEFAULT` (MEASURED: the only 4/2 row); its model is its event zone's object's
   (`forgotten_world.md` 6). Not drawn: a 0x351E state other than 0 or 1 leaves the object as it is
-  (c:0x535750).
+  (c:0x535750). **So a door's record carries the whole structure record too** -- `CIEventRuntimeObj::
+  vslot_025` (c:0x535980) calls `CIRuntimeStruct::vslot_025` first, which reads +0x254, +0x255, the
+  name or u32 +0x258 and u32 +0x25c for every runtime structure -- and only then u32 +0x280 (the
+  event zone, eventzonedata.txt column 1) and u8 +0x284: {head, u8 +0x260, u8 state, u8 0, u8 0,
+  u32 0, u32 0, u32 zone, u8 0} for a door with no owner rule (round 869, lane C1). And the name
+  follows +0x255 only for type 6; any other type has the u32 (c:0x56dfa0).
 - **Instance regions in the client** (MEASURED, round 869): the four start positions load as any
   field region or dungeon does -- Togui 126/228, Wreck inside 114/243 and outside 111/228 (terrain,
   objects, navmesh and minimap tiles from the archives), Flame as dungeon 0x8012 -- see the round's
