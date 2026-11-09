@@ -1169,6 +1169,14 @@ func main() {
 	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026, a GM tool since round 854: the bot's account must be in the server's -gm-accounts, or it is refused and stays put), e.g. dungeon/32769")
 	flag.DurationVar(&botZoneAfter, "zone-after", 0, "bot -zone: wait this long in the world before asking (round 854: a client watches the refusal)")
 	instanceWorld := flag.String("world", "63", "instance: the instanced world the GM aid opens (round 869)")
+	var fgw fgwOpts
+	flag.Int64Var(&fgw.hole, "fgw-hole", 35887, "fgw (round 869 lane W3): the Dimension hole item")
+	flag.StringVar(&fgw.world, "fgw-world", "67", "fgw: the hole's world")
+	flag.StringVar(&fgw.pillar, "fgw-pillar", "MOB_GOD_PILLAR_TOGUI_61_70", "fgw: the band's dimension pillar")
+	flag.StringVar(&fgw.envyDrop, "fgw-envy", "MOB_GOD_PILLAR_ENVY_DROP_61_70", "fgw: the pillar's hole-dropping Envy")
+	flag.Float64Var(&fgw.fieldDX, "fgw-field-dx", -3000, "fgw: how far west of the town spawn a field point lies")
+	flag.IntVar(&fgw.level, "fgw-level", 65, "fgw: the two players' level")
+	flag.StringVar(&fgw.only, "fgw-only", "", "fgw: \"pillar\" runs the pillar step alone")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	flag.StringVar(&botGuild.create, "guild-create", "", "bot: found a guild of this name once in the world (raises itself to the founder's level and gold; a GM account)")
 	flag.Int64Var(&botGuild.join, "guild-join", 0, "bot: join this guild id once in the world")
@@ -1280,6 +1288,9 @@ func main() {
 	case "instance":
 		// Round 869: the game worlds' live check (instance.go).
 		err = instanceRun(*addr, *name, *level, *instanceWorld)
+	case "fgw":
+		// Round 869 lane W3: the Forgotten World's live check (fgw.go).
+		err = fgwRun(*addr, *prefix, fgw)
 	case "academyfill":
 		err = academyFillRun(*addr, *prefix)
 	case "academyguardian":

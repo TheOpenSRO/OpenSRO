@@ -1145,6 +1145,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			svc.text = req.Text
 			return useServiceScroll(ctx, sess, characterID, it, held, have, svc)
 		}
+		// Round 869 lane W3 (fgw.go): a Dimension hole (TypeID 3/3/12/7)
+		// opens a Forgotten World layer and stands its gate.
+		if isDimensionHole(it) {
+			return useDimensionHole(ctx, sess, hub.For(sess), inv, note, characterID, it, held, have)
+		}
 		// Round 795 (cossummon.go, cosuse.go): a pet item or a ride scroll
 		// calls its COS out; a pet's potion, food, revival or clock acts on
 		// the pet it names.

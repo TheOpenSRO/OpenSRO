@@ -60,7 +60,7 @@ const (
 // TableNames is every table LoadDir reads (the trigger tables included).
 func TableNames() []string {
 	return append([]string{TableWorld, TableWorldConfig, TableGroup, TableGroupConfig, TableGroupBind,
-		TableRegion, TableStartPos, TableEventZone}, trigger.TableNames...)
+		TableRegion, TableStartPos, TableEventZone, TableAssignedDrop}, trigger.TableNames...)
 }
 
 // StartPos is one _RefInstance_World_Start_Pos row: an arrival point.
@@ -149,6 +149,9 @@ type Ref struct {
 	Groups     map[int]*Group
 	EventZones map[string]*EventZone
 	Triggers   *trigger.Ref
+	// AssignedDrops are _RefMonster_AssignedItemDrop's rows by monster
+	// (round 869 lane W3: the ENVY_DROP pillars' holes; fgw.go).
+	AssignedDrops map[int64][]AssignedDrop
 }
 
 // World is world id's row, nil for none.
@@ -324,6 +327,20 @@ func Build(tables trigger.Tables) (*Ref, error) {
 				z.Str[i] = t.Get(r, fmt.Sprintf("strParam%d", i+1))
 			}
 			ref.EventZones[z.Zone] = z
+		}
+	}
+	ref.AssignedDrops = map[int64][]AssignedDrop{}
+	if t := tables(TableAssignedDrop); t != nil {
+		for _, r := range t.Rows {
+			if !inService(t, r) {
+				continue
+			}
+			d := AssignedDrop{Monster: t.Int(r, "RefMonsterID"), Item: t.Int(r, "RefItemID"),
+				AmountMin: int(t.Int(r, "DropAmountMin")), AmountMax: int(t.Int(r, "DropAmountMax")), Ratio: t.Float(r, "DropRatio")}
+			if d.Monster == 0 || d.Item == 0 {
+				continue
+			}
+			ref.AssignedDrops[d.Monster] = append(ref.AssignedDrops[d.Monster], d)
 		}
 	}
 	trig, err := trigger.BuildRef(tables)

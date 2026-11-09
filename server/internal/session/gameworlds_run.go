@@ -54,6 +54,10 @@ type GameWorldDeps struct {
 	// a trigger's LOAD_MONSTER (cmd/server's species table). Nil spawns
 	// nothing.
 	Spawn func(w *gameworld.World, code string, zone string, x, y, z float64) (int64, bool)
+	// PillarSummon runs a dead dimension pillar's summon skill in w (round
+	// 869 lane W3, fgw_pillar.go: the minion executor over its 'ssou'
+	// block) and answers the spawned monsters. Nil summons nothing.
+	PillarSummon func(w *gameworld.World, pillar combat.Monster) []int64
 }
 
 var gwDeps atomic.Pointer[GameWorldDeps]
@@ -268,13 +272,19 @@ func worldClose(w *gameworld.World, reason gameworld.CloseReason) {
 	for _, m := range w.Monsters.AppendAll(nil) {
 		statusFX.forgetMonster(m.ID)
 	}
+	// Round 869 lane W3 (fgw.go): the layer's gates go with it, and its
+	// pending summons.
+	removeGatesOf(w)
+	forgetSummonsOf(w)
 }
 
 func worldMessage(w *gameworld.World, kind uint8, key string, targets []int64) {
 	pkt := noticePacket(gameworld.EncodeTriggerNotice(kind, key))
 	for _, id := range targets {
 		if e, ok := w.Hub.EntityByCharacterID(id); ok {
-			e.Session.Send(pkt)
+			// Round 869 lane W3: an entering player hears it with its
+			// arrival (MEASURED: right after its 0x3012).
+			sendAfterArrival(id, e.Session, pkt, false)
 		}
 	}
 }
@@ -399,10 +409,24 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 		instanceReturns.Store(e.CharacterID, returnPoint{zone: p.zone, bucket: e.Zone, frame: p.frame, pos: e.Pos})
 		savePosition(d.Chars, sess, e)
 	}
+	// Round 869 lane W3: the re-entry limit's 0x320C is queued for the
+	// arrival before the warp (MEASURED: it comes after the arrival state,
+	// behind the entry notices), so it cannot overtake them.
+	now := w.Clock().Now()
+	coolPkt := startGroupCoolTime(ctx, e.CharacterID, w, now)
+	guarded := arrivalGuardOn.Load()
+	if coolPkt != nil && guarded {
+		queueForArrival(e.CharacterID, coolPkt, true)
+		queueForArrival(e.CharacterID, coolPkt, true)
+	}
 	if _, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, w.Hub, d.Zerk, zone, bucket, pos, frame, via); err != nil {
+		dropArrivalSends(e.CharacterID)
 		return err
 	}
-	now := w.Clock().Now()
+	if coolPkt != nil && !guarded {
+		_ = sess.Send(coolPkt)
+		_ = sess.Send(coolPkt)
+	}
 	if d.Instances != nil {
 		row, _, _ := d.Instances.Get(ctx, e.CharacterID, w.ID.World)
 		if row.Key != w.Key {
@@ -415,19 +439,19 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 			d.Logger.Warn("instance row not saved", "character_id", e.CharacterID, "err", err)
 		}
 	}
-	startGroupCoolTime(ctx, sess, e.CharacterID, w, now)
 	return nil
 }
 
 // startGroupCoolTime is the re-entry limit's timed job at an entry: a new
 // one for this instance, or the running one kept (re-entering the same
 // instance does not restart it -- INFERRED: the job holds the key it was
-// started for). Its 0x320C {0x0C, group, remaining} goes to the client.
-func startGroupCoolTime(ctx context.Context, sess *gateway.Session, characterID int64, w *gameworld.World, now time.Time) {
+// started for). It answers its 0x320C {0x0C, group, remaining} for the
+// client (nil for none).
+func startGroupCoolTime(ctx context.Context, characterID int64, w *gameworld.World, now time.Time) *proto.Packet {
 	g := w.Ref.Group
 	d := gameWorldDeps()
 	if g == nil || g.CoolTime <= 0 || d.Timed == nil {
-		return
+		return nil
 	}
 	job, running := groupCoolTime(ctx, characterID, g.ID, now)
 	if !running || uint32(job.Key) != w.Key {
@@ -437,7 +461,9 @@ func startGroupCoolTime(ctx context.Context, sess *gateway.Session, characterID 
 			d.Logger.Warn("group cool time not saved", "character_id", characterID, "err", err)
 		}
 	}
-	sess.Send(&proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(g.ID), job.End.Sub(now))})
+	// Round 869 lane W3: sent with the arrival, after its state, twice
+	// (MEASURED: the 0x320C comes twice in the burst after the 0x3012).
+	return &proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(g.ID), job.End.Sub(now))}
 }
 
 // groupCoolTime is characterID's running limit of group, if any.

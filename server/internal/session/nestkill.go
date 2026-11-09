@@ -53,6 +53,9 @@ func noteMonsterKilled(hub *world.Hub, parties *party.Hub, hits []combat.Hit, m 
 			level = e.Level
 		}
 		w.MonsterKilled(m, user, level)
+		// Round 869 lane W3 (fgw_pillar.go): a dimension pillar's summon at
+		// its death.
+		fgwPillarDied(hub, m)
 	}
 	f := monsterKillObserver.Load()
 	if f == nil {

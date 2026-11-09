@@ -412,8 +412,14 @@ func realDrops(ctx context.Context, src DropSource, monster combat.Monster) ([]L
 // left the other on own-design data -- and the ground path is the one cmd/server
 // actually runs.
 func dropsForKill(ctx context.Context, src DropSource, monster combat.Monster) []LootDrop {
+	// Round 869 lane W3 (fgw_pillar.go): a Forgotten World monster's assigned
+	// drops (the ENVY_DROP pillars' holes) come on top of its group drops.
+	fgw := fgwKillLoot(ctx, monster)
 	if d, ok := realDrops(ctx, src, monster); ok {
-		return d
+		return append(d, fgw...)
+	}
+	if len(fgw) > 0 {
+		return append(rollDrops(monster.Name), fgw...)
 	}
 	return rollDrops(monster.Name)
 }

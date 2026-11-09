@@ -7483,6 +7483,112 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-ninth round, lane W3: the Forgotten World on the server -- the Dimension hole and its gate, the entry with its notices, every band's script, the party recall, the pillars and their holes, the hole's kept cool time
+
+The user: "let's start forgotten world work", and for big systems "Make sure you're comparing
+against the original game and make no mistakes". The contract is `docs/protocol/forgotten_world.md`
+11 SERVER items 1-8, on lane W1's instanced worlds (base `99ca8f73`). Labels: READ (`s:` the game
+server, `c:` the client), MEASURED, INFERRED, OURS, OPEN. Server only: no perf gate (nothing drawn
+changed). The user's decisions (the specs' section 13) are built: the gate's access read per hole
+(6 today), the 300-minute re-entry limit, no free ticket, the inside built from what was read and
+then measured.
+
+### What was built
+
+| item | where | test |
+|---|---|---|
+| 1 reference data | `gameworld/fgw.go`: the hole's reading (TypeID 3/3/12/7; Param1 the grade, Param3/4 the band -- the item table's RestoreMP / RestoreMPPct columns --, Param5, Param6 the access, Desc2 the world, the 0x71 / 18,000,000 ms cool time), the INS_GOD_ codenames, the gate's constants (19556, interaction 0x1c, destination kind 2), the refusal and recall codes; `_RefMonster_AssignedItemDrop` joined into the game-world data (`Ref.AssignedDrops`, so `export-refdata -mode gameworlds` carries it) | `gameworld/fgw_test.go`: 35883 -> world 63, band 35..50, grade 1, Param6 6, group 0x71, 5 h; with the export: 22 worlds in group 1 at 300 min, the 22 ENVY_DROP rows 0..1 at 0.3/0.2/0.2/0.1 |
+| 2 the hole | `session/fgw.go` `useDimensionHole`, first among the item kinds: town 0x184b, band 0x1851, Param6 7's master 0x184f, the layer (no slot 0x1852, other 0x183e); the item and its cool time spent; the use reply, `0x305C`, `0xB034 {01, 0F, slot+13, 02}`, the gate's `0x3015`, in that order; the cool time kept as a category-6 timed job and re-armed at world entry | `session/fgw_hole_test.go` `TestHoleUseRefusals` (each code in order, the hole kept; a non-master party member's Param6-6 hole works; the cool time 0x185b), `TestHoleUseSuccess` (the order, every record byte, the watcher's copies, the timed job, its restore) |
+| 3 the gate | `fgw.go`: a structure in the open world at the user, a random yaw (READ s:0x5f8aa0), the record of `forgotten_world.md` 4 with access 6 (the name) or 7 (the party id); spawned and despawned by the area of interest's window, taken down with its layer; `0x7045` -> the MEASURED `0xB045 {01, gate, 01 1c 01 02, region, x, y, z}`, no interaction state; the portal (W1's `RegisterPortal`) for the entry | `TestGateSelectEntryAndClose`: the select's bytes, `0x704B` -> `{02, 0x1c0d}`, a non-creator `{2,1}` then `{2, 0x1c2f}`, the creator in, the gate's `0x3016` at the 600 s empty close |
+| 4 the scripts | the engine runs every action at once (MEASURED: the banner's Delay 20,000 does not delay it); an instance's message to a character still behind the arrival guard waits for its `0x3012` (the release first catches the instance's goroutine up), the `0x320C` after the arrival state, twice | `trigger/fgw_scripts_test.go`: all 22 worlds from the export, every hive killed when awake, the Wreck bosses by codename -- each script reaches its boss's defeat with every dormant nest woken (Togui 36 nests / 15 doors / 18 notices; Flame 21 / 19 / 20; Wreck inside 13 / 2 / 22 with the curse loaded; outside 14 / 16 / 14); the entry pair in the gate test above |
+| 5 recall | `session/fgw_recall.go`: `0x7519` (reach of an 0x27 NPC 3, party 0x1c33, master 0x1c34, two members 2) -> `0xB519` at once; `0x751A` -> the push to the member, nothing to the master, refusals on `0xB51A`, 0x1c3a within 20 s; `0x751C` Yes -> `0x30BF {member, 0B, 1}`, `0xB51C {01}`, the entry 5 s later | `TestPartyRecall`: the rows (state, level, minutes), outside a town 0x1c37, the push bytes, the second summon, the member in the layer at the start, then state 1 with its own 300 minutes, a member's list 0x1c34 |
+| 6 the hole sources | world 1's pillar triggers already ran on W1's engine; `session/fgw_pillar.go`: the pillar's summon at its death through cmd/server's minion executor (`gameworlds.go` `pillarSummon`), the ENVY_DROP's assigned drops on the kill's drops | `TestEnvyDropHoles` (200,000 seeded kills: 15.0 % / 10.0 %), `TestPillarTriggerAndSummon` (0.1 % of 100,000 eligible kills; out of band none; only the pillar's death summons), `cmd/server` `TestPillarSummon` (5..7 champions of 36048 at the executor's 47 units) |
+| 7 re-entry | W1's limit; the 0x320C now with the arrival; the hole's own cool time kept | W1's `TestReEntryLimit`; the gate test's 0x320C order |
+| 8 GM aids (OURS) | `session/fgw_gm.go`: `/fgw <world>`, `/fgwtime <d>` and `/fgwtime limit <d>`, `/fgwkill [n]`, `/fgwpillar [band]` | the live check |
+| death inside | the return-point revive leaves the layer for the open world's return point (OURS) | `TestDeathInside` |
+
+### MEASURED over READ (taken from lane FX's measurement of world 67, `forgotten_world.md` 5)
+
+- The entry notice: READ/data said a 20 s delay on the banner; MEASURED both lines come with the
+  arrival, banner first. W1's per-action delay is dropped; the Delay column stays OPEN.
+- The recall's list: READ a 15.0 s job; MEASURED the answer in 113 ms. The u8 per member is the
+  **level** (MEASURED), not a count.
+- The summon: MEASURED nothing back to the master on a Yes, the warp 5.4 s after it (the push's u32
+  5), the member at the world's start with its own notices, 0x320C and re-entry job.
+- The 0x320C comes twice, after the arrival state (MEASURED); OpenSRO sends it so.
+- Differences left alone, for the lead: MEASURED, `_CharInstanceWorldData` stays empty after an
+  entry and a logout, while W1 writes a row at every entry (internal, nothing a player sees); and
+  the exit and recall NPCs' MEASURED `0xB045 {01, npc, 00 00 00 01 29 00}` has two zero bytes before
+  the count that OpenSRO's NPC select (`npctalk.EncodeSelectNPC`, `{01, npc, 00, 01, 29, 00}`) does
+  not send -- a shared encoder the client parses; not changed here.
+
+### Read in this lane
+
+- s:0x724a00 (CRefDropData::AddAssignedItemDrop): a row's attempts are `rand % (max - min + 1) + min`,
+  each at the ratio -- so the ENVY_DROP's 0..1 rows give a grade-1 hole on 15 % of the kills (the
+  rows' 0.3), grades 2/3 on 10 %, grade 4 on 5 %.
+- s:0x5614d0: a skill whose AI_SkillType is `'D'` (68) is filed at the selector's +0x34, `'S'` at
+  +0x24, any other on the attack list (+0x14). s:0x593738..0x593754: EngageSkill runs the minion
+  executor (s:0x596e50) for any skill with a summon block. The pillar's only skill is a `'D'` summon
+  with AI_AttackChance 0 -- INFERRED a death skill; the reader of +0x34 is OPEN.
+- s:0x51bb70 / 0x51bd60 / 0x51bf10: the recall's three handlers (their checks above; the 15 s is
+  the overlapped job 0x7d1b's).
+- MEASURED in the data: the 35-50 pillar's block {36048, class 1, 4..6}, {36048, class 1, 1..1};
+  `_RefMonster_AssignedItemRndDrop` gives `ITEM_TALISMAN_TOGUI_DROPGROUP` to the elder (0.15) and
+  the six Togui treasure boxes (0.15 / 2 x 1.0 / 0.3 / 2 x 1.0 / 0.6 / 2 x 1.0), the Wreck groups
+  to its own; they drop by the ordinary path with the operator's drop tables. The client archive's
+  `ITEM_ETC_TELEPORT_HOLE_WRECK_100_110_LEVEL_3` row carries a 28,800,000 ms cool time where every
+  other row has 18,000,000 (the database's value is the spec's).
+
+### The live check (lane server 17731, `partybot -mode fgw`, Togui 61-70 grade 1, hole 35887)
+
+The lane server ran in memory with `-gameworld-dir` (W1's export plus `_RefMonster_AssignedItemDrop`),
+`-nest-db-dir`, `-items-csv`, `-monsters-csv`, `-npcs-csv`, `-regions-csv` and the server navmesh;
+two level-65 players Fa (party master, GM) and Fb, and a level-30 Fc. Every packet below came over
+the bots' own connections. Steps 1-8 PASS in run 6 (monsters fighting back); its pillar step FAILed
+because the pillar's champions killed the GM, so step 9 is run 5's:
+
+1. The hole in the field (Jangan + 3,000 west, region 25254, IsBattleField 1): `{.., Code 0x184b}`,
+   the hole kept; Fc at level 30: 0x1851.
+2. In Jangan: the use reply, `0x305C`, `0xB034 01 0f 0d 02`, the gate's `0x3015` (access 6, "W3Fa",
+   35887) in that order, the same burst; Fb, beside it, got the `0x305C` and the record; a second
+   hole: 0x185b.
+3. `0x7045` -> `01 <gate> 01 1c 01 02 e4 7e 27 04 00 00 b5 02 00 00 65 04 00 00`; `0x704B` -> `02 0d
+   1c`; Fb through it: `02 01 00`, `02 2f 1c`.
+4. Fa in: `02 01 00`, `01`, the zone change to `126/228`, then `0x300C` kind 1, kind 2 (the entry
+   notice), then `0x320C 0c 01 00 00 ..` twice; the exit and recall NPCs in view.
+5. The recall pillar: `0xB519 01 01 02 00 00 00 02 41 00 00` (Fb, possible, level 65, 0 minutes);
+   the summon's push `.. 05 00 00 00 04 00 "W3Fa"` to Fb and nothing to Fa; Fb's Yes: `{01}` and
+   Fb in the layer 5.0 s later.
+6. The script: nine `/fgwkill` passes killed 232, 3, 36, 18, 24, 24, 36, 24 and 3 monsters (400 of
+   the layer's caps, each the GM's kill) as the dormant nests woke; the banners came as ENVY_TOGUI_3,
+   ENVY_TOGUI_2, OPEN_DOOR, ENVY_TOGUI_1, BOSS, OPEN_DOOR, BOSS_KILL, OPEN_DOOR, with 15 `0x351E`;
+   Fb heard the boss's defeat too.
+7. The exit NPC: `{01}` and back to the gate's spot.
+8. `/fgw 67` (a second layer's gate): `02 01 00`, `02 32 1c`; the first gate again: `02 01 00`,
+   `01`, its `0x320C` with 17,975 s left.
+9. The pillar (run 5, on a server whose monsters do not fight back -- the pillar's champions kill a
+   bare level-65 GM in a second): `/fgwpillar` loaded MOB_GOD_PILLAR_TOGUI_61_70; killed by real
+   blows, each death summoned its Envies (5 and 7 champions); 12 Envies killed by real blows dropped
+   35887 x1 and 35888 x2 (the two holes of the band).
+
+Logs: `/var/tmp/r869w3/fgw5.out`, `fgw6.out`, `server5.log`, `server6.log` on the render box.
+
+`cd server && go build ./... && go test ./...`: pass (98 packages ok, `go vet ./...` clean). With the export (`OPENSRO_GAMEWORLD_DIR`,
+`OPENSRO_TRIGGER_NESTS`) `TestEveryGodScriptExport`, `TestWorld63ScriptExport` and `TestFGWExport` pass too.
+
+### OURS, OPEN
+
+- OURS: the GM aids; the gate uids 0x7d400000.. (event zones now 0x7d000000..0x7d3fffff); the hole's
+  refusals on OpenSRO's use reply with their codes; the town test passing everywhere when no region
+  table is loaded (as the stall network's); the assigned drops served for MOB_GOD_* monsters only;
+  the return-point revive leaving the layer; a No to a summon telling the master nothing.
+- INFERRED: the pillar's summon at its death; the recall list's states and minutes; the summon's
+  checks and their order past the READ ones; the 20 s request life; `0xB034`'s trailing 02.
+- OPEN: why no monster spawned in the measured layer (so the doors, the boss and the rewards are
+  still unmeasured); where the doors stand (W1); what a treasure box gives beyond its talisman
+  groups; the hole's "24 hours"; a disconnect inside; the recall's No.
+
 ## Eight-hundred-and-sixty-ninth round, lane W1: the server's instanced game worlds -- the reference data, the world unit, the session plumbing off the global hub, warps between worlds, the lifecycle, the entry rules, the re-entry limit, the exit NPC, event zones and the trigger engine
 
 The user: "let's start forgotten world work", "and make sure instanced worlds are virtually

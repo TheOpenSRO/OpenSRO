@@ -268,6 +268,11 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		if !isAcademyTime {
 			out, isInstance = instanceCommand(ctx, sess, req.Line)
 		}
+		// Round 869 lane W3 (OURS, QA aids): /fgw, /fgwtime, /fgwkill,
+		// /fgwpillar (fgw_gm.go).
+		if !isAcademyTime && !isInstance {
+			out, isInstance = fgwCommand(ctx, sess, req.Line)
+		}
 		if !isAcademyTime && !isInstance {
 			out = deps.Run(ctx, actor, req.Line)
 		}

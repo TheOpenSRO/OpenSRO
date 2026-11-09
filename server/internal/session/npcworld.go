@@ -325,6 +325,8 @@ func sortedCells(cells []combat.Cell) []combat.Cell {
 // reconcile sends the whole window (a world entry: the client cleared its
 // roster).
 func forgetNPCWindow(id uint64) {
+	// Round 869 lane W3: and the gates it held (fgw.go).
+	forgetGateWindow(id)
 	if w := npcWorldRuntime.Load(); w != nil {
 		w.mu.Lock()
 		delete(w.sent, id)

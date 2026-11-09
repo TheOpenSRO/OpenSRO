@@ -8,9 +8,11 @@ package main
 // (the NPC nests: the exit and recall NPCs).
 
 import (
+	"context"
 	"log/slog"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
@@ -18,6 +20,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/nest"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/species"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trigger"
@@ -64,6 +67,7 @@ func installGameWorlds(logger *slog.Logger, dir, npcsCSV string, hub *world.Hub,
 	mgr := gameworld.NewManager(gameworld.ManagerConfig{Ref: ref, Hooks: hooks, Logger: logger})
 	mgr.AttachOpenWorld(hub, monsters, ground)
 	deps.Spawn = b.spawn
+	deps.PillarSummon = b.pillarSummon
 	session.SetGameWorldDeps(deps)
 	session.SetGameWorlds(mgr)
 	instanced, triggers := 0, 0
@@ -195,4 +199,78 @@ func (b *gameWorldBuild) spawn(w *gameworld.World, code, zone string, x, y, z fl
 	m := w.Monsters.SpawnHatched(zone, d.species, x, d.homeY, z, d.maxHP, d.defense, d.attack, d.gold,
 		combat.Hatch{HomeX: x, HomeZ: z})
 	return m.ID, true
+}
+
+// pillarSummon is a dead dimension pillar's summon (round 869 lane W3,
+// session/fgw_pillar.go): its species' summon skill ('ssou', the nest DB's
+// _RefSkill rows) through the minion executor (nest.ExecuteSummon, READ
+// s:0x596e50), each minion spawned around the pillar with its tuple's class
+// clamped by level (READ, round 661's spawnMinions).
+func (b *gameWorldBuild) pillarSummon(w *gameworld.World, pillar combat.Monster) []int64 {
+	if b.table == nil || b.db == nil || b.db.Skills == nil {
+		return nil
+	}
+	row, ok := b.table.ByID(pillar.RefObjID)
+	if !ok {
+		return nil
+	}
+	var tuples []nest.SummonTuple
+	for _, sid := range row.Skills {
+		if sk := b.db.Skills[sid]; sid != 0 && sk != nil && sk.Summon {
+			tuples = sk.Tuples
+			break
+		}
+	}
+	if len(tuples) == 0 {
+		return nil
+	}
+	minion := make([]species.Row, len(tuples))
+	have := make([]bool, len(tuples))
+	for i, t := range tuples {
+		if t.RefObjID != 0 {
+			minion[i], have[i] = b.table.ByID(t.RefObjID)
+		}
+	}
+	bc := func(i int) int {
+		if have[i] {
+			return minion[i].BCRadius
+		}
+		return 0
+	}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano() ^ pillar.ID))
+	var ids []int64
+	for _, p := range nest.ExecuteSummon(nest.RandDice(rng), tuples, pillar.BCRadius, bc) {
+		if !have[p.Tuple] {
+			continue
+		}
+		spec, _ := specFromRow(monsterSpec{}, minion[p.Tuple], b.lookup)
+		spec.Rarity = nest.ClampClassByLevel(nest.Class(tuples[p.Tuple].Class), spec.Level).Rank()
+		x, z := pillar.X+p.DX, pillar.Z+p.DZ
+		spec.Zone, spec.X, spec.Z = pillar.Zone, x, z
+		d := hatchDataOf(spec)
+		m := w.Monsters.SpawnHatched(pillar.Zone, d.species, x, pillar.Y, z, d.maxHP, d.defense, d.attack, d.gold,
+			combat.Hatch{HomeX: x, HomeZ: z})
+		ids = append(ids, m.ID)
+	}
+	return ids
+}
+
+// fgwHoleRefs maps each world codename to the first (lowest id) hole item
+// naming it in its Desc2 (round 869 lane W3).
+func fgwHoleRefs(list func(context.Context) ([]*refdata.Item, error)) map[string]uint32 {
+	out := map[string]uint32{}
+	items, err := list(context.Background())
+	if err != nil {
+		return out
+	}
+	for _, it := range items {
+		if !gameworld.IsHoleType(it.TypeID1, it.TypeID2, it.TypeID3, it.TypeID4) || it.Desc2 == "" {
+			continue
+		}
+		k := strings.ToUpper(strings.TrimSpace(it.Desc2))
+		if cur, ok := out[k]; !ok || uint32(it.ID) < cur {
+			out[k] = uint32(it.ID)
+		}
+	}
+	return out
 }

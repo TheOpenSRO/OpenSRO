@@ -567,6 +567,10 @@ The wire is the original's (`PROTOCOL_DECISION.md`); OpenSRO's own zone-change m
   fires. MEASURED in the data: the FGW entry notice's banner action has Delay 20,000 and its system line
   0, so with this reading the system line comes at once and the banner 20 s later
   (`forgotten_world.md` 6 read it as both after 20 s: the cumulative reading). Which is right is OPEN.
+  **Round 869 lane W3: neither** -- MEASURED, the banner and the system line both arrive with the
+  arrival (right after the client's 0x3012), banner first; the engine now runs every action at once,
+  in binding order, and holds a message for a character still behind the arrival guard until its
+  0x3012 (`forgotten_world.md` 11, stage 2 notes). What the column means stays OPEN.
 - **The party condition** (CanEnter's 2) is applied only to a world whose EntryType is 6 (INFERRED: the
   type READ to switch the party rule on; every FGW world's is 0, and a solo entry MEASURED was refused 3,
   not 0x1c2a).

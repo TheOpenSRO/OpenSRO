@@ -351,3 +351,22 @@ func BuildRef(tables Tables) (*Ref, error) {
 	}
 	return ref, nil
 }
+
+// UserLevelBand is the band a trigger's USER_LEVEL conditions admit (round
+// 869 lane W3: the pillar triggers' killer band): SIGN_LEFT_BIG_EQUAL n is
+// the low end, SIGN_RIGHT_BIG_EQUAL n the high one (compare's INFERRED
+// reading); 0 for an end no condition names.
+func (t *Trigger) UserLevelBand() (lo, hi int) {
+	for _, c := range t.Conditions {
+		if c.Kind != CondUserLevel {
+			continue
+		}
+		switch c.Params.Get("SIGN_SELECT") {
+		case "SIGN_LEFT_BIG_EQUAL":
+			lo = int(c.Params.Int("NUM_INPUT"))
+		case "SIGN_RIGHT_BIG_EQUAL":
+			hi = int(c.Params.Int("NUM_INPUT"))
+		}
+	}
+	return lo, hi
+}

@@ -373,6 +373,9 @@ func (v *monsterAOI) reconcile() {
 	if w := npcWorldFor(v.world); w != nil {
 		w.reconcile(ents)
 	}
+	// Round 869 lane W3 (fgw.go): the Dimension-hole gates standing in this
+	// world, the same window.
+	reconcileGates(v.world, ents)
 }
 
 // windowDiff is the cells the window centred on to holds and the one centred
