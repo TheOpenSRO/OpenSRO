@@ -113,10 +113,19 @@ func (rt *academyRuntime) now() time.Time {
 // (OURS, a QA aid; 0 on a server nobody moved it on).
 var academyClockOffset atomic.Int64
 
+// academyClockMoved wakes RunAcademyRanks after a /academytime (round 873,
+// OURS: the moved clock's 00:00 runs the daily update, so a QA run reaches a
+// ranked academy and its guardian's honor buffs).
+var academyClockMoved = make(chan struct{}, 1)
+
 // AdvanceAcademyClock moves the academy's clock forward by d (the GM's
 // /academytime) and returns the new academy time.
 func AdvanceAcademyClock(d time.Duration) time.Time {
 	academyClockOffset.Add(int64(d))
+	select {
+	case academyClockMoved <- struct{}{}:
+	default:
+	}
 	if rt := academyRT.Load(); rt != nil {
 		return rt.now()
 	}

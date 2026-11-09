@@ -432,6 +432,9 @@ func RunAcademyRanks(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
+		case <-academyClockMoved:
+			// Round 873 (OURS, the QA aid's): a /academytime past the
+			// day's 00:00 runs the update, as the day turning would.
 		}
 	}
 }
@@ -447,7 +450,9 @@ func (rt *academyRuntime) updateRanks(ctx context.Context, now time.Time) {
 		rt.push(ch.CampID, academy.EncodeRank(ch.Rank), 0)
 		if c, err := rt.Store.Get(ctx, ch.CampID); err == nil {
 			if g, ok := c.Guardian(); ok {
-				if _, online := entityOf(rt.Hub, g.CharID); online {
+				// Round 873: wherever it plays (an instance is a hub of
+				// its own, hubOfChar).
+				if _, online := entityOf(hubOfChar(rt.Hub, g.CharID), g.CharID); online {
 					rt.engageHonorBuffs(ctx, g.CharID, ch.Rank)
 				}
 			}
@@ -469,17 +474,19 @@ func HonorBuffsFor(rank int) []string {
 	return honorBuffCodes[rank-1:]
 }
 
-// engageHonorBuffs is s:0x5dd8b0: the guardian's honor buffs cancelled, then
-// engaged by rank. What each does is its skill row's own params (OPEN here:
-// OpenSRO's skill data).
+// engageHonorBuffs is s:0x5dd8b0: the guardian's honor buffs cancelled
+// (s:0x5dd8f0: GObjPC::FUN_0059f0c0 for each of the table's skills), then
+// engaged by rank (s:0x5dd9b0: FUN_0059b8d0 for each). What each does is its
+// skill row's own params (OPEN here: OpenSRO's skill data). Round 873: the
+// cancel and the engage under one buffLock, both told to honorAudience.
 func (rt *academyRuntime) engageHonorBuffs(ctx context.Context, characterID int64, rank int) {
-	rt.cancelHonorBuffs(characterID)
 	if rt.Skills == nil {
 		return
 	}
 	l := buffLock(characterID)
 	l.Lock()
 	defer l.Unlock()
+	rt.cancelHonorBuffsLocked(ctx, characterID)
 	now := time.Now()
 	for _, code := range HonorBuffsFor(rank) {
 		ref, err := rt.Skills.GetSkillByCode(ctx, code)
@@ -491,13 +498,39 @@ func (rt *academyRuntime) engageHonorBuffs(ctx context.Context, characterID int6
 			rt.log().Info("academy: an honor buff was refused", "character_id", characterID, "skill", code, "refused", refused)
 			continue
 		}
-		zone := zoneOf(rt.Hub, characterID)
-		broadcastBuffEnd(zone, characterID, ended, sp)
-		sendAboutOwner(zone, characterID, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
+		to := honorAudience(rt.Hub, characterID)
+		broadcastBuffEnd(to, characterID, ended, sp)
+		sendAboutOwner(to, characterID, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
 		if len(rec.Stats) > 0 {
 			pushOwnerStats(characterID)
 		}
 	}
+}
+
+// honorAudience is who hears a guardian's honor buffs start and end: the
+// players in view of it (zoneOf) and always its own client. Round 873: a
+// character its arrival holds out of the world (world.Entity.Held, from a
+// teleport to its client's 0x3012) is in no message block, so zoneOf left
+// its own client out. A revive at the return point (the move, then the
+// revive while held) engaged the buffs there unheard -- the zone change had
+// already listed the old tokens (sendOwnBuffs) -- and the arrival's engage
+// then ended tokens the client never had and added new ones: every honor
+// icon twice on the board (MEASURED in a player's log: tokens 12-15 kept,
+// 16-19 ended unseen, 20-23 added). A rank change or the disband during a
+// load went unheard the same way.
+func honorAudience(hub *world.Hub, characterID int64) []world.Entity {
+	to := zoneOf(hub, characterID)
+	for _, e := range to {
+		if e.CharacterID == characterID {
+			return to
+		}
+	}
+	if h := hubOfChar(hub, characterID); h != nil {
+		if e, ok := h.EntityByCharacterID(characterID); ok && e.Session != nil {
+			to = append(to, e)
+		}
+	}
+	return to
 }
 
 // academyTimeCommand is a GM's /academytime <duration> (round 865, OURS, a
@@ -523,11 +556,23 @@ func academyTimeCommand(line string) (gm.Result, bool) {
 }
 
 // academyRevived re-engages a guardian's honor buffs at its revival (READ
-// s:0x46cd5e: the revive's call to s:0x5dd8b0).
+// s:0x46cd5e, in the resurrection's answer trs_wait_response::vslot_002
+// s:0x46cb30, and the resurrection scroll's s:0x49ff20: each calls
+// s:0x5dd8b0 after GObjPC::Revive(1)). Round 873: not while its arrival
+// holds it -- the return point, which OpenSRO revives after the move. READ:
+// the 0x3053 handler (s:0x50fee0) takes option 1 with GObjPC::Revive(0) and
+// calls no s:0x5dd8b0; the re-entry's CGObjPC::vslot_391 (s:0x4df9e0)
+// engages them, academyArrived at the client's 0x3012. One engage, as the
+// original, where OpenSRO made two (the first one unheard, honorAudience).
 func academyRevived(ctx context.Context, characterID int64) {
 	rt := academyRT.Load()
 	if rt == nil {
 		return
+	}
+	if h := hubOfChar(rt.Hub, characterID); h != nil {
+		if e, ok := h.EntityByCharacterID(characterID); ok && e.Held {
+			return
+		}
 	}
 	c := rt.campOf(ctx, characterID)
 	if c == nil {
@@ -538,26 +583,31 @@ func academyRevived(ctx context.Context, characterID int64) {
 	}
 }
 
-// cancelHonorBuffs ends the guardian's honor buffs (the disband, and before
-// each engage).
+// cancelHonorBuffs ends the guardian's honor buffs (the disband, s:0x5dd8f0).
 func (rt *academyRuntime) cancelHonorBuffs(characterID int64) {
 	if rt.Skills == nil {
 		return
 	}
+	l := buffLock(characterID)
+	l.Lock()
+	defer l.Unlock()
+	rt.cancelHonorBuffsLocked(context.Background(), characterID)
+}
+
+// cancelHonorBuffsLocked is cancelHonorBuffs with buffLock(characterID)
+// held (the engage's first half too), told to honorAudience.
+func (rt *academyRuntime) cancelHonorBuffsLocked(ctx context.Context, characterID int64) {
 	ids := map[int64]bool{}
 	for _, code := range honorBuffCodes {
-		if ref, err := rt.Skills.GetSkillByCode(context.Background(), code); err == nil && ref != nil {
+		if ref, err := rt.Skills.GetSkillByCode(ctx, code); err == nil && ref != nil {
 			ids[ref.ID] = true
 		}
 	}
 	if len(ids) == 0 {
 		return
 	}
-	l := buffLock(characterID)
-	l.Lock()
-	defer l.Unlock()
 	ended, sp := buffBooks.EndWhere(characterID, func(r buff.Record) bool { return ids[r.SkillID] })
 	if len(ended) > 0 {
-		broadcastBuffEnd(zoneOf(rt.Hub, characterID), characterID, ended, sp)
+		broadcastBuffEnd(honorAudience(rt.Hub, characterID), characterID, ended, sp)
 	}
 }
