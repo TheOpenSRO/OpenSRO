@@ -244,7 +244,9 @@ close (the decompiler drops them).
 **Leaving** (READ):
 - **The exit NPC**: **0x751D {u32 npc}** (s:0x51c050; the NPC offers interaction 0x29). Refusals:
   dead 0x1c36, trade transport 0x1c10, busy 2. Otherwise the warp to the return point; reply
-  **0xB51D {u8 1}**, or {u8 != 1, u16 code} in error category 1 (c:0x89a760).
+  **0xB51D {u8 1}**, or {u8 != 1, u16 code} in error category 1 (c:0x89a760) -- whose switch has no text
+  for 0x1c36, 0x1c10 or 2, so a refused exit shows nothing (READ round 869: 0x7b8c82 sends every code
+  outside 3, 0x1807 and 0x180b..0x18ff to the default 0x7b913a).
 - **The layer closes** (section 4): everyone to the return point.
 - OPEN (not read, not measured): where a player revives after dying inside; what a logout or a
   disconnect inside keeps (INFERRED from the table: `_CharInstanceWorldData` keeps the region and

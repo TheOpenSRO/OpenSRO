@@ -195,10 +195,12 @@ teleport sequence into the layer's random start position; or `{02, code}`:
 | 0x1c0b | `INTERACTION_FAIL_IM_BUSY` |
 | 0x1c10 | `CANT_USE_TELEPORT_WITH_TRADECART` |
 | 0x1c25 | `OUT_OF_REQUIRED_NUMBER_FOR_TELEPORT` ("Max number is reached") |
-| 0x1c28 | (party rule: not the master's layer) -- no text case read (OPEN) |
+| 0x1c28 | (party rule: not the master's layer) -- `EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_02` ("Party master has not move or difficulty does not match party masters choice. Therefore unable to move."; READ round 869, table 0x7bbaac) |
 | 0x1c29 | `INSTANCEDUNGEON_ERROR_MSG_01` ("Unable to create instance dungeon now") |
-| 0x1c2a..0x1c2c | party condition / job suit or voucher / level -- texts OPEN in category 0xd |
-| 0x1c2f | portal access refused -- text OPEN |
+| 0x1c2a | party condition -- `EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_05` ("Party over 2 members are able to enter.") |
+| 0x1c2b | job suit or voucher -- `FLAGWAR_GAME_JOB_NOT_ENTER` ("Cannot enter while in Free PvP mode or wearing Job outfit.") |
+| 0x1c2c | level -- `EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_01` ("Unable to move. Level requirement does not match.") |
+| 0x1c2f | portal access refused -- `EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_02` ("Has no right to move on.") |
 | 0x1c30 | `CANT_USE_TELEPORT_WITH_RIDE` |
 | 0x1c31 | `INSTANCEDUNGEON_ERROR_MSG_02` ("already inside of instance dungeon") |
 | 0x1c32 | `UIIT_MGS_ERR_GOD_LIMIT_TIME` ("Unable to enter instance dungeon, because re-entering time limit is not over.") |
@@ -305,27 +307,44 @@ All on **0x300C {u16 0x0C1C, u8 1 | 2, str key}** (1 = banner, 2 = system line),
 ## 8. Leaving, and the party recall
 
 - **The exit NPC** (`NPC_INS_EXIT_TELEPORT`, `quest\ins_quest_teleport.bsr`, interaction 0x29): the
-  talk line "Exit Dungeon" (`UIIT_STT_DUNGEON_EXIT`, c:0x7014bb) sends **0x751D {u32 npc}**; the
-  player goes back to the return point (where they used the gate). `game_worlds.md` 5.
+  talk line "Exit Dungeon" (`UIIT_STT_DUNGEON_EXIT`, c:0x7014bb: id 0x29 -> line type 0x3e) sends
+  **0x751D {u32 npc}** (CIF_NPCTalk::FUN_008234f0, case 0x3e; the talk window stays); the player goes back
+  to the return point (where they used the gate). `game_worlds.md` 5. 0xB51D's refusals go to category 1,
+  whose switch (0x7b8c82) has a text only for 3, 0x1807 and 0x180b..0x18ff: the exit's own refusals
+  (0x1c36, 0x1c10, 2) show **nothing** (READ round 869).
 - **The recall NPC** (`NPC_FWORLD_RECALL_PARTY`, `Dun\Property\com\property_recall.bsr`, interaction
   0x27; one beside the start, others along the way), READ both sides:
-  1. The talk line "Summon Party member" (`UIIT_PAG_PARTY_SUMMON`, c:0x70144a) sends **0x7519 {u32
-     npc}** (c:0x823290). Server (s:0x51bb70): not in a party 0x1c33, not the master 0x1c34, fewer
+  1. The talk line "Summon Party member" (`UIIT_PAG_PARTY_SUMMON`, c:0x70144a: id 0x27 -> line type
+     0x3d) sends **0x7519 {u32 npc}** (c:0x823290; CIF_NPCTalk::FUN_007020c0 case 0x3d, which leaves the
+     talk window open). Server (s:0x51bb70): not in a party 0x1c33, not the master 0x1c34, fewer
      than 2 members 2; otherwise a 15.0 s job (0x7d1b, s:0xb45f08).
-  2. **0xB519** (c:0x89a590): {u8 1, u8 n, n x {u32 char id, u8 state, u8 count, u16 minutes}} or
-     {u8 2, u16 code} (category 0xd). It fills the summon window `CNIFSummonPartyUserWnd` (window 0xd6):
+  2. **0xB519** (c:0x89a590): {u8 1, u8 n, n x {u32 char id, u8 state, u8 level, u16 minutes}} or
+     {u8 != 1, u16 code} (category 0xd); the window's list is cleared before the result is tested. The u8
+     printed "%d" sits under the `PARAM_LV` header (MEASURED in the .2dt; INFERRED the member's level).
+     It fills the summon window `CNIFSummonPartyUserWnd` (window 0xd6, built from
+     **`res_ui\nifsummonpartyuserwnd.2dt`** -- MEASURED in Media.pk2, 51 records; READ c:0x787119..0x787154
+     loads it at game start, string 0xdb90bc -- 496 x 320, caption `UIIT_PAG_PARTY_SUMMON`, eight
+     `CNIFSummonPartyUserSlot` rows (ids 13..48, statics 14 name / 15 state / 16 level / 17 minutes), the
+     Summon button 7; a row is selected with the left button (c:0x609a80) and the button is enabled only
+     for a selected row in state 2 that is not waiting (c:0x6096e0, c:0x607730)):
      each member's name, state (1 "Completed" `UIIT_STT_FORT_SMITH_COMPLETE`, 2
      `UIIT_CTL_PARTY_SUMMON_POSSILBE`, 3 `..._IMPOSSILBE` with its tooltip), "%d" and "%d Minutes".
-  3. A slot's Summon sends **0x751A {u32 char id}** (c:0x823350; server s:0x51bd60, master only
-     0x1c34); the slot then waits 20,000 ms. A refusal comes on 0xB51A in **category 0x23**:
-     0x1c0b busy, 0x1c25 number full, 0x1c2b job outfit, 0x1c2c level, 0x1c30 transport, 0x1c36
-     dead, 0x1c37 outside town, 0x1c39 guild war, 0x1c3a wait (`UIIT_STT_PARTY_SUMMON_IMPOSSILBE_n`,
-     `PARTY_SUMMON_WAIT_ERR`).
+  3. The window's Summon (button 7, c:0x607c80) sends **0x751A {u32 char id}** of the selected row
+     (c:0x823350; server s:0x51bd60, master only 0x1c34); that row then waits 20,000 ms (timer 100,
+     c:0x607c20; its end re-enables the button for the selected row, c:0x607c50). A refusal comes on
+     0xB51A {u8 != 1, u16 code} in **category 0x23** (READ round 869, index bytes 0x7bc118, targets
+     0x7bc0f0): 0x1c0b `INTERACTION_FAIL_IM_BUSY`, 0x1c25 `_IMPOSSILBE_2`, 0x1c2b `_4`, 0x1c2c `_3`,
+     0x1c30 `_6`, 0x1c36 `_8`, 0x1c37 `_1`, 0x1c39 `_7` (`UIIT_STT_PARTY_SUMMON_IMPOSSILBE_n`), 0x1c3a
+     `UIIT_STT_PARTY_SUMMON_WAIT_ERR`; any other code no text.
   4. The member gets the push **0x751A {u32 requester, u32, u32, str name}** (c:0x89f010 ->
      c:0x608a60) and a confirm box "%s is summoning you. Do you wish to accept the summon?"
      (`UIIT_STT_GNGWC_PARTY_MEMBER_CALL`) with a 20,000 ms timer; the timer closes it silently.
-  5. The answer **0x751C {u32 requester, u32 own id, u8 1 | 0}** (c:0x823410; server s:0x51bf10);
-     reply 0xB51C {u8 1} or {u8 2, u16 code} (category 0xd); the master gets 0xB51A.
+  5. The answer **0x751C {u32 requester, u32 own id, u8 1 | 0}** (c:0x823410; server s:0x51bf10): the
+     requester is the push's first u32 (+0x7c8), the own id the party's own JID (the party object's +0x18,
+     which 0xB060 writes, c:0x880059; READ c:0x6076d3..0x607702); the push's second u32 (+0x7cc) is
+     never sent. The box is a MsgBoxSimple (GInterface::FUN_007884e0, 360 x 151, style 1 Yes / No,
+     `UIIT_STT_CONFIRM_BOX`); a push while one is up keeps its text and restarts the timer.
+     Reply 0xB51C {u8 1} or {u8 2, u16 code} (category 0xd); the master gets 0xB51A.
   INFERRED: an accepted member is warped from the town into the master's layer (the member's
   CanEnter applies). Not measured (nobody entered, section 5).
 - **Time-out**: the warnings, then everyone to their return point (`game_worlds.md` 4).
@@ -393,7 +412,7 @@ ticket clears the group cool time (`GROUP_INS_GOD`) and belongs to a later clien
 5. **Inside** -- the 0x300C notices (both kinds), the doors (0x351E), the destroy alarm. Test with
    recorded bytes.
 6. **Exit and recall talk lines** -- interaction 0x29 / 0x27 lines; the summon window
-   (`CNIFSummonPartyUserWnd`, its resource file OPEN), the 20 s per-slot wait, the member's confirm box
+   (`CNIFSummonPartyUserWnd`, `res_ui\nifsummonpartyuserwnd.2dt`), the 20 s per-slot wait, the member's confirm box
    with its 20 s timer, 0x751C. Test: window rows from a recorded 0xB519.
 7. **Re-entry icon** -- the buff-bar icon (foundation client 5) with this group's texts. Test.
 8. **QA** -- real clicks against the lane server: make a gate, enter, kill a hive, see the door open,
@@ -426,10 +445,10 @@ start in parallel with the world unit because it only needs the interfaces):
    process until the user says otherwise.
 
 OPEN: why the measured warp was refused (code 3); the type-6 gate's client test; the gate
-record's +0x260; codes 0x1c28, 0x1c2a..0x1c2c and 0x1c2f's texts in category 0xd; the hole's "24
+record's +0x260; the hole's "24
 hours" expiry; how the talismans (`ITEM_TALISMAN_TOGUI_*`, `_FLAME_*`, `_WRECK_A_*` / `_B_*`) and
 other rewards drop (no assigned drops on any FGW monster but the ENVY_DROP pillars; the drop groups
-were not read); the treasure boxes' contents; the summon window's resource file; everything in
+were not read); the treasure boxes' contents; what the 0x751A push's second and third u32 mean; everything in
 `game_worlds.md` 13.
 
 **Choices:**
