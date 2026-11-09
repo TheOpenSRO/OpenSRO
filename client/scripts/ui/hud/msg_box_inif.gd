@@ -35,9 +35,23 @@ class_name MsgBoxInif
 ##   (c:0x647909..0x647989). MEASURED at 1280 x 1024: the box 500 wide from x
 ##   487, Yes from x 640 and No from x 739 -- the layout's OK (72) and CANCEL
 ##   (152) plus those shifts.
+## - **DUNGEON_TICKET, the Forgotten World timer reset** (round 872, OURS: no
+##   box of the original asks it -- its binaries never reference the
+##   entrance ticket or its text, forgotten_world.md 9): box 0x2e's shell and
+##   title with the action's text key, by default
+##   UIIT_STT_DUNGEON_FREE_TICKET_ENTER_FORGOTTEN ("If you use the Dungeon
+##   entrance ticket, dungeon cooltime will  disappear. Do you want to use the
+##   entrance ticket?", the archive's own text). Too long for box 0x2e's one
+##   line, it is split after its first sentence onto two lines (OURS layout:
+##   0x2e's text rect raised by 9 and a second line 0x12 below it).
 ## The buttons keep the layout's own text (UIIT_CTL_YES / UIIT_CTL_NO).
 
-enum Kind { RETURN_POINT = 0x05, ITEM_USE = 0x1f, BUFF_CANCEL = 0x20, MAGIC_HOLE = 0x2e }
+enum Kind { RETURN_POINT = 0x05, ITEM_USE = 0x1f, BUFF_CANCEL = 0x20, MAGIC_HOLE = 0x2e, DUNGEON_TICKET = 0x1001 }
+
+## The Forgotten World reset's default text (round 872).
+const DUNGEON_TICKET_TEXT := "UIIT_STT_DUNGEON_FREE_TICKET_ENTER_FORGOTTEN"
+## Its two lines' rects (OURS, see the header).
+const DUNGEON_TICKET_RECTS := [Rect2(0x14, 0x2e, 0x1cc, 0xf), Rect2(0x14, 0x40, 0x1cc, 0xf)]
 
 ## Box 0x2e's own size and moves (READ, see the header).
 const MAGIC_HOLE_SIZE := Vector2(0x1f4, 0x90)
@@ -52,20 +66,22 @@ const MESSAGES := ["GDR_MBIN_STATIC_MESSAGE1", "GDR_MBIN_STATIC_MESSAGE2", "GDR_
 var kind := 0
 
 ## Builds box `box_kind` (Kind) named `box_name`. `zone_name` fills the
-## return point's first line. False without the layout or for another kind.
-func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: String = "") -> bool:
+## return point's first line; `text_key` is DUNGEON_TICKET's text (its
+## default when ""). False without the layout or for another kind.
+func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: String = "", text_key: String = "") -> bool:
 	var title := ""
 	var lines: Array = []
 	match box_kind:
 		Kind.RETURN_POINT:
 			title = "UIIT_STT_AGREEMENT_BOX"
-		Kind.ITEM_USE, Kind.BUFF_CANCEL, Kind.MAGIC_HOLE:
+		Kind.ITEM_USE, Kind.BUFF_CANCEL, Kind.MAGIC_HOLE, Kind.DUNGEON_TICKET:
 			title = "UIIT_STT_CONFIRM_BOX"
 		_:
 			return false
 	kind = box_kind
 	name = box_name
-	var box_size := MAGIC_HOLE_SIZE if box_kind == Kind.MAGIC_HOLE else SIZE
+	var wide := box_kind == Kind.MAGIC_HOLE or box_kind == Kind.DUNGEON_TICKET
+	var box_size := MAGIC_HOLE_SIZE if wide else SIZE
 	if not build_shell(builder, box_size, title, title, LAYOUT, "MsgBoxINIF"):
 		return false
 	match box_kind:
@@ -80,6 +96,9 @@ func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: 
 				text("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_2", "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_2")]
 		Kind.MAGIC_HOLE:
 			lines = [text("UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE", "UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE")]
+		Kind.DUNGEON_TICKET:
+			var key := text_key if text_key != "" else DUNGEON_TICKET_TEXT
+			lines = split_sentence(text(key, key))
 	_add_background(builder, box_size)
 	for i in MESSAGES.size():
 		var n := node(MESSAGES[i])
@@ -94,8 +113,12 @@ func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: 
 	var certify := node("GDR_MBIN_BTN_CERTIFY")
 	if certify != null:
 		certify.visible = false
-	if box_kind == Kind.MAGIC_HOLE:
-		_place(node(MESSAGES[0]), MAGIC_HOLE_TEXT_RECT)
+	if box_kind == Kind.DUNGEON_TICKET:
+		for i in DUNGEON_TICKET_RECTS.size():
+			_place(node(MESSAGES[i]), DUNGEON_TICKET_RECTS[i])
+	if wide:
+		if box_kind == Kind.MAGIC_HOLE:
+			_place(node(MESSAGES[0]), MAGIC_HOLE_TEXT_RECT)
 		for pair in [["GDR_MBIN_BTN_OK", MAGIC_HOLE_OK_SHIFT], ["GDR_MBIN_BTN_CANCEL", MAGIC_HOLE_CANCEL_SHIFT]]:
 			var b := node(String(pair[0]))
 			if b != null:
@@ -103,6 +126,14 @@ func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: 
 				r.position.x += float(pair[1])
 				_place(b, r)
 	return true
+
+## DUNGEON_TICKET's two lines (OURS): `s` split after its first sentence
+## (". "), or the whole text on one line when it has no second sentence.
+static func split_sentence(s: String) -> Array:
+	var at := s.find(". ")
+	if at < 0:
+		return [s]
+	return [s.substr(0, at + 1), s.substr(at + 2).strip_edges()]
 
 ## A message line's text ("" when it has none).
 func line(i: int) -> String:

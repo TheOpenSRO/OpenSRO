@@ -28526,6 +28526,8 @@ func _npc_talk_net() -> NpcTalkNet:
 	NetClient.register_handler(NpcShopDefNet.OP_SHOP_DEF, _on_npc_shop_def)
 	# Round 786: and then the instances its goods are listed as.
 	NetClient.register_handler(NpcShopDefNet.OP_SHOP_GOODS, _on_npc_shop_goods)
+	# Round 872: and then its action lines (the Forgotten World timer reset).
+	NetClient.register_handler(NpcShopDefNet.OP_ACTION_DEF, _on_npc_action_def)
 	_npc_talk.selected.connect(_on_npc_selected)
 	# Round 869: a CITeleportGate's reply (the Dimension hole's gate).
 	_npc_talk.is_gate = func(uid: int) -> bool: return _structure_world().is_gate(uid)
@@ -28581,6 +28583,8 @@ func _connect_game_world() -> void:
 	NetClient.world_notice.connect(_on_world_notice)
 	NetClient.timed_job.connect(_on_timed_job)
 	NetClient.teleport_use_ack.connect(_on_teleport_use_ack)
+	# Round 872 (OURS): the Forgotten World timer reset's answer.
+	NetClient.register_handler(GameWorldNet.OP_TIMERS_RESET, _on_timers_reset)
 	var roster: StructureSpawnNet.Roster = NetClient.structure_roster
 	for uid in roster.structures:
 		_on_structure_spawned(roster.structures[uid])
@@ -28689,6 +28693,30 @@ func _on_timed_job(d: Dictionary) -> void:
 	var g := GameWorldNet.group_gauge(int(rec["cool_s"]), remaining_s)
 	_hud_buff_board.add_world_group(int(d["group"]), String(rec["icon"]), int(g["total_ms"]), int(g["remaining_ms"]))
 
+## OpTimersReset (round 872, OURS; GameWorldNet.OP_TIMERS_RESET): the system
+## line, then the cleared item cool time groups leave ItemCooldowns (the
+## hotbar's and the tooltip's re-use time with them) and the cleared world
+## groups' re-entry icons leave the buff board, without a relog.
+func _on_timers_reset(data: PackedByteArray) -> void:
+	var r := GameWorldNet.decode_timers_reset(data)
+	if r.is_empty():
+		print("TIMERS RESET: malformed (%d bytes)" % data.size())
+		return
+	var text := String(r["text"])
+	var line := _resolve_any_text(text, text) if text.begins_with("UIIT_") else text
+	var cleared: Array = []
+	for g in (r["cool_groups"] as PackedInt32Array):
+		if _item_cooldowns.clear_group(int(g)):
+			cleared.append("g%d" % int(g))
+	var icons: Array = []
+	for g in (r["world_groups"] as PackedInt32Array):
+		if _hud_buff_board != null and _hud_buff_board.remove_world_group(int(g)):
+			icons.append(int(g))
+	print("TIMERS RESET status %d: cool %s cleared %s, world %s icons removed %s -- %s" % [int(r["status"]),
+		str(r["cool_groups"]), str(cleared), str(r["world_groups"]), str(icons), line])
+	if line != "":
+		_log_system(line, HudSystemMessage.TYPE_GAME)
+
 ## Round 869 (QA): the structures in view and drawn, the doors' models, the
 ## talk window's lines and the re-entry icon, as JSON.
 func _qa_game_world_report() -> String:
@@ -28725,6 +28753,10 @@ func _qa_game_world_report() -> String:
 			if e != null:
 				(out["group_icons"] as Array).append({"group": g, "icon": String(e.info.get("icon", "")), "gauge": e.gauge_value(),
 					"left_ms": e.remaining_ms(), "tooltip": _hud_buff_board.tooltip_for(_hud_buff_board.WORLD_GROUP_TOKEN_BASE + g)})
+	# Round 872: the Dimension holes' re-use time left (group 0x71's entry,
+	# what a hole's own check reads) and every item timer's count.
+	out["hole_reuse_ms"] = _item_cooldowns.left_ms(ItemCooldowns.data_key(0, 0x71))
+	out["item_timers"] = _item_cooldowns.count()
 	return JSON.stringify(out)
 
 ## OpNpcShopDef (round 783): kept by uid for the select reply that follows.
@@ -28759,6 +28791,36 @@ func _on_npc_shop_goods(data: PackedByteArray) -> void:
 	var def: Dictionary = _npc_shop_defs[uid]
 	print("NPC shop goods: uid %d, %d listed instance(s) (%d in all)" % [uid, (goods["instances"] as Dictionary).size(),
 		(def["instances"] as Dictionary).size()])
+
+## OpNpcActionDef (round 872, OURS; NpcShopDefNet.OP_ACTION_DEF): the action
+## lines of the definition just sent (they follow its store lines).
+func _on_npc_action_def(data: PackedByteArray) -> void:
+	var acts := NpcShopDefNet.decode_actions(data)
+	if acts.is_empty():
+		print("NPC action lines: malformed (%d bytes)" % data.size())
+		return
+	var uid := int(acts["uid"])
+	if not _npc_shop_defs.has(uid):
+		print("NPC action lines: uid %d has no definition" % uid)
+		return
+	NpcShopDefNet.merge_actions(_npc_shop_defs[uid], acts)
+	print("NPC action lines: uid %d, %d line(s) %s" % [uid, (acts["actions"] as Array).size(), str(acts["actions"])])
+
+## An action line's click (round 872, OURS): its confirm box, whose Yes
+## sends OpNpcAction {npc, id}; with no confirm key the request goes at once.
+func _npc_action_selected(action: Dictionary) -> void:
+	var uid := _talk_npc_uid()
+	var id := int(action["id"])
+	var send := func() -> void:
+		print("NPC action %d -> npc %d" % [id, uid])
+		if NetClient.is_connected_to_server():
+			NetClient._send(NpcShopDefNet.OP_ACTION, NpcShopDefNet.encode_action(uid, id))
+	var key := String(action.get("confirm", ""))
+	if key == "":
+		send.call()
+		return
+	if _hud_panels.open_fgw_reset_box(key, send) == null:
+		print("NPC action %d: no confirm box (no layout); not sent" % id)
 
 ## The 0xB046 reply: the store (id 1) or the storage (3) opens; the talk
 ## line (2) keeps the talk window (INTERACTMODE 5; what the original then
@@ -29326,6 +29388,12 @@ func _npc_services(code: String, ids: Variant = null) -> Array:
 		store_lines = NpcShopDefNet.store_lines(_talk_shop_def)
 	var out := NpcServiceReader.services_from_ids(id_set, store_lines, _guild_id, _guild_master, NetClient.job_kind,
 		_player_level, NetClient.job_alias == "", NetClient.academy.in_academy())
+	# Round 872 (OURS): its action lines, right after its store lines (the
+	# Test Items NPC has no other line, so after the last of them).
+	if not _talk_shop_def.is_empty():
+		for a in NpcShopDefNet.action_lines(_talk_shop_def):
+			var label := String(a["label"])
+			out.append(NpcServiceReader.Service.new(String(a["key"]), _resolve_any_text(label, label), label))
 	# Round 844: the guild storage's line is red below guild level 2.
 	if NetClient.guild_data.level < GuildStorageController.MIN_LEVEL:
 		NpcTalkView.line_colours["guild_storage"] = NpcTalkView.COLOUR_MENU_LOW_LEVEL
@@ -29576,6 +29644,13 @@ func _on_npc_service_selected(key: String) -> void:
 		return
 	# Round 869 (lane C1): the instance NPCs' lines 0x3d / 0x3e (RecallFlow).
 	if _recall_flow != null and _recall_flow.handle_service(key):
+		return
+	# Round 872 (OURS): an action line of an NPC of OpenSRO's own (the Test
+	# Items NPC's Forgotten World timer reset).
+	if key.begins_with(NpcShopDefNet.ACTION_KEY_PREFIX):
+		var action := NpcShopDefNet.action_of(_talk_shop_def, key)
+		if not action.is_empty():
+			_npc_action_selected(action)
 		return
 	# A server NPC's store, storage and talk lines (round 727): the open
 	# request 0x7046 with the line's id (CIF_NPCTalk::FUN_007020c0: kind 1 ->
@@ -39301,6 +39376,11 @@ func _on_use_item_result(result) -> void:
 		# A refusal with an engine code (round 778: the scrolls') is the
 		# archive's own category-1 message (ErrorText.scroll_line).
 		var refused_line: String = ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error
+		# Round 872: a refusal worded by a text key (the Forgotten World
+		# ticket's UIIT_MSG_DUNGEON_FREE_TICKET_ENTERD_NOT_USED) is the
+		# archive's own text.
+		if result.code == 0 and String(result.error).begins_with("UIIT_"):
+			refused_line = _resolve_any_text(result.error, result.error)
 		# Round 862 (READ, ErrorText.SCROLL_BANNER_CODES): some codes raise
 		# the warning banner as well, as the original does.
 		if ErrorText.scroll_banner(result.code):

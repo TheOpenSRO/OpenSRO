@@ -606,6 +606,17 @@ func add_world_group(group: int, icon: String, total_ms: int, remaining_ms: int)
 func world_group_entry(group: int) -> Buff:
 	return _by_token.get(WORLD_GROUP_TOKEN_BASE + group)
 
+## Takes the group's re-entry icon down at once (round 872, OURS: the
+## Forgotten World timer reset's OpTimersReset; READ c:0x88dad0: the
+## original's 0x320C never removes it -- remaining <= 0 is ignored). Answers
+## whether it was up.
+func remove_world_group(group: int) -> bool:
+	var b: Buff = _by_token.get(WORLD_GROUP_TOKEN_BASE + group)
+	if b == null or b.kind != KIND_WORLD_GROUP:
+		return false
+	_remove(b)
+	return true
+
 func remove_academy_buff(token: int) -> void:
 	var b: Buff = _by_token.get(token)
 	if b != null and (b.kind == KIND_ACADEMY_SAVE or b.kind == KIND_ACADEMY_RESERVE):

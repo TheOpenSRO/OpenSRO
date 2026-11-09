@@ -137,5 +137,12 @@ func ratio(key: String) -> float:
 func count() -> int:
 	return _entries.size()
 
+## Drops COOLTIME group `group`'s entry at once (round 872, OURS: the
+## Forgotten World timer reset's OpTimersReset; the original has no message
+## that clears a running entry -- GameWorldNet.OP_TIMERS_RESET has the
+## READ). Answers whether one was there.
+func clear_group(group: int) -> bool:
+	return _entries.erase("g%d" % group)
+
 func clear() -> void:
 	_entries.clear()

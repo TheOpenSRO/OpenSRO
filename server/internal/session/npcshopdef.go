@@ -30,6 +30,11 @@ type NPCShopDef struct {
 	// (round 783, the user's choice for the Test Items NPC; OURS). The same
 	// items bought anywhere else keep their own price.
 	Free bool
+	// ActionsPayload is OpNpcActionDef's bytes (round 872,
+	// testnpc.Shop.EncodeActions), sent after the goods; nil for none.
+	ActionsPayload []byte
+	// Actions is what each of its action ids runs (testnpc.Action.Do).
+	Actions map[uint8]string
 }
 
 // InstallNPCShopDefs installs the definitions (nil or empty: none).
@@ -75,5 +80,19 @@ func sendNPCShopDef(sess *gateway.Session, uid uint32) {
 		for _, g := range d.GoodsPayloads {
 			sess.Send(&proto.Packet{Opcode: testnpc.OpNpcShopGoods, Data: g})
 		}
+		// Round 872: its action lines, after the store's (OpNpcActionDef).
+		if len(d.ActionsPayload) > 0 {
+			sess.Send(&proto.Packet{Opcode: testnpc.OpNpcActionDef, Data: d.ActionsPayload})
+		}
 	}
+}
+
+// npcActionOf is what action id of the NPC with unique id uid runs ("" for
+// none: a retail NPC, or an id its definition lacks).
+func npcActionOf(uid uint32, id uint8) string {
+	p := npcShopDefs.Load()
+	if p == nil {
+		return ""
+	}
+	return (*p)[uid].Actions[id]
 }

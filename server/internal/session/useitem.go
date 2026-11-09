@@ -1150,6 +1150,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if isDimensionHole(it) {
 			return useDimensionHole(ctx, sess, hub.For(sess), inv, note, characterID, it, held, have)
 		}
+		// Round 872 (fgwreset.go, OURS): the Forgotten World entrance
+		// ticket (TypeID 3/3/13/23) clears the Forgotten World timers.
+		if isForgottenWorldTicket(it) {
+			return useForgottenWorldTicket(ctx, sess, inv, characterID, it, held, have)
+		}
 		// Round 795 (cossummon.go, cosuse.go): a pet item or a ride scroll
 		// calls its COS out; a pet's potion, food, revival or clock acts on
 		// the pet it names.

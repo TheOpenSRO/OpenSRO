@@ -172,6 +172,51 @@ static func encode_timed_job_group(group: int, remaining_s: int) -> PackedByteAr
 	b.encode_s32(5, remaining_s)
 	return b
 
+## OpTimersReset 0x00BF (round 872, OURS; server/internal/session/fgwreset.go):
+## the answer to a Forgotten World timer reset (the Test Items NPC's line or
+## the entrance ticket) and what this client drops:
+##
+##   u8 status        1 done, 2 nothing to reset, 3 refused
+##   u16 n, n bytes   the system line (a text key or text)
+##   u8 n, n x u32    the item cool time groups cleared (ItemCooldowns "g<n>")
+##   u8 n, n x u32    the world groups whose re-entry icon goes (0x320C's)
+##
+## OURS because the original has no such message (READ): 0x320C kind 0x0C
+## with remaining <= 0 does nothing (c:0x88dad0), and the 0x3077 restore
+## (c:0x88e090) sets cool times through std::map inserts (c:0x9b95d0 by group,
+## c:0x9b99d0 by id) that keep an entry already there; an entry goes only
+## when the per-frame tick (c:0x9b9f60) finds it spent.
+const OP_TIMERS_RESET := 0x00bf
+const TIMERS_RESET_DONE := 1
+const TIMERS_RESET_NOTHING := 2
+const TIMERS_RESET_REFUSED := 3
+
+## Decodes OP_TIMERS_RESET: {} when malformed, else {"status", "text",
+## "cool_groups": PackedInt32Array, "world_groups": PackedInt32Array}.
+static func decode_timers_reset(data: PackedByteArray) -> Dictionary:
+	if data.size() < 3:
+		return {}
+	var n := data.decode_u16(1)
+	var at := 3 + n
+	if at > data.size():
+		return {}
+	var out := {"status": int(data[0]), "text": data.slice(3, at).get_string_from_utf8()}
+	for key in ["cool_groups", "world_groups"]:
+		if at + 1 > data.size():
+			return {}
+		var c := int(data[at])
+		at += 1
+		if at + 4 * c > data.size():
+			return {}
+		var list := PackedInt32Array()
+		for i in range(c):
+			list.append(data.decode_u32(at + 4 * i))
+		at += 4 * c
+		out[key] = list
+	if at != data.size():
+		return {}
+	return out
+
 ## The gauge c:0x805a40 case 0xe sets: total = the record's cool time (s) x
 ## 1000; elapsed = total - remaining x 1000 (READ). {"total_ms", "remaining_ms"}.
 static func group_gauge(cool_s: int, remaining_s: int) -> Dictionary:
