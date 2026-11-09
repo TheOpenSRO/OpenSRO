@@ -1080,3 +1080,23 @@ func buff_count(main_list: bool = true) -> int:
 
 func buff(token: int) -> Buff:
 	return _by_token.get(token)
+
+## Round 873 (QA): the skill icons on the board as the scene holds them --
+## "skills={<skill>: <icons>} twice=[<skill>...] icons=[<token>:<skill>...]",
+## counting the slots in the tree that are not playing their end. A skill
+## with two icons is the honor buffs' fault this round fixed.
+func qa_report() -> String:
+	var count := {}
+	var icons: Array = []
+	for list in [_main, _second]:
+		for entry in list:
+			var b: Buff = entry
+			if b.skill_id <= 0 or b.ending or b.slot == null or not b.slot.is_inside_tree() or not b.slot.visible:
+				continue
+			count[b.skill_id] = int(count.get(b.skill_id, 0)) + 1
+			icons.append("%d:%d" % [b.token, b.skill_id])
+	var twice: Array = []
+	for s in count:
+		if int(count[s]) > 1:
+			twice.append(s)
+	return "skills=%s twice=%s icons=%s" % [str(count), str(twice), str(icons)]
