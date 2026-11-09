@@ -6739,6 +6739,9 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 	if price >= 0:
 		ctx["gp_price"] = guild_gp_price(item_id)
 		ctx["honor_price"] = honor_price(item_id)
+	# Round 869: a Dimension hole's re-use time left (c:0x66f400).
+	if DimensionHole.is_hole(item.type_ids):
+		ctx["reuse_left_ms"] = DimensionHole.reuse_left_ms(item, item_reuse_left)
 	# Round 789: a devil's spirit's ability lines (AvatarTables, READ
 	# c:0x67b460) at its plus.
 	if item.is_devil_spirit():
@@ -7330,6 +7333,11 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		# 0x1c, c:0x676f1a).
 		if is_guild_recall_item(item_types(item_id)):
 			open_guild_recall_confirm(slot)
+			return
+		# Round 869: a Dimension hole opens box 0x2e at once, with no local
+		# check (IFSlotWithHelp::FUN_00676570, c:0x677006 -> 0x666f80).
+		if DimensionHole.is_hole(item_types(item_id)):
+			open_magic_hole_box(slot)
 			return
 		# Round 838: an item used ON another item enters the use-on mode.
 		if is_use_on_item(item_types(item_id)):
@@ -10341,6 +10349,52 @@ func open_guild_recall_confirm(slot: int) -> PartyMatchConfirm:
 	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
 	_qa_print_buttons(box, str(box.name))
 	return box
+
+# --- Round 869: the Dimension hole (DimensionHole; forgotten_world.md 3) -------
+
+## The item re-use time left for an item id, in ms (World3D binds it to its
+## ItemCooldowns, DimensionHole.reuse_left_ms); unbound, nothing is running.
+var item_reuse_left: Callable
+## The hole's box up (QA), or null.
+var magic_hole_box: MsgBoxInif = null
+
+## Box 0x2e for the hole at bag `slot` (MsgBoxInif.Kind.MAGIC_HOLE); Yes runs
+## FUN_00797d90's case 0x2e: the plain item use through SendItem_HandleUseItem
+## (DimensionHole.use).
+func open_magic_hole_box(slot: int) -> MsgBoxInif:
+	if is_instance_valid(magic_hole_box):
+		magic_hole_box.close()
+	if _builder == null:
+		return null
+	var box := MsgBoxInif.new()
+	if not box.build_kind(_builder, MsgBoxInif.Kind.MAGIC_HOLE, "MagicHoleConfirm"):
+		box.free()
+		return null
+	box.accepted.connect(func(_t: String) -> void: use_magic_hole(slot))
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	magic_hole_box = box
+	_qa_print_buttons(box, str(box.name))
+	print("HudPanels: Dimension hole box 0x2e for bag slot %d" % slot)
+	return box
+
+## The box's Yes: the client's own re-use check, then the use (DimensionHole).
+## Returns what was done: "sent", "reuse" (the line, no packet) or "none".
+func use_magic_hole(slot: int) -> String:
+	var id := _bag_item_id_at_slot(slot)
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(id) if id >= 0 else null
+	if NetClient.current_character_name == "":
+		return "none"
+	var send := func(s: int) -> void:
+		print("HudPanels: Dimension hole %d at bag slot %d used" % [id, s])
+		NetClient.use_item(NetClient.current_character_name, s)
+	var refuse := func(code: int) -> void:
+		var line := ErrorText.scroll_line(code, _text_table(), DimensionHole.REUSE_FALLBACK)
+		print("HudPanels: Dimension hole at bag slot %d refused by the client (re-use time left): %s" % [slot, line])
+		system_notice.emit(line)
+	var done := DimensionHole.on_yes(item, slot, item_reuse_left, send, refuse)
+	return done
 
 ## The recall scroll: TypeID 3/3/12/3 (c:0x667000).
 static func is_guild_recall_item(types: PackedInt32Array) -> bool:

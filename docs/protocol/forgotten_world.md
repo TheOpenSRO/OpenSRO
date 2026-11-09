@@ -66,9 +66,9 @@ Params:
 | Param1 | 1..4 | the grade (stars); the client's tooltip and gate window read it (c:0x9e9eb0 via +0x2b4, INFERRED offset) |
 | Desc2 | `INS_GOD_...` | the world codename |
 | Param3 / Param4 | band min / max | level check at use (0x1851, READ) and the "Level : 35 - 50" lines |
-| Param5 | 4 or 8 | INFERRED the max players ("Number of Players Allowed: 1-4", MEASURED tooltip) |
+| Param5 | 4 or 8 | the max players: READ c:0x66f400 prints UIIT_STT_PARTY_SUMMON "Number of Players Allowed: 1-%d" with ref +0x2c4 (Param5; round 869) |
 | Param6 | 6 | the gate's access condition type (READ s:0x4865a0: 6 = only the creator's character, 7 = the creator's party); with 7 the user must also be the party master (READ s:0x4a0979, 0x184f). **Every row of the measured data is 6** (choice 1) |
-| Param7 | 1 | INFERRED the min players |
+| Param7 | 1 | INFERRED the min players (the tooltip's "1-" is the text's own, not Param7: READ c:0x66f400) |
 | Desc8 | `INS_QUEST_TELEPORT` | the gate structure (RefObjID 19556, TypeID 4/1/2, `quest\ins_quest_teleport.bsr`) |
 | Desc9 | `UIIT_STT_GOD_TOGUI` / `_FLAME` / `_WRECK` | the theme's name |
 | Param10 / Desc10 | 18,000,000 / `COOLTIME:0x00000071` | the reuse cool time: 5 h, group 0x71 shared by every hole |
@@ -103,6 +103,20 @@ Forgotten World?" (`UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE`, c:0x6479b9). OK sends 
 **0x704C {u8 slot, u16 0x3E6C}** (c:0x79865d -> c:0x797660). Success plays
 `prim\snd\ui\gacha_change_2.wav` (c:0x87b47c). A hole whose cool time is running is refused by the
 client itself with the system line "Still have time to reuse the item." and **no packet** (MEASURED).
+
+READ in round 869 (stage 2): box 0x2e is CMessageBoxManager's (UI_SILKMALL 0x644c90, case at c:0x6478c2):
+title UIIT_STT_CONFIRM_BOX, the box resized to 0x1f4 x 0x90, the line at (0x14, 0x37) 0x1cc x 0xf, OK moved
+right by 0x50 and Cancel by 0x64 from the MsgBoxINIF layout's 72 / 152 (MEASURED: Yes from x 640, No from x
+739, the box from x 487 at 1280 x 1024). The client's re-use refusal is not in the bag use but in the send
+path SendItem_HandleUseItem (c:0x7972aa..0x7972f5), so it comes **after** the box's Yes: the item's
+COOLTIME group's time left (ref +0x53c != 0, 0x9ba5c0) or else its own id's (0x9ba6e0) ->
+FUN_00778190(1, 0x185b, ...), UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY, nothing sent. The success sound is
+played by path (0xdda9d8) through the sound manager at the player's +0x90 (c:0x87b485..0x87b4bf) after
+Item_OnUseItemResult's success for type word 0x3E6C. The tooltip (c:0x66f400, from the generic builder
+0x6860a0 at c:0x686aa3): "Level : %s" with "%d - %d" of Param3 / Param4, "Grade : %s" by Param1 (a
+Param1 outside 1..4 prints the level's text again: the switch's default leaves the buffer), "Number of
+Players Allowed: 1-%d" with Param5, "%s %d%s" UIIT_STT_ITEM_FORMAT_COOLTIME with the re-use time left / 1000
+or the item's own cool time / 1000, all white, after the description's blank.
 
 **Server checks, in order** (READ, item use for TypeID 3/3/12/7 -> `GObjPC::FUN_004a08e0`):
 1. outside a safe zone (town) -> **0x184b**; the client has no text case for it (READ: default);

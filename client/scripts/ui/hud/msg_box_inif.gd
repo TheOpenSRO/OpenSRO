@@ -25,9 +25,25 @@ class_name MsgBoxInif
 ## - **0x20, a cancellable buff** (case 0x647d9a): title UIIT_STT_CONFIRM_BOX;
 ##   +0x840 UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_1 (0xd9c2c0); +0x844
 ##   _CANCLE_2 (0xd9c260, joining case 5's tail at 0x645065); +0x808 hidden.
+## - **0x2E, the Dimension hole** (round 869; the case at c:0x6478c2): opened
+##   at once by a bag use of a TypeID 3/3/12/7 item (c:0x677006 -> 0x666f80,
+##   then `push 0x2e` at c:0x677039). Title UIIT_STT_CONFIRM_BOX (0xd89140,
+##   c:0x64798b); +0x840 UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE (0xd9c500,
+##   c:0x6479b9); +0x808 hidden (c:0x6479f1). The case resizes the box to
+##   0x1f4 x 0x90 (c:0x6478c7), moves +0x840 to (0x14, 0x37) at 0x1cc x 0xf
+##   (c:0x6478d5..0x647907), and moves +0x800 right by 0x50 and +0x804 by 0x64
+##   (c:0x647909..0x647989). MEASURED at 1280 x 1024: the box 500 wide from x
+##   487, Yes from x 640 and No from x 739 -- the layout's OK (72) and CANCEL
+##   (152) plus those shifts.
 ## The buttons keep the layout's own text (UIIT_CTL_YES / UIIT_CTL_NO).
 
-enum Kind { RETURN_POINT = 0x05, ITEM_USE = 0x1f, BUFF_CANCEL = 0x20 }
+enum Kind { RETURN_POINT = 0x05, ITEM_USE = 0x1f, BUFF_CANCEL = 0x20, MAGIC_HOLE = 0x2e }
+
+## Box 0x2e's own size and moves (READ, see the header).
+const MAGIC_HOLE_SIZE := Vector2(0x1f4, 0x90)
+const MAGIC_HOLE_TEXT_RECT := Rect2(0x14, 0x37, 0x1cc, 0xf)
+const MAGIC_HOLE_OK_SHIFT := 0x50
+const MAGIC_HOLE_CANCEL_SHIFT := 0x64
 
 const SIZE := Vector2(0x134, 0x94)
 const MESSAGES := ["GDR_MBIN_STATIC_MESSAGE1", "GDR_MBIN_STATIC_MESSAGE2", "GDR_MBIN_STATIC_MESSAGE3",
@@ -43,13 +59,14 @@ func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: 
 	match box_kind:
 		Kind.RETURN_POINT:
 			title = "UIIT_STT_AGREEMENT_BOX"
-		Kind.ITEM_USE, Kind.BUFF_CANCEL:
+		Kind.ITEM_USE, Kind.BUFF_CANCEL, Kind.MAGIC_HOLE:
 			title = "UIIT_STT_CONFIRM_BOX"
 		_:
 			return false
 	kind = box_kind
 	name = box_name
-	if not build_shell(builder, SIZE, title, title, LAYOUT, "MsgBoxINIF"):
+	var box_size := MAGIC_HOLE_SIZE if box_kind == Kind.MAGIC_HOLE else SIZE
+	if not build_shell(builder, box_size, title, title, LAYOUT, "MsgBoxINIF"):
 		return false
 	match box_kind:
 		Kind.RETURN_POINT:
@@ -61,7 +78,9 @@ func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: 
 		Kind.BUFF_CANCEL:
 			lines = [text("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_1", "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_1"),
 				text("UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_2", "UIIT_MSG_QUESTION_SILKMALL_ITEM_USE_CANCLE_2")]
-	_add_background(builder, SIZE)
+		Kind.MAGIC_HOLE:
+			lines = [text("UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE", "UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE")]
+	_add_background(builder, box_size)
 	for i in MESSAGES.size():
 		var n := node(MESSAGES[i])
 		if n != null:
@@ -75,6 +94,14 @@ func build_kind(builder: UiBuilder, box_kind: int, box_name: String, zone_name: 
 	var certify := node("GDR_MBIN_BTN_CERTIFY")
 	if certify != null:
 		certify.visible = false
+	if box_kind == Kind.MAGIC_HOLE:
+		_place(node(MESSAGES[0]), MAGIC_HOLE_TEXT_RECT)
+		for pair in [["GDR_MBIN_BTN_OK", MAGIC_HOLE_OK_SHIFT], ["GDR_MBIN_BTN_CANCEL", MAGIC_HOLE_CANCEL_SHIFT]]:
+			var b := node(String(pair[0]))
+			if b != null:
+				var r: Rect2 = b.get_meta(UiBuilder.AUTHORED_RECT_META, Rect2(b.position, b.size))
+				r.position.x += float(pair[1])
+				_place(b, r)
 	return true
 
 ## A message line's text ("" when it has none).
@@ -88,3 +115,8 @@ func line(i: int) -> String:
 ## CMessageBoxManager's placement (0x6ec5d0).
 func place_on(view: Vector2) -> void:
 	position = Vector2(floorf(view.x / 2.0) - 0x9a, floorf(view.y / 2.0) - 0x4a)
+
+## The OK (true) or CANCEL button, for OPENSRO_QA_INPUT's `boxyes:` / `boxno:`
+## (round 869: `boxyes:MagicHoleConfirm`).
+func _find_button(ok: bool) -> BaseButton:
+	return button("GDR_MBIN_BTN_OK" if ok else "GDR_MBIN_BTN_CANCEL")

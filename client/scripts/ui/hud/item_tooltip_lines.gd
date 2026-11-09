@@ -141,6 +141,9 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 	# Round 795: a pet's summon scroll (3/2/1) has its own builder.
 	if is_pet_scroll(item):
 		return compose_pet_scroll(item, ctx)
+	# Round 869: a Dimension hole (3/3/12/7) through the generic builder.
+	if DimensionHole.is_hole(item.type_ids):
+		return compose_dimension_hole(item, ctx)
 	if not is_equipment_shape(item):
 		return _compose_other(item, ctx)
 
@@ -451,6 +454,36 @@ static func _compose_other(item: ItemTableReader.Item, ctx: Dictionary) -> Array
 # devil's spirit builder FUN_0067b460 (c:0x67b460), and the avatar line table
 # FUN_00669e20 / FUN_0066a8c0 (c:0x669e20, c:0x66a8c0) that the blue lines of a
 # TypeID3 13 item and the grant window's rows go through.
+
+# --- the Dimension hole (round 869) ---------------------------------------------
+
+## A Dimension hole's tooltip, the generic builder UI_SILKMALL::FUN_006860a0
+## (READ) on its path for this type: the name (0x67a570) and a blank; "%s: %s"
+## UIIT_STT_ITEM_TYPE + the type, beige (0xffefdaa4, c:0x6862b8); the blank
+## every item gets (c:0x68683b); the description (0x66f850) and its blank;
+## the hole's lines (0x66f400, c:0x686a95 -> DimensionHole.tooltip_lines; no
+## blank after them, c:0x686aa8 jumps past the shared one); then the
+## requirement block and the price as _compose_other draws them. ctx's
+## "reuse_left_ms" is the hole's re-use time left (0 none). MEASURED (grade 1,
+## 1280 x 1024): name, "Sort of item: Dimension Hole", the description, a
+## blank, "Level : 35 - 50", "Grade : ★", "Number of Players Allowed: 1-4",
+## "Reuse time 18000Second", "Quantity 1". The quantity line is not built
+## (OPEN, as for every other item: 0x6784a0's amount line is not read).
+static func compose_dimension_hole(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
+	var lines: Array = []
+	var t: Callable = ctx.get("text", func(_k, f): return f)
+	_name_line(lines, item, ctx, 0, false)
+	_add(lines, "%s: %s" % [t.call("UIIT_STT_ITEM_TYPE", "Sort of item"), String(ctx.get("type_name", ""))], BEIGE)
+	_blank(lines)
+	_description(lines, ctx)
+	for l in DimensionHole.tooltip_lines(item, t, int(ctx.get("reuse_left_ms", 0))):
+		_add(lines, String(l), WHITE)
+	if item.required_character_level() > 0 or item.req_gender != ItemTableReader.REQ_GENDER_ANY:
+		_requirements(lines, item, ctx, t)
+	if int(ctx.get("price", -1)) >= 0:
+		_blank(lines)
+	_price(lines, ctx, t)
+	return lines
 
 ## The avatar line table (c:0x669e20): MATTR code -> [PARAM key, unit key].
 const AVATAR_PARAMS := {
