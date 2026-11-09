@@ -250,6 +250,19 @@ var npc_roster := NpcSpawnNet.Roster.new()
 signal npc_spawned(rec: NpcSpawnNet.Record)
 signal npc_despawned(uid: int)
 
+## Round 869: the game worlds' runtime structures (the Dimension hole's gate,
+## the trigger doors; StructureSpawnNet) in view, by uid, and their messages
+## (GameWorldNet): 0x351E, the 0x300C words 0x0C1A / 0x0C1C, 0x320C, 0xB05A.
+var structure_roster := StructureSpawnNet.Roster.new()
+signal structure_spawned(rec: StructureSpawnNet.Record)
+signal structure_despawned(uid: int)
+signal event_zone_state(uid: int, state: int)
+signal world_notice(n: Dictionary)
+signal timed_job(d: Dictionary)
+signal teleport_use_ack(d: Dictionary)
+## RefObjID -> StructureSpawnNet kind, handed over with the item table.
+var _structure_kinds: Dictionary = {}
+
 ## Round 795: the COS in view (CICCos records: rides, transports, pets) by
 ## uid, as last spawned, and this character's own COS data (0x30C8) by uid --
 ## kept so a World3D that comes up after them adopts them (cos_spawned /
@@ -1030,6 +1043,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	crest_cache.clear()
 	buff_roster.clear()
 	npc_roster.clear()
+	structure_roster.clear()
 	user_roster.clear()
 	user_guilds.clear()
 	war_guilds.clear()
@@ -1131,6 +1145,7 @@ func disconnect_from_server() -> void:
 	safe_trade_last = {}
 	buff_roster.clear()
 	npc_roster.clear()
+	structure_roster.clear()
 	user_roster.clear()
 	user_guilds.clear()
 	war_guilds.clear()
@@ -2318,8 +2333,10 @@ func _dispatch_lobby(r: LobbyNet.Result) -> void:
 ## players' spawn records (round 737, UserSpawnNet): World3D hands it over
 ## as soon as it has read it. The spawns that waited for it are read now, in
 ## the order they came.
-func set_spawn_item_rows(rows: Dictionary, cos_kind: Callable = Callable()) -> void:
-	_spawn_types = UserSpawnNet.Types.new(rows, cos_kind)
+func set_spawn_item_rows(rows: Dictionary, cos_kind: Callable = Callable(), structure_kinds: Dictionary = {}) -> void:
+	if not structure_kinds.is_empty():
+		_structure_kinds = structure_kinds
+	_spawn_types = UserSpawnNet.Types.new(rows, cos_kind, _structure_kinds)
 	_cos_kind = cos_kind
 	var waiting := _pending_spawns
 	_pending_spawns = []
@@ -2407,6 +2424,15 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 				_pending_spawns.append({"op": op, "data": data, "rx": _rx_msec})
 				return
 			if data.size() >= 4 and not UserSpawnNet.is_player_ref(data.decode_u32(0)):
+				# Round 869: a structure (StructureSpawnNet).
+				var sk := _spawn_types.structure_kind_of(data.decode_u32(0))
+				if sk != StructureSpawnNet.KIND_NONE:
+					var st := StructureSpawnNet.decode_single_spawn(data, sk)
+					if st == null:
+						push_warning("NetClient: a 0x3015 that does not read as a structure record (%d bytes)" % data.size())
+					else:
+						structure_spawned.emit(structure_roster.spawn(st))
+					return
 				var k := _spawn_types.cos_kind_of(data.decode_u32(0))
 				if k != 0:
 					var c := CosSpawnNet.decode_single_spawn(data, k)
@@ -2428,7 +2454,9 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 				_user_spawned(rec)
 		NpcSpawnNet.OP_SINGLE_DESPAWN:
 			var gone := NpcSpawnNet.decode_single_despawn(data)
-			if cos_roster.has(gone):
+			if structure_roster.despawn(gone):
+				structure_despawned.emit(gone)
+			elif cos_roster.has(gone):
 				_cos_despawned(gone)
 			elif user_roster.has(gone):
 				if _spawn_log:
@@ -2471,6 +2499,8 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 					npc_spawned.emit(npc_roster.spawn(rec))
 				for c in g.cos:
 					_cos_spawned(c)
+				for st in g.structures:
+					structure_spawned.emit(structure_roster.spawn(st))
 				if not g.users.is_empty():
 					var qt := Time.get_ticks_usec()
 					user_group_begin.emit()
@@ -2491,7 +2521,9 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 					print("NetClient: group despawn of %d player(s)%s" % [players,
 						(" at %d ms" % Time.get_ticks_msec()) if FrameSplit.on else ""])
 				for u in g.uids:
-					if cos_roster.has(u):
+					if structure_roster.despawn(u):
+						structure_despawned.emit(u)
+					elif cos_roster.has(u):
 						_cos_despawned(u)
 					elif user_roster.has(u):
 						_user_left(u)
@@ -2534,6 +2566,14 @@ func _group_step() -> bool:
 				user_group_begin.emit()
 			_user_spawned(rec)
 			job["users"] = int(job["users"]) + 1
+		elif _spawn_types != null and _spawn_types.structure_kind_of(UserSpawnNet.peek_ref(r)) != 0:
+			# Round 869: a structure (StructureSpawnNet).
+			var st := StructureSpawnNet.read_record(r, _spawn_types.structure_kind_of(UserSpawnNet.peek_ref(r)))
+			if st == null:
+				push_warning("NetClient: a group spawn that does not read (record %d of %d: %s) -- the rest dropped" % [int(job["i"]), count, r.error])
+				job["i"] = count
+				break
+			structure_spawned.emit(structure_roster.spawn(st))
 		elif _spawn_types != null and _spawn_types.cos_kind_of(UserSpawnNet.peek_ref(r)) != 0:
 			# Round 795: a COS (CICCos, cos_spawn.gd).
 			var c := CosSpawnNet.read_record(r, _spawn_types.cos_kind_of(UserSpawnNet.peek_ref(r)))
@@ -2582,7 +2622,9 @@ func _despawn_step(job: Dictionary) -> bool:
 			break
 		var u: int = uids[int(job["i"])]
 		job["i"] = int(job["i"]) + 1
-		if cos_roster.has(u):
+		if structure_roster.despawn(u):
+			structure_despawned.emit(u)
+		elif cos_roster.has(u):
 			_cos_despawned(u)
 		elif user_roster.has(u):
 			job["users"] = int(job["users"]) + 1
@@ -2773,6 +2815,7 @@ func _dispatch(p: Packet) -> void:
 				# session at the entry (session.forgetNPCWindow) and spawns
 				# the whole window again.
 				npc_roster.clear()
+				structure_roster.clear()
 				# And the players in view (round 737): they follow as spawns.
 				_start_user_view(result.frame)
 			enter_world_result.emit(result)
@@ -3189,7 +3232,8 @@ func _dispatch(p: Packet) -> void:
 			# COS's (round 795) by the COS table, which comes with the item
 			# table: before both, the record waits with the players'.
 			if p.data.size() >= 4 and (UserSpawnNet.is_player_ref(p.data.decode_u32(0)) \
-					or _spawn_types == null or cos_kind_of(p.data.decode_u32(0)) != 0):
+					or _spawn_types == null or cos_kind_of(p.data.decode_u32(0)) != 0 \
+					or _structure_kinds.has(p.data.decode_u32(0))):
 				_user_spawn_message(NpcSpawnNet.OP_SINGLE_SPAWN, p.data)
 			else:
 				var single := NpcSpawnNet.decode_single_spawn(p.data)
@@ -3199,7 +3243,7 @@ func _dispatch(p: Packet) -> void:
 					npc_spawned.emit(npc_roster.spawn(single))
 		NpcSpawnNet.OP_SINGLE_DESPAWN:
 			var gone := NpcSpawnNet.decode_single_despawn(p.data)
-			if gone >= 0 and (user_roster.has(gone) or cos_roster.has(gone) or not _pending_spawns.is_empty()):
+			if gone >= 0 and (user_roster.has(gone) or cos_roster.has(gone) or structure_roster.has(gone) or not _pending_spawns.is_empty()):
 				# A player's (round 737): in order behind any spawn still
 				# waiting for the item table.
 				_user_spawn_message(NpcSpawnNet.OP_SINGLE_DESPAWN, p.data)
@@ -3389,6 +3433,10 @@ func _dispatch(p: Packet) -> void:
 			# Round 801: a word the unique notices do not carry (0x0c01, the
 			# thief's town veto) goes to its own signal.
 			if p.data.size() >= 2 and p.data.decode_u16(0) not in [UniqueNoticeNet.KIND_SPAWN, UniqueNoticeNet.KIND_KILL]:
+				# Round 869: the game worlds' two words (GameWorldNet).
+				if GameWorldNet.is_world_notice(p.data):
+					_world_notice(p.data)
+					return
 				notice_word.emit(p.data.decode_u16(0))
 				return
 			var un := UniqueNoticeNet.decode(p.data)
@@ -3586,11 +3634,42 @@ func _dispatch(p: Packet) -> void:
 						last_equipment_instances.merge(_note_instances("worn", more), true)
 					ItemInstance.CONTAINER_WAREHOUSE:
 						last_storage_instances.merge(_note_instances("warehouse", more), true)
+		GameWorldNet.OP_NOTICE:
+			# Round 869: retail's own 0x300C (the server may send the game
+			# worlds' words on it rather than on OpUniqueNotice).
+			if GameWorldNet.is_world_notice(p.data):
+				_world_notice(p.data)
+			elif p.data.size() >= 2:
+				notice_word.emit(p.data.decode_u16(0))
+		StructureSpawnNet.OP_EVENT_ZONE_STATE:
+			# Round 869 (READ c:0x89a7b0): only field 0x10 is acted on.
+			var ez := StructureSpawnNet.decode_event_zone_state(p.data)
+			if not ez.is_empty() and int(ez["field"]) == StructureSpawnNet.EVENT_FIELD_TRIGGER:
+				var known: StructureSpawnNet.Record = structure_roster.structures.get(int(ez["uid"]))
+				if known != null:
+					known.state = int(ez["state"])
+				event_zone_state.emit(int(ez["uid"]), int(ez["state"]))
+		GameWorldNet.OP_TIMED_JOB:
+			var tj := GameWorldNet.decode_timed_job(p.data)
+			if not tj.is_empty():
+				timed_job.emit(tj)
+		GameWorldNet.OP_TELEPORT_USE_ACK:
+			var ta := GameWorldNet.decode_teleport_ack(p.data)
+			if not ta.is_empty():
+				teleport_use_ack.emit(ta)
 		_:
 			if _extra_handlers.has(p.opcode):
 				(_extra_handlers[p.opcode] as Callable).call(p.data)
 			elif _should_warn_unhandled(p.opcode):
 				push_warning("NetClient: unhandled opcode 0x%04x (warned once per connection)" % p.opcode)
+
+## Round 869: a 0x300C word of the game worlds, decoded (GameWorldNet).
+func _world_notice(data: PackedByteArray) -> void:
+	var n := GameWorldNet.decode_notice(data)
+	if n.is_empty():
+		push_warning("NetClient: a game-world notice that does not read (%d bytes)" % data.size())
+		return
+	world_notice.emit(n)
 
 ## Round 789: an avatar move's 0xB034 applied as the client applies it (READ
 ## c:0x87ba20): 0x24 moves bag src-13 into avatar storage dst, 0x23 avatar

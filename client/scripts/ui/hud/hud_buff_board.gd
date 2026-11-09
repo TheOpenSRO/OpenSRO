@@ -575,6 +575,37 @@ func add_academy_buff(kind: int, token: int, total_ms: int, remaining_ms: int, t
 		b.slot.gauge.visible = b.total_ms > 0
 	return b
 
+## Round 869: the world group's re-entry limit (0x320C kind 0x0C ->
+## FUN_00777f20(0xe, group, 1, remaining s, record +0x00); game_worlds.md 5).
+## READ c:0x805a40 case 0xe: total = the record's cool time (s) x 1000, elapsed
+## = total - remaining x 1000, the gauge shown (+0x70 = 1); the icon is the
+## record's icon (+0x3c), the tooltip c:0x800a10's kind-0xe arm
+## (GameWorldNet.group_tooltip): the subject, the explanation and
+## "%s: %d%s %d%s %d%s" with hours, minutes and seconds left. A second push
+## for the same group refreshes it (the entry is keyed by the group).
+const KIND_WORLD_GROUP := 0x0E
+## The token space of the group entries (OURS: a group id is not a skill
+## token; kept clear of the server's buff tokens).
+const WORLD_GROUP_TOKEN_BASE := 0x7E000000
+## The tooltip's lines for a group entry (World3D binds GameWorldNet's).
+var world_group_tooltip: Callable
+
+func add_world_group(group: int, icon: String, total_ms: int, remaining_ms: int) -> Buff:
+	var token := WORLD_GROUP_TOKEN_BASE + group
+	var b := add_state_entry(KIND_WORLD_GROUP, token, icon, "")
+	b.info = {"icon": icon, "tooltip": "", "group": group}
+	b.total_ms = total_ms if total_ms > 0 else -1
+	b.elapsed_ms = 0.0
+	if b.total_ms > 0:
+		b.elapsed_ms = float(clampi(b.total_ms - remaining_ms, 0, b.total_ms))
+	if b.slot != null:
+		b.slot.gauge.value = b.gauge_value()
+		b.slot.gauge.visible = b.total_ms > 0
+	return b
+
+func world_group_entry(group: int) -> Buff:
+	return _by_token.get(WORLD_GROUP_TOKEN_BASE + group)
+
 func remove_academy_buff(token: int) -> void:
 	var b: Buff = _by_token.get(token)
 	if b != null and (b.kind == KIND_ACADEMY_SAVE or b.kind == KIND_ACADEMY_RESERVE):
@@ -654,7 +685,7 @@ func right_click_action(token: int) -> String:
 		return ACTION_NONE
 	# OURS: an item grant is not a skill buff; vslot_033's kind-5 branch was
 	# not read, so a right-click on it does nothing rather than send a cancel.
-	if b.kind == 5 or b.kind == KIND_SAFE_TRADE or b.kind == KIND_GOLD_TIME \
+	if b.kind == 5 or b.kind == KIND_SAFE_TRADE or b.kind == KIND_GOLD_TIME or b.kind == KIND_WORLD_GROUP \
 			or b.kind == KIND_ACADEMY_SAVE or b.kind == KIND_ACADEMY_RESERVE:
 		return ACTION_NONE
 	if bool(b.info.get("nbuf", false)) and not bool(b.info.get("lnks", false)):
@@ -775,6 +806,10 @@ func tooltip_for(token: int) -> String:
 	if b.kind == KIND_GOLD_TIME:
 		# The caller composes every line, the period left among them.
 		return String(b.info.get("tooltip", ""))
+	if b.kind == KIND_WORLD_GROUP:
+		if world_group_tooltip.is_valid():
+			return "\n".join(world_group_tooltip.call(int(b.info.get("group", 0)), b.remaining_ms()))
+		return ""
 	if b.kind == KIND_ACADEMY_SAVE or b.kind == KIND_ACADEMY_RESERVE:
 		# Round 865: the caller's title and point lines, then the time left.
 		var aca := PackedStringArray([String(b.info.get("tooltip", ""))])

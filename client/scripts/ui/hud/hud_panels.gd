@@ -945,6 +945,9 @@ signal skin_change_requested(slot: int)
 ## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
 ## with the gate the list was opened at (NetClient.teleport_use).
 signal teleport_requested(dest_id: int)
+## Round 869: a destination line of the Dimension hole's gate (line kind
+## 0x2a, READ c:0x7035d2..0x7036c4): World3D sends 0x704B and 0x705A.
+signal portal_requested(index: int)
 ## An action-window button was used (round 781): a right click on its slot
 ## (CIFSlotWithHelp vslot 33 -> 0x682040, kind 0x4a -> 0x793b00). World3D runs
 ## it (ActionCommands).
@@ -1860,6 +1863,50 @@ func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, servi
 	window.set_meta(TELEPORT_LIST_META, false)
 	_qa_print_talk_lines.call_deferred(body)
 
+## Round 869: the talk window of a CITeleportGate the server spawned (the
+## Dimension hole's gate), as c:0x88b200's gate branch fills it: the greeting
+## and a blank line (FUN_006fb530), the gate's own lines (c:0x9ea880, each
+## {"text", "colour", "bold"}) and a blank line (c:0x6fac20's "  "), one line
+## per destination ("%d. ..." in the menu colours, key gate_dest:<index>), and
+## the end line with the next number (FUN_007001a0).
+const GATE_DEST_PREFIX := "gate_dest:"
+
+func open_gate_talk(npc_name: String, greeting: String, gate_lines: Array, dests: PackedStringArray) -> void:
+	var window := open("npctalk")
+	if window == null:
+		return
+	_drop_talk_prompts(window)
+	window.set_title(npc_name)
+	var body := _talk_body(window)
+	if body == null:
+		return
+	var lines := PackedStringArray()
+	lines.append(TeleportBoard.escape(greeting if greeting != "" else "..."))
+	lines.append("")
+	for l in gate_lines:
+		var d: Dictionary = l
+		var t := TeleportBoard.escape(String(d["text"]))
+		var c: Color = d["colour"]
+		if c != Color.WHITE and t != "":
+			t = "[color=#%s]%s[/color]" % [c.to_html(false), t]
+		if bool(d["bold"]) and t != "":
+			t = "[b]%s[/b]" % t
+		lines.append(t)
+	if not gate_lines.is_empty():
+		lines.append("")
+	var n := 1
+	for i in dests.size():
+		print("NPCTALK %s line %d: %s" % [npc_name, n, dests[i]])
+		lines.append("[url=%s%d]%s[/url]" % [GATE_DEST_PREFIX, i, TeleportBoard.escape(dests[i])])
+		n += 1
+	var end_text := _resolve_ui(NpcServiceReader.TALKEND_STRID, "End conversation.")
+	print("NPCTALK %s line %d: %d. %s" % [npc_name, n, n, end_text])
+	lines.append("[url=end]%d. %s[/url]" % [n, TeleportBoard.escape(end_text)])
+	NpcTalkView.show_lines(window, lines)
+	window.set_meta(TALK_TEXT_META, lines[0])
+	window.set_meta(TELEPORT_LIST_META, false)
+	_qa_print_talk_lines.call_deferred(body)
+
 func _on_npc_talk_choice(meta: Variant) -> void:
 	var key := str(meta)
 	# A quest page's line (round 785): its response id goes as 0x70D4.
@@ -1881,6 +1928,10 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 		# The talk box's OPEN is silent: nothing that shows GDR_NPCWINDOW
 		# (+0x724) calls the helper or names a sound (read).
 		UiSounds.window_toggled(false, _interface_shown(), "npctalk end line")
+		return
+	# Round 869: the Dimension hole's gate (GameWorldNet): its line's index.
+	if key.begins_with(GATE_DEST_PREFIX) and key.substr(GATE_DEST_PREFIX.length()).is_valid_int():
+		portal_requested.emit(int(key.substr(GATE_DEST_PREFIX.length())))
 		return
 	# A gate's destination line (round 603): the request goes at once, as the
 	# client's does, and the talk box stays up.

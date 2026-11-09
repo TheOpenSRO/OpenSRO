@@ -23,6 +23,9 @@ const ID_ARENA_MANAGER := 0x21
 
 ## The select reply named this NPC and its interaction-id set.
 signal selected(entity: int, ids: PackedByteArray)
+## Round 869: the select reply for a CITeleportGate (the Dimension hole's
+## gate; GameWorldNet.decode_gate_select): its ids and destinations.
+signal gate_selected(entity: int, reply: Dictionary)
 ## The select was refused: {u8 2, u16 code} (3 no target or busy, 4 out of
 ## reach -- the server's 0x50fd41 / 0x50fd11). The client shows nothing for
 ## it (round 701's reading of 0x88b200's failure branch).
@@ -36,6 +39,9 @@ signal end_refused(code: int)
 ## Sends a message: Callable(opcode: int, payload: PackedByteArray). World3D
 ## binds NetClient's sender; the tests capture.
 var send: Callable
+## Round 869: whether an entity is a CITeleportGate the server spawned
+## (Callable(uid) -> bool): its 0xB045 is read by c:0x88b200's gate branch.
+var is_gate: Callable
 ## The NPC the last select named (0 none) and its set.
 var entity := 0
 var ids := PackedByteArray()
@@ -147,6 +153,14 @@ func handle(data: PackedByteArray, op: int) -> void:
 			var code := refusal_code(data)
 			if code >= 0:
 				select_refused.emit(code)
+				return
+			if is_gate.is_valid() and data.size() >= 5 and data[0] == 1 and bool(is_gate.call(data.decode_u32(1))):
+				var g := GameWorldNet.decode_gate_select(data)
+				if g.is_empty():
+					return
+				entity = int(g["entity"])
+				ids = g["ids"]
+				gate_selected.emit(entity, g)
 				return
 			var s := decode_select(data)
 			if s.is_empty():

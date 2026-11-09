@@ -105,9 +105,19 @@ class Types:
 	## record whose ref it names is a CICCos's (CosSpawnNet). Unbound, none is.
 	var cos_kind: Callable
 
-	func _init(r: Dictionary, cos: Callable = Callable()) -> void:
+	## Round 869: RefObjID -> StructureSpawnNet.KIND_GATE / KIND_EVENT for the
+	## teleportbuilding rows of TypeID 4/1 and 4/2 (IGIDObject::FUN_009c1fa0's
+	## two structure classes); a record of one is a structure's.
+	var structure_kinds: Dictionary = {}
+
+	func _init(r: Dictionary, cos: Callable = Callable(), structures: Dictionary = {}) -> void:
 		rows = r
 		cos_kind = cos
+		structure_kinds = structures
+
+	## Round 869: a RefObjID's structure class, 0 for none.
+	func structure_kind_of(ref_id: int) -> int:
+		return int(structure_kinds.get(ref_id, 0))
 
 	## A RefObjID's COS TypeID4, 0 for none.
 	func cos_kind_of(ref_id: int) -> int:
@@ -346,7 +356,7 @@ static func decode_single_spawn(data: PackedByteArray, types: Types) -> Record:
 ## "uids": Array[int], "error": String, "deferred": bool}. deferred is set,
 ## and nothing else read, when a player record comes before types.
 static func read_group(buffer: PackedByteArray, types: Types) -> Dictionary:
-	var out := {"kind": 0, "npcs": [], "users": [], "cos": [], "uids": [], "error": "", "deferred": false}
+	var out := {"kind": 0, "npcs": [], "users": [], "cos": [], "structures": [], "uids": [], "error": "", "deferred": false}
 	var r := NpcSpawnNet.Reader.new(buffer)
 	var kind := r.u8()
 	var count := r.u16()
@@ -362,6 +372,13 @@ static func read_group(buffer: PackedByteArray, types: Types) -> Dictionary:
 					out.error = "record %d of %d: %s" % [i, count, r.error]
 					return out
 				out.users.append(rec)
+			elif types != null and types.structure_kind_of(peek_ref(r)) != 0:
+				# Round 869: a structure (the gate, a door; StructureSpawnNet).
+				var st := StructureSpawnNet.read_record(r, types.structure_kind_of(peek_ref(r)))
+				if st == null:
+					out.error = "record %d of %d: %s" % [i, count, r.error]
+					return out
+				out.structures.append(st)
 			elif types != null and types.cos_kind_of(peek_ref(r)) != 0:
 				# Round 795: a COS (CICCos, cos_spawn.gd).
 				var c := CosSpawnNet.read_record(r, types.cos_kind_of(peek_ref(r)))
