@@ -2063,7 +2063,7 @@ func warpAcross(ctx context.Context, sess *gateway.Session, eq equipment.Store, 
 	{
 		username, _ := AuthenticatedUsername(sess)
 		slog.Info("warp", "character", old.Name, "character_id", old.CharacterID, "account", username,
-			"via", via, "kind", metrics.TeleportKind(via), "from", zoneLabelOf(old), "zone", zone)
+			"via", via, "kind", metrics.TeleportKind(via), "from", warpFromLabel(from, old), "zone", zone)
 	}
 
 	// The window it left drops it (0x3016), even a window it lands in view
@@ -2095,6 +2095,17 @@ func warpAcross(ctx context.Context, sess *gateway.Session, eq equipment.Store, 
 	}
 	sendOwnBuffs(arrived, time.Now())
 	return true, nil
+}
+
+// warpFromLabel is the warp log's "from": the zone label of where old stood,
+// and for a character leaving an instanced world that world and its bucket
+// (round 873: zoneLabelOf reads a layer's region bucket as the nearest open
+// zone, so a death inside the Wrecked Ship logged from=jangan).
+func warpFromLabel(from *world.Hub, old world.Entity) string {
+	if w := instanceOf(from); w != nil {
+		return "instance " + w.ID.String() + " " + old.Zone
+	}
+	return zoneLabelOf(old)
 }
 
 func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars character.Store) error {
