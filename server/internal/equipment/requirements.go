@@ -160,12 +160,11 @@ func RequirementsOf(it *refdata.Item) []Requirement {
 
 // CheckRequirements applies the engine's rule to an item's requirement slots.
 //
-// masteryLevel and tier are how the caller supplies the two values OpenSRO
-// does not track yet. **A nil lookup means that category is not enforced**,
-// which is deliberate: refusing every mastery-gated item because nothing
-// records a mastery level would be a worse answer than the engine's, not a
-// closer one. When mastery tracking lands, pass a real lookup and the rule
-// already here starts enforcing it.
+// masteryLevel and tier are how the caller supplies the character's mastery
+// levels and job tier. **A nil lookup means that category is not enforced.**
+// From round 877 the equip refusal and the worn items' params pass a real
+// mastery lookup (equipment.Refusal, equipment.Qualifies); the tier is still
+// passed none (no equippable row carries type 0x301).
 func CheckRequirements(reqs []Requirement, level int, masteryLevel func(masteryID int) (int, bool), tier func() (int, bool)) error {
 	var need, met Category
 	for _, r := range reqs {

@@ -33,9 +33,12 @@ import (
 //     0x01) and the academy member's (FUN_005de6c0 field 6) on every change --
 //     world.Hub.SetLevel's hook (academyLevelChanged, guildMemberLevelChanged)
 //     -- re-reads the level entry, sets param 0 (the level) and the level's
-//     params 54/55, and refreshes the worn items' params with NO level test
+//     params 54/55, and refreshes the worn items' params
 //     (CGPCInventoryOP::RefreshEquipParamEntryForPC s:0x4bb3e0): gear above
-//     the new level stays worn and counts. Only a level UP heals to full
+//     the new level stays worn -- and, corrected in round 877, counts for
+//     nothing: each item is published again through PublishEquipItemParams
+//     (s:0x4e3760), which tests CheckEquipRequirements (s:0x4919e0), the
+//     level included (gearcount.go, gearOnLevel). Only a level UP heals to full
 //     (ApplyHPMPDelta(max - cur), s:0x4e5076) and sends 0x3054.
 //   - The negative amount is kept as the last loss, pc+0x1ce0 (s:0x4e5710,
 //     whatever the RemainExpOffset clamp did), which GObjPC::Revive clears

@@ -22,9 +22,10 @@ package session
 // them again, and PublishEquipItemParams (0x4e3760) runs the option
 // operations only when the item's own publication succeeds (READ, round 769's
 // review). PublishEquipItemParams also gates the whole item on
-// CheckEquipRequirements (0x4919e0); OpenSRO checks requirements only at
-// equip time (OPEN: an item worn below its requirement, after a de-level,
-// still counts here). The set items' opt-level bonus
+// CheckEquipRequirements (0x4919e0); from round 877 OpenSRO does too: every
+// sum here reads the worn items through countedWorn (gearcount.go), which
+// leaves out an item whose level or mastery requirement failed when it was
+// last published. The set items' opt-level bonus
 // (CGPCInventoryOP::ApplySetItemOptLevel2ThisGroup 0x4bb680) is not built.
 // The magic option table names each option's tag; without it no option
 // counts (the plus still does).
@@ -122,7 +123,7 @@ func equipBonus(ctx context.Context, characterID int64, eq equipment.Store) (cha
 	if eq == nil || magicOptions.Load() == nil {
 		return b, true
 	}
-	worn, err := eq.Get(ctx, characterID)
+	worn, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return b, false
 	}
@@ -164,7 +165,7 @@ func wornOptionSum(ctx context.Context, characterID int64, eq equipment.Store, t
 	if eq == nil || magicOptions.Load() == nil {
 		return 0
 	}
-	worn, err := eq.Get(ctx, characterID)
+	worn, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0
 	}
@@ -224,7 +225,7 @@ func accessoryAbsorb(ctx context.Context, characterID int64, eq equipment.Store,
 	if eq == nil || items == nil {
 		return 0
 	}
-	worn, err := eq.Get(ctx, characterID)
+	worn, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0
 	}

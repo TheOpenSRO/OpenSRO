@@ -309,10 +309,9 @@ func (m *MemStore) SetGender(_ context.Context, characterID int64, gender string
 // SetLeveling implements Store.
 func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, exp int64, statPoints, str, intel int) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	c, ok := m.byID[characterID]
 	if !ok {
+		m.mu.Unlock()
 		return ErrNotFound
 	}
 	c.MaxLevel = max(c.MaxLevel, c.Level, level)
@@ -322,6 +321,8 @@ func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, 
 	c.Str = str
 	c.Int = intel
 	noteBaseStats(characterID, str, intel)
+	m.mu.Unlock()
+	noteLevel(characterID, level)
 	return nil
 }
 

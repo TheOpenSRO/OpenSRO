@@ -68,7 +68,17 @@ func _test_worn_ammo_record() -> void:
 	if got[0] != null:
 		_check((got[0] as ItemInstance).count == 9876, "the worn quiver's count is 9876")
 
+## Round 877: a mastery or level refusal and the armour mix raise the banner;
+## our own words (a job suit's refusal, a slot error) do not.
+func _test_refusal_banner() -> void:
+	_check(EquipmentNet.refusal_banner("UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM"), "0x186c raises the banner")
+	_check(EquipmentNet.refusal_banner("UIIT_MSG_STRGERR_EU_CANT_MIX_EXCLUSIVE_ARMOR_TYPE"), "0x1832 (Europe) raises the banner")
+	_check(EquipmentNet.refusal_banner("UIIT_MSG_STRGERR_CANT_MIX_EXCLUSIVE_ARMOR_TYPE"), "0x1832 (China) raises the banner")
+	_check(not EquipmentNet.refusal_banner("that does not go in that slot"), "our own words do not")
+	_check(not EquipmentNet.refusal_banner(""), "no error, no banner")
+
 func _init() -> void:
+	_test_refusal_banner()
 	_test_encode_equip()
 	_test_encode_unequip()
 	_test_decode_result()

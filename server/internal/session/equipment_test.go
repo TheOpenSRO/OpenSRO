@@ -205,7 +205,9 @@ func TestEquipRefusesWhatTheItemTableForbids(t *testing.T) {
 	if got := equip(equipment.SlotHelm, 0); got != "that does not go in that slot" {
 		t.Errorf("a suit in the helm slot: got %q", got)
 	}
-	if got := equip(equipment.SlotHelm, 2); got != "your level is too low" {
+	// Round 877: worded by the client's own 0x186c key (MEASURED: the banner
+	// and the system line say the level is too low).
+	if got := equip(equipment.SlotHelm, 2); got != "UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM" {
 		t.Errorf("a level-79 hood at level 1: got %q", got)
 	}
 	if got := equip(equipment.SlotMail, 0); got != "" {

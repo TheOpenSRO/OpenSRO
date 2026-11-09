@@ -1628,7 +1628,7 @@ func swingWait(ctx context.Context, characterID int64, eq equipment.Store, items
 // attackerDamageOf is attackerDamage for a blow whose damage-type mask is
 // known -- `att` value[0] off the skill being used. See combat.AttackType.
 func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq equipment.Store, items combat.ItemLookup, atk combat.AttackType, attackerLevel, defenderLevel int, defenderParry float64) (int, error) {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
 	}
@@ -1773,7 +1773,7 @@ func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
 //
 // A broken piece parries for nothing, the same rule defenderDefence uses.
 func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (float64, error) {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
 	}
@@ -1841,7 +1841,7 @@ func defenderArmor(ctx context.Context, characterID int64, str int, eq equipment
 // TRUNCATED, not rounded (MEASURED: a magic defence of 3205.99 reads 3205 on
 // the character window, a parry of 617.6 reads 617).
 func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64, float64), armourGroup, shieldGroup int, stat int, magical bool) (int, error) {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
 	}
@@ -1997,7 +1997,7 @@ func armourReinforce(ctx context.Context, worn []equipment.Equipped, items comba
 // No weapon, or a weapon with no reference data, means no critical rather than
 // a disclosed default: an unarmed attack has no weapon column to read.
 func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) int {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0
 	}
@@ -2060,7 +2060,7 @@ func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store
 // zero in a duel. Round 406 found this comment claiming the former for both.
 // See combat.EvadedChance.
 func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) int {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0
 	}

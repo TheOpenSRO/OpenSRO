@@ -294,7 +294,7 @@ func plainSwingOf(ctx context.Context, characterID int64, eq equipment.Store, it
 // default here -- no bare-hand writer of param 33 was found, which is not
 // the same as one being proven absent.
 func equippedWeaponRange(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) int {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID) // round 877: a held weapon publishes no range
 	if err != nil {
 		return 0
 	}

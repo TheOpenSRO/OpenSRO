@@ -41,3 +41,31 @@ func (m *MemStore) SeedMasteries(_ context.Context, characterID int64, masteryID
 	}
 	return nil
 }
+
+// MasterySetter writes a mastery's level outright (round 877: the GM's
+// /mastery, OURS -- a test tool with no retail counterpart; the original's
+// masteries only rise, through Mastery_LevelUp).
+type MasterySetter interface {
+	SetMasteryLevel(ctx context.Context, characterID, masteryID int64, level int) error
+}
+
+// SetMasteryLevel implements MasterySetter.
+func (s *SQLStore) SetMasteryLevel(ctx context.Context, characterID, masteryID int64, level int) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO character_mastery_levels (character_id, mastery_id, level) VALUES ($1, $2, $3)
+		 ON CONFLICT (character_id, mastery_id) DO UPDATE SET level = EXCLUDED.level`, characterID, masteryID, level); err != nil {
+		return fmt.Errorf("skill: setting mastery %d: %w", masteryID, err)
+	}
+	return nil
+}
+
+// SetMasteryLevel implements MasterySetter.
+func (m *MemStore) SetMasteryLevel(_ context.Context, characterID, masteryID int64, level int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.masteries[characterID] == nil {
+		m.masteries[characterID] = make(map[int64]int)
+	}
+	m.masteries[characterID][masteryID] = level
+	return nil
+}

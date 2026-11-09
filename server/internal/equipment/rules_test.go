@@ -45,36 +45,36 @@ func TestRefusal(t *testing.T) {
 	man := &character.Character{Gender: character.GenderChinaMan, Level: 1}
 	woman := &character.Character{Gender: character.GenderChinaWoman, Level: 1}
 
-	if err := Refusal(man, cottonSuit(), SlotMail); err != nil {
+	if err := Refusal(man, cottonSuit(), SlotMail, nil); err != nil {
 		t.Fatalf("a man at level 1 may wear a Cotton Suit: %v", err)
 	}
 	// An item with no reference row is REFUSED, not allowed through. The old
 	// permissive reading ("unknown" == "fine") is how an HP potion got worn
 	// in an armour slot on a server whose refdata lacked the consumables.
-	if err := Refusal(man, nil, SlotMail); !errors.Is(err, ErrNotEquippable) {
+	if err := Refusal(man, nil, SlotMail, nil); !errors.Is(err, ErrNotEquippable) {
 		t.Errorf("an item with no reference row: got %v, want ErrNotEquippable", err)
 	}
 
-	if err := Refusal(man, cottonSuit(), SlotHelm); !errors.Is(err, ErrWrongSlot) {
+	if err := Refusal(man, cottonSuit(), SlotHelm, nil); !errors.Is(err, ErrWrongSlot) {
 		t.Errorf("a suit in the helm slot: got %v, want ErrWrongSlot", err)
 	}
-	if err := Refusal(woman, cottonSuit(), SlotMail); !errors.Is(err, ErrWrongGender) {
+	if err := Refusal(woman, cottonSuit(), SlotMail, nil); !errors.Is(err, ErrWrongGender) {
 		t.Errorf("a man's suit on a woman: got %v, want ErrWrongGender", err)
 	}
 	unisex := cottonSuit()
 	unisex.ReqGender = ReqGenderAny
-	if err := Refusal(woman, unisex, SlotMail); err != nil {
+	if err := Refusal(woman, unisex, SlotMail, nil); err != nil {
 		t.Errorf("a unisex item on a woman: %v", err)
 	}
 	european := cottonSuit()
 	european.Country = CountryEurope
 	european.TypeID3 = FamilyEuropeHeavy
-	if err := Refusal(man, european, SlotMail); !errors.Is(err, ErrWrongRace) {
+	if err := Refusal(man, european, SlotMail, nil); !errors.Is(err, ErrWrongRace) {
 		t.Errorf("a European item on a China character: got %v, want ErrWrongRace", err)
 	}
 	high := cottonSuit()
 	high.ReqLevel1 = 12
-	if err := Refusal(man, high, SlotMail); !errors.Is(err, ErrLevelTooLow) {
+	if err := Refusal(man, high, SlotMail, nil); !errors.Is(err, ErrLevelTooLow) {
 		t.Errorf("a level-12 item at level 1: got %v, want ErrLevelTooLow", err)
 	}
 	// A requirement by mastery level (a mastery id, not 1) is not one this
@@ -82,11 +82,11 @@ func TestRefusal(t *testing.T) {
 	mastery := cottonSuit()
 	mastery.ReqLevelType1 = 513
 	mastery.ReqLevel1 = 40
-	if err := Refusal(man, mastery, SlotMail); err != nil {
+	if err := Refusal(man, mastery, SlotMail, nil); err != nil {
 		t.Errorf("a mastery-level requirement is not enforced yet: %v", err)
 	}
 	potion := &refdata.Item{ID: 1, TypeID1: TypeItem, TypeID2: 3}
-	if err := Refusal(man, potion, SlotMail); !errors.Is(err, ErrNotEquippable) {
+	if err := Refusal(man, potion, SlotMail, nil); !errors.Is(err, ErrNotEquippable) {
 		t.Errorf("a potion: got %v, want ErrNotEquippable", err)
 	}
 }
@@ -291,17 +291,17 @@ func TestRingTakesEitherSlot(t *testing.T) {
 	ring := &refdata.Item{ID: 1, TypeID1: TypeItem, TypeID2: TypeEquipment,
 		TypeID3: FamilyEuropeAccessory, TypeID4: PieceRing, Country: CountryAny, ReqGender: ReqGenderAny}
 	for _, slot := range []Slot{SlotRingLeft, SlotRingRight} {
-		if err := Refusal(nil, ring, slot); err != nil {
+		if err := Refusal(nil, ring, slot, nil); err != nil {
 			t.Errorf("a ring was refused slot %d: %v", slot, err)
 		}
 	}
-	if err := Refusal(nil, ring, SlotNecklace); err == nil {
+	if err := Refusal(nil, ring, SlotNecklace, nil); err == nil {
 		t.Error("a ring was allowed into the necklace slot")
 	}
 	// The pair is rings only: a necklace resolves to 10 and stays there.
 	neck := &refdata.Item{ID: 2, TypeID1: TypeItem, TypeID2: TypeEquipment,
 		TypeID3: FamilyEuropeAccessory, TypeID4: PieceNecklace, Country: CountryAny, ReqGender: ReqGenderAny}
-	if err := Refusal(nil, neck, SlotRingRight); err == nil {
+	if err := Refusal(nil, neck, SlotRingRight, nil); err == nil {
 		t.Error("a necklace was allowed into the second ring slot")
 	}
 }

@@ -2751,6 +2751,9 @@ func main() {
 	// Round 769: a character's Str, Int and max HP/MP count its worn items'
 	// blue options (character.BonusOf), read from the equipment store.
 	session.SetEquipBonusSource(eq)
+	// Round 877: a worn item whose level or mastery requirement failed when
+	// it was last published counts for nothing (session/gearcount.go).
+	session.SetGearRequirementSource(chars, eq, skills, refItems)
 	session.SetUseItemEquipment(eq) // round 838: the repair hammer mends the worn items
 	// The quest catalogue (round 785, internal/quest): exported from the
 	// operator's own archives and game server scripts; without it no quest is
