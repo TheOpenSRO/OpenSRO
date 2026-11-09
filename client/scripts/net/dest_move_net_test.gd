@@ -52,6 +52,17 @@ func _test_echo() -> void:
 		"the source's x and z are tenths (%s)" % str(e.source_local))
 	load("res://scripts/net/net_client.gd").resolve_echo(e, Vector2i(97, 168))
 	_check(e.dest_world.is_equal_approx(Vector3(40, -3, 60)), "the destination in the 97/168 frame is world (40, -3, 60) (%s)" % str(e.dest_world))
+	# Round 870: the wire's heights are region-local; a frame anchored at
+	# 833.58 (Togui's) draws them that much lower.
+	var ea := DestMoveNet.decode_echo(_hex(ECHO))
+	load("res://scripts/net/net_client.gd").resolve_echo(ea, Vector2i(97, 168), 833.58)
+	_check(is_equal_approx(ea.dest_world.y, -3.0 - 833.58) and is_equal_approx(ea.source_world.y, 5.5 - 833.58),
+		"with the frame's anchor 833.58 the heights come into the scene less it (%s, %s)" % [str(ea.dest_world), str(ea.source_world)])
+	var nc = load("res://scripts/net/net_client.gd").new()
+	nc.wire_height_anchor = 833.58
+	_check(is_equal_approx(nc.wire_y(-141.05), 692.53) and is_equal_approx(nc.scene_y(692.53), -141.05),
+		"a scene height goes on the wire plus the anchor and comes back less it (%.2f, %.2f)" % [nc.wire_y(-141.05), nc.scene_y(692.53)])
+	nc.free()
 	var h := DestMoveNet.decode_echo(_hex("0100000000012a1000"))
 	_check(h.error == "" and h.kind == 0 and h.command == 1 and h.angle == 0x102a and not h.has_source, "a heading echo, flag 0")
 	_check(DestMoveNet.decode_echo(_hex("0100000000012a1001")).error != "", "flag 1 with no source is an error")

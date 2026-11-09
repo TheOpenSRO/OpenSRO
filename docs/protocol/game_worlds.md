@@ -638,9 +638,10 @@ The wire is the original's (`PROTOCOL_DECISION.md`); OpenSRO's own zone-change m
   `OpTeleportUse` / `Ack`, `OpInstanceExit` / `Ack`).
 - **0x351E's state byte** (INFERRED): the server's ON (2) is the wire's 1 (the door removed), OFF (1)
   the wire's 0 (built). The door's spawn tail is {u32 event-zone key = the `_RefEventZone` ID, u8 0}
-  after the structure fields (INFERRED order; section 7). Where the doors stand is OPEN (no table, nest
-  or map list found names their positions), so no door is spawned or blocks yet; a placement fed to
-  `gameworld.Manager.SetZonePlaces` makes one block the server's move (OURS, 40 units).
+  after the structure fields (INFERRED order; section 7 -- round 870: the whole runtime-structure
+  record comes first, see the stage 3 notes). Where the doors stand was OPEN here (round 870: READ, they
+  stand at `objectstring.ifo`'s named positions, the stage 3 notes); a placed door blocks the server's
+  move (OURS, 40 units).
 - **Action Delay** (INFERRED, OPEN in the binary): each action runs its own Delay after the trigger
   fires. MEASURED in the data: the FGW entry notice's banner action has Delay 20,000 and its system line
   0, so with this reading the system line comes at once and the banner 20 s later
@@ -657,6 +658,45 @@ The wire is the original's (`PROTOCOL_DECISION.md`); OpenSRO's own zone-change m
   place inside, it stays (OURS rule: `session.warpTarget`). A re-login lands at the return point (the
   instance position is never saved: READ s:0x4df666); re-entering a still-open instance at login is not
   built (OPEN, section 13).
+
+**Stage 3 notes (round 870, lane FQ: the server and the client run together; superseding the notes
+above where they say so):**
+- **The door's record** is the whole runtime-structure record (READ c:0x535980 -> c:0x56dfa0): {head,
+  u8 +0x260, u8 +0x261 state, u8 +0x254, u8 +0x255, the u16-length name when +0x255 is 6 else u32
+  +0x258, u32 +0x25c, u32 +0x280 the zone's `_RefEventZone` ID, u8 +0x284}; the server sends +0x260 1
+  (INFERRED, as every measured structure), the runtime fields 0 (INFERRED: no owner rule) and +0x284 0.
+  The name goes out only for access type 6, any other type carries the u32 (the gate's record too).
+- **Where the doors stand** (READ, no longer OPEN): the game server loads `navmesh\objectstring.ifo`'s
+  named positions (`RegionManagerBody::FUN_0098c7f0` s:0x98c7f0, "%x %x %d %d %x %x %x %x" and the
+  quoted name, lower-cased) and looks every `_RefEventZone` up there by its ZoneName at start-up
+  (`CMainProcess::FUN_005304e0` s:0x5304e0, kept at the zone's +0xdc); an OBJECT zone whose region the
+  server holds is filed for its structure (s:0x6a2e20). MEASURED: all 52 `POS_STRUCTURE_GOD_*` zones
+  have an entry (Togui 15, Flame 19, Wreck 18). OpenSRO: `export-refdata -mode gameworlds` takes the
+  file (`objectstring.csv`), `gameworld.Ref.ZonePlaces` places the zones, and a layer's placed doors
+  go to its players by the gates' window as 0x3015 of 36513 `STORE_EVENTZONE_DEFAULT` with the state
+  in +0x261 (`session/doors.go`). The record's u16 angle from the file's yaw is INFERRED (the
+  client's own quarter turn undone, so the door faces as a map object of that yaw); the original's
+  conversion was not read.
+- **An arrival stands on the floor** (READ `CGObj::EnterWorld` s:0x485360: an object with no cell is
+  resolved through the region manager's ResolveCellAndHeight before it is placed): OpenSRO resolves
+  an instance's start onto the surface nearest its height (MEASURED the Wrecked Ship's starts -770 and
+  -247 stand on decks at -779.12 and -257.59, Togui's 693 on terrain at 692.53).
+- **0x320C** (MEASURED again, the packets of round 869's entries): a new re-entry limit's push comes
+  twice -- right after the entry notice pair and again in the arrival state -- a running one's (a
+  re-entry) once, in the arrival state; and every arrival back in town (the exit NPC, the close)
+  carries the running limit's push once. OpenSRO sends exactly that.
+- **The exit and recall NPCs' select** is `{01, u32 npc, 00, 01, 29 | 27, 00}` (MEASURED raw bytes;
+  round 869's "00 00 00 01 29 00" read the id's two high zero bytes twice) -- the order c:0x88b200
+  reads and what the shared encoder sends (`forgotten_world.md` 5).
+- **Heights on the movement wire are region-local** (round 870; the original's 0x7021 destination
+  names a region and a point in it). OpenSRO's client drew a field frame at minus its anchor height
+  (round 570's OURS calibration) and sent scene heights; the server, whose navigation mesh, nests,
+  NPCs and starts are region-local, then held a player the anchor away from them: MEASURED anchors
+  -2.49 (Jangan's frame), -99 (Donwhang), 80 (Constantinople), 244 (Hotan), 180 (Samarkand), 834
+  (Togui), -1800 (both Wrecked Ship frames), and inside Togui every NPC select after a click-walk was
+  refused (0xB045 {02, 4}: 855 units in 3-D at 167 across). The client now converts at the wire
+  (`NetClient.wire_y` / `scene_y`, the frame's anchor); a position saved before is read on login
+  whichever way lies on a walkable surface (`session.restoredHeight`).
 
 ### SERVER
 1. **Reference data** -- `server/cmd/export-refdata` (new `-mode gameworlds`) writes the world,

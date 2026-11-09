@@ -338,10 +338,16 @@ binaries and the data, **not measured**.
 - **NPCs**: the world's NPC hive spawns with the layer: "Dungeon Exit" (`NPC_INS_EXIT_TELEPORT`, a
   blue crystal with lightning) 160 units west of the start and "Pillar of Party Member Recall"
   (`NPC_FWORLD_RECALL_PARTY`, a dark stone pillar with red light) 200 units south-east of it.
-  - Selecting the exit NPC: `B045 {01, npc, 00 00 00 01 29 00}` (one interaction, 0x29); the talk
-    window "Dungeon Exit": "1. Exit Dungeon", "2. End conversation."
-  - Selecting the recall pillar: `B045 {01, npc, 00 00 00 01 27 00}` (0x27); "Pillar of Party Member
+  - Selecting the exit NPC: `B045 {01, u32 npc, 00, 01, 29, 00}` (9 bytes: the flag byte 0, one
+    interaction 0x29, the CICNPC's u8 0); the talk window "Dungeon Exit": "1. Exit Dungeon", "2. End
+    conversation."
+  - Selecting the recall pillar: `B045 {01, u32 npc, 00, 01, 27, 00}` (0x27); "Pillar of Party Member
     Recall": "1. Summon Party member", "2. End conversation."
+  - Round 870: the raw payload is `01 4e090000 00 01 29 00` (and `01 4d090000 00 01 27 00`); round
+    869's "00 00 00 01 29 00" counted the npc id's two high zero bytes twice. It is exactly the order
+    READ in c:0x88b200's CICharactor branch (u8 1, u32 id, u8 flag, u32 when its bit 0 is set, u8 n, n
+    ids, u16 when 0x1f is among them, the CICNPC's u8 (`FUN_00b94b70(0xef1ac4)`), u16 when 0x21 is, u16
+    when the ref's +0x120 is set) and what OpenSRO's shared encoder (`npctalk.EncodeSelectNPC`) sends.
 - **Monsters: none appeared.** In this layer none of world 67's 116 monster nests (hives 838..854)
   spawned anything -- no monster spawn reached either player at the start, at the camp-1 nest
   (0x7EE3 (1066, 820, 512)) or at camp 2, over 35 minutes; the area map's monster option showed
@@ -658,6 +664,40 @@ ticket clears the group cool time (`GROUP_INS_GOD`) and belongs to a later clien
 7. **Re-entry icon** -- the buff-bar icon (foundation client 5) with this group's texts. Test.
 8. **QA** -- real clicks against the lane server: make a gate, enter, kill a hive, see the door open,
    recall a member, exit (`partybot` as the second member).
+
+**Stage 3 notes (round 870, lane FQ: OpenSRO's server and two real clients together; the step table
+is the round's WORLD_ISSUES entry):**
+- **The doors stand at `objectstring.ifo`'s named positions** (READ, `game_worlds.md` 14 stage 3
+  notes): all 52 `POS_STRUCTURE_GOD_*` zones have an entry; none is near a start (the nearest Togui
+  door is 1,000+ units from 0x7EE4), so a door reaches a client when it walks into the door's window.
+  In this client archive eventzonedata has no Togui zone (round 869), so a Togui door's record arrives
+  and draws nothing; the Flame and Wreck doors draw their models.
+- **The recall pillar draws** (`NPC_FWORLD_RECALL_PARTY`'s `Dun\Property\com\property_recall.bsr` is a
+  type-2 object with no skeleton; MEASURED the original shows "a dark stone pillar with red light"):
+  the client builds an NPC whose model is a static object through the scenery templates, with its
+  ambient effect, collider and plate (`World3D._place_static_npc`). Before, it was not placed and
+  could not be selected.
+- **The exit and recall selects**: `{01, u32 npc, 00, 01, 29 | 27, 00}` MEASURED (section 5's raw
+  bytes), sent so.
+- **0x320C**: twice for a new limit (after the notice pair and in the arrival state), once on a
+  re-entry, once on each arrival back in town and once after the 0x3012 of a login (MEASURED; before,
+  OpenSRO sent it at the login's world entry, before the client's world existed, and the icon was
+  missing after a login inside the limit).
+- **Every NPC select inside Togui after a walk was refused** (0xB045 {02, 4}): the client sent its
+  frame-anchored scene heights (Togui's anchor 834); the wire carries region-local heights now
+  (`game_worlds.md` 14 stage 3 notes).
+- **A gate vanished from a client at a zone change within its frame** (a GM's `/tp`, a return to the
+  same town): its record was kept but its holder, under the old terrain group, was taken for standing
+  (`StructureWorld._standing` now reads the parents, as the NPCs' `npc_holder_standing` does).
+- **The data's own quirk**, sent as bound: one Togui world's camp-2 system-line action (row 2027,
+  `TRIGGER_ACTION_MESSAGE_SYSTEM_WINDOW_1228`) names `..._ENVY_TOGUI_1`, so its banner says "Camp No. 2"
+  and its line "Camp No. 1" (MEASURED in the data).
+- **The recall's warp** waits 5.0 s after the Yes (W3's); MEASURED 5.32 s from `B51C` to the first
+  despawn, INFERRED the push's u32 5 plus the original's job tick. Kept at 5 s.
+- **The warnings** come at their thresholds exactly (60 / 10 / 5 minutes before the end); MEASURED
+  each 9.9 s past them in the original (3,609.9 s, 6,609.9 s, 6,909.9 s, 7,209.9 s after the hole),
+  and the empty closes 601.0 s and 604.9 s: INFERRED the shard manager's tick phase, not a rule;
+  not copied.
 
 ## 12. Stage 2: size (estimate)
 

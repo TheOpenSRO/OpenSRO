@@ -2142,6 +2142,8 @@ func _ready() -> void:
 
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok:
+		# Round 870: the result's heights are the wire's (region-local).
+		_scene_heights_of_result(result.zone, result.frame, result)
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		_walked_since_send = 0.0
@@ -6485,6 +6487,10 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	_grid_origin_region = Vector2i(frame_x, frame_y)
 	_grid_centre_region = Vector2i(center_x, center_y)
 	_grid_shared_anchor_height = center_near_height if is_nan(anchor) else anchor
+	# Round 870: the movement wire's heights are region-local; this frame's
+	# scene stands at minus the anchor (NetClient.wire_height_anchor).
+	if not is_nan(_grid_shared_anchor_height):
+		NetClient.wire_height_anchor = _grid_shared_anchor_height
 	_grid_has_origin = true
 	_grid.loaded_cells.clear()
 	_grid.mark_loaded(cdx, cdy, center_x, center_y)
@@ -7570,6 +7576,33 @@ func _reload_zone_assets(zone: String, frame: String = "") -> void:
 ## default (server/internal/worldmap.FrameFor returns ZoneCentre, which
 ## _resolve_zone_region equals; zone_centres_test.gd). The server's
 ## -single-frame (round 571, default off) names 97/168 for every town.
+## Round 870: an entry's or a zone change's heights -- the player's and the
+## players in view -- from the wire's (region-local) into this client's scene
+## for the result's frame, whose anchor (_frame_anchor_height) becomes
+## NetClient.wire_height_anchor now, before the grid is built (the grid sets
+## it again from what it anchored on). A dungeon has none. Converted once:
+## the result is marked.
+func _scene_heights_of_result(zone: String, frame: String, result) -> void:
+	if result == null or result.has_meta("scene_heights"):
+		return
+	result.set_meta("scene_heights", true)
+	if zone.begins_with("dungeon/"):
+		return
+	var coords := _zone_frame_coords(zone, frame)
+	if not coords.is_empty():
+		var a := _frame_anchor_height(int(coords["x"]), int(coords["y"]))
+		if not is_nan(a):
+			NetClient.wire_height_anchor = a
+	var anchor: float = NetClient.wire_height_anchor
+	result.y -= anchor
+	for o in result.others:
+		if o == null:
+			continue
+		o.y -= anchor
+		if o.has_dest:
+			o.dest.y -= anchor
+	print("World3D: the result's heights into the scene of frame %s (anchor %.2f): player at y %.2f" % [frame, anchor, result.y])
+
 static func _frame_coords(centre: Dictionary, frame: String) -> Dictionary:
 	if frame != "":
 		var named := _parse_region_coords(frame)
@@ -7725,6 +7758,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# centre region's middle named in that frame (worldmap.Landing) -- inside
 	# the grid, which is built around the centre; (0, 0, 0) would be the
 	# FRAME region's middle, off it.
+	# Round 870: its heights are the wire's (region-local), in the new frame.
+	_scene_heights_of_result(result.zone, result.frame, result)
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
 	_walked_since_send = 0.0
@@ -11302,14 +11337,24 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	# Assemble a model once into a detached template, then duplicate it for
 	# each NPC that uses it -- the repeat spawns skip the expensive .bsr
 	# assembly and just copy a node (sharing its mesh/texture resources).
+	if _npc_static_models.has(model):
+		return _place_static_npc(rec, group, model, code)
 	var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
 	if template == null:
 		# Round 838: a skinned object resource is an NPC body too (the Magic
 		# POP machine's type-3 .bsr; SkinnedBsrAssembler's skinned_object).
 		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true, false, 0, true)
 		if template == null:
-			print("World3D: NPC ref=%d uid=%d not placed: %s did not assemble" % [rec.ref_id, rec.uid, model])
-			return {}
+			# Round 870: an NPC whose resource is a static object .bsr (no
+			# skeleton) -- the Forgotten World's party-recall pillar,
+			# NPC_FWORLD_RECALL_PARTY's Dun\Property\com\property_recall.bsr,
+			# type 2 -- is drawn as a map object is (MEASURED: the original
+			# shows "a dark stone pillar with red light" and it can be
+			# selected); before, it was not placed and could not be clicked.
+			var placed := _place_static_npc(rec, group, model, code)
+			if placed.is_empty():
+				print("World3D: NPC ref=%d uid=%d not placed: %s did not assemble" % [rec.ref_id, rec.uid, model])
+			return placed
 		_npc_model_cache[model] = template
 	var skeleton := template.skeleton.duplicate() as Skeleton3D
 	if skeleton == null:
@@ -11419,6 +11464,89 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 			var diff := absf(fposmod(bearing - open_bearing + 180.0, 360.0) - 180.0)
 			print("QA NPCFACE %s uid=%d server %.1f open %.1f diff %.1f" % [code, rec.uid, bearing, open_bearing, diff])
 	return {"db": facing_source == "server", "facing_usec": facing_usec}
+
+## Round 870: the NPC models that are static objects (no skeleton), so a
+## second spawn of one skips the skinned assembly.
+var _npc_static_models := {}
+
+## Round 870: an NPC whose model is a static object .bsr, built through the
+## scenery templates (ObjectTemplateCache, as StructureWorld builds a static
+## structure, with the model's ambient effects), standing and turned as any
+## NPC, with the NPC's collider, metas and plate -- no skeleton, idle or
+## fidget. {} when the model does not build either.
+func _place_static_npc(rec: NpcSpawnNet.Record, group: Node3D, model: String, code: String) -> Dictionary:
+	if _object_templates == null:
+		_object_templates = ObjectTemplateCache.new(_load_object_template)
+	var full := model if model.to_lower().begins_with("res\\") else "res\\" + model
+	var body: Node3D = _object_templates.instance(full, "npc")
+	if body == null:
+		return {}
+	_npc_static_models[model] = true
+	body.name = "Model"
+	var holder := Node3D.new()
+	holder.name = "Npc_%d_%d" % [rec.ref_id, rec.uid]
+	var local: Vector3 = rec.local_position
+	var height: float = local.y
+	var region_pair := _grid.nav_graph_for_region(rec.region_x, rec.region_y)
+	if not region_pair.is_empty():
+		height = (region_pair[0] as NavGraph).landing_height_at(local.x, local.z, local.y)
+	holder.position = Vector3(local.x, height, local.z)
+	var facing_source := "none"
+	if rec.has_angle:
+		holder.rotation.y = NpcSpawnNet.holder_yaw(NpcSpawnNet.heading_of(rec.angle))
+		facing_source = "server"
+	holder.add_child(body)
+	# Its size from its meshes, in the holder's frame.
+	var aabb := AABB()
+	var have := false
+	for mi in body.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		var t := body.transform * _local_xform_under(m, body)
+		var box := t * m.get_aabb()
+		aabb = box if not have else aabb.merge(box)
+		have = true
+	var bounds := Vector2(NPC_MIN_RADIUS, NPC_MIN_HEIGHT)
+	if have:
+		bounds = Vector2(maxf(minf(aabb.size.x, aabb.size.z) * 0.5, NPC_MIN_RADIUS), maxf(aabb.end.y, NPC_MIN_HEIGHT))
+	holder.add_child(_npc_collider(bounds))
+	var npc_name: String = _npc_names.get(rec.ref_id, "")
+	if rec.name != "":
+		npc_name = rec.name
+	holder.set_meta("npc_id", rec.ref_id)
+	holder.set_meta("npc_uid", rec.uid)
+	holder.set_meta("npc_name", npc_name)
+	holder.set_meta("npc_code", code)
+	holder.set_meta("npc_interactions", rec.interactions)
+	holder.set_meta("npc_facing_source", facing_source)
+	holder.set_meta("npc_static", true)
+	holder.set_meta(QuestMarks.HEIGHT_META, bounds.y)
+	CharacterBlobs.register(holder, float(_bc_radius_by_code.get(code, 0.0)))
+	if npc_name != "":
+		var npc_plate := _name_plate(npc_name, bounds.y)
+		_retail_plate_look(npc_plate, NPC_NAME_COLOUR)
+		holder.add_child(npc_plate)
+	group.add_child(holder)
+	_npc_holders[rec.uid] = holder
+	var fx := 0
+	if body.has_meta(AmbientParticles.META_ENTRIES) and OS.get_environment("OPENSRO_QA_AMBIENT") != "off":
+		var particles: Pk2Reader = _open_particles_pk2_if_set()
+		if particles != null and _ambient != null:
+			fx = (_ambient as AmbientParticles).attach(body, body.get_meta(AmbientParticles.META_ENTRIES), particles).size()
+	if NetClient.quest.marks.has(rec.uid):
+		QuestMarks.apply_one(holder, NetClient.quest.marks[rec.uid], _quest_mark_models, _quest_mark_model, _quest_mark_fx)
+	print("World3D: NPC %s uid=%d ref=%d region %d/%d at %.1f,%.1f angle=%d facing %s -- static model %s, %d ambient effect(s), height %.1f" % [
+		code, rec.uid, rec.ref_id, rec.region_x, rec.region_y, local.x, local.z, rec.angle, facing_source, model, fx, bounds.y])
+	return {"db": facing_source == "server", "facing_usec": 0}
+
+## The transform of `n` relative to its ancestor `top` (both detached or not).
+static func _local_xform_under(n: Node3D, top: Node3D) -> Transform3D:
+	var t := Transform3D.IDENTITY
+	var cur: Node = n
+	while cur != null and cur != top:
+		if cur is Node3D:
+			t = (cur as Node3D).transform * t
+		cur = cur.get_parent()
+	return t
 
 ## OPENSRO_QA_LOCAL_NPCS=1 (round 708, OURS, QA ONLY): with no server -- the
 ## offline renders, the perf gate, the headless suites -- nobody spawns NPCs,
@@ -19866,7 +19994,23 @@ func _qa_input_step() -> void:
 			# code as drawn (the talk ray, the approach and the select 0x7045
 			# decide what it does, as a player's click).
 			var nh := _qa_server_npc(arg)
-			if nh == null or camera_3d == null or camera_3d.is_position_behind(nh.global_position):
+			# Round 870: `npcclick:~<code>` turns the camera toward the NPC
+			# first (as gateclick does, a player dragging it round), and
+			# clicks a few frames on.
+			if arg.begins_with("~"):
+				nh = _qa_server_npc(arg.substr(1))
+				if nh == null or camera_3d == null:
+					_qa_input_report = action + " (no such NPC drawn)"
+				else:
+					var to_npc := nh.global_position - player.global_position
+					camera_arm.global_rotation = Vector3(camera_arm.global_rotation.x, atan2(-to_npc.x, -to_npc.z), 0.0)
+					_qa_input_report = "%s (NPC at %s, player at %s; camera turned)" % [action, str(nh.global_position.round()), str(player.global_position.round())]
+					get_tree().create_timer(0.2).timeout.connect(func() -> void:
+						var tat := camera_3d.unproject_position(nh.global_position + Vector3(0, 0.9 * PLAYER_SCALE_RATIO, 0))
+						print("QA NPCCLICK at %s" % str(tat))
+						if not camera_3d.is_position_behind(nh.global_position) and get_viewport().get_visible_rect().has_point(tat):
+							_qa_push_click(tat, MOUSE_BUTTON_LEFT))
+			elif nh == null or camera_3d == null or camera_3d.is_position_behind(nh.global_position):
 				_qa_input_report = action + " (no such NPC drawn)"
 			else:
 				var nat := camera_3d.unproject_position(nh.global_position + Vector3(0, 0.9 * PLAYER_SCALE_RATIO, 0))
@@ -19881,10 +20025,14 @@ func _qa_input_step() -> void:
 			# Round 869: left click the middle of the server's gate structure
 			# (StructureWorld) as drawn -- the talk ray, the approach and the
 			# select 0x7045 decide what it does, as a player's click.
+			# Round 870: the gate nearest this player (two gates may stand in a
+			# town: a re-entry and another layer's).
 			var gh: Node3D = null
 			for guid in _structure_world().holders:
 				if _structure_world().is_gate(int(guid)):
-					gh = _structure_world().gate_holder(int(guid))
+					var cand := _structure_world().gate_holder(int(guid))
+					if cand != null and (gh == null or cand.global_position.distance_to(player.global_position) < gh.global_position.distance_to(player.global_position)):
+						gh = cand
 			if gh == null or camera_3d == null:
 				_qa_input_report = action + " (no gate drawn)"
 			else:

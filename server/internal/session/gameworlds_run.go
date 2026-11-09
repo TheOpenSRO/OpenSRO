@@ -402,6 +402,13 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 	if !ok {
 		return fmt.Errorf("start region %#04x cannot be placed", start.Region)
 	}
+	// Round 870: the arrival stands on the surface nearest the start's height
+	// (READ CGObj::EnterWorld s:0x485360, ResolveCellAndHeight): the Wrecked
+	// Ship's starts are ~10 above their decks (MEASURED -770 over -779.1,
+	// -247 over -257.6).
+	if y, ok := navArrivalHeight(bucket, pos); ok {
+		pos.Y = y
+	}
 	// The return point: where the character stood, saved now (the move in
 	// saves nothing: savePosition skips an instance).
 	if instanceOf(from) == nil {
@@ -418,11 +425,10 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 	// behind the entry notices), so it cannot overtake them. A layer on
 	// another process (lane W2) sends its own at the hand-off's arrival.
 	now := w.Clock().Now()
-	coolPkt := startGroupCoolTime(ctx, e.CharacterID, w, now)
+	coolPkt, fresh := startGroupCoolTime(ctx, e.CharacterID, w, now)
 	guarded := arrivalGuardOn.Load()
 	remote := w.Remote()
 	if coolPkt != nil && guarded && !remote {
-		queueForArrival(e.CharacterID, coolPkt, true)
 		queueForArrival(e.CharacterID, coolPkt, true)
 	}
 	if remote {
@@ -435,8 +441,21 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 		dropArrivalSends(e.CharacterID)
 		return err
 	}
+	// Round 870, MEASURED: a new limit's 0x320C comes twice -- right after
+	// the entry notice pair and again in the arrival state -- and a running
+	// one's (a re-entry) once, in the arrival state. Held, the first goes
+	// out right after the arrival's early sends (the notices); unheld, it is
+	// posted to the layer behind the entry's triggers (World.Enter fired
+	// them). A layer on another process sends its own (lane W2's hand-off).
+	if coolPkt != nil && fresh && !remote {
+		if guarded {
+			queueAfterEarly(e.CharacterID, coolPkt)
+		} else {
+			w.Post(func() { _ = sess.Send(coolPkt) })
+		}
+	}
 	if coolPkt != nil && !guarded && !remote {
-		_ = sess.Send(coolPkt)
+		w.Sync()
 		_ = sess.Send(coolPkt)
 	}
 	if d.Instances != nil {
@@ -458,24 +477,25 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 // one for this instance, or the running one kept (re-entering the same
 // instance does not restart it -- INFERRED: the job holds the key it was
 // started for). It answers its 0x320C {0x0C, group, remaining} for the
-// client (nil for none).
-func startGroupCoolTime(ctx context.Context, characterID int64, w *gameworld.World, now time.Time) *proto.Packet {
+// client (nil for none) and whether the job is new.
+func startGroupCoolTime(ctx context.Context, characterID int64, w *gameworld.World, now time.Time) (*proto.Packet, bool) {
 	g := w.Ref.Group
 	d := gameWorldDeps()
 	if g == nil || g.CoolTime <= 0 || d.Timed == nil {
-		return nil
+		return nil, false
 	}
 	job, running := groupCoolTime(ctx, characterID, g.ID, now)
-	if !running || uint32(job.Key) != w.Key {
+	fresh := !running || uint32(job.Key) != w.Key
+	if fresh {
 		job = timedjob.Job{CharID: characterID, Type: TimedJobWorldGroup, Ref: int64(g.ID), Key: int64(w.Key),
 			Start: now, End: now.Add(g.CoolTime), V1: int64(w.ID.World), V2: int64(w.ID.Layer)}
 		if err := d.Timed.Put(ctx, job); err != nil && d.Logger != nil {
 			d.Logger.Warn("group cool time not saved", "character_id", characterID, "err", err)
 		}
 	}
-	// Round 869 lane W3: sent with the arrival, after its state, twice
-	// (MEASURED: the 0x320C comes twice in the burst after the 0x3012).
-	return &proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(g.ID), job.End.Sub(now))}
+	// Round 869 lane W3 / round 870: sent with the arrival (EnterInstance
+	// places it; MEASURED twice for a new limit, once for a running one).
+	return &proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(g.ID), job.End.Sub(now))}, fresh
 }
 
 // groupCoolTime is characterID's running limit of group, if any.
@@ -515,13 +535,14 @@ func coolTimesOf(ctx context.Context, characterID int64, now time.Time) []gamewo
 	return out
 }
 
-// sendGroupCoolTimes pushes every running group limit at a world entry
-// (game_worlds.md 14 item 7: 0x320C at entry and at world entry).
-func sendGroupCoolTimes(ctx context.Context, sess *gateway.Session, characterID int64) {
-	now := time.Now()
+// groupCoolTimePackets is a 0x320C {0x0C, group, remaining s} for each of
+// characterID's running group limits.
+func groupCoolTimePackets(ctx context.Context, characterID int64, now time.Time) []*proto.Packet {
+	var out []*proto.Packet
 	for _, ct := range coolTimesOf(ctx, characterID, now) {
-		sess.Send(&proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(ct.Group), ct.End.Sub(now))})
+		out = append(out, &proto.Packet{Opcode: proto.OpTimedJobPush, Data: gameworld.EncodeGroupCoolTime(uint32(ct.Group), ct.End.Sub(now))})
 	}
+	return out
 }
 
 // returnFromInstance warps sess's character from the instance hub `from` to
@@ -540,7 +561,24 @@ func returnFromInstance(ctx context.Context, sess *gateway.Session, from *world.
 	if to == from {
 		return fmt.Errorf("no open world")
 	}
+	// Round 870, MEASURED: the arrival back in town (the exit NPC's and the
+	// close's) carries the running limit's 0x320C in its arrival state, as
+	// every arrival does; the icon stays.
+	cool := groupCoolTimePackets(ctx, e.CharacterID, time.Now())
+	guarded := arrivalGuardOn.Load()
+	if guarded {
+		for _, p := range cool {
+			queueForArrival(e.CharacterID, p, true)
+		}
+	}
 	_, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, to, d.Zerk, rp.zone, rp.bucket, rp.pos, rp.frame, via)
+	if err != nil {
+		dropArrivalSends(e.CharacterID)
+	} else if !guarded {
+		for _, p := range cool {
+			_ = sess.Send(p)
+		}
+	}
 	instanceReturns.Delete(e.CharacterID)
 	clusterClearReturn(ctx, e.CharacterID)
 	return err

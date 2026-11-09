@@ -213,6 +213,12 @@ func restoredArrival(c *character.Character) (zone, bucket string, pos world.Pos
 	if !ok {
 		return "", "", world.Position{}, "", false
 	}
+	// Round 870: the wire's heights are region-local now (the client sent its
+	// frame-anchored scene heights before); a height saved in this frame is
+	// read whichever way lies on the ground (navRestoredHeight).
+	if c.Frame == frame {
+		pos = navRestoredHeight(bucket, pos)
+	}
 	return c.Zone, bucket, pos, frame, true
 }
 

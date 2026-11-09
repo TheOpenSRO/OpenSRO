@@ -186,8 +186,14 @@ func remove_holder(uid: int) -> void:
 	if h != null and is_instance_valid(h):
 		(h as Node).queue_free()
 
+## Round 870: a holder under a node queued for deletion -- the old terrain
+## group a zone change frees; queue_free marks only the node it is called on
+## -- is gone too, as World3D.npc_holder_standing reads it for the NPCs. Before,
+## a gate standing in town vanished at any zone change within the frame (a
+## GM's /tp, a return to the same town): its record was kept but never placed
+## again, so it was neither drawn nor clickable.
 func _standing(uid: int) -> bool:
-	return holders.has(uid) and is_instance_valid(holders[uid]) and not (holders[uid] as Node).is_queued_for_deletion()
+	return holders.has(uid) and w.npc_holder_standing(holders[uid])
 
 ## Whether this player may see gate `rec` (StructureSpawnNet.gate_visible).
 func gate_visible(rec: StructureSpawnNet.Record) -> bool:

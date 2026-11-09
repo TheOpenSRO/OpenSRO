@@ -1348,7 +1348,31 @@ func enter_world(char_name: String) -> void:
 ## `heading_wire` (round 653) is a heading run's u16 wire angle
 ## (SkyRun.wire_angle), or -1 for a position with no run in effect.
 func move_to(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1) -> void:
-	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated, heading_wire))
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, wire_y(y), z, relocated, heading_wire))
+
+## Round 870: the heights on the movement wire are region-local, as the
+## original's are (its 0x7021 destination names the region and the point in
+## it, FUN_009ec080), and as the server's own are (its navigation mesh, the
+## nests, the instance starts). This client draws a field frame at
+## -wire_height_anchor (World3D._group_position: every region group stands at
+## minus the frame's anchor height, round 570 -- OURS calibration the
+## original does not have), so its scene heights are the wire's less the
+## anchor. Until round 870 they went out as scene heights: MEASURED the
+## anchor is -2.5 in Jangan's frame but 244 in Hotan's, 834 in the Forgotten
+## World's Togui and -1800 in the Wrecked Ship's, and the server -- which
+## takes a destination's height for the leg's end -- then held a player 834
+## below the NPC nests' heights in Togui, beyond the 300 of the NPC reach
+## (0x7045 refused 4 at 167 units after one click-walk). World3D sets the
+## anchor for each field frame; in a dungeon it is not applied.
+var wire_height_anchor := 0.0
+
+## The wire's height for this client's scene height `y` (a field frame).
+func wire_y(y: float) -> float:
+	return y + wire_height_anchor if _spawn_dungeon < 0 else y
+
+## This client's scene height for the wire's height `y` (a field frame).
+func scene_y(y: float) -> float:
+	return y - wire_height_anchor if _spawn_dungeon < 0 else y
 
 ## Round 749: where the player's walk stopped short of the destination its
 ## 0x7021 named (WorldNet.MOVE_FLAG_STOPPED, OURS) -- the server takes it on
@@ -1359,7 +1383,7 @@ func request_unstuck() -> void:
 	_send(OP_UNSTUCK)
 
 func report_stop(x: float, y: float, z: float) -> void:
-	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, false, -1, true))
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, wire_y(y), z, false, -1, true))
 
 ## Round 749: retail's click move, 0x7021's destination form, for the world
 ## point `at` in the frame the server named (the last result's FrameRegion):
@@ -1374,7 +1398,7 @@ func move_order_destination(at: Vector3) -> Vector3:
 	if _spawn_frame.x < 0:
 		return Vector3.INF
 	var l := DestMoveNet.local_of_world(at.x, at.z, _spawn_frame)
-	_send_move(DestMoveNet.encode_destination(int(l["region"]), float(l["lx"]), at.y, float(l["lz"])))
+	_send_move(DestMoveNet.encode_destination(int(l["region"]), float(l["lx"]), wire_y(at.y), float(l["lz"])))
 	return quantize_destination(at)
 
 ## Round 795: the COS this player rides (its uid), 0 on foot. While it is
@@ -2381,13 +2405,14 @@ func _on_zone_notice(data: PackedByteArray) -> void:
 		zone_departures[uid] = true
 
 ## Round 749: an 0xB021's world points in frame.
-static func resolve_echo(echo: DestMoveNet.Echo, frame: Vector2i) -> void:
+## `anchor` (round 870): the frame's wire_height_anchor, taken off the heights.
+static func resolve_echo(echo: DestMoveNet.Echo, frame: Vector2i, anchor: float = 0.0) -> void:
 	if echo.kind == DestMoveNet.KIND_DESTINATION:
 		var d := DestMoveNet.world_of_local(echo.region, float(echo.local.x), float(echo.local.z), frame)
-		echo.dest_world = Vector3(d.x, float(echo.local.y), d.y)
+		echo.dest_world = Vector3(d.x, float(echo.local.y) - anchor, d.y)
 	if echo.has_source:
 		var s := DestMoveNet.world_of_local(echo.source_region, echo.source_local.x, echo.source_local.z, frame)
-		echo.source_world = Vector3(s.x, echo.source_local.y, s.y)
+		echo.source_world = Vector3(s.x, echo.source_local.y - anchor, s.y)
 
 ## A spawn message that may name a player: read now, or queued behind any
 ## that wait for the item table.
@@ -2404,7 +2429,7 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 			if echo.error != "":
 				push_warning("NetClient: a 0xB021 that does not read (%s)" % echo.error)
 				return
-			resolve_echo(echo, _spawn_frame)
+			resolve_echo(echo, _spawn_frame, wire_y(0.0))
 			entity_move_echo.emit(echo)
 		DestMoveNet.OP_MOVEMENT_STOP:
 			var stop := DestMoveNet.decode_stop(data)
@@ -2412,7 +2437,7 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 				push_warning("NetClient: a 0xB023 that does not read (%s)" % stop.error)
 				return
 			var at := DestMoveNet.world_of_local(stop.region, stop.local.x, stop.local.z, _spawn_frame)
-			stop.world = Vector3(at.x, stop.local.y, at.y)
+			stop.world = Vector3(at.x, scene_y(stop.local.y), at.y)
 			entity_move_stop.emit(stop)
 		DestMoveNet.OP_MOVEMENT_TURN:
 			# Round 808: a body's new heading, in order with its moves.
@@ -2654,6 +2679,10 @@ func _cos_despawned(uid: int) -> void:
 ## its body (_berserk_resync), and its sitting.
 func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	var snap := UserSpawnNet.to_snapshot(rec, _spawn_types, _spawn_frame)
+	# Round 870: the record's heights are the wire's (region-local).
+	snap.y = scene_y(snap.y)
+	if snap.has_dest:
+		snap.dest.y = scene_y(snap.dest.y)
 	user_roster[rec.uid] = true
 	# Round 800: its job as the record carries it (the client's +0x50d job
 	# state, +0x7be / +0x7bf, +0x50e): the plate, the target window.
@@ -2820,9 +2849,16 @@ func _dispatch(p: Packet) -> void:
 				_start_user_view(result.frame)
 			enter_world_result.emit(result)
 		WorldNet.OP_ENTITY_ENTERED:
-			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
+			var entered = WorldNet.decode_entity_entered(p.data)
+			# Round 870: its height is the wire's (region-local).
+			if entered != null:
+				entered.y = scene_y(entered.y)
+			entity_entered.emit(entered)
 		WorldNet.OP_ENTITY_MOVED:
-			entity_moved.emit(WorldNet.decode_entity_moved(p.data))
+			var moved = WorldNet.decode_entity_moved(p.data)
+			if moved != null:
+				moved.y = scene_y(moved.y)
+			entity_moved.emit(moved)
 		WorldNet.OP_ENTITY_LEFT:
 			var left_id := WorldNet.decode_entity_left(p.data)
 			# Its buffs went with its body (round 646, BuffRoster.drop), and

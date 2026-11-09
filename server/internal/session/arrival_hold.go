@@ -108,6 +108,9 @@ func releaseArrival(sess *gateway.Session, arrival uint64, why string) bool {
 		w.Sync()
 	}
 	flushArrivalSends(id, sess, false)
+	// Round 870: what follows the early sends (a new re-entry limit's first
+	// 0x320C, MEASURED right after the entry notice pair).
+	flushAfterEarly(id, sess)
 	if then != nil {
 		then(released)
 	}
@@ -123,7 +126,9 @@ func releaseArrival(sess *gateway.Session, arrival uint64, why string) bool {
 var arrivalSends = struct {
 	sync.Mutex
 	early, late map[int64][]*proto.Packet
-}{early: map[int64][]*proto.Packet{}, late: map[int64][]*proto.Packet{}}
+	// afterEarly (round 870) goes between the two.
+	afterEarly map[int64][]*proto.Packet
+}{early: map[int64][]*proto.Packet{}, late: map[int64][]*proto.Packet{}, afterEarly: map[int64][]*proto.Packet{}}
 
 // sendAfterArrival sends pkt to characterID's sess now, or with its arrival
 // when it is held (late: after the arrival state).
@@ -162,7 +167,27 @@ func dropArrivalSends(characterID int64) {
 	arrivalSends.Lock()
 	delete(arrivalSends.early, characterID)
 	delete(arrivalSends.late, characterID)
+	delete(arrivalSends.afterEarly, characterID)
 	arrivalSends.Unlock()
+}
+
+// queueAfterEarly files pkt for characterID's next arrival, after its early
+// sends (the entry notices) and before the arrival state (round 870).
+func queueAfterEarly(characterID int64, pkt *proto.Packet) {
+	arrivalSends.Lock()
+	arrivalSends.afterEarly[characterID] = append(arrivalSends.afterEarly[characterID], pkt)
+	arrivalSends.Unlock()
+}
+
+// flushAfterEarly sends what queueAfterEarly filed for characterID.
+func flushAfterEarly(characterID int64, sess *gateway.Session) {
+	arrivalSends.Lock()
+	pkts := arrivalSends.afterEarly[characterID]
+	delete(arrivalSends.afterEarly, characterID)
+	arrivalSends.Unlock()
+	for _, p := range pkts {
+		_ = sess.Send(p)
+	}
 }
 
 // flushArrivalSends sends what waited for characterID's arrival.

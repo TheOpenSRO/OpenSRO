@@ -96,6 +96,93 @@ func navGround(zone string, from world.Position, x, z float64) (float64, bool) {
 	return 0, false
 }
 
+// navArrivalHeight is the height an arrival at pos in zone stands at: the
+// surface nearest pos.Y under the point (SurfaceAt's rule). READ (round 870,
+// CGObj::EnterWorld s:0x485360): an object entering a world with no cell yet
+// is resolved through the region manager's ResolveCellAndHeight (its log
+// line names it) before it is placed, so an arrival point above a floor
+// stands on that floor rather than falling to it. ok is false with no mesh
+// there (a dungeon: the server walks no dungeon yet).
+func navArrivalHeight(zone string, pos world.Position) (float64, bool) {
+	w := navWorld.Load()
+	if w == nil {
+		return 0, false
+	}
+	ox, oy, ok := entityFrame(zone)
+	if !ok {
+		return 0, false
+	}
+	y := w.Height(ox, oy, pos.X, pos.Z, pos.Y)
+	if math.IsNaN(y) {
+		return 0, false
+	}
+	return y, true
+}
+
+// navFrameAnchor is the height the client anchors zone's frame on: the frame
+// region's terrain at its block 0's vertex 8, local (160, 0) -- the client's
+// MapmTerrainBuilder.near_row_middle_height of the frame's .m (World3D.
+// _frame_anchor_height, round 570). MEASURED on the server's navigation mesh
+// equal to the client's: Jangan's 97/168 -2.49, Togui's 126/228 833.58.
+func navFrameAnchor(zone string) (float64, bool) {
+	w := navWorld.Load()
+	if w == nil {
+		return 0, false
+	}
+	rx, ry, ok := entityFrame(zone)
+	if !ok {
+		return 0, false
+	}
+	g := w.Graph(rx<<8 | ry)
+	if g == nil || g.Region == nil {
+		return 0, false
+	}
+	h := g.Region.SampleHeight(160, 0)
+	if math.IsNaN(h) {
+		return 0, false
+	}
+	return h, true
+}
+
+// restoredHeight is a saved position's height read both ways (round 870):
+// as the wire's region-local height (saved since round 870) and as the
+// client's frame-anchored scene height plus the frame's anchor (saved
+// before: the client sent scene heights). Each reading is resolved onto the
+// surface nearest it (surfaceNear) and the one that lies nearer its surface
+// is taken -- a saved height is within a step of the ground it stood on, the
+// other reading is the anchor away (MEASURED 80..834 in the towns' and the
+// Forgotten World's frames, -1800 in the Wrecked Ship's). No surface: saved.
+func restoredHeight(saved, anchor float64, surfaceNear func(refY float64) (float64, bool)) float64 {
+	h1, ok1 := surfaceNear(saved)
+	h2, ok2 := surfaceNear(saved + anchor)
+	switch {
+	case ok1 && ok2:
+		if math.Abs(h2-(saved+anchor)) < math.Abs(h1-saved) {
+			return h2
+		}
+		return h1
+	case ok1:
+		return h1
+	case ok2:
+		return h2
+	}
+	return saved
+}
+
+// navRestoredHeight is restoredHeight on the navigation mesh for pos in zone.
+func navRestoredHeight(zone string, pos world.Position) world.Position {
+	a, ok := navFrameAnchor(zone)
+	if !ok {
+		return pos
+	}
+	pos.Y = restoredHeight(pos.Y, a, func(refY float64) (float64, bool) {
+		p := pos
+		p.Y = refY
+		return navArrivalHeight(zone, p)
+	})
+	return pos
+}
+
 // navWalk walks from (x, y, z) toward (tx, tz) in zone's frame with no
 // slide (the walk every mover uses, READ round 653). ok is false without a
 // navigation mesh or a frame for the zone (a dungeon: OURS, the server walks

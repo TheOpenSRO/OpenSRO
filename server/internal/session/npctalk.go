@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"sort"
 	"sync"
@@ -134,7 +135,10 @@ func npcTarget(e world.Entity, entity uint32) (npcPlacement, uint16) {
 		return pl, npctalk.CodeNoTarget
 	}
 	dx, dy, dz := pl.x-e.Pos.X, float64(pl.npc.Y)-e.Pos.Y, pl.z-e.Pos.Z
-	if math.Sqrt(dx*dx+dy*dy+dz*dz) > npcInteractRange {
+	if d := math.Sqrt(dx*dx + dy*dy + dz*dz); d > npcInteractRange {
+		// Round 870: the refusal says why (the client shows nothing for it).
+		slog.Info("npc out of interaction range", "character_id", e.CharacterID, "npc", pl.npc.UID, "zone", e.Zone,
+			"distance", math.Round(d*10)/10, "dx", math.Round(dx), "dy", math.Round(dy), "dz", math.Round(dz))
 		return pl, npctalk.CodeTooFar
 	}
 	return pl, 0
