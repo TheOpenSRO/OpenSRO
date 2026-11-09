@@ -56,7 +56,10 @@ MEASURED (94 rows):
 ### 1.1 Which regions belong to a world
 
 `_RefInstance_World_Region` {WorldID, RegionID} (MEASURED 4,754 rows). World 1 lists 2,385
-regions and **includes every Forgotten World region**; each instanced world lists its own set:
+regions and **includes every Forgotten World region**; each instanced world lists its own set. A game
+server loads only the regions whose `ContinentName` is bound to it in `_RefRegionBindAssocServer`
+(READ, section 5 item 7). In the measured data the Forgotten World continents are `GOD_TOGUI`,
+`GOD_FLAME`, `GOD_WRECK_IN` and `GOD_WRECK_OUT`.
 
 | worlds | regions | MEASURED |
 |---|---|---|
@@ -208,6 +211,13 @@ close (the decompiler drops them).
      path (s:0x4f34bb..0x4f3657); otherwise a direct warp, `CGObjPC::vslot_222` (s:0x4df590), whose
      0 -> 3. It returns 0 for region 0, **layer 0** (s:0x4df5a7), a region not in the server's region
      table (s:0x4df5d8) or a region whose map is not loaded (s:0x4df607).
+     READ (round 869): the region table holds only the regions whose area is bound to this server in
+     `_RefRegionBindAssocServer`. The `_RefRegion` row reader (s:0x6a2e40) takes the area's value by
+     `ContinentName` (s:0x5fba80), and the loader (s:0x6e33b0) drops a row whose value is 0. The value
+     is the 1-based index of the shard's `SR_GameServer` node (s:0x412360, s:0x412530). s:0x4df607
+     tests a region's index against the running server (s:0x412590, s:0x411780). This is the
+     original's static sharding of areas over game servers. MEASURED: the Forgotten World refusals
+     were this check, because the four `GOD_*` areas were bound to 0 (`forgotten_world.md` 5).
 - **CanEnter** (READ s:0x609c30, base s:0x5ec5b0; world codes -> reply codes by s:0x5f9950):
 
 | order | check | reply |
@@ -515,8 +525,8 @@ players back in the open world in under 15 s) and a drain under load.
 2. Re-entry limit: 300 minutes on the server (the database and the item's cooldown); the client keeps reading
    its own text.
 3. The free entrance ticket: not built (switched off in the data, referenced by neither binary).
-4. The inside: built from what was READ; measured in stage 3 if entry can be made to work (the refusal's cause
-   is being looked for).
+4. The inside: built from what was READ; measured in stage 3 if entry can be made to work. The refusal's cause
+   was found in round 869: the `GOD_*` areas are not bound to a game server (`forgotten_world.md` 5).
 5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
    process until the user says otherwise.
 

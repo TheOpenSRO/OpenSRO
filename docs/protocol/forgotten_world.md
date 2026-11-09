@@ -215,10 +215,55 @@ The checks and their order are `game_worlds.md` 5 (the warp handler's portal che
 
 **MEASURED**: the creator (alone, and again in a party of two, levels 39 and 40,
 in band) clicked the destination and got `0xB05A {02, 0x0001}` then `0xB05A {02, 0x0003}` -- accepted,
-then refused with 3 and no text; nobody entered. READ narrows code 3 to the player-set check (1), a
-missing layer (6) or the warp refusing (7: layer 0, region not in the server's table, map not loaded);
-which one applied is OPEN. So the inside (sections 6-8) is READ from the binaries and the data,
-**not measured**.
+then refused with 3 and no text; nobody entered. Round 869 found the cause (below): the game server
+had none of the Forgotten World's regions loaded. So the inside (sections 6-8) is READ from the
+binaries and the data, **not measured**.
+
+**Why every entry was refused with 3** (round 869):
+
+- **READ: a game server keeps only the regions whose area is bound to it.** The `_RefRegion` row
+  reader (s:0x6a2e40) drops the row's own `AssocServer`. It looks up the row's `ContinentName` in
+  `_RefRegionBindAssocServer` {AreaName, AssocServer} (s:0x5fba80, a case-insensitive name lookup
+  over the list the shard manager hands over in `CGameServer::LoadReferenceData` case 2, s:0x6bd920)
+  and stores that value at the region's +0x10. A **0**, or an area missing from the list, makes the
+  reader return 0, and the loader (s:0x6e33b0) then **drops the region** with no log line.
+- READ: the bound value is a 1-based index of the shard's `SR_GameServer` nodes. s:0x412360 lists
+  them from the certification node data, s:0x412530 gives the running server its own index (kept by
+  `InitializeGame`, s:0x412c20), and s:0x412590 turns an index back into a node id. So with one game
+  server the index is 1, and 0 matches no server.
+- READ: an instance world's regions are its `_RefInstance_World_Region` rows that this server kept
+  (s:0x530f40 with s:0x533030). A world left with none still opens: s:0x53b4b0 prints "There is no
+  assigned region!!! check out _RefRegion Table !!!" at console level and carries on. So the hole
+  still makes a layer and a gate, and selecting the gate still works. The warp to the start region
+  then fails in `CGObjPC::vslot_222` (s:0x4df5a7..0x4df5d8: the region is not in the table), which
+  the warp handler (s:0x4f365c -> s:0x4f369a) answers with **`0xB05A {02, 0x0003}`**.
+- READ: arena worlds are bound the same way when they are created (s:0x5f5b60 looks up `ARENA_SCORE`
+  and `ARENA_FLAG` and compares them with the running server's index).
+- **MEASURED** (the data the entries were measured against):
+  - `_RefRegionBindAssocServer` binds `GOD_TOGUI`, `GOD_FLAME`, `GOD_WRECK_IN` and `GOD_WRECK_OUT` to
+    **0**. The same goes for every `ARENA_*`, `FORT_*_AREA`, `PRISON`, `GM_EVENT`, `JUPITER`,
+    `SIEGE_DUNGEON` and `EVENT_GHOST` area.
+  - The open-world areas and Egypt (`TEMPLE`, `KingsValley`, `Pharaoh`, `SD`, `DELTA`) are bound to
+    **1**.
+  - Every `_RefRegion` row's own `AssocServer` is 0; the binding replaces it.
+  - All Forgotten World regions are present in `_RefRegion` and `_RefInstance_World_Region`: 48
+    Togui (continent `GOD_TOGUI`), the Flame dungeon 0x8012 (`GOD_FLAME`) and 224 + 224 Wreck. The
+    server's own map data has every one of their navmeshes (`nv_<region>.nvm`, `ainavdata_32786.dat`,
+    `flame.dof`), and its `mapinfo.mfo` sets their bits. **The binding is the only thing missing.**
+- **MEASURED again in round 869** (level 41, alone, band 35-50, a new grade-1 hole in Jangan):
+  1. `B04C {01, slot, 00 00, 3E6C}`, then the gate's `3015` 41 ms later (the same record as
+     section 4: access 6, the creator's name, 35883).
+  2. Selecting the gate: `B045` with the same one destination (0x7EE4, 1063, 693, 1125).
+  3. Clicking line 1: `B04B {02, 0x1c0d}`, then `B05A {02, 0x0001}`, then `B05A {02, 0x0003}` 38 ms
+     later. No text appears and nothing else is sent.
+- **Inference:** every band and theme is refused the same way, because all four `GOD_*` areas are
+  bound to 0.
+- **To measure the inside** on data like this, the four `GOD_*` areas must be bound to the game
+  server's index, and the shard manager and the game server restarted (the binding is loaded at
+  start).
+- **OpenSRO** has no per-area server binding: one process serves every region of a world's
+  `_RefInstance_World_Region` list (OURS: `game_worlds.md` 12 places whole instances, not areas).
+  Stage 2 needs no change for this; the instanced worlds' regions must simply be loaded.
 
 **The party** (READ): a type-6 gate admits only its creator; the rest of the party comes in through
 the recall NPC inside (section 8). With Param6 = 7 a party gate would admit the creator's party
@@ -420,12 +465,12 @@ start in parallel with the world unit because it only needs the interfaces):
 2. Re-entry limit: 300 minutes on the server (the database and the item's cooldown); the client keeps reading
    its own text.
 3. The free entrance ticket: not built (switched off in the data, referenced by neither binary).
-4. The inside: built from what was READ; measured in stage 3 if entry can be made to work (the refusal's cause
-   is being looked for).
+4. The inside: built from what was READ; measured in stage 3 if entry can be made to work. The refusal's cause
+   was found in round 869: the `GOD_*` areas are not bound to a game server (`forgotten_world.md` 5).
 5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
    process until the user says otherwise.
 
-OPEN: why the measured warp was refused (code 3); the type-6 gate's client test; the gate
+OPEN: the type-6 gate's client test; the gate
 record's +0x260; codes 0x1c28, 0x1c2a..0x1c2c and 0x1c2f's texts in category 0xd; the hole's "24
 hours" expiry; how the talismans (`ITEM_TALISMAN_TOGUI_*`, `_FLAME_*`, `_WRECK_A_*` / `_B_*`) and
 other rewards drop (no assigned drops on any FGW monster but the ENVY_DROP pillars; the drop groups
@@ -443,5 +488,6 @@ were not read); the treasure boxes' contents; the summon window's resource file;
 3. **The free entrance ticket.** It is off in the data and unreferenced by both binaries. Recommend:
    leave it unbuilt (not served), or, if the user wants it, build it as OURS: using it clears the
    GROUP_INS_GOD cool time after the confirm box with its existing text.
-4. **The inside was not measured** (every measured entry was refused, section 5). Recommend: build
-   from the READ behaviour and the data, and measure the inside in stage 3 before calling it done.
+4. **The inside was not measured** (every measured entry was refused, section 5: the `GOD_*` areas
+   were bound to no game server, so their regions were never loaded). Recommend: build from the READ
+   behaviour and the data, and measure the inside in stage 3 before calling it done.
