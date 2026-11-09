@@ -277,7 +277,7 @@ func guildNicknameToMembers(hub *world.Hub, g *guild.Guild, name, nickname strin
 		return
 	}
 	for _, m := range g.Members {
-		if e, ok := hub.EntityByCharacterID(m.CharacterID); ok && e.Session != nil {
+		if e, ok := reachOf(hub, m.CharacterID); ok && e.Session != nil {
 			_ = e.Session.SendFrames(f)
 		}
 	}

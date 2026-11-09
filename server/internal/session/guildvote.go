@@ -173,7 +173,7 @@ func (d guildOpsDeps) voteStart(ctx context.Context, sess *gateway.Session, e wo
 	if voteOfGuild(g.ID) != nil {
 		return fail(CodeVoteRunning)
 	}
-	if _, online := entityOf(d.hub, g.LeaderID); online {
+	if _, online := reachOf(d.hub, g.LeaderID); online {
 		return fail(CodeVoteNotTime)
 	}
 	ps, _ := d.guilds.(guild.PresenceStore)
@@ -191,7 +191,7 @@ func (d guildOpsDeps) voteStart(ctx context.Context, sess *gateway.Session, e wo
 		if m.CharacterID == g.LeaderID {
 			continue
 		}
-		if _, on := entityOf(d.hub, m.CharacterID); on {
+		if _, on := reachOf(d.hub, m.CharacterID); on {
 			v.list = append(v.list, m.CharacterID)
 			continue
 		}

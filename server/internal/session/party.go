@@ -90,6 +90,9 @@ func sendParty(sess *gateway.Session, op uint16, data []byte) {
 // PartyHandler returns the handler for the party's client messages: 0x7060
 // create, 0x7061 leave, 0x7062 invite, 0x7063 kick and the 0x3080 answer.
 func PartyHandler(d PartyDeps) gateway.Handler {
+	// Round 869 lane W2: a member's record at a hand-off in (clusterparty.go).
+	dd := d
+	partyDepsBox.Store(&dd)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		// Round 869: the session's own world (gameworlds.go).
 		d := d
@@ -540,6 +543,12 @@ func PartyDisconnectHandler(d PartyDeps) func(sess *gateway.Session) {
 		if !ok {
 			return
 		}
+		// Round 869 lane W2: a character moving to another process stays in
+		// its party (its membership follows it there, clusterparty.go).
+		if HandingOff(sess) {
+			partyRecords.forget(characterID)
+			return
+		}
 		d.removeMember(characterID, party.ReasonLogout)
 	}
 }
@@ -716,6 +725,17 @@ func (b *partyRecordBook) forget(id int64) {
 	b.mu.Unlock()
 }
 
+// ids is every filed member (round 869 lane W2).
+func (b *partyRecordBook) ids() map[int64]bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[int64]bool, len(b.m))
+	for id := range b.m {
+		out[id] = true
+	}
+	return out
+}
+
 // partyUpdate compares a member's sample with what the members last heard and
 // returns the kind-6 record of what changed (mask 0 when nothing did), by
 // FUN_005bb0c0's rules (READ): level; HP/MP by the update formula
@@ -783,6 +803,10 @@ func (d PartyDeps) sendPartyUpdates(ctx context.Context) {
 		for _, m := range p.Members {
 			prev, ok := partyRecords.get(m.CharacterID)
 			if !ok {
+				continue
+			}
+			// Round 869 lane W2: a member is sampled only where it plays.
+			if !partyLocalMember(m.CharacterID) {
 				continue
 			}
 			cur := d.sample(ctx, m, &prev, now)

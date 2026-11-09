@@ -128,7 +128,7 @@ func toGuildMembers(gs []*guild.Guild, op uint16, data []byte) {
 	}
 	for _, g := range gs {
 		for _, m := range g.Members {
-			if e, ok := entityOf(d.hub, m.CharacterID); ok {
+			if e, ok := reachOf(d.hub, m.CharacterID); ok {
 				sendGuild(e.Session, op, data)
 			}
 		}

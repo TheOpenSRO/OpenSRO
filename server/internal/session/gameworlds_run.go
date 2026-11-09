@@ -396,10 +396,20 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 	// saves nothing: savePosition skips an instance).
 	if instanceOf(from) == nil {
 		p, _ := placeOf(sess)
-		instanceReturns.Store(e.CharacterID, returnPoint{zone: p.zone, bucket: e.Zone, frame: p.frame, pos: e.Pos})
+		rp := returnPoint{zone: p.zone, bucket: e.Zone, frame: p.frame, pos: e.Pos}
+		instanceReturns.Store(e.CharacterID, rp)
 		savePosition(d.Chars, sess, e)
+		// Round 869 lane W2: the registry keeps it too, for a recovery
+		// when the instance's host dies (handoff.go).
+		clusterSetReturn(ctx, e.CharacterID, rp)
 	}
-	if _, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, w.Hub, d.Zerk, zone, bucket, pos, frame, via); err != nil {
+	if w.Remote() {
+		// Round 869 lane W2: a layer another process runs: the hand-off
+		// there (handoff.go), the same zone change for the client.
+		if err := handOffToInstance(sess, w, zone, bucket, pos, frame, via); err != nil {
+			return err
+		}
+	} else if _, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, w.Hub, d.Zerk, zone, bucket, pos, frame, via); err != nil {
 		return err
 	}
 	now := w.Clock().Now()
@@ -504,6 +514,7 @@ func returnFromInstance(ctx context.Context, sess *gateway.Session, from *world.
 	}
 	_, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, to, d.Zerk, rp.zone, rp.bucket, rp.pos, rp.frame, via)
 	instanceReturns.Delete(e.CharacterID)
+	clusterClearReturn(ctx, e.CharacterID)
 	return err
 }
 

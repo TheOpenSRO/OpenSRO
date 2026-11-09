@@ -228,3 +228,19 @@ func (t *Tracker) Clear(characterID int64) {
 	defer t.mu.Unlock()
 	delete(t.current, characterID)
 }
+
+// Peek is the character's MP if the tracker holds it (round 869 lane W2: what
+// a character carries to another process).
+func (t *Tracker) Peek(characterID int64) (int, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cur, ok := t.current[characterID]
+	return cur, ok
+}
+
+// Set puts the character's MP (the target process of a move).
+func (t *Tracker) Set(characterID int64, mp int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.current[characterID] = mp
+}

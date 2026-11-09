@@ -24,9 +24,9 @@ func (g GMSessions) KickCharacter(name string) (string, bool) {
 	if g.Hub == nil {
 		return "", false
 	}
-	e, ok := findByNameAnywhere(g.Hub, name)
+	e, ok := findByNameCluster(g.Hub, name)
 	if !ok {
-		for _, x := range allEntitiesAnywhere(g.Hub) {
+		for _, x := range everyoneCluster(g.Hub) {
 			if strings.EqualFold(x.Name, name) {
 				e, ok = x, true
 				break

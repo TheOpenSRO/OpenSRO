@@ -78,7 +78,7 @@ func (rt *academyRuntime) liveOf(m academy.Member) academy.Live {
 	rt.mu.Unlock()
 	out.Display = ""
 	if in {
-		if e, ok := entityOf(rt.Hub, m.CharID); ok {
+		if e, ok := reachOf(rt.Hub, m.CharID); ok {
 			out.Display = displayName(context.Background(), e)
 		}
 	}
@@ -101,7 +101,7 @@ func (rt *academyRuntime) setOnline(campID, charID int64, online bool) {
 	msg := academy.EncodeFieldU8(charID, academy.FieldPlayState, state)
 	rt.push(campID, msg, charID)
 	if online {
-		if e, ok := entityOf(rt.Hub, charID); ok {
+		if e, ok := reachOf(rt.Hub, charID); ok {
 			acSend(e.Session, proto.OpAcademyUpdate, msg)
 		}
 	}

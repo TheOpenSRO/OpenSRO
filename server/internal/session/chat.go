@@ -336,7 +336,7 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		return okResult()
 
 	case ChatWhisper:
-		target, ok := findByNameAnywhere(d.Hub, req.Target)
+		target, ok := findByNameCluster(d.Hub, req.Target)
 		if !ok {
 			return fail(ChatErrCantFindTarget, req.Target)
 		}
@@ -385,7 +385,7 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 			if m.CharacterID == sender.CharacterID {
 				continue
 			}
-			if e, ok := d.Hub.EntityByCharacterID(m.CharacterID); ok {
+			if e, ok := reachOf(d.Hub, m.CharacterID); ok {
 				sendChatUpdate(e.Session, line)
 			}
 		}
@@ -433,7 +433,7 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 			return err
 		}
 		for _, id := range members {
-			if e, ok := d.Hub.EntityByCharacterID(id); ok {
+			if e, ok := reachOf(d.Hub, id); ok {
 				sendChatUpdate(e.Session, line)
 			}
 		}
@@ -515,6 +515,11 @@ func BroadcastChatAll(hub *world.Hub, u *ChatUpdate) int {
 		if sendChatUpdate(e.Session, u) == nil {
 			n++
 		}
+	}
+	// Round 869 lane W2: and every character of the other processes, in one
+	// bus message.
+	if clusterOn() {
+		sendEverywhere(0, &proto.Packet{Opcode: OpChatUpdate, Data: u.Encode()})
 	}
 	return n
 }

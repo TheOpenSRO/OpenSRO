@@ -90,7 +90,7 @@ func (d guildOpsDeps) guildLive(ctx context.Context, characterID int64) guild.Me
 			l.RefObjID, _ = modelOf(c)
 		}
 	}
-	_, l.Online = entityOf(d.hub, characterID)
+	_, l.Online = reachOf(d.hub, characterID)
 	return l
 }
 
@@ -103,7 +103,7 @@ func (d guildOpsDeps) toMembers(g *guild.Guild, op uint16, data []byte, skip int
 		if m.CharacterID == skip {
 			continue
 		}
-		if e, ok := entityOf(d.hub, m.CharacterID); ok {
+		if e, ok := reachOf(d.hub, m.CharacterID); ok {
 			sendGuild(e.Session, op, data)
 		}
 	}
@@ -515,10 +515,10 @@ func takeGuildInvite(target int64) *guildInvite {
 // {2, code} to the inviter (clearing its request lock) and 0xB0F8 {2, code}
 // to the invitee (0x4c10 closes its question box).
 func (d guildOpsDeps) failInvite(inv *guildInvite, code uint16) {
-	if e, ok := entityOf(d.hub, inv.inviter); ok {
+	if e, ok := reachOf(d.hub, inv.inviter); ok {
 		sendGuild(e.Session, guild.OpInviteResult, guild.EncodeFail(code))
 	}
-	if e, ok := entityOf(d.hub, inv.target); ok {
+	if e, ok := reachOf(d.hub, inv.target); ok {
 		sendGuild(e.Session, guild.OpJoinResult, guild.EncodeFail(code))
 	}
 }

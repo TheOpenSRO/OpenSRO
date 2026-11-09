@@ -1512,9 +1512,16 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 			// review).
 			forgetCharacterSkillState(left.CharacterID)
 			// Round 821: its fellow guild members see it go offline.
-			guildMemberPresence(context.Background(), left.CharacterID, false)
-			// Round 865: and its academy's (academylive.go).
-			academyLeftWorld(left.CharacterID)
+			// Round 869 lane W2: not a character moving to another
+			// process (handoff.go): it did not log off.
+			if !HandingOff(sess) {
+				guildMemberPresence(context.Background(), left.CharacterID, false)
+				// Round 865: and its academy's (academylive.go).
+				academyLeftWorld(left.CharacterID)
+			}
+			// Round 869 lane W2: the cluster's directory hears it left
+			// this process.
+			clusterLeft(left.CharacterID)
 		}
 		// Nor may it save where the stale session last stood, or tell the
 		// zone the character left: the live session's entity is still there,
@@ -1803,6 +1810,10 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// back first, so the spawns below and the own buffs carry them.
 	restoreSkillJobs(ctx, owned.ID, time.Now())
 	arrived, inWorld := hub.EntityBySession(sess.ID())
+	// Round 869 lane W2: the cluster's directory hears it (cluster.go).
+	if inWorld {
+		clusterArrived(sess, arrived)
+	}
 	if inWorld && guard {
 		holdArrival(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived, "enter world", nil)
 	} else if inWorld {
@@ -1935,6 +1946,11 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 // instance's when it crosses. The client hears the ordinary zone change
 // (OpChangeZoneResult with the region label), never a world id.
 func warpAcross(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, from, to *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame, via string) (moved bool, err error) {
+	// Round 869 lane W2: the open world on another process is a hand-off
+	// there (handoff.go); the client hears the same zone change from it.
+	if from != to && openWorldElsewhere(to) {
+		return handOffToOpenWorld(sess, zone, bucket, pos, frame, via)
+	}
 	hub := to
 	guard := arrivalGuardOn.Load()
 	var old world.Entity

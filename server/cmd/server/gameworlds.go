@@ -36,7 +36,7 @@ type gameWorldBuild struct {
 
 // installGameWorlds loads the game-world data and installs the manager. nil
 // when dir is empty: the open world alone, as before round 869.
-func installGameWorlds(logger *slog.Logger, dir, npcsCSV string, hub *world.Hub, monsters *combat.Hub, ground *grounditem.Hub,
+func installGameWorlds(logger *slog.Logger, wc *worldCluster, dir, npcsCSV string, hub *world.Hub, monsters *combat.Hub, ground *grounditem.Hub,
 	db *nest.DB, table *species.Table, lookup species.SkillLookup, deps session.GameWorldDeps) *gameworld.Manager {
 	if dir == "" {
 		logger.Info("no game-world data (-gameworld-dir / OPENSRO_GAMEWORLD_DIR): the open world only, no instances")
@@ -61,7 +61,12 @@ func installGameWorlds(logger *slog.Logger, dir, npcsCSV string, hub *world.Hub,
 		}
 		b.build(w)
 	}
-	mgr := gameworld.NewManager(gameworld.ManagerConfig{Ref: ref, Hooks: hooks, Logger: logger})
+	reg, host := wc.managerConfig()
+	mgr := gameworld.NewManager(gameworld.ManagerConfig{Ref: ref, Hooks: hooks, Logger: logger, Registry: reg, Host: host})
+	if wc != nil {
+		// Round 869 lane W2: a new instance goes to the least-loaded host.
+		mgr.SetPlacer(session.NewClusterPlacer(version))
+	}
 	mgr.AttachOpenWorld(hub, monsters, ground)
 	deps.Spawn = b.spawn
 	session.SetGameWorldDeps(deps)

@@ -532,7 +532,7 @@ func gainJobExp(ctx context.Context, characterID int64, amount int64) {
 	}
 	lk.Unlock()
 	if changed {
-		if e, ok := entityOf(d.hub, characterID); ok && e.Session != nil {
+		if e, ok := reachOf(d.hub, characterID); ok && e.Session != nil {
 			_ = e.Session.Send(&proto.Packet{Opcode: jobs.OpJobExp, Data: jobs.JobExp(rec)})
 		}
 	}

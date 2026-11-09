@@ -306,7 +306,7 @@ func (d guildOpsDeps) handOver(ctx context.Context, g *guild.Guild, to int64, do
 	}
 	d.toMembers(after, guild.OpUpdate, guild.EncodeMembersFields(
 		guild.MemberFieldClass|guild.MemberFieldPerm|guild.MemberFieldSiege, pair, nil), 0)
-	if ne, ok := entityOf(d.hub, to); ok {
+	if ne, ok := reachOf(d.hub, to); ok {
 		var others []guild.Member
 		for _, mm := range after.Members {
 			if mm.CharacterID != to {
@@ -403,7 +403,7 @@ func (d guildOpsDeps) handlePermissions(ctx context.Context, sess *gateway.Sessi
 	for _, c := range changes {
 		if mm, ok := memberOf(after, c.CharacterID); ok {
 			rows = append(rows, mm)
-			if me, ok := entityOf(d.hub, c.CharacterID); ok {
+			if me, ok := reachOf(d.hub, c.CharacterID); ok {
 				sendGuild(me.Session, guild.OpUpdate, guild.EncodeMemberFields(guild.MemberFieldPerm, mm, guild.MemberLive{}))
 			}
 		}
