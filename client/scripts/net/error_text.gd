@@ -441,3 +441,107 @@ static func trade_line(code: int, table: UiTextTable) -> String:
 		return ""
 	var text := table.get_text(key).strip_edges()
 	return "" if text == "" or text == key else text
+
+## Round 869 (lane C1): category 0xd, the interaction switch, whole (code -
+## 0x1c07, 0x33 entries, targets at 0x7bbaac; the first push at each target
+## read as UTF-16 out of sro_client.exe). Every entry not listed is the
+## default 0x7b913a, which shows nothing (it jumps to 0x7bb34e past the
+## display); below 0x1c07 the compare chain gives 4 TOO_FAR_KEY and sends the
+## rest (1, 2, 3, ...) to the same default. The instance replies 0xB519 and
+## 0xB51C use it (c:0x89a6aa, c:0x89a710).
+const INTERACTION_UIIT_BY_CODE := {
+	4: TOO_FAR_KEY,
+	0x1c07: "UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY",
+	0x1c0b: "UIIT_MSG_INTERACTION_FAIL_IM_BUSY",
+	0x1c10: "UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_TRADECART",
+	0x1c11: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED",
+	0x1c12: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED",
+	0x1c13: "UIIT_MSG_INTERACTION_FAIL_TOO_FAR_FROM_TRADECART",
+	0x1c14: "UIIT_MSG_INTERACTION_FAIL_TELESCROLL_ALREADY_WORKING",
+	0x1c15: "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT",
+	0x1c16: "UIIT_MSG_INTERACTION_FAIL_MURDERER_CAN_USE_PORTAL_STRUCTURE",
+	0x1c17: "UIIT_MSG_INTERACTION_FAIL__REQUESTED_JOB_BLOCKED_BY_QUEST",
+	0x1c18: "UIIT_INTERACTION_FAIL_ONLY_ROBBER_CAN_TELEPORT_TO_THIEFDEN",
+	0x1c1a: "UIIT_MSG_FORT_ENTRANCE_FORTRESS_FAIL_01",
+	0x1c1b: "UIIT_MSG_FORT_PORTALSTONE_FAIL_04",
+	0x1c1c: "UIIT_MSG_FORT_ENTRANCE_FORTRESS_FAIL_02",
+	0x1c1d: "UIIT_MSG_FORT_NOT_POSSESS_FORTRESS_MEMBER",
+	0x1c1e: "UIIT_MSG_FORT_ETC_ERR_CANT_ENTER_5MINBEFORE",
+	0x1c20: "UIIT_MSG_NEWBIE_RETURN_LV20_OVER",
+	0x1c21: "UIIT_MSG_NEWBIE_RETURN_ERROR",
+	0x1c23: "UIIT_MSG_QUEST_ROC_CANNOT_ENTRANCE",
+	0x1c24: "UIIT_MSG_QUEST_ROC_CANNOT_ENTRANCE",
+	0x1c25: "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_NUMBER_FOR_TELEPORT",
+	0x1c26: "UIIT_MSG_EGYPT_MENU_ERROR_UNIONMEMBER",
+	0x1c27: "UIIT_MSG_EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_01",
+	0x1c28: "UIIT_MSG_EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_02",
+	0x1c29: "UIIT_MSG_INSTANCEDUNGEON_ERROR_MSG_01",
+	0x1c2a: "UIIT_MSG_EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_05",
+	0x1c2b: "UIIT_MSG_FLAGWAR_GAME_JOB_NOT_ENTER",
+	0x1c2c: "UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_01",
+	0x1c2d: "UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_04",
+	0x1c2e: "UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_03",
+	0x1c2f: "UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_02",
+	0x1c30: "UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_RIDE",
+	0x1c31: "UIIT_MSG_INSTANCEDUNGEON_ERROR_MSG_02",
+	0x1c32: "UIIT_MGS_ERR_GOD_LIMIT_TIME",
+	0x1c33: "UIIT_MGS_ERR_GOD_TELEPORT_HOLE_NOT_PARTY",
+	0x1c34: "UIIT_MSG_PARTYMATCH_RECORD_ERROR_PARTYLEADER",
+	0x1c35: "UIIT_MGS_ERR_GOD_INS_WORLD",
+	0x1c36: "UIIT_MGS_ERR_GOD_DEADSTATE",
+	0x1c37: "UIIT_MGS_ERR_GOD_TELEPORT_HOLE_NOT_TOWN",
+	0x1c38: "UIIT_MGS_ERR_GOD_BATTLE_STATE",
+	0x1c39: "UIIT_MGS_ERR_GOD_GUILD",
+}
+
+## Round 869: category 0x23, the party summon's switch (category table
+## 0x7bb378 entry 0x23 -> 0x7bb28d: code - 0x1c0b, 0x30 entries, index bytes
+## at 0x7bc118, targets at 0x7bc0f0). Every other code takes index 9, the
+## default 0x7bb2f3, which pushes no key of its own (INFERRED: nothing shown).
+## 0xB51A's refusals (c:0x89a6fc).
+const SUMMON_UIIT_BY_CODE := {
+	0x1c0b: "UIIT_MSG_INTERACTION_FAIL_IM_BUSY",
+	0x1c25: "UIIT_STT_PARTY_SUMMON_IMPOSSILBE_2",
+	0x1c2b: "UIIT_STT_PARTY_SUMMON_IMPOSSILBE_4",
+	0x1c2c: "UIIT_STT_PARTY_SUMMON_IMPOSSILBE_3",
+	0x1c30: "UIIT_STT_PARTY_SUMMON_IMPOSSILBE_6",
+	0x1c36: "UIIT_STT_PARTY_SUMMON_IMPOSSILBE_8",
+	0x1c37: "UIIT_STT_PARTY_SUMMON_IMPOSSILBE_1",
+	0x1c39: "UIIT_STT_PARTY_SUMMON_IMPOSSILBE_7",
+	0x1c3a: "UIIT_STT_PARTY_SUMMON_WAIT_ERR",
+}
+
+## Round 869: category 1's codes outside its storage switch (READ 0x7b8c82:
+## 0x1807 -> UIIT_MSG_STRGERR_INVENTORY_FULL, 3 ->
+## UIIT_MSG_STRGERR_INVALID_TARGET; codes above 0x18ff, and every other one
+## below 0x180b, go to the default 0x7b913a: nothing). The instance exit's
+## reply 0xB51D is category 1 (c:0x89a760), so the server's exit refusals --
+## 0x1c36 dead, 0x1c10 a trade transport, 2 busy (game_worlds.md 5) -- show no
+## text at all (READ: all three are outside the switch).
+const CATEGORY1_LOW_UIIT := {
+	3: "UIIT_MSG_STRGERR_INVALID_TARGET",
+	0x1807: "UIIT_MSG_STRGERR_INVENTORY_FULL",
+}
+
+static func _keyed_text(key: String, table: UiTextTable) -> String:
+	if key == "" or table == null or not table.has(key):
+		return ""
+	var text := table.get_text(key).strip_edges()
+	return "" if text == "" or text == key else text
+
+## Category 0xd's line for `code`, "" when the client shows nothing.
+static func interaction_line(code: int, table: UiTextTable) -> String:
+	return _keyed_text(String(INTERACTION_UIIT_BY_CODE.get(code, "")), table)
+
+## Category 0x23's line for `code` (the summon's refusals), "" for none.
+static func summon_line(code: int, table: UiTextTable) -> String:
+	return _keyed_text(String(SUMMON_UIIT_BY_CODE.get(code, "")), table)
+
+## The exit reply's line (category 1), "" for none: the two low codes, and the
+## storage switch's rows this file holds for codes inside it.
+static func exit_line(code: int, table: UiTextTable) -> String:
+	if CATEGORY1_LOW_UIIT.has(code):
+		return _keyed_text(String(CATEGORY1_LOW_UIIT[code]), table)
+	if code >= 0x180b and code <= 0x18ff:
+		return _keyed_text(String(TRADE_UIIT_BY_CODE.get(code, UIIT_BY_CODE.get(code, ""))), table)
+	return ""

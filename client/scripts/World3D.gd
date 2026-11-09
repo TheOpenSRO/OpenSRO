@@ -2705,6 +2705,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.connect_net()
 	_job_setup()
 	_academy_setup()
+	# Round 869 (lane C1): the instance NPCs' exit and recall lines.
+	_recall_flow = RecallFlow.new(self, _hud_panels)
 	# A body dressed before the panels existed gets its paper doll now, as
 	# the portrait does above (round 695: a QA run's loadout dresses before
 	# the HUD is built, and _refresh_paper_doll returns without panels).
@@ -8056,6 +8058,9 @@ func _exit_tree() -> void:
 	_academy_flow = null
 	_union_world = null
 	_specialty_flow = null
+	if _recall_flow != null:
+		_recall_flow.detach()
+	_recall_flow = null
 	# Round 786: the display pass goes with the world.
 	if RenderingServer.frame_pre_draw.is_connected(_submit_efp_pass):
 		RenderingServer.frame_pre_draw.disconnect(_submit_efp_pass)
@@ -19395,6 +19400,8 @@ func _qa_input_step() -> void:
 				_hud_worldmap.quest_report() if _hud_worldmap != null else "(no world map)"]
 		"acapkt", "acahex", "acarow", "acabox", "acajudge", "acareport", "acaask", "acanotice":
 			_qa_input_report = "%s -> %s" % [action, _qa_academy_step(kind, arg)]
+		"fgwhex", "fgwrow", "fgwsummon", "fgwbox", "fgwline", "fgwreport":
+			_qa_input_report = "%s -> %s" % [action, _qa_recall_step(kind, arg)]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
 			_qa_input_report = "%s %s" % [action, _hud_panels.qa_guild_report() if _hud_panels != null else "{}"]
@@ -29357,6 +29364,9 @@ func _on_npc_service_selected(key: String) -> void:
 	# Round 865: the storage keeper's academy lines (AcademyFlow: the fee
 	# box then 0x7470, or 0x7478 at once).
 	if _academy_flow != null and _academy_flow.handle_service(key):
+		return
+	# Round 869 (lane C1): the instance NPCs' lines 0x3d / 0x3e (RecallFlow).
+	if _recall_flow != null and _recall_flow.handle_service(key):
 		return
 	# A server NPC's store, storage and talk lines (round 727): the open
 	# request 0x7046 with the line's id (CIF_NPCTalk::FUN_007020c0: kind 1 ->
@@ -41245,6 +41255,53 @@ func _select_cos(uid: int) -> void:
 # --- The academy (round 865, AcademyFlow) -----------------------------------------
 
 var _academy_flow: AcademyFlow = null
+## Round 869 (lane C1): the instance NPCs' exit and recall lines.
+var _recall_flow: RecallFlow = null
+
+## OPENSRO_QA_INPUT's instance-NPC actions (round 869, lane C1):
+##   fgwhex:<op>:<hex>  a message through NetClient's decode path (qa_receive)
+##   fgwline:party_summon|dungeon_exit  the talk line's action, as its click
+##   fgwrow:<i>         a real click on the summon window's row i
+##   fgwsummon          a real click on its Summon button (7)
+##   fgwbox:yes|no      a real click on the member's question's button
+##   fgwreport          the window, the question and the lines shown
+func _qa_recall_step(kind: String, arg: String) -> String:
+	if _recall_flow == null:
+		return "no recall flow"
+	match kind:
+		"fgwhex":
+			var op := ("0x" + arg.get_slice(":", 0)).hex_to_int()
+			var data := arg.get_slice(":", 1).hex_decode()
+			NetClient.qa_receive(op, data)
+			return "fed 0x%04X %s" % [op, data.hex_encode()]
+		"fgwline":
+			return "line %s handled=%s" % [arg, _recall_flow.handle_service(arg)]
+		"fgwrow":
+			var w := _recall_flow.window
+			if w == null or not w.visible or int(arg) >= w.rows.size():
+				return "no summon window row %s" % arg
+			var at := w.rows[int(arg)].get_global_rect().get_center()
+			_qa_push_click(at, MOUSE_BUTTON_LEFT)
+			return "clicked row %s at %s" % [arg, at]
+		"fgwsummon":
+			var w2 := _recall_flow.window
+			var b := w2.summon_button() if w2 != null else null
+			if b == null or not b.is_visible_in_tree():
+				return "no Summon button"
+			_qa_push_click(b.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			return "clicked Summon at %s (disabled=%s)" % [b.get_global_rect().get_center(), b.disabled]
+		"fgwbox":
+			var q := _recall_flow.box
+			if q == null or not is_instance_valid(q) or not q.visible:
+				return "no question box"
+			var qb := q._find_button(arg == "yes")
+			if qb == null:
+				return "no button"
+			_qa_push_click(qb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			return "clicked %s on the question at %s" % [arg, q.position]
+		"fgwreport":
+			return _recall_flow.report()
+	return "unknown %s" % kind
 
 func _academy_setup() -> void:
 	_academy_flow = AcademyFlow.new(self, _hud_panels)
