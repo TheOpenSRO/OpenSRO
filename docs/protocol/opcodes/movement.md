@@ -862,6 +862,34 @@ ends it at the first wall with a 0xB023, as a walled 0x7021 leg.
 banked second wherever it lay; a claim the server's own walk from where it has the character cannot
 reach (a wall more than 0.5 short of it) is now corrected (`world.Bound.Unreached`).
 
+## Where the walk is in time (round 878)
+
+The user: "I get teleported back to where I was, seems like server lag". Labels as above.
+
+**READ.**
+- The heading run's server step, `CGObjMoverByCmd::vslot_003` (`s:0x48c1b0`) ->
+  `FUN_0048bff0` (`s:0x48bff0`): while the command's bit 0 holds (`+0xc == 1`), the step is
+  `|speed (+0x174) x elapsed|`, capped at **160.0** (`0xb45ea8`, f32), along the run's direction
+  (`+0x24`, `+0x2c`), each component under 0.01 (`0xb45df8`) zeroed. So the original's run is
+  stepped every tick at its time's length and through the collision query (above, "Collision per
+  kind of mover"); nothing of it waits.
+- The client's mover steps by the frame's elapsed time (`c:FUN_009e0e60`, above): a stalled frame is
+  one longer step, and the mover is where its time has it.
+
+**What OpenSRO did (MEASURED, round 878's lane runs, prod's flags).**
+- The server walked a heading run two seconds ahead at a time (round 857, OURS), and when one of
+  those walks met a wall it kept the run's clear stretch at the walk's START: the run stood there
+  until its time reached the wall, then jumped to it. The client's run went on, so the server was up
+  to a whole walk behind (2 s of run: 100 units at 50, 258 at the user's 129). A stop at that wall
+  was then refused and the player corrected back; a click meanwhile started its leg from the held
+  point.
+- The client walked in Godot's physics ticks, at most 8 a frame; a longer frame's remaining time was
+  dropped (a 724 ms frame ran 6 ticks: 0.6 s, 30 units, lost), while the server's leg ran on.
+
+**OpenSRO now.** `world.Hub.walkRuns` counts a walled walk's stretch as clear up to the wall
+(`Mover.clear = wallAt`); `WalkClock` (client) walks the time a stalled frame dropped. The server
+logs every correction, refusal and wall stop of a move at INFO (`session/movelog.go`).
+
 ## Not read
 
 - ~~What the `+0x14` byte in the heading form is~~: the movement command (round 653, "The heading
@@ -870,8 +898,9 @@ reach (a wall more than 0.5 short of it) is now corrected (`world.Bound.Unreache
   1000 units, and the arrow keys (round 653, above). The monster AI always supplies a destination —
   `AITactics_MoveAlongDirection`'s name describes how it *derives* the point (position + direction
   × distance), not the wire form it sends.
-- **The server mover's step cap** (`0xb45ea8`, `FUN_0048bff0`), and whether the server sends a stop
-  of its own when its navmesh ends a heading move.
+- ~~**The server mover's step cap** (`0xb45ea8`, `FUN_0048bff0`)~~: read in round 878 (below,
+  "Where the walk is in time"). Whether the server sends a stop of its own when its navmesh ends a
+  heading move is still not read.
 - **Bit 9 of `+0x65c`** (state 9), which gates the sky click's no-resend window. That it means
   "moving" is INFERRED. `+0x6e8` is read: the move kind (round 653's review).
 - **What the optional `extra` byte at `+1` carries.** Which caller emits it is now known; what it

@@ -54,6 +54,10 @@ type Mover struct {
 	dist float64
 	// Wall is MoveOrder.Wall.
 	Wall bool
+	// Asked (with hasAsked) is MoveOrder.Asked: the destination the client
+	// asked for, when the wall clipped Dest short of it (round 878).
+	Asked    Position
+	hasAsked bool
 	// Origin is where the leg's line was last given a height the server's
 	// own walk settled (round 822, OURS: GroundFunc): Src when the leg
 	// began or turned; a speed re-base moves Src along the same line and
@@ -70,6 +74,15 @@ type Mover struct {
 	clear  float64
 	clearY float64
 	wallAt float64
+}
+
+// asked is the destination the client asked for (Asked when a wall clipped
+// the leg, else Dest).
+func (m *Mover) asked() Position {
+	if m.hasAsked {
+		return m.Asked
+	}
+	return m.Dest
 }
 
 // WallFunc walks a mover from `from` (its height the walk's footing) along
@@ -264,6 +277,10 @@ type MoveOrder struct {
 	// ends the leg with a 0xB023 to the window, as the original server's
 	// mover stopped by a blocking edge sends one (READ, movement.md).
 	Wall bool
+	// Asked, with Wall, is the destination the client asked for (round 878):
+	// the 5.0 test of the next order is against it, as the original's mover
+	// keeps its destination and stops at the edge while stepping.
+	Asked Position
 }
 
 // MoveStatus is what StartMove did.
@@ -399,10 +416,24 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 	if !ok {
 		return MoveResult{}, MoveNotInWorld
 	}
-	if cur := e.Move; cur != nil && !o.Heading && !cur.Heading {
-		if _, arrived := cur.At(now); !arrived && math.Hypot(o.Dest.X-cur.Dest.X, o.Dest.Z-cur.Dest.Z) <= NearDestination {
+	var r MoveResult
+	if cur := e.Move; cur != nil {
+		_, arrived := cur.At(now)
+		// Round 878: the original's mover keeps the destination it was given
+		// and stops at a blocking edge while stepping; the 5.0 test is against
+		// that destination (READ, s:0x48c35f), not the wall the server's walk
+		// clipped the leg at (cur.Dest when cur.Wall).
+		want := o.Dest
+		if o.Wall {
+			want = o.Asked
+		}
+		if !arrived && !o.Heading && !cur.Heading && math.Hypot(want.X-cur.asked().X, want.Z-cur.asked().Z) <= NearDestination {
 			metrics.MoveRefused("near")
-			return MoveResult{}, MoveRefusedNear
+			r.Entity = outLocked(e, now)
+			return r, MoveRefusedNear
+		}
+		if arrived && cur.Wall {
+			r.WallStop, r.WallAt = true, cur.Dest
 		}
 	}
 	// Round 749's verification, FP5: the standing time before a first walk is
@@ -427,14 +458,19 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 	} else {
 		m.Dest = o.Dest
 		m.Wall = o.Wall
+		if o.Wall {
+			m.Asked, m.hasAsked = o.Asked, true
+		}
 		m.dist = math.Hypot(o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
-		e.noteClientY(o.Dest.X, o.Dest.Y, o.Dest.Z) // the clicked ground's height
+		// The clicked ground's height: the client's point (a wall's clipped
+		// Dest carries the server's walked height, a guess for this rule).
+		a := m.asked()
+		e.noteClientY(a.X, a.Y, a.Z)
 		e.Heading = HeadingToward(e.Heading, o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
 	}
 	e.Move = m
 	e.allowLeg, e.allowSpeed = 0, o.Speed
 	h.moving[sess.ID()] = e
-	var r MoveResult
 	h.refileLocked(e, now, &r)
 	r.Entity = *e
 	metrics.MoveLeg(o.Heading)
@@ -534,17 +570,23 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 		old, cell combat.Cell
 	}
 	var crossed []crossing
-	var ended []*Entity
+	type ending struct {
+		e   *Entity
+		by  string
+		leg Mover
+	}
+	var ended []ending
 	var out Pass
 	h.mu.Lock()
 	held := time.Now()
 	now := h.clock()
 	out.Moved = make([]Entity, 0, len(h.moving))
 	for _, e := range h.moving {
-		wall := e.Move != nil && e.Move.Wall
+		leg := e.Move
+		wall := leg != nil && leg.Wall
 		h.settleLocked(e, now)
 		if wall && e.Move == nil {
-			ended = append(ended, e) // stopped at the wall (round 812)
+			ended = append(ended, ending{e, "wall", *leg}) // stopped at the wall (round 812)
 			metrics.MoveLegEnd("wall")
 		}
 		out.Moved = append(out.Moved, outLocked(e, now))
@@ -554,7 +596,7 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 			}
 			if m.Heading && now.Sub(m.Start) >= HeadingRunLimit {
 				h.endMoveLocked(e)
-				ended = append(ended, e)
+				ended = append(ended, ending{e, "run_limit", *m})
 				metrics.MoveLegEnd("run_limit")
 			}
 		}
@@ -584,11 +626,12 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 		h.crossingLocked(c.e, c.old, c.cell, now, &r)
 		out.Crossings = append(out.Crossings, r)
 	}
-	for _, e := range ended {
+	for _, en := range ended {
+		e := en.e
 		if h.bySession[e.Session.ID()] != e {
 			continue
 		}
-		r := MoveResult{Entity: outLocked(e, now)}
+		r := MoveResult{Entity: outLocked(e, now), EndedBy: en.by, EndedLeg: en.leg}
 		h.forWindowLocked(e.Cell, func(o *Entity) {
 			if o != e {
 				r.Watchers = append(r.Watchers, Watcher{Session: o.Session, CharacterID: o.CharacterID})
@@ -820,7 +863,18 @@ func (h *Hub) walkRuns(only func(e *Entity) bool) {
 				case !ok:
 					n.walked = false // nothing to walk here: straight, as before
 				case wall:
+					// Round 878: the stretch up to the wall was walked clear
+					// too. Before, clear stayed where this walk began, so the
+					// run held there (headingSpan) until its time reached the
+					// wall and then jumped to it: up to a whole walk (two
+					// seconds of run, 258 units at a run speed of 129) behind
+					// the client's run, whose stop at that wall was then
+					// refused and corrected back to the held point, and whose
+					// next click started its leg there (MEASURED, the user's
+					// prod log: four corrections 75-250 units back in the
+					// Wrecked Ship).
 					n.wallAt = n.clear + math.Hypot(end.X-w.from.X, end.Z-w.from.Z)
+					n.clear, n.clearY = n.wallAt, end.Y
 					n.Dest, n.Wall = end, true
 				default:
 					n.clear += w.length

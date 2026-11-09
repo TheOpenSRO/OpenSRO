@@ -331,6 +331,32 @@ type MoveResult struct {
 	Crossed  bool
 	Gained   []Entity
 	Lost     []Entity
+	// Claim is how Claim judged the claim (round 878: the session logs every
+	// refused one, with why).
+	Claim ClaimVerdict
+	// WallStop, from StartMove (round 878): the leg the new one replaced had
+	// already stopped at a wall the server's own walk met -- at WallAt --
+	// before any pass told the window (its 0xB023 is the pass's), so its
+	// client may still believe it walked on. The session logs it.
+	WallStop bool
+	WallAt   Position
+	// EndedBy and EndedLeg, in a Pass's Ended (round 878): why the pass ended
+	// the leg ("wall", "run_limit") and the leg it ended.
+	EndedBy  string
+	EndedLeg Mover
+}
+
+// ClaimVerdict is one claim's judgement (round 878): the rule that decided
+// it ("trust", "near" -- within the slack --, "allowance", "named", or for a
+// refusal "unreached", "height", "distance"), the anchor it was measured
+// from, its ground distance from there, and the slack and the allowance it
+// had.
+type ClaimVerdict struct {
+	Rule      string
+	Anchor    Position
+	Distance  float64
+	Slack     float64
+	Allowance float64
 }
 
 // Relocate moves sess's character to pos, turning it as kind says (heading
