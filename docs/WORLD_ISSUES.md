@@ -7483,6 +7483,106 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-third round, honor buffs: the guardian's crown and rings twice on the buff board after a death in an instance -- the revive's engage unheard while the arrival held the character, the arrival's engage on top
+
+The user on prod (v0.1.643): "it also appears my honor buffs are appearing twice" -- an academy
+guardian at honor rank 1 showed the crown and the three rings twice, every other buff once. Lane HB,
+base `29661359` (dev merged at `2b3276ca` before the last runs). Labels: READ (`s:` the game server,
+`c:` the client), MEASURED, INFERRED, OURS, OPEN.
+
+### The cause (MEASURED in the player's log, then reproduced by a test)
+
+The log's sequence, owner 12, skills 12000-12003 (the four `SKILL_TC_*_BUFF_01`):
+
+1. Hole and gate into the instance: the zone change's own buff list (`sendOwnBuffs`) re-sent tokens
+   4-7, then the arrival (`academyArrived`, at the 0x3012) ended 4-7 and started 8-11. Once each.
+2. A death there ended 8-11. The return point (option 1) moved the dead character to Jangan, then
+   the revive was refused "not dead" (the instance is a hub of its own; lane DX's area). The arrival
+   engaged 12-15 on the dead character.
+3. A second option 1 in Jangan: the zone change listed 12-15, then the revive ran **while the
+   arrival held the character** (`world.Entity.Held`: out of every message block until its client's
+   0x3012). `academyRevived` cancelled 12-15 and started 16-19, but `zoneOf` (the players of its
+   window) has nobody for a held character -- not even its own client -- so neither reached it.
+   At the 0x3012 the arrival's engage ended 16-19 (tokens the client never had) and started 20-23:
+   the board kept 12-15 and added 20-23. Every honor icon twice.
+
+The book was right throughout (one record of each); the client was never told. A rank change at the
+daily update or a disband while a guardian loads went unheard the same way.
+
+### What the original does (READ)
+
+- **The engage** s:0x5dd8b0 finds the guardian's member record and, when its +0x38 is set
+  (INFERRED: the member's PC), cancels then engages: s:0x5dd8f0 calls GObjPC::FUN_0059f0c0 for every
+  row of the table at s:0xc6741c, s:0x5dd9b0 calls FUN_0059b8d0 per row down to the camp's rank.
+  So a re-engage ends the old tokens and starts new ones (what OpenSRO does).
+- **Its callers are four**: CGObjPC::vslot_391 (s:0x4df9e0, the world entry: a login and every
+  teleport's re-entry), the rank change (s:0x5dd830, then 0x3C80 0c), the resurrection's answer
+  (trs_wait_response::vslot_002 s:0x46cb30, case 4/8, after GObjPC::Revive(1), at s:0x46cd5e) and
+  the resurrection scroll (s:0x49ff20, after Revive(1)).
+- **The 0x3053 revive calls none** (GObjPC_HandleResurrectMsg_053, s:0x50fee0): option 1 is
+  GObjPC::Revive(0) -- the return point, whose re-entry (vslot_391) engages the buffs; option 2 is
+  Revive(1) in place with no engage. GObjPC::Revive (s:0x4df290) itself engages no honor buff.
+- **The client's board adds a slot for every start** (c:0x8a59e0, the 0xB0BD handler, ->
+  c:0x8048c0: 0x803cd0 builds the slot, 0x803ec0 inserts it; no search by skill or token). So the
+  original shows a buff once only because its server ends the old token before it starts a new one;
+  a second start of the same skill with a new token would show twice there too. The client is not
+  changed: OpenSRO's board already replaces a token it holds (OURS, `HudBuffBoard.add_buff`, for the
+  zone change's re-sent list) and keeps the original's rule for a new token.
+- Not measured on a running original: no ranked academy was available, so the rank buffs' packets
+  across a teleport and a revive are READ only.
+
+### The fix (server, `session/academylive.go`; no revive handler touched)
+
+- `honorAudience`: the honor engage and cancel go to the players in view **and always the
+  guardian's own client**, held or not.
+- `academyRevived` does nothing while the character is held: the return point revives after the
+  move, and the arrival's engage (vslot_391's) follows at the 0x3012 -- one engage, as the original.
+  Revives not held (the resurrection, the scroll, in place) re-engage as before.
+- The cancel and the engage run under one `buffLock` (two engages at once no longer interleave).
+- The daily update finds a guardian in an instance (`hubOfChar`), where `entityOf(rt.Hub)` had it
+  offline and kept its old rank's buffs.
+- OURS, QA aids: `/academytime` wakes the rank loop, so a moved clock's 00:00 runs the daily update;
+  `partybot -mode honor` builds a rank-1 academy (two graduations: 5 evaluation points each, a rank
+  needs 10) and logs out, so a real client logs in as its guardian; the client's `boardreport` QA
+  input prints the board's icons per skill (`HudBuffBoard.qa_report`).
+
+### Tests
+
+`TestHonorBuffs873OncePerPath` and `TestHonorBuffs873WhileHeld` (`academy873_test.go`) replay the
+guardian's own packets into a board model (start adds a token, end removes) and check it against the
+book after each step: world entry, teleport, into another world, death, return point with the revive
+while held, a second return point with the buffs on (the player's step 3), revive in place, rank
+change while held, the daily update in another world, disband while held. Fail-first on `29661359`:
+"return point with the buffs on: skill 873002 is on the board 2 times ... the book holds tokens
+[25 26 27 28], the board [17 18 19 20 25 26 27 28]" (the player's log, renumbered) and "rank change
+while held: the book holds tokens [33 34 35], the board [29 30 31 32]"; with the routing line put
+back, "rank update in another world: skill 873001 is on the board 1 times". All pass after.
+
+### Real client (lane server `-full-map`, prod's flags, `partybot -mode honor`, then hbG logged in)
+
+| run | server | login | instance entry (hole, gate) | instance exit (NPC) | GM /tp warp |
+|---|---|---|---|---|---|
+| b5 | `29661359` + the rank-loop wake | 4 icons once (5-8) | once (9-12) | once (13-16) | once (17-20) |
+| f2 | this round | 4 icons once (5-8) | once (9-12) | once (13-16) | once (17-20) |
+
+`boardreport` counts the board's slots in the scene (`twice=[]` in every line of both runs); frames in
+`/var/tmp/r873h/srv/{b5,f2}/snaps` on the box. These paths were never broken. **OPEN:** the death and
+revive with the real client: on the lane server the instance showed no monsters to the client and a
+GM-spawned monster drew no body (`0 monster bod(ies) built`), so the player could not be killed; the
+held-revive and held-rank paths stand on the tests above. Single-player only: the players in view
+were always told (they see the guardian only after its release), so no multiplayer side.
+
+### OPEN / for the user
+
+- The return point's revive from an instance is refused "not dead" (the revive looks in the hub the
+  request came from; lane DX). This round makes the board right either way.
+- The original's 0x3053 revive in place (option 2) does not re-engage the honor buffs; OpenSRO's
+  revive in place does. Kept (a guardian is above level 10, where option 2 is not offered).
+- UI-only/server-only round: no world drawing changed, perf gate skipped.
+
+**Gates** (dev `2b3276ca` merged): `go test ./...` passes; `check` ALL LOAD (1175 scripts, 9 scenes);
+`tests` "ran 450 suite(s), 0 failing".
+
 ## Eight-hundred-and-seventy-second round: the Forgotten World timer reset -- a Test Items NPC line and the entrance ticket clear the hole cool time, the re-entry limit and the instance row at once; a login trusts the kept rows
 
 The user (2026-11-09): "add an item to the test item npc to reset dimensional gate time and stuff. There
