@@ -247,6 +247,11 @@ type MatchEntry struct {
 	CampID uint32
 	Flags  byte
 	Title  string
+	// Registered is when the entry was registered, Unix seconds: the u32 a
+	// 0xB47D row carries after the title (round 866, MEASURED: a row read
+	// back seconds after its 0x747A carried that moment's Unix time; the
+	// client reads it nowhere, READ c:0x890ab0).
+	Registered uint32
 }
 
 const (
@@ -291,8 +296,9 @@ type MatchRow struct {
 // EncodeMatchList is 0xB47D {01, u8 page count, u8 page, u8 n, rows} (READ
 // c:0x7738c0 stores the two crossed: the second byte is the page index
 // c:0x769550 passes to the page store c:0x775b00). A row is the entry record
-// (the u32 after the entry id the camp id, the u32 after the title the
-// graduate count, as 0xB47A's record: INFERRED, the client reads neither),
+// (the u32 after the entry id the camp id; the u32 after the title the
+// entry's registration time in Unix seconds, MEASURED round 866; the client
+// reads neither),
 // then the guardian's levels, body, name, the graduate count, the
 // honor rank and the assistant and apprentice counts.
 func EncodeMatchList(pages, page byte, rows []MatchRow) []byte {
@@ -302,7 +308,7 @@ func EncodeMatchList(pages, page byte, rows []MatchRow) []byte {
 		out = binary.LittleEndian.AppendUint32(out, r.Entry.CampID)
 		out = append(out, r.Entry.Flags)
 		out = appendStr(out, r.Entry.Title)
-		out = binary.LittleEndian.AppendUint32(out, r.GraduateCount)
+		out = binary.LittleEndian.AppendUint32(out, r.Entry.Registered)
 		out = append(out, r.Level, r.MaxLevel)
 		out = binary.LittleEndian.AppendUint32(out, r.RefObjID)
 		out = appendStr(out, r.Guardian)
@@ -324,6 +330,47 @@ const (
 	MatchJoinDone    byte = 1
 	MatchJoinNoReply byte = 2
 )
+
+// MatchJoinAsk is a join request put to the camp's guardian, 0x747E down
+// (round 866; READ c:0x890fa0 -> c:0x88f4d0, s:0x5df260 -> s:0x5e2c80;
+// MEASURED): the shard's job id and the requester's key (the shard puts
+// both in front, as it does for a party's 0x706d, m:0x422230), then what
+// the game server wrote: the entry, the requester's key again, its level,
+// max level, body and name. MEASURED: the two keys are the same value, the
+// requester's account id; OpenSRO puts party.JIDOf's value there, as its
+// party matching does.
+type MatchJoinAsk struct {
+	JobID     uint32
+	Requester uint32
+	Entry     uint32
+	Level     byte
+	MaxLevel  byte
+	RefObjID  uint32
+	Name      string
+}
+
+// EncodeMatchJoinAsk is 0x747E down {u32 job, u32 requester, u32 entry, u32
+// requester, u8 level, u8 max level, u32 RefObjID, str name}. MEASURED for
+// a level-30 requester, in that layout: `<job> <key> <entry> <key> 1e 1e
+// <body> <u16 len> <name>`, the two keys equal.
+func EncodeMatchJoinAsk(a MatchJoinAsk) []byte {
+	out := binary.LittleEndian.AppendUint32(nil, a.JobID)
+	out = binary.LittleEndian.AppendUint32(out, a.Requester)
+	out = binary.LittleEndian.AppendUint32(out, a.Entry)
+	out = binary.LittleEndian.AppendUint32(out, a.Requester)
+	out = append(out, a.Level, a.MaxLevel)
+	out = binary.LittleEndian.AppendUint32(out, a.RefObjID)
+	return appendStr(out, a.Name)
+}
+
+// DecodeMatchJoinAnswer is the guardian's 0x347F {u32 job, u32 requester, u8
+// answer} (READ c:0x81d530, its callers c:0x798081..0x7980c2: 1 for Yes, 0
+// otherwise; MEASURED: No and the box's own 15 s timer both send 0).
+func DecodeMatchJoinAnswer(b []byte) (job, requester uint32, answer byte, err error) {
+	r := &reader{b: b}
+	job, requester, answer = r.u32(), r.u32(), r.u8()
+	return job, requester, answer, r.err
+}
 
 // Request decoders.
 

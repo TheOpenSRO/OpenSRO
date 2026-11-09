@@ -20,7 +20,9 @@ package session
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -74,6 +76,9 @@ type academyRuntime struct {
 	live    map[int64]*acLive   // by CharID
 	invites map[int64]*acInvite // by the invitee
 	joins   map[int64]*acJoin   // by the requester (the matching board)
+	// joinSeq numbers the board's join requests (the job id 0x747E down and
+	// 0x347F carry; OURS: from 1, one counter per server).
+	joinSeq uint32
 }
 
 // acLive is a member as this server last knew it.
@@ -127,8 +132,54 @@ func (rt *academyRuntime) log() *slog.Logger {
 
 func acSend(sess *gateway.Session, op uint16, data []byte) {
 	if sess != nil {
+		logAcademyReply(sess, op, data)
 		_ = sess.Send(&proto.Packet{Opcode: op, Data: data})
 	}
+}
+
+// academyActorKey holds, on a session, the character its academy requests
+// come from (round 866), so a reply's log line names it.
+const academyActorKey = "academy.actor"
+
+type academyActor struct {
+	id   int64
+	name string
+}
+
+// logAcademyReply logs, at INFO, every academy reply (0xB470..0xB483) and a
+// joiner's 0x3C80 0a with its result and code (round 866: prod logged no
+// academy request at all, so a player's report could not be followed).
+func logAcademyReply(sess *gateway.Session, op uint16, data []byte) {
+	result, code := -1, -1
+	switch {
+	case op >= proto.OpAcademyOpenAck && op <= proto.OpAcademyBuffTransferAck:
+		if len(data) > 0 {
+			result = int(data[0])
+		}
+		if result == int(academy.ResultFail) && len(data) >= 3 {
+			code = int(binary.LittleEndian.Uint16(data[1:]))
+		}
+		if op == proto.OpAcademyMatchJoinAck && result == int(academy.ResultOK) && len(data) >= 2 {
+			code = int(data[1]) // the join's state: 0 refused, 1 joined, 2 no reply
+		}
+	case op == proto.OpAcademyUpdate && len(data) >= 2 && data[0] == academy.PushJoin:
+		result = int(data[1])
+		if result == int(academy.ResultFail) && len(data) >= 4 {
+			code = int(binary.LittleEndian.Uint16(data[2:]))
+		}
+	default:
+		return
+	}
+	var who academyActor
+	if v, ok := sess.Get(academyActorKey); ok {
+		who, _ = v.(academyActor)
+	} else if rt := academyRT.Load(); rt != nil && rt.Hub != nil {
+		if e, ok := rt.Hub.EntityBySession(sess.ID()); ok {
+			who = academyActor{id: e.CharacterID, name: e.Name}
+		}
+	}
+	slog.Info("academy reply", "character_id", who.id, "name", who.name, "opcode", fmt.Sprintf("%#04x", op),
+		"result", result, "code", fmt.Sprintf("%#04x", code))
 }
 
 func acFail(sess *gateway.Session, op uint16, code uint16) {
@@ -156,6 +207,9 @@ func AcademyHandler() gateway.Handler {
 		if !ok {
 			return nil
 		}
+		sess.Set(academyActorKey, academyActor{id: e.CharacterID, name: e.Name})
+		rt.log().Info("academy request", "character_id", e.CharacterID, "name", e.Name,
+			"opcode", fmt.Sprintf("%#04x", p.Opcode), "len", len(p.Data))
 		switch p.Opcode {
 		case proto.OpAcademyOpenRequest:
 			rt.handleOpen(ctx, sess, e, p.Data)
@@ -215,8 +269,11 @@ func storeCode(err error) uint16 {
 
 // The codes this file sends besides internal/academy's.
 const (
-	ErrAcademyTargetBusy    uint16 = 0x6806
-	ErrAcademyInviterGone   uint16 = 0x680c
+	ErrAcademyTargetBusy  uint16 = 0x6806
+	ErrAcademyInviterGone uint16 = 0x680c
+	// ErrAcademyRequesterGone: the shard's "requester not found"
+	// (docs/protocol/academy.md 11; no text on the client).
+	ErrAcademyRequesterGone uint16 = 0x680d
 	ErrAcademyExisting      uint16 = 0x680f // TC_ERROR_TRAININGCAMP_ALREADY_ENTRY
 	ErrAcademySecondFull    uint16 = 0x6810 // TC_ERROR_SECOND_GUARDIAN_COUNT_OVER
 	ErrAcademyStoreFailed   uint16 = 0x6813
@@ -598,6 +655,7 @@ func (rt *academyRuntime) inviteTimedOut(inv *acInvite) {
 	}
 	delete(rt.invites, inv.target)
 	rt.mu.Unlock()
+	rt.log().Info("academy invite timed out", "character_id", inv.target, "inviter", inv.inviter)
 	rt.failInvite(inv, academy.ErrInviteTimeout)
 }
 
@@ -627,6 +685,8 @@ func academyInviteAnswer(ctx context.Context, sess *gateway.Session, me world.En
 		return true
 	}
 	accept := len(data) >= 2 && data[0] == 1 && data[1] == 1
+	rt.log().Info("academy invite answered", "character_id", me.CharacterID, "name", me.Name, "inviter", inv.inviter,
+		"accept", accept, "answer", fmt.Sprintf("% x", data))
 	if !accept {
 		rt.failInvite(inv, academy.ErrInviteRejection)
 		return true
