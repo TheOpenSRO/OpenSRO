@@ -90,6 +90,23 @@ func sprintDestination(from, target world.Position, radii, limit float64) world.
 	return world.Position{X: from.X + ux*limit, Y: from.Y + uy*limit, Z: from.Z + uz*limit}
 }
 
+// sprintLandingOnSurface puts a sprint's landing on the walkable surface
+// nearest its height (navArrivalHeight), where there is a navigation mesh.
+// Round 873: the landing's height is the target's (sprintDestination, READ),
+// and the original's monster stands on its navigation mesh (CGObj::EnterWorld
+// s:0x485360 resolves an object's cell and height); OpenSRO's monsters keep
+// their nest's height (the nest point, not the surface under the scattered
+// spawn -- on the Wrecked Ship's sloping decks MEASURED 81 above the deck at
+// the landing), so the landing is resolved here (INFERRED to be the
+// original's result: the target's height on its surface). Without a mesh
+// there, the point is kept.
+func sprintLandingOnSurface(zone string, p world.Position) world.Position {
+	if y, ok := navArrivalHeight(zone, p); ok {
+		p.Y = y
+	}
+	return p
+}
+
 // truncatedLanding is the landing as FUN_005862e0 stores it: region-local,
 // each coordinate truncated toward zero (_ftol2, 0x5866c1..0x5866ea, READ),
 // and the world position that truncated point is.

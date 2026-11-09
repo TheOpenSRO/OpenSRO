@@ -1756,7 +1756,11 @@ func use_skill(char_name: String, skill_id: int, target_monster_id: int,
 	if riding_mount != 0:
 		ride_refused_action.emit()
 		return
-	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id, target_type, point))
+	# Round 873: a ground point goes out at the wire's height (round 870's
+	# wire_y), as a walk's destination does; the server clamps the move in 3-D
+	# from the region-local height it holds.
+	var wire_point := Vector3(point.x, wire_y(point.y), point.z) if target_type == SkillNet.TARGET_GROUND else point
+	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id, target_type, wire_point))
 	if target_type == SkillNet.TARGET_ENTITY and target_monster_id > 0 and not JobPvpNet.is_cos_uid(target_monster_id):
 		own_offensive.emit(target_monster_id)
 	if LatencyProbe.on and target_type == SkillNet.TARGET_ENTITY:
@@ -3394,8 +3398,14 @@ func _dispatch(p: Packet) -> void:
 			if sm == null:
 				push_warning("NetClient: short OpSkillMove (%d bytes) dropped" % p.data.size())
 			else:
-				print("SKILL move: character %d skill %d to (%.1f, %.1f, %.1f)" % [
-					sm.character_id, sm.skill_id, sm.x, sm.y, sm.z])
+				# Round 873: its height is the wire's (region-local), as every
+				# position since round 870. Taken raw, a sprint on the Wrecked
+				# Ship (anchor -1800) slid the player 1,560 units down off the
+				# deck to the sea floor (prod, v0.1.643).
+				var wire_height := sm.y
+				sm.y = scene_y(sm.y)
+				print("SKILL move: character %d skill %d to (%.1f, %.1f, %.1f) (wire height %.1f)" % [
+					sm.character_id, sm.skill_id, sm.x, sm.y, sm.z, wire_height])
 				skill_moved.emit(sm)
 		PartyNet.OP_CREATE_ACK, PartyNet.OP_INVITE_ACK, PartyNet.OP_JOIN_ACK, \
 				PartyNet.OP_PARTY_INFO, PartyNet.OP_REQUEST, PartyNet.OP_EVENT, \

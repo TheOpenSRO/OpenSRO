@@ -7483,6 +7483,175 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-third round: combat and death inside the Forgotten World -- a sprint's landing taken at the wire's height (the deck, not the sea floor), the return-point revive done in one request, the resurrection scroll in place, the gate's ten minutes measured
+
+The user on prod (v0.1.643, a level-110 warrior in a Wreck-inside 101-110 layer): "so I tried to
+attacking a monster and the world around kept disappearing like I was teleporting and then I died.
+When I died I ressed my self but then it asked me to res again and took me back to Jangan", then
+"my crystal to teleport to fgw should still be there in the same spot I spawned it in Jangan and
+it's not". Lane DX, base `29661359`, dev (`2b3276ca`, round 872) merged in. Labels: READ (`s:` the
+game server, `m:` the shard manager), MEASURED, INFERRED, OURS, OPEN.
+
+### The vanishing world: a sprint slid the player off the deck to the sea floor
+
+The user's client log, at the attack: `SKILL move: character 12 skill 8499 to (-268.0, -605.0,
+2049.0)`, `slides at 500 u/s from (-268.8, 955.2, 2038.8) to (-268.0, -605.0, 2049.0), 1560.2
+units`, `arrived ... footing terrain`, then the player stood at local -1800 (the sea floor's
+terrain), its walks were refused, and three `MOVE correction: the server has this player at (-268.00,
+953.93, 2049.00), the client at (..., 0.00, ...)` put it back between walks -- the camera going from
+the deck to the sea floor and back is "the world disappearing like I was teleporting".
+
+- **Cause (client):** OpSkillMove's height is the wire's, region-local, like every position since
+  round 870 (`NetClient.wire_y` / `scene_y`, the frame's anchor -1800 on the Wrecked Ship), and the
+  client took it as a scene height. Jangan's anchor (-2.49) hid it everywhere else. The same held for
+  a knockback's or knockdown's region-local point (`_region_point_world`), and a ground cast's point
+  went out as a scene height.
+- **Fixed (client):** the skill move's height is converted at the wire (`net_client.gd`, and the log
+  line names the wire's height); the knockback point takes `scene_y`; a ground point goes out with
+  `wire_y`.
+- **Fixed (server, a stand-in):** a sprint ('tel3') lands at its target's height (READ,
+  FUN_005862e0's tel3 branch), and OpenSRO's monsters keep their nest's height while the original's
+  stand on their navigation mesh (`CGObj::EnterWorld` s:0x485360 resolves an object's cell and
+  height). MEASURED with the client fix alone: the landing came at wire -764, 81 above the deck, and
+  the player slid up and dropped back. The landing is now put on the mesh's surface nearest that
+  height (`sprintLandingOnSurface`; INFERRED to be the original's result). The monsters' own
+  heights are left as they are (OPEN below).
+
+| run | client | server | the sprint (skill 8479 at a Ghost Seiren, real click and key 1) |
+|---|---|---|---|
+| d2 | v0.1.643 source (`29661359`) | this round, step 1 | wire -762 -> slid 1,720.5 down to scene -762, footing terrain (local -1800); a walk then `MOVE correction` back to 957.66 |
+| d3 | this round | step 1 | wire -764 -> scene 1036 (81 above), settled on `wreck_sship_in_02` at 955.2 |
+| d4 | this round | this round | wire -844 -> scene 956, 6.1 units, footing `wreck_sship_in_02`, stays (five `where`s) |
+
+The prod log's corrections and the d2 run are the same sequence. MEASURED on the original (another
+player as the target; no monster could be loaded into the measured layer): the approach is the
+server's own walk (one `B021` to both clients 77 ms after `7074`, the first hit 1.44 s later), no
+`B023` correction and no teleport during the fight. OpenSRO's client walks into reach itself (its
+design since round 749), which the user's log shows working until the sprint.
+
+### Death inside: what the original does
+
+MEASURED (a level-64 character killed inside a Togui 61-70 layer; the window is the open world's):
+
+- The death: `30BF {uid, 00 02}`, the EXP loss `3056` ("[66380]Experience Points lost"), `3011`.
+  The dead window: "Confirmation window", "the character is now paralyzed.", "Resurrect at the
+  specified point" and "Waiting for other player's help." (above level 10). No timer.
+- **"Resurrect at the specified point"**: the window closes at the click and one `3053 {01}` goes
+  out. 29 ms later `30D2`, the layer's despawns, `34B5 {0x61A8}`, `34A5`, `3013`, `34A6` -- one
+  teleport, the character arriving alive -- at its **designated return point** in Jangan (its
+  `AppointedTeleport` gate), not where it used the gate and not the layer's start. HP trunc(0.4 x
+  2054) = 821, MP kept. The `320C` icon stays (16,877 s left); the gate in town stands.
+- "Waiting for other player's help.": the window closes and nothing is sent; dead 70 s later, no
+  window again. Escape closes it the same way.
+- **A resurrection scroll** (`ITEM_MALL_RESURRECTION_100P_SCROLL`, a right click in the bag while
+  dead): `704C`, alive (`30BF {00 01}`), protection 6.1 s, the EXP back, `B04C {01 ...}`, `305C`:
+  **in place, in the layer**, HP and MP full.
+- READ: GObjPC_HandleResurrectMsg_053 (s:0x50fee0) offers the PC's event 0x1d to its world's hooks
+  first (FUN_0063d4a0 / FUN_0063d190; result 3 swallows the request). The binary's only
+  `OnResurrectMyChar` handlers are `BATTLE_ARENA_EVENT_HANDLERS`' and `FLAG_WORLD_EVENT_HANDLERS'`
+  (RTTI; s:0x5eea70, s:0x5f1a00): no Forgotten World handler. Option 1 is then GObjPC::Revive(0)
+  (s:0x4df290): CGObjPC::FUN_004e08a0 resolves the designated gate (a siege world aside) and
+  `vslot_222` warps there, world 1 layer 1. So the open world's rule is the instance's: W3's rule
+  (round 869, then OURS) is the original's.
+
+### Death inside: what OpenSRO did, and the fix
+
+- **The double request (server):** `ReviveHandler`'s option 1 moved the character (`returnToPoint`,
+  the layer's hub to the open world's) and then asked **the layer's hub** to revive it, which no
+  longer held it: "not dead". The character arrived in Jangan still dead; its client logged `SYSLOG
+  not dead` / `revive refused: not dead` and kept the window; the second click warped it again (prod:
+  two "death: return point" warps 3.26 s apart, the user's log lines 3192..3571). Fixed: the revive
+  is asked of the hub the character is in after the move. `warpHome` reads the character and binds
+  its guard in the session's own hub; a resurrection skill's accept revives in the target's hub (it
+  used the open world's, so a party member's resurrection inside failed the same way).
+- **`from=jangan`:** the warp log read a layer's region bucket as the nearest open zone. It now
+  names the instance it leaves (`from="instance 81.1 114/243"`).
+- **The window (client):** it closes at the click, as MEASURED; a refusal -- only OpenSRO's server
+  sends one -- shows it again for a player still dead (OURS).
+- **The resurrection scroll (server, client):** a 3/3/13/6 scroll from the bag was refused "you are
+  dead" (the disclosed gap of round 491), and the client stopped it locally. It is now the one item
+  a dead user may use: revived where it lies, in its own world (`reviveByScroll`, round 864's
+  arithmetic), one spent; alive it is refused with 0x1887's line. The bar's item slot does the same.
+  The premium's free fill (round 864) already revived in the session's world.
+
+| run (real clicks, `-full-map`, dead state on) | what happened |
+|---|---|
+| d1, d5 | killed by Ghost Seirens on the deck; `node:RevivePoint` -> one `death: return point` warp (`from="instance 81.1 114/243"`), "Revived." (HP 4467 = trunc(0.4 x 11169)), at the race's gate in Constantinople (the test character's return point), the re-entry icon kept |
+| d6 | dead on the deck; `rbagitem:3783` (the 100 % scroll) -> `use item ok: 1 left`, "Revived." HP 11169 / MP 11169, the same spot (-266.94, 956.34, 2066.58) in the layer, protection 6 s; dead again, the return point in one click, the box gone 5 ticks after the click (`node:RevivePoint` -> no such node) |
+
+### The gate in Jangan (MEASURED: the original agrees with OpenSRO)
+
+The user expected the crystal to stay. MEASURED on the original: the layer emptied at 12:58:18.211
+(the creator by the exit NPC, the other member by its death revive a minute earlier); the gate's
+`3016` reached both players in town at 13:08:18.781 -- **600.57 s** later, no text. READ, the shard
+manager: a user's leave (m:0x658f10) stamps "empty since" (+0x54) when the count (+0x14) reaches 0,
+an entry (m:0x658e30) clears it, and the tick (m:0x658810) closes a layer at count 0 once that is
+`WorldEmptyRemainTime` (+0x3c, 10 min) old. So a death that takes the last player out starts the
+empty close, and the gate goes with its layer, as on prod (12:09:08 out, "instance closing ...
+reason=empty" at 12:19:08). The `320C` icon outlives it; a new hole makes a new layer whose gate is
+refused 0x1c32 while the limit runs. OpenSRO already does all of this; a test now pins the empty
+close after a death.
+
+### Tests
+
+- `server/internal/session/gameworld873_test.go`: `TestReviveAtReturnPointFromALayer` (with and
+  without `-single-frame`: one zone change, alive, no error, the layer counts nobody, a second
+  request "not dead" with nothing moved, the layer closed 600 s after the death emptied it; fails on
+  `29661359` with "not dead"), `TestSprintLandsOnTheSurface`, `TestEveryReviveFindsTheCharactersWorld`
+  (an in-place revive and a scroll handed the open world's hub revive a character dead in a layer:
+  `reviveWith`, `reviveByScroll` and the flag-off respawn take the hub that holds the character).
+- `server/internal/session/resurrect873_test.go`: `TestResurrectionScrollInsideALayer` (alive
+  refused, a potion refused dead, the scroll revives on the spot in the layer, full HP, one spent).
+- `client/scripts/net/dest_move_net_test.gd`: a skill move's wire height -846 is scene 954 with the
+  anchor -1800. `client/scripts/world/monster_strikes_test.gd`: each button closes the box.
+
+### Gates
+
+The client's movement changed (the skill move's and the knockback's height), so the gate ran
+(`--base 2b3276ca --sites jangan --frames 40000`, Forward+ on the RX 7600; dev had moved to round 872's
+merge, which is in this branch):
+
+```
+perf gate: base 2b3276ca (forward_plus) vs head working tree (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 1.00  head 1.04  (+0.0)  SAME
+jangan  entry ms   base 9365  head 9601  (+236.0)  SAME
+jangan  freeze ms  base 3030  head 3058  (+28.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+`cd server && go build ./... && go vet ./... && go test ./...`: pass (after merging dev at v0.1.645). `remote_godot.sh check`: ALL LOAD (1,175 scripts, 9 scenes).
+`remote_godot.sh tests`: "ran 450 suite(s), 1 failing": `video_options_test.gd` ("nothing is saved before Apply"), which passes alone on this branch and on the base (`buff_persist_test` and `crowd_main_thread_test` failed in earlier full runs at a box load of 51 and passed here; `crowd_main_thread_test` fails alone on the base too).
+
+### Differs on purpose / unsure (not changed)
+
+- "Waiting for other player's help." (above level 10): MEASURED the original's click closes the box
+  and sends nothing. OpenSRO draws it disabled and keeps the box (OURS since round 665, "no one can
+  resurrect another player in OpenSRO yet" -- since round 785 another player can). Unchanged; the
+  user decides.
+- The death penalty: MEASURED a level-65 victim dropped to 64 (the level comes back with a scroll's
+  EXP). OpenSRO's penalty takes EXP only (round 549's rule). Not this round's.
+
+### OPEN
+
+- A monster's death and monster combat inside, on the original: no monster could be loaded into
+  the measured layer (`/loadmonster` spawned and despawned at once, `B010 {02 06 00}`).
+- OpenSRO's monsters keep their nest's height; the original's stand on their mesh. The sprint
+  landing is resolved on the server; a monster's own height (its plate, a 3-D reach) is not.
+- What option 1 does at level 10 or under inside (not measured).
+
+### Changelog lines (draft)
+
+- Attacking with a charge skill on the Wrecked Ship no longer drops you off the deck to the sea floor (the world no longer seems to vanish in combat).
+- Knockbacks inside the Forgotten World keep you on the deck.
+- Resurrecting at the specified point after dying in the Forgotten World now works with one click and brings you back alive.
+- The resurrection window closes as soon as you choose.
+- A resurrection scroll can be used from the bag or the quick bar while dead, and revives you where you fell, inside the Forgotten World too.
+
+Frames (box `/var/tmp/r873d/frames`): `sprint_before_sea_floor.png`,
+`sprint_before_after_correction.png`, `sprint_after_on_deck.png`, `dead_inside.png`,
+`return_point_revived_town.png`, `scroll_revived_in_layer.png`, `return_point_one_click.png`. Runs:
+`/var/tmp/r873d/lane` `d1`..`d6` (`*.log`, `*.server.log`).
+
 ## Eight-hundred-and-seventy-third round, honor buffs: the guardian's crown and rings twice on the buff board after a death in an instance -- the revive's engage unheard while the arrival held the character, the arrival's engage on top
 
 The user on prod (v0.1.643): "it also appears my honor buffs are appearing twice" -- an academy

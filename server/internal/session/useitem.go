@@ -1031,7 +1031,8 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // restores-nothing reason and keeps the item. That refusal is OpenSRO's
 // DISCLOSED GAP, not an engine refusal. The berserk potion is modelled since
 // round 632 (useBerserkPotion), the return scrolls since round 778, and the
-// universal and purification pills since round 786 (curepill.go).
+// universal and purification pills since round 786 (curepill.go), and the
+// resurrection scroll since round 873 (resurrectfill.go, usable while dead).
 //
 // The one non-recovery kind OpenSRO does model is the container expansion
 // (round 498, useExpansion): the warehouse item grows the account's
@@ -1097,7 +1098,9 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// kind below anyway). The wording is OpenSRO's own; the engine's
 		// order is kept as far as the slot test, which comes after this here
 		// because the slot is read below.
-		if deadBySession(hub, sess) {
+		// Round 873: the one kind usable while dead is the resurrection
+		// scroll (3/3/13/6, the class the engine's life-state test exempts).
+		if deadBySession(hub, sess) && !resurrectionScrollAt(ctx, inv, items, characterID, int(req.InventorySlot)) {
 			return fail(deadRefusal)
 		}
 		if inv == nil || items == nil {
@@ -1137,6 +1140,13 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			return fail("that item cannot be used")
 		}
 		note.characterID, note.refItemID = characterID, it.ID
+		// Round 873 (resurrectfill.go): a resurrection scroll from the bag
+		// revives its dead user where it lies -- inside an instanced world
+		// too (MEASURED: in the layer, the same spot, full pools with a 100 %
+		// scroll, the EXP the death took given back).
+		if isResurrectionScroll(it) {
+			return useResurrectionScroll(ctx, sess, fail, inv, chars, hub, characterID, it, held, have)
+		}
 		// Round 838 (servicescroll.go, OURS): the private server's service
 		// scrolls, by code name -- before the COS, composite and return
 		// scroll kinds, since eight of them are typed 3/3/3/1 and were cast

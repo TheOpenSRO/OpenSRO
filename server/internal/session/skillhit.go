@@ -359,6 +359,7 @@ func performSkillAttack(ctx context.Context, d combatDeps, sess *gateway.Session
 	if limit, ok := sprintLimit(castRow); ok {
 		dest := sprintDestination(attacker.Pos, world.Position{X: primary.X, Y: primary.Y, Z: primary.Z},
 			float64(combat.PlayerBCRadius+primary.BCRadius), limit)
+		dest = sprintLandingOnSurface(attacker.Zone, dest)
 		landing, region, ix, iy, iz := truncatedLanding(attacker.Zone, dest)
 		if moveBySkill(sess, hub, chars, req.SkillID, landing, now) {
 			action.Flags |= ActionFlagMove

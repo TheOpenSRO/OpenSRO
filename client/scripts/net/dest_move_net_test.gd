@@ -126,6 +126,29 @@ func _test_net_client() -> void:
 	_check(echoes.size() == 2, "and follows it once the table comes")
 	nc.free()
 
+## Round 873: OpSkillMove's height is the wire's (region-local) like every
+## position since round 870: on the Wrecked Ship (anchor -1800) a sprint's
+## landing on the deck at -846 is scene 954, not -846 (taken raw it slid the
+## player down to the sea floor, prod v0.1.643).
+func _test_skill_move_height() -> void:
+	var nc = load("res://scripts/net/net_client.gd").new()
+	nc.wire_height_anchor = -1800.0
+	var got: Array = []
+	nc.skill_moved.connect(func(m): got.append(m))
+	var data := PackedByteArray()
+	data.resize(28)
+	data.encode_s64(0, 12)
+	data.encode_s64(8, 8499)
+	data.encode_float(16, -268.0)
+	data.encode_float(20, -846.0)
+	data.encode_float(24, 2049.0)
+	nc._dispatch(Packet.new(SkillNet.OP_SKILL_MOVE, data))
+	_check(got.size() == 1 and is_equal_approx((got[0] as SkillNet.SkillMove).y, 954.0),
+		"a skill move's wire height -846 is scene 954 with the anchor -1800 (%s)" % (str((got[0] as SkillNet.SkillMove).y) if got.size() == 1 else "none"))
+	_check(got.size() == 1 and is_equal_approx((got[0] as SkillNet.SkillMove).x, -268.0) and is_equal_approx((got[0] as SkillNet.SkillMove).z, 2049.0),
+		"its x and z are kept")
+	nc.free()
+
 func _init() -> void:
 	_test_request()
 	_test_echo()
@@ -133,6 +156,7 @@ func _init() -> void:
 	_test_frames()
 	_test_moving_records()
 	_test_net_client()
+	_test_skill_move_height()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

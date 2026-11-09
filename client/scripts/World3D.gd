@@ -13892,7 +13892,12 @@ func _skill_is_assignable(skill_id: int) -> bool:
 ## A quickslot was activated (clicked, or its number key pressed): cast the
 ## skill assigned to it.
 func _on_quickslot_activated(slot_index: int) -> void:
-	if _player_dead:
+	# Round 873: a resurrection scroll on the bar is used while dead, as from
+	# the bag (HudPanels.is_resurrection_scroll).
+	var dead_scroll := false
+	if _player_dead and _quickslot_items.has(slot_index) and _hud_panels != null:
+		dead_scroll = HudPanels.is_resurrection_scroll(_hud_panels.item_types(int(_quickslot_items[slot_index]["item"])))
+	if _player_dead and not dead_scroll:
 		# Dead (round 548): the server refuses a cast and an item alike
 		# (its OpUseSkill and OpUseItem gates, the dead state's server half;
 		# retail's `GetLifeState() != 1` guards), so nothing goes out.
@@ -16677,11 +16682,12 @@ func _settle_pushed_player(to: Vector3) -> void:
 
 ## World position of a region-local point (a hit block's knockback point).
 ## (NetClient's spawn frame, as a 0xB023 stop is placed; the local height is
-## the world height there too.)
+## the wire's, less the frame's anchor -- round 873: raw, a knockback on the
+## Wrecked Ship (anchor -1800) put the body 1,800 under the deck.)
 func _region_point_world(region: int, local: Vector3, _fallback_y: float) -> Vector3:
 	var frame: Vector2i = NetClient.get("_spawn_frame")
 	var w := DestMoveNet.world_of_local(region, local.x, local.z, frame)
-	return Vector3(w.x, local.y, w.y)
+	return Vector3(w.x, NetClient.scene_y(local.y), w.y)
 
 ## Puts a body at a point at once (a knockdown's point).
 func _put_body(body: Node3D, to: Vector3) -> void:
@@ -18393,6 +18399,8 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   hit:<x>,<y>         list every shown Control that would take a press there
 #                       (round 850: a world click a window swallowed)
 #   playerclick:<name>  left click the middle of that player's body (round 839)
+#   monsterclick[:<name>]  left click the middle of the nearest drawn monster
+#                       (its plate holding <name>; round 873)
 #   groundclick:<dx>,<dz>  left click the ground that far (world units) from
 #                       where this player stands, at the pixel the camera
 #                       draws it (round 846: small and large steps)
@@ -19449,6 +19457,31 @@ func _qa_input_step() -> void:
 				var at := camera_3d.unproject_position(pbody.global_position + Vector3(0, top * 0.5, 0))
 				_qa_input_report = "%s at %s" % [action, at]
 				_qa_push_click(at, MOUSE_BUTTON_LEFT)
+		"monsterclick":
+			# Round 873: left click the middle of the nearest drawn monster
+			# (whose name plate holds <arg>, if given), as a player clicks it:
+			# the pick and the click's dispatch decide (a select, then an
+			# attack that walks into reach).
+			var mbody: Node3D = null
+			var mbest := INF
+			for mid in _monster_bodies:
+				var mb = _monster_bodies[mid]
+				if mb == null or not is_instance_valid(mb) or _dying_until.has(mid):
+					continue
+				if arg != "":
+					var plate: Label3D = (mb as Node).get_node_or_null("Label")
+					if plate == null or not plate.text.contains(arg):
+						continue
+				var md: float = (mb as Node3D).global_position.distance_to(player.global_position)
+				if md < mbest:
+					mbest = md
+					mbody = mb
+			if mbody == null or camera_3d == null:
+				_qa_input_report = action + " (no monster drawn)"
+			else:
+				var mat := camera_3d.unproject_position(mbody.global_position + Vector3(0, 1.0 * PLAYER_SCALE_RATIO, 0))
+				_qa_input_report = "%s at %s (%.1f away, body at %s)" % [action, mat, mbest, str(mbody.global_position)]
+				_qa_push_click(mat, MOUSE_BUTTON_LEFT)
 		"pmi_order":
 			# Round 855 (QA only): the player block as drawn -- where the pet
 			# strip sits among its children and which of them draw under and
@@ -33988,6 +34021,12 @@ func _on_revive_result(result: WorldNet.ReviveResult) -> void:
 	if result.error != "":
 		_log_system(result.error)
 		print("World3D: revive refused: %s" % result.error)
+		# Round 873: the box closed at the click (MEASURED). A refusal is
+		# OpenSRO's own answer (the original's handler answers nothing), so
+		# the box comes back for a player still dead -- OURS, so a refused
+		# request never leaves one dead with no way to choose.
+		if _player_dead and _hud_panels != null and _hud_panels.get_node_or_null(HudPanels.REVIVE_PROMPT) == null:
+			_hud_panels.show_revive_prompt(_death_line(0), _player_level)
 		return
 	_leave_dead_state()
 	_own_hp_told()

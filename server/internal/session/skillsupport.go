@@ -366,7 +366,9 @@ func takeResurrection(ctx context.Context, sess *gateway.Session, characterID in
 	if !have {
 		return true
 	}
-	c, mpNow, err := reviveWith(ctx, d.chars, d.mp, d.hub, characterID, false)
+	// Round 873: the hub the dead character is in (a layer's, inside an
+	// instanced world); the deps' is the open world's.
+	c, mpNow, err := reviveWith(ctx, d.chars, d.mp, d.hub.For(sess), characterID, false)
 	if err != nil || c == nil {
 		return true
 	}

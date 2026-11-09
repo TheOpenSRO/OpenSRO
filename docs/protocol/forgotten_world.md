@@ -553,8 +553,34 @@ All on **0x300C {u16 0x0C1C, u8 1 | 2, str key}** (1 = banner, 2 = system line),
   opened at once (no 15 s wait was seen); the master got no `B51A` for an accepted summon.
 - **Time-out**: the warnings, then everyone to their return point (`game_worlds.md` 4).
 - MEASURED (round 869, section 5): logout inside -> the next login is at the return point, the
-  gate leads back into the same layer; the party dismissed inside -> nobody is moved. OPEN: death
-  inside (no monster spawned in the measured layer); a disconnect (not a clean logout) inside.
+  gate leads back into the same layer; the party dismissed inside -> nobody is moved. OPEN: a
+  disconnect (not a clean logout) inside; a death by a monster inside (monsters could not be loaded
+  into the measured layer; the deaths below were by another player).
+- **Death inside** (MEASURED round 873, Togui 61-70, a level-64 character killed inside; READ the
+  server): the death is the open world's -- `30BF {uid, 00 02}`, the EXP loss `3056`, the dead window
+  `3011` -- and so is the window: "Confirmation window", "the character is now paralyzed.", the buttons
+  "Resurrect at the specified point" and (above level 10) "Waiting for other player's help.", no timer.
+  - "Resurrect at the specified point": the window closes at the click and **one** `3053 {01}` goes
+    out; the server answers in 29 ms with `30D2`, the layer's despawns, `34B5 {0x61A8}`, `34A5`,
+    `3013`, `34A6` -- an ordinary teleport, the character arriving alive -- to its **designated
+    return point** (`_Char.AppointedTeleport`, a town gate) in the open world: not where it used the
+    gate, not the layer's start. HP trunc(0.4 x max), MP kept. The `320C` re-entry icon stays with
+    the remaining time, and the gate in town still stands. READ: GObjPC_HandleResurrectMsg_053
+    (s:0x50fee0) -> GObjPC::Revive(0) (s:0x4df290) -> CGObjPC::FUN_004e08a0 (the designated gate;
+    only a siege world differs) -> the warp to it in world 1, layer 1. The handler's world hook
+    (event 0x1d, `OnResurrectMyChar`) has handlers only for the battle arena and the flag world
+    (the binary's RTTI): the Forgotten World has none.
+  - "Waiting for other player's help.": the window closes and nothing is sent; the character stays
+    dead (70 s watched, no revive, no window again). Escape closes it the same way.
+  - A resurrection scroll (`ITEM_MALL_RESURRECTION_100P_SCROLL`, a right click in the bag while
+    dead): `704C`, then alive (`30BF {00 01}`), protection (`30BF {04 02}`, 6.1 s), the EXP back
+    (`3056`), `B04C {01 ...}` and the item effect `305C` -- **in place, in the layer**, HP and MP full.
+- **The layer after its last user left** (MEASURED round 873): the creator left by the exit NPC
+  and the other member by its death revive; the gate in town despawned (`3016`, no text) **600.57 s**
+  after the layer emptied -- the empty close, whoever left how (READ, the shard manager: a user's
+  leave m:0x658f10 stamps "empty since" at a count of 0; the tick m:0x658810 closes the layer once
+  that is `WorldEmptyRemainTime` old). The `320C` icon outlived it; a new hole made a new layer, and
+  its gate was refused `0x1c32` (the re-entry limit runs on).
 
 ## 9. The free entrance ticket
 
@@ -673,7 +699,8 @@ have time to reuse the item." (MEASURED there).
   `TOGUIELDER_A1` 0.15, `TREASUREBOX_A1` 0.15, `_A2` 2 x 1.0, `_C2` 2 x 1.0); they drop through the
   ordinary drop path when the operator's drop tables are loaded. What else a box gives is OPEN.
 - **Death inside**: the return-point revive takes the character to its designated return point in
-  the open world, which counts it out of the layer (OURS; the original's place is OPEN).
+  the open world, which counts it out of the layer; a resurrection scroll revives it in place in the
+  layer (MEASURED and READ round 873, section 8).
 - **GM aids (OURS)**: `/fgw <world>` opens a layer and stands its gate at the GM (no item, no
   checks; the entry is the gate's own); `/fgwtime <duration>` ages the GM's layer (or its newest
   gate's); `/fgwtime limit <duration>` moves the GM's re-entry limit and hole cool time;

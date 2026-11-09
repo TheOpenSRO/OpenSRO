@@ -466,6 +466,9 @@ func reviveWith(ctx context.Context, chars character.Store, mp *mana.Tracker, hu
 	if hub == nil {
 		return nil, 0, errNotDead
 	}
+	// Round 873: the hub the character is in, whichever world (the
+	// return-point revive used to ask the layer it had just left).
+	hub = hubOfChar(hub, characterID)
 	e, ok := hub.EntityByCharacterID(characterID)
 	if !ok || e.Life != world.LifeDead {
 		return nil, 0, errNotDead
@@ -589,6 +592,16 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 			if werr != nil || !moved {
 				return werr // !moved: warpTo has answered "not in the world"
 			}
+			// Round 873: the return point may be in another world unit than
+			// the one the character died in -- from an instanced world it is
+			// always the open world's (READ: GObjPC::Revive(0) s:0x4df290
+			// resolves the designated gate, s:0x4e08a0, and warps to it in
+			// its own world, layer 1). The revive is asked of the hub the
+			// character is in NOW: asked of the layer's, which no longer
+			// held it, it answered "not dead", the character arrived in town
+			// still dead and its client showed the dead window again (prod,
+			// v0.1.643: two requests, two warps, one revive).
+			hub = hub.For(sess)
 			c, mpNow, err = reviveWith(ctx, chars, deps.Mana, hub, e.CharacterID, true)
 		case ReviveOptionPresentPoint:
 			if e.Level > PresentPointMaxLevel {
@@ -635,13 +648,17 @@ func returnToPoint(ctx context.Context, sess *gateway.Session, chars character.S
 // recall.go): its designated gate, else its race's.
 func warpHome(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, via string) (bool, error) {
 	var characterID int64
-	if e, ok := hub.EntityBySession(sess.ID()); ok {
+	// The session's own world (round 873: a caller holding the open world's
+	// hub read no character for a session in a layer).
+	if e, ok := hub.For(sess).EntityBySession(sess.ID()); ok {
 		characterID = e.CharacterID
 	}
 	zone, bucket, pos, frame := returnPointFor(ctx, chars, characterID)
 	armReturnGuard(sess, zone, pos, time.Now())
 	moved, err := warpVia(ctx, sess, eq, chars, hub, zerk, zone, bucket, pos, frame, via)
-	if arrived, in := hub.EntityBySession(sess.ID()); moved && in {
+	// Round 873: the arrival is in the hub the move landed in (from an
+	// instanced world, the open world's), not the one it left.
+	if arrived, in := hub.For(sess).EntityBySession(sess.ID()); moved && in {
 		bindReturnGuard(sess, arrived.Arrival)
 	} else {
 		sess.Set(returnGuardKey, (*returnGuard)(nil))
@@ -747,6 +764,9 @@ func returnAfterKill(ctx context.Context, chars character.Store, eq equipment.St
 	if playerDeadState.Load() || hub == nil {
 		return
 	}
+	// Round 873: wherever the character is (an instanced world's hub when
+	// it died inside one); the caller may hold the open world's.
+	hub = hubOfChar(hub, characterID)
 	e, ok := hub.EntityByCharacterID(characterID)
 	if !ok || e.Session == nil || e.Life != world.LifeAlive {
 		return
