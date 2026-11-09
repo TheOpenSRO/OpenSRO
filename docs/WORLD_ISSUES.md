@@ -7483,6 +7483,170 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventieth round: the Forgotten World's halves together -- whole runs with two real clients against the server, the door's record and its place, region-local heights on the movement wire, the recall pillar drawn, the re-entry icon at a login, a gate kept across a zone change
+
+Stage 3 of the Forgotten World (lane FQ). The user, for big systems: "Make sure you're comparing
+against the original game and make no mistakes". OpenSRO's server (lanes W1/W3) and client (C1) ran
+together for the first time: a lane server on 17741 (in memory, `-persist-position`, no
+`-trust-client-positions` -- prod's flags --, a navmesh export with the compounds, W3's game-world
+export plus `objectstring.ifo`), and one or two windowed clients driven by real clicks and keys
+through the client's input path (`OPENSRO_QA_INPUT`: `rbagitem`, `boxyes`, `gateclick`, `talkline`,
+`npcclick`, `fgwrow`, `fgwsummon`, `fgwbox`, `groundclick`, `key:m`). Base `68d9902e`, dev's W2 merge
+(`356c7299`) merged in. Labels: READ (`s:` the game server, `c:` the client), MEASURED, INFERRED,
+OURS, OPEN.
+
+### The seams settled first
+
+| seam | READ | MEASURED | OpenSRO before | now |
+|---|---|---|---|---|
+| the door's record | c:0x535980 calls c:0x56dfa0 first: u8 +0x260, u8 +0x261, u8 +0x254, u8 +0x255, name (type 6) or u32 +0x258, u32 +0x25c; then u32 +0x280, u8 +0x284 | -- | {head, +0x260, +0x261, zone, u8}: 10 bytes short | FIXED: the whole record (`gameworld.StructureRecord`, `appendRuntime`); a door is 36513 with zeros for the runtime fields (INFERRED) |
+| the owner name | c:0x56dfa0: the name only when +0x255 == 6 | type 6 with the name | the name for any type but 7 | FIXED: the u32 for every type but 6 |
+| exit / recall select | c:0x88b200's CICharactor branch: u8 1, u32 id, u8 flag, [u32], u8 n, ids, [u16 0x1f], u8 (CICNPC), [u16 0x21], [u16 ref+0x120] | raw `01 4e090000 00 01 29 00` | `{01, npc, 00, 01, 29, 00}` | MATCH: round 869's "00 00 00 01 29 00" counted the id's high zero bytes twice (spec corrected) |
+| the Wreck starts above their decks | `CGObj::EnterWorld` s:0x485360 resolves an object with no cell through ResolveCellAndHeight | -- | the start's y kept (-770 over a deck at -779.12) | FIXED: an instance arrival stands on the surface nearest its height (`navArrivalHeight`): -779.12, -257.59, 692.53 |
+| `buff_persist_test` | -- | 6 of 6 pass at load 3 (3 of 6 at load 35, round 869) | the check read the aura before a frame-budgeted dressing | FIXED in the test: the dressing is pumped until the body is dressed, then the aura asked for (the product resyncs on dressing, `_dress_other` -> `_fx_resync_owner`; not a product bug) |
+
+### Where the doors stand (READ, no longer OPEN)
+
+The game server loads `navmesh\objectstring.ifo` into its region manager's named positions
+(`RegionManagerBody::FUN_0098c7f0` s:0x98c7f0: "%x %x %d %d %x %x %x %x" and the quoted name,
+lower-cased) and at start-up looks each `_RefEventZone` row up there by its ZoneName
+(`CMainProcess::FUN_005304e0` s:0x5304e0, the position kept at the zone's +0xdc); an OBJECT zone whose
+region the server holds is filed for its structure (s:0x6a2e20). MEASURED: every one of the 52
+`POS_STRUCTURE_GOD_*` zones has an entry (Togui 15, Flame 19, Wreck 18). Built: the export takes the
+file (`export-refdata -mode gameworlds ... objectstring.ifo` -> `objectstring.csv`, "286 event zones
+(52 placed)"), `gameworld.Ref.ZonePlaces` places the zones, and a layer's placed doors go to its
+players through the gates' window (`session/doors.go`) with their state in +0x261. The wire angle from
+the file's yaw is INFERRED (the client's quarter turn undone, so the door faces as a map object of that
+yaw; the original's conversion was not read). MEASURED live: the Wreck-outside layer's
+`BIG_GATE_WRECK_1F_ORANGE_1` came in as 36513, zone 272 and was built (`wreck_event_door.bsr`, 6
+ambient effects) at (1200.2, -257.0, 384.4), seated between the passage's posts (picture only).
+
+### Heights on the movement wire (the round's main finding)
+
+After one click-walk inside Togui every NPC select was refused (0xB045 {02, 4}); the server logged the
+player 855 units from the recall pillar in 3-D with 167 across (dy 840). The client draws a field
+frame at minus its anchor height (round 570's OURS calibration, which the original's frames do not
+have) and sent those scene heights in every 0x7021 destination, placement and stop; the server's
+navigation mesh, nests, NPCs and starts are region-local, as the original's wire is. MEASURED anchors
+(the frame region's terrain at block 0's vertex 8, equal on the server's navmesh and the client's `.m`):
+Jangan -2.49, Donwhang -99.1, Constantinople 80.0, Hotan 243.8, Samarkand 180.0, Togui 833.58, Wrecked
+Ship (both) -1800. So Jangan hid it; Hotan's NPCs refused a select past ~175 across after a walk; the
+Wrecked Ship's arrival height read as a scene height would put the player on the sea floor. Fixed in the
+client at the wire (`NetClient.wire_y` / `scene_y` with the frame's anchor: out on 0x7021, the
+placement and the stop; in on the echo, the stop, player spawns, entity snapshots and moves, the entry
+and zone-change results, `World3D._scene_heights_of_result`), and on the server a saved position is read
+whichever way lies on a walkable surface (`session.restoredHeight`: a row saved before the fix holds a
+scene height). MEASURED after: Togui's selects answer after walking; Wreck inside arrives at scene
+1020.88 = local -779.12 and four walks keep it there; Wreck outside at 1542.41 = -257.59.
+
+### The runs (box `/var/tmp/r870q`: `r1`..`r8`, `*b` the second client, `snaps/` the frames, `server*.log`)
+
+| step | MEASURED (original) | READ / spec | OpenSRO (real clicks) | |
+|---|---|---|---|---|
+| hole in Jangan | box, `B04C`, `305C`, `B034`, gate `3015` | c:0x677006, s:0x4a08e0 | right-click the hole -> box 0x2e -> Yes -> the gate built for Fa870, not built for Fb870 ("access 6 is not this player's") | MATCH |
+| gate select / window | `B045 {01, gate, 01 1c 01 02, 0x7EE4, 1063, 693, 1125}`; "Gap of Dimensions", "1. Teleport to [Togui Village]area." | c:0x88b200, c:0x6fac20 | the same lines; "Inside of the Shipwreck", "Outside of the Shipwreck", "Flame Mountain" for the others | MATCH |
+| entry | `B05A {02,1}`, `{01}`, the teleport; the notice pair after `3012`; `320C` x2 (new) | `game_worlds.md` 5 | `{02,1}`, `{01}`, OURS zone change; banner then line; `320C` 18,000 s twice | MATCH (`320C`: FIXED, see below) |
+| minimap / area map / world map | "Togui Village", X 17962 Y 6640; "Regional map - Togui village", "Camp No. 1"; no FGW world-map page | -- | "Togui Village", X:17962 Y:6640 at the start; "Regional map - Togui village" with "Camp No. 1" | MATCH (the world-map page not checked: OPEN) |
+| NPCs | exit 160 W, pillar 200 SE; "Dungeon Exit" / "1. Exit Dungeon"; "Pillar of Party Member Recall" / "1. Summon Party member" | -- | the same names and lines; the pillar was **not drawn** | FIXED (static model; and the select after walking, the heights) |
+| recall | `B519` at once, u8 = level; four columns; push `{0x1F5, 0x596, 5, name}`; Yes -> `B51C {01}`; warp 5.32 s later; nothing to the master | c:0x89a590 | "Fb870 / Possible / 65 / 0 Minutes" under "Party Member Name / Eligibility / Level / Time Limit for Entry"; push `{2, 2, 5, "Fa870"}`; Yes (a real click on the second client) -> `B51C {01}`, Fb at the start with its notice pair and `320C` x2 | MATCH (5.0 s kept: decision 4) |
+| the chain | -- (no monster spawned in the measured layer) | `forgotten_world.md` 6 | `/fgwkill` x12: Envy 3, 2, 1, the doors' notices, the boss, its defeat, to both players; 15 `0x351E` | as READ (data quirk: one world's camp-2 line names camp 1, sent as bound) |
+| party dismissed inside | nobody moved | -- | Fb kicked, stayed at (103, -165) for the rest of the run | MATCH |
+| exit | `751D` -> `B51D {01}`, back at the gate's spot, `320C` stays (one push) | -- | back at (-9, 790), one `320C` (17,870 s) | MATCH (`320C` on the way out: FIXED) |
+| another layer | `0x1c32` | `game_worlds.md` 5 | "Unable to enter instance dungeon, because re-entering time limit is not over." | MATCH |
+| re-entry | the same layer, `320C` with the time left (once) | -- | 67.1 again, `320C` 17,943 s once | MATCH (once: FIXED) |
+| logout inside | the next login at the return point, the icon, the gate leads back | -- | quit inside -> login at (-9, 790), icon 17,974 s, the gate -> the same layer (`320C` 17,956 s) | MATCH (the login icon: FIXED) |
+| warnings and close | 60 / 10 / 5 min banner + line; close with no text, each to its own return point, `320C` stays | `game_worlds.md` 4 | both players got the three; the close took Fa to (-9, 790) and Fb to (-3, 790) where it accepted; `320C` 17,922 / 17,946 s | MATCH (the +9.9 s tick phase not copied: decision 5) |
+| death inside | OPEN | -- | killed at camp 1; option 1 -> the town's resurrection point (9, -409) | OURS kept (W3) |
+| Flame | -- | dungeon 0x8012 | 45 rooms, 1,663 effects, arrival (10897, 162.1, -6110), three 80-unit walks | as READ |
+| Wreck inside | -- | 0x72F3 (264, -770, 1745) | on the deck (local -779.12), four walks on it, the exit NPC answers | FIXED (heights) |
+| Wreck outside | -- | 0x6FE4 | on the deck (local -257.59); the ORANGE_1 door drawn at its place | FIXED (doors placed) |
+| a gate after a zone change in its frame | the original re-sends everything at a teleport | -- | a GM `/tp` with a gate standing: "no gate drawn" | FIXED (`StructureWorld._standing`), MEASURED after: drawn and clicked |
+
+### Fixed (server)
+
+- The structure record (door and type rule), with `TestStructureRecordBytes` extended.
+- The doors placed from `objectstring.ifo` and spawned to the layer's players (`zoneplace.go`,
+  `doors.go`; `TestZonePlacesFromObjectStrings`, `TestAngleOfYaw`, `TestDoorsOnTheWire`: the record
+  bytes, 0x351E, a later arrival told state 1).
+- An instance arrival on the surface nearest its height (`navArrivalHeight`).
+- `0x320C`: twice for a new limit (the first right after the notice pair: the arrival's new
+  after-early slot, `queueAfterEarly`), once on a re-entry, once on each arrival back in town, and at a
+  login after the `3012` (`TestCoolTimePushes`, `TestLoginCoolTimeAfterReady`, W3's
+  `TestGateSelectEntryAndClose` order kept).
+- A saved height read both ways at login (`restoredHeight`, `TestRestoredHeight`).
+- The NPC select's out-of-reach refusal is logged with its distances; `TestInstanceNPCSelect` (the
+  exit NPC 167 units off answers the MEASURED bytes).
+
+### Fixed (client)
+
+- Region-local heights on the movement wire (`net_client.gd`, `World3D._scene_heights_of_result`;
+  `dest_move_net_test.gd` checks the echo with an anchor and `wire_y` / `scene_y`).
+- The recall pillar (a static-object NPC model, `_place_static_npc`).
+- A gate kept across a zone change within its frame (`StructureWorld._standing`).
+- The console forwards the OURS world GM aids (`/instance`, `/fgw`, `/fgwtime`, `/fgwkill`,
+  `/fgwpillar`), until now reachable only from a bot.
+- QA hooks: `npcclick:~<code>` turns the camera first, `gateclick` takes the nearest gate.
+- `buff_persist_test.gd`: the dressing pumped before the aura check.
+
+### Decisions (the user asleep; the standing rules)
+
+1. Door angle: INFERRED from the file's yaw so the door faces as a map object of that yaw; the
+   original's conversion is unread. Kept, labelled.
+2. Door record fields +0x254/+0x255/+0x258/+0x25c sent 0 and +0x260 1: INFERRED (no measured door).
+3. Heights: fixed at the client's wire (the original's convention), not by dropping the client's
+   anchor (round 570's anchor keeps the snap ray and `WORLD_FLOOR_Y` assumptions); old saved rows
+   read both ways, no data migration.
+4. The recall's warp stays 5.0 s after the Yes (MEASURED 5.32 s: INFERRED the push's 5 plus a tick).
+5. The warnings and the close fire at their thresholds exactly; the measured +9.9 s (and the empty
+   closes' 601.0 / 604.9 s) is the shard manager's tick phase (INFERRED), not copied.
+6. The entry keeps OpenSRO's own zone change (OURS, `PROTOCOL_DECISION.md`); the measured town
+   despawns before `B05A {01}` are not copied.
+7. Death inside keeps W3's OURS rule (the town's resurrection point); the original is unmeasured.
+8. Flame's entry notice keeps the data's binding order (system line first); Togui's MEASURED banner
+   first is also its data's order.
+
+### OPEN
+
+- What the world-map page shows inside (MEASURED none; not checked here).
+- The door's server-side block (OURS 40 units) and the original's (its structure's collision,
+  INFERRED); how the original turns a named position's yaw into the zone object's angle.
+- Death inside and a disconnect inside on the original; the hole's "24 hours"; the treasure boxes'
+  rewards (the `/fgwkill` aid gives no drops).
+- A Togui door draws nothing in this client archive (no Togui eventzonedata rows, round 869).
+- Other teleports' `0x320C`: the original re-sends it with every arrival (its teleport is a
+  re-login); OpenSRO sends it on the instance paths and at a login only (the client keeps the icon
+  across a zone change).
+
+### Gates
+
+The movement wire and the NPC drawing changed, so the gate ran (`--base 68d9902e --sites jangan
+--frames 40000`, Forward+ on the RX 7600; the default 3,000 frames end ~2 s after the entry at 540
+fps on a quiet box and give no frame samples):
+
+```
+perf gate: base 68d9902e (forward_plus) vs head working tree (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.91  head 0.91  (+0.0)  SAME
+jangan  entry ms   base 8832  head 8839  (+7.0)  SAME
+jangan  freeze ms  base 2842  head 2866  (+24.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+`cd server && go build ./... && go vet ./... && go test ./...`: pass (100 packages). `remote_godot.sh
+check`: ALL LOAD (1,172 scripts, 9 scenes); `remote_godot.sh tests`: "ran 447 suite(s), 0 failing" (on a
+box at load 1-8; `buff_persist_test` also 6 of 6 alone before its change).
+
+### Deploy notes
+
+- **Re-export the server navmesh** (`export-navmesh -data Data.pk2 -map Map.pk2 -out DIR`): an export
+  from before round 869 has no compound meshes, and the Wrecked Ship's decks then have no surface on
+  the server (MEASURED this round: 6,279 `.nvm`, 2,111 of 3,307 objects with a mesh).
+- **Re-export the game worlds with `objectstring.ifo`** (`export-refdata -mode gameworlds -out DIR
+  <the table dumps> ... objectstring.ifo`, the file from Data.pk2's `navmesh\`): without it no door
+  is placed (the server runs as before: zones switch, nothing spawns or blocks).
+- The client and the server go out together (the movement wire's heights); a position saved before is
+  read either way at login.
+
+
 ## Eight-hundred-and-sixty-ninth round, lane W2: instanced worlds on as many processes as there are machines -- the PostgreSQL registry and bus, the front's relay and the hand-off, parties and every social line across processes, the reaper, the drain, a four-process test and the load test
 
 The user: "make sure instanced worlds are virtually infinitely horizontally scalable", and the
