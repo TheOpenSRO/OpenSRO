@@ -337,6 +337,14 @@ binaries and the data, **not measured**.
   layer 3,609.9 s after the hole was used (the layer's creation), at the same millisecond; the
   system line read "After 60 minute, instance dungeon will vanish. When it vanish, user will move to
   saved return place." (with the banner).
+- **The 10- and 5-minute warnings and the close** (both players kept inside, no party):
+  `300C {1A 0C 0A}` at 6,609.9 s and `300C {1A 0C 05}` at 6,909.9 s.
+  - **The close** came at **7,209.9 s** (2 h + 9.9 s after the hole was used), to both players in
+    the same millisecond, **with no text**: `3019` despawns of the layer's objects, then `34B5
+    {0x61A8}` and the ordinary teleport.
+  - Each player landed **at their own return point**: the creator at the gate's spot, and the
+    summoned member where it had accepted the summon.
+  - `320C` came back with the remaining limit (12,903 s): the re-entry limit outlives the layer.
 - **Leaving the party inside**: the master banished the only member (C `7063 {member id}`; both got
   `3864 {01, 0x0B}`, "The party is dismissed."). **Nobody was moved**: the former member stayed in
   the layer, and was still there minutes later.

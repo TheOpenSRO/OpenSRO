@@ -7561,8 +7561,10 @@ in by the recall pillar. All MEASURED, written into `forgotten_world.md` 5 and `
   - `751C` -> `B51C {01}`, then the member is warped into the layer 5.4 s later. The master gets no
     `B51A`.
 - **Dismissing the party inside** moves nobody.
-- **The 60-minute warning**: `300C {0x0C1A, 60}` to both players, 3,609.9 s after the layer was
-  created.
+- **The warnings**: `300C {0x0C1A, 60 | 10 | 5}` to both players at 3,609.9 / 6,609.9 / 6,909.9 s
+  after the layer was created.
+- **The close** at 7,209.9 s, with no text: each player went to its own return point; `320C` kept
+  running.
 - **No monster spawned** in the layer: not one of world 67's 116 monster nests, over 35 minutes
   and three spots. So the triggers, the doors, the boss, the rewards and death inside are still
   unmeasured. The cause is OPEN.
@@ -7583,7 +7585,6 @@ in by the recall pillar. All MEASURED, written into `forgotten_world.md` 5 and `
 - Why no monster spawned, and with it the trigger chain, the doors (0x351E), the Envy, the boss,
   the treasure boxes and the talisman/reward drops.
 - Death inside, and a disconnect inside.
-- The 10/5-minute warnings and the close (pending at the time of writing).
 - The type-6 gate's client test.
 - The category-0xd texts of 0x1c28, 0x1c2a, 0x1c2c and 0x1c2f.
 - The hole's "24 hours".

@@ -183,7 +183,11 @@ item use).
   vanish, user will move to saved return place.") and shows it as the blue notice banner (c:0x77b580)
   and as a system line (c:0x7781b0). The game server never reads the key; only the shard manager.
   MEASURED (round 869): `300C {1A 0C 3C}` to every player in the layer 3,609.9 s after its creation
-  (the 60-minute threshold of a 2-hour world, plus the tick).
+  (the 60-minute threshold of a 2-hour world, plus the tick); `{1A 0C 0A}` at 6,609.9 s, `{1A 0C 05}`
+  at 6,909.9 s.
+  MEASURED close at 7,209.9 s: no text. The players in the layer get the despawns and an ordinary
+  teleport (`34B5 {0x61A8}`, `34A5`, `3013`, `34A6`), each to its own return point (a summoned
+  member: where it accepted). `320C` keeps running.
 
 **Close** (READ s:0x5f80b0): every player still inside is warped to the return point on the
 character (`_Char` LatestRegion/Pos/WorldID, which the warp in did not overwrite: s:0x4df666..0x4df68f
@@ -536,7 +540,7 @@ players back in the open world in under 15 s) and a drain under load.
 5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
    process until the user says otherwise.
 
-OPEN (not read, not measured): the close messages' kind bytes; where a player revives after dying
+OPEN (not read, not measured): the close messages' kind bytes (the close itself: MEASURED, section 4); where a player revives after dying
 inside (re-login and a member leaving the party inside: MEASURED, section 5); the trigger chain
 rule (OnTrue/OnFalse), Delay and IsRepeat in the binary; `NUM_INPUT_1` of LOAD_MONSTER; the door's
 server-side block; which type id makes a door object; the loading backdrop and world map inside
