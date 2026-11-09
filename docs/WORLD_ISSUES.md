@@ -7483,6 +7483,121 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-sixth round: "auto use vigors" -- a Vigor row in the Auto potion window (OURS, the user's request), drunk when HP or MP falls to its percent, saved on the client
+
+The user: "also, instead of waiting until I code in a bot can you please add "auto use vigors" to
+the auto potions section?" Lane AV, base `c295b6e8`. Labels: READ (`c:` the client), MEASURED,
+INFERRED, OURS, OPEN. Full account: `docs/protocol/auto_potion.md`, "The vigor row".
+
+### The original
+
+- **No vigor row (READ).** `CAutoPotion`'s row accessor c:0x82cd50 asserts
+  `byType < AUTO_POTION_COUNT` whenever `2 < byType`: three rows, HP, MP and abnormal status;
+  `CIFAutoPotion::Create` (c:0x741980) builds two slot children (10, 11). The use c:0x82ce90 ->
+  c:0x60ae50 fires a slot holding any 3/3/1 (recovery potion) or 3/3/2 (cure), so a vigor on the
+  HP or MP row's own slot is already drunk by that row -- for that row's pool only.
+- **Text (MEASURED, the archive's text tables):** no key names "Vigor" alone; the vigor strings
+  are the items' names (`SN_ITEM_ETC_ALL_POTION_01..05`, "Vigor Recovery Herb", "Vigor Recovery
+  Potion (Small)" ...) and an add-on's unused keys (`VPLUS_UI_AUTO_POTION_HP_VIGOR_CHECK_BOX_TEXT`
+  "HP Vigors", `VPLUS_UI_AUTO_POTION_MP_VIGOR_CHECK_BOX_TEXT` "MP Vigors"). So the row's name is
+  our own, "Vigor".
+- **The vigors (MEASURED, itemdata):** TypeID 3/3/1/3 is `ITEM_ETC_ALL_POTION_01..05`,
+  `ITEM_ETC_ALL_SPOTION_01` (the grain) and `ITEM_ETC_GNGWC_ALL_POTION_100`; HP potions are
+  3/3/1/1, MP 3/3/1/2.
+
+### What was built (all OURS)
+
+- **The row** (`AutoPotionWindow._add_vigor_row`): a third `CIFAutoPotionSlot`,
+  `GDR_AUTO_POTION_SLOT_VIGOR`, from `ifautopotionslot.txt` like HP and MP (check box, 1..100
+  slider with its 1 / 50 / 100 statics, belt and quick-slot combos), one row pitch under MP (the
+  layout's HP -> MP step, 86: at 23,369 347x73). The abnormal row, the delay row, Confirm and
+  Cancel move down 86; the window frame (`GDR_AUTO_POTION_FRAME_1`) and tile (`_BG_1`) grow by 86,
+  the window 394x520 -> 394x606, re-centred at its first open. The longer name's static widens to
+  its text and the value box / value / "%" move right just enough to keep 6 px after it.
+  `layout_problems()` reports any overlap of the window's controls (text by its drawn extent) or
+  any control outside the window.
+- **The rule** (`AutoPotion` row 3, `ROW_VIGOR`; judgment calls named in the code): low when
+  `HP <= trunc(maxHP x pct)` **or** `MP <= trunc(maxMP x pct)` (c:0x82cdb0's rule against each
+  maximum; a pool not yet known is not low, so the entry's first HP update does not drink); checked
+  on every HP and every MP update while unarmed, then on its own timer (id 0x876) at the window's
+  delay (500 ms with the box off) like the HP row, re-armed the same way; the HP row's guards
+  (`can_act`; no use while zombie, timer armed all the same; no stun guard, as HP has none); fires
+  its slot only when it holds a 3/3/1/3 (`vigor_usable`). With the HP or MP row due on the same
+  update, that row drinks first.
+- **Saved on the client, the wire untouched.** The original's seven bytes (0x7158 type 2 and the
+  entry's `0x0116`) carry the three rows exactly as before; `apply()` and `encode()` ignore the
+  vigor row, so a Confirm that changed only it sends nothing. The row goes to
+  `user://settings.cfg` `[auto_potion_vigor]`, keyed per server and character as the quick-slot
+  bar is (`HotbarStore.key_for`, round 639: the bar it points into is client-side too), value
+  `{enabled, percent, slot}`, read when the settings arrive at entry. Defaults: off, 50 %, F1 "4".
+  No server change; the server and older clients are unaffected.
+- **QA hooks:** `OPENSRO_QA_INPUT` `apnode:<row>:<control>` (a real click on a window control),
+  `apstate` (values and `layout_problems()`), `qslot:<n>` (a click on an underbar slot: a held
+  icon's drop); `OPENSRO_QA_AUTOPOT` `cfg:` takes three more values for the vigor row.
+
+### Tests
+
+- `auto_potion_test.gd` (all pass): the original rows' wire, defaults, thresholds, checks, timers
+  and Confirm unchanged; new `_vigor_wire` (a vigor-only change sends nothing, the seven bytes the
+  same, the character data's bytes leave the row alone), `_vigor_checks` (40 % of 1000 / 201 =
+  400 / 80; drinks at HP 400, at MP 80 with HP full, not at 401 / 81, not with a non-vigor in its
+  slot -- timer runs on --, zombie no use but armed, unable to act nothing, disabled nothing, MP
+  not known not low, HP row then vigor), `_vigor_timers` (999 ms nothing, 1000 ms again, killed
+  when both are above, re-armed drinks at once; 500 ms with the box off; 2.5 s delay),
+  `_vigor_config` (load, out-of-range defaults, junk, `is_vigor`).
+- `auto_potion_window_test.gd` (all pass): the fixture gains the real layouts' statics, frames
+  and HAligns; the vigor row at 23,369 with HP / MP unmoved, named Vigor, pitch 86, window grown by
+  86, Confirm / Cancel / abnormal / delay moved to 548 / 461..465 / 499..502, frame and tile +86,
+  the description's frame not; `layout_problems()` empty; its check box (on, on the saved 35), next
+  arrow (37), combos (F3 "5" = 25), Confirm handing it out fourth, the HP row untouched.
+- `client/tools/remote_godot.sh check`: ALL LOAD; `tests`: see Gates.
+
+### QA (real input, lane server 17811 with `srv870q.sh`'s flags, box `/var/tmp/r876v/run876v.sh`)
+
+Run v1 (Av876a, level 30, HP / MP 870; `/give 18 50`, `/give 4 20`):
+
+- The bag opened with I, the vigor herb (item 18) picked up with a left click and dropped on F1 "4"
+  with a left click on that slot ("hotbar saved ... 1 items"). T opened the window: 394x606,
+  `layout_problems()` [] (the real fonts and art), the vigor row unchecked with the disabled bar.
+- Real clicks: the vigor row's check box (on, slider back on 50), its next arrow five times (55),
+  its belt combo -> list row F1, its quick-slot combo -> list row "4"; `apstate` read
+  `{enabled: true, percent: 55, slot: 4}` with the original rows unchanged; Confirm: "AUTOPOT
+  confirm unchanged, vigor row saved on the client" -- nothing sent to the server.
+- `/hurt 500` -> HP 370/870 (threshold trunc(870 x 0.55) = 478): the vigor fired at once (t
+  26154 ms; drunk, 50 -> 49, "Recovered 47 HP"), again 999 ms later (refused by the server's 1.1 s
+  lock, "Still have time to reuse the item.", as the HP row with the 1.0 s delay, round 786); HP
+  611 > 478 by the next pass: the timer killed.
+- `/hurt 0 99999` -> MP 0/870 with HP 611 (above its threshold): the vigor fired for MP at once (t
+  32259) and on the 1.0 s timer (33245, 34278, 35309, 36324, 37324, 38482); over both phases 9
+  fires, 5 drunk (50 -> 45, each "restored 47 HP 47 MP" while both were short) and 4 refused by
+  the lock, until MP 482 > 478.
+- T again: the window shows the saved row (55 %, F1 4). An HP potion (item 4) dropped on slot 4
+  and `/hurt 500` -> HP 376 <= 478: **nothing drunk** (q4 = item 4 x20 unchanged), the vigor
+  timer running -- only a vigor is fired.
+- Run v2 (a new login, a fresh server): the entry's settings line carries the vigor row
+  `{enabled: true, percent: 55, slot: 4}` from `settings.cfg` while the server's bytes were zero;
+  T shows it; vigor dropped on slot 4, `/hurt 600` -> drunk at HP 270, 370, 464 ... (48 left).
+- Frames on the box: `/var/tmp/r876v/lane/v1/snaps/` (b0_window_opened, b3_window_set,
+  c1_hurt_hp, c2_drinking, c4_hurt_mp, c5_after_mp, d0_reopened, e1_still_low),
+  `/var/tmp/r876v/lane/v2/snaps/`, and the base build's window (no vigor row; 394x520)
+  `/var/tmp/r876v/lane/base/snaps/base_window.png`.
+
+UI-only (no world drawing): no perf gate.
+
+### Gates
+
+- `remote_godot.sh check` (`RENDER_DIR=/var/tmp/r876v`): ALL LOAD (1175 scripts, 9 scenes).
+- `remote_godot.sh tests`: "ran 450 suite(s), 0 failing" (an earlier run beside the live QA had
+  `seated_spawn_test.gd` fail its zone-change spawn; alone it passes, and the clean rerun passed).
+- No server change: `go test` not needed (the lane server ran the base `c295b6e8` server).
+
+### OPEN
+
+- Whether the user wants the add-on's other shape instead (an "HP Vigors" / "MP Vigors" check box
+  on the HP and MP rows, which the archive's unused keys suggest) -- the fourth row was what was
+  asked.
+- The server's zombie potion (round 786's OPEN) applies to a vigor's HP half too.
+
 ## Eight-hundred-and-seventy-fourth round: the death penalty and "Waiting for other player's help." as the original's -- the loss capped at the level's share, one level lost and the max level kept, the EXP and the level back with a scroll or another player's resurrection, the help button that closes and sends nothing, the box again by selecting oneself
 
 Round 873 (lane DX) left two differences: the dead window's "Waiting for other player's help." was

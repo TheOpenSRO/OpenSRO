@@ -52,14 +52,48 @@ class_name AutoPotion
 ## potion it is does not matter: an MP potion in the HP row is drunk for HP.
 ## The item's own reuse delay is the server's to refuse (the slot function
 ## sends without a cooldown test of its own).
+##
+## **The vigor row (round 876, OURS, the user's request).** The original has
+## three rows and no more: 0x82cd50 asserts `byType < AUTO_POTION_COUNT`
+## when `2 < byType` (READ), and CIFAutoPotion::Create builds two slot
+## children (10, 11). A fourth row, ROW_VIGOR, drinks a vigor potion
+## (TypeID 3/3/1/3: ITEM_ETC_ALL_POTION_01..05 and the grain) from its own
+## quick slot. Its rule, each part a judgment call:
+##
+##   - **low** when HP <= trunc(max HP x pct) **or** MP <= trunc(max MP x
+##     pct): a vigor restores both, so the one percent applies to each pool
+##     and either pool reaching it is reason to drink (Row.threshold and
+##     Row.threshold_mp, computed as 0x82cdb0 computes the HP / MP rows');
+##   - checked on every HP update and every MP update (as the HP and MP rows
+##     are on theirs) when enabled and not armed, and on its own timer;
+##   - the HP row's guards: can_act, and no use while zombie (mask 0x20) --
+##     a vigor's HP half would hurt a zombie as an HP potion does (0x49b912)
+##     -- with the timer armed all the same; no stun guard, which the HP row
+##     has none of either;
+##   - the same delay (the window's one delay box and spin) and the same arm /
+##     disarm as the HP row; its timer is VIGOR_TIMER_ID, an id of ours
+##     outside the interface's 0xe..0x10;
+##   - it fires only a vigor (vigor_usable): an HP or MP potion or a pill on
+##     its slot does nothing;
+##   - it is not on the wire: the seven bytes, apply()'s answer and encode()
+##     are the original's three rows exactly. The row is kept on the client,
+##     per server and character, as the quick-slot bar it points into is
+##     (round 639, HotbarStore): vigor_config / load_vigor_config, written to
+##     ClientSettings by World3D. The server and older clients are untouched.
 
 const ROW_HP := 0
 const ROW_MP := 1
 const ROW_ABNORMAL := 2
+## The original's rows: the wire's three words and every READ loop.
 const ROW_COUNT := 3
+## Round 876 (OURS): the vigor row, after the original's three.
+const ROW_VIGOR := 3
+const ROW_TOTAL := 4
 
-## The interface timer ids the three rows arm (0x82d13b / 0x82d1b0 / 0x82d226).
-const TIMER_IDS := [0xe, 0xf, 0x10]
+## The interface timer ids the three rows arm (0x82d13b / 0x82d1b0 / 0x82d226),
+## then the vigor row's (OURS: any id the three do not use).
+const VIGOR_TIMER_ID := 0x876
+const TIMER_IDS := [0xe, 0xf, 0x10, VIGOR_TIMER_ID]
 ## The period when the delay box is not checked (0x82d126, 0x82d19b, 0x82d211).
 const UNCHECKED_DELAY_MS := 500
 ## The delay at construction (0x82d034 `mov DWORD PTR [ebx+0x38],0x1f4`).
@@ -82,6 +116,11 @@ const MAX_SLOT := 40
 ## (on, 1.0 s); and an HP word whose slot byte is 0 is replaced by 0x3211.
 const DEFAULT_WORDS := [0x3211, 0x3212, 0x0013]
 const DEFAULT_DELAY_BYTE := 0x8a
+## The vigor row's defaults (OURS, in the original's manner): off, 50 %, F1 "4".
+const VIGOR_DEFAULT := {"enabled": false, "percent": 50, "slot": 4}
+## A vigor potion's TypeIDs, 3/3/1/3 (MEASURED in itemdata: the five
+## ITEM_ETC_ALL_POTION_*, ITEM_ETC_ALL_SPOTION_01, ITEM_ETC_GNGWC_ALL_POTION_100).
+const VIGOR_TYPES := [3, 3, 1, 3]
 
 class Row extends RefCounted:
 	var enabled := false
@@ -90,6 +129,8 @@ class Row extends RefCounted:
 	var armed := false
 	var percent := 0
 	var threshold := 0
+	## The vigor row's MP threshold (OURS; `threshold` is its HP one).
+	var threshold_mp := 0
 	var kind := 0
 	var slot := 0
 
@@ -111,6 +152,9 @@ var status_mask := 0
 var can_act: Callable
 var slot_usable: Callable
 var use_slot: Callable
+## Round 876 (OURS): vigor_usable(slot) -> bool, the slot holds a vigor
+## (is_vigor of its TypeIDs). Unset, the vigor row fires nothing.
+var vigor_usable: Callable
 
 ## The interface's timers, id -> {"interval": ms, "last": ms} (0xb93320 adds,
 ## 0xb93170 removes, 0xb933d0 fires every one whose interval has passed and
@@ -120,8 +164,14 @@ var _timers: Dictionary = {}
 var now_ms := 0
 
 func _init() -> void:
-	for i in ROW_COUNT:
+	for i in ROW_TOTAL:
 		rows.append(Row.new())
+	load_vigor_config(null)
+
+## Whether TypeIDs are a vigor potion's (3/3/1/3).
+static func is_vigor(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == VIGOR_TYPES[0] and types[1] == VIGOR_TYPES[1] \
+		and types[2] == VIGOR_TYPES[2] and types[3] == VIGOR_TYPES[3]
 
 # --- The wire --------------------------------------------------------------
 
@@ -238,12 +288,15 @@ func apply(values: Dictionary) -> bool:
 func _recompute(row: int) -> void:
 	var r: Row = rows[row]
 	var m := 1
-	if row == ROW_HP:
+	if row == ROW_HP or row == ROW_VIGOR:
 		m = max_hp
 	elif row == ROW_MP:
 		m = max_mp
 	var frac := PackedFloat32Array([float(r.percent) / 100.0])[0]
 	r.threshold = int(float(m) * frac)
+	if row == ROW_VIGOR:
+		# OURS: the same rule against the MP maximum.
+		r.threshold_mp = int(float(max_mp) * frac)
 
 ## An HP update for this player (0x3057 flag 1 in retail; here every message
 ## that sets the bar): a new maximum recomputes the threshold (0x9d4b60), and
@@ -253,20 +306,32 @@ func on_hp(current: int, maximum: int) -> void:
 	if maximum > 0 and maximum != max_hp:
 		max_hp = maximum
 		_recompute(ROW_HP)
+		_recompute(ROW_VIGOR)
 	hp = current
 	var r: Row = rows[ROW_HP]
 	if r.enabled and not r.armed:
 		check(ROW_HP)
+	_vigor_update()
 
 ## The MP update's twin (0x8aa196..0x8aa1b8, 0x9d4b90).
 func on_mp(current: int, maximum: int) -> void:
 	if maximum > 0 and maximum != max_mp:
 		max_mp = maximum
 		_recompute(ROW_MP)
+		_recompute(ROW_VIGOR)
 	mp = current
 	var r: Row = rows[ROW_MP]
 	if r.enabled and not r.armed:
 		check(ROW_MP)
+	_vigor_update()
+
+## Round 876 (OURS): the vigor row's update path, on an HP or an MP update,
+## as the HP / MP rows' on theirs (enabled and not armed). After the HP / MP
+## row's own check, so with both due the original's row drinks first.
+func _vigor_update() -> void:
+	var v: Row = rows[ROW_VIGOR]
+	if v.enabled and not v.armed:
+		check(ROW_VIGOR)
 
 ## The state mask's update (flag 4, 0x8aa2a7..0x8aa2c9).
 func on_status(mask: int) -> void:
@@ -292,6 +357,13 @@ func check(row: int) -> void:
 		ROW_ABNORMAL:
 			low = status_mask != 0
 			skip_use = status_mask & STUN_BIT != 0
+		ROW_VIGOR:
+			# OURS (round 876): either pool at or below its share; the HP
+			# row's zombie guard (see the header). A pool whose maximum is
+			# not known yet (0) is not low: the first HP update comes before
+			# the first MP one, and 0 <= 0 would drink at the world's entry.
+			low = (max_hp > 0 and hp <= r.threshold) or (max_mp > 0 and mp <= r.threshold_mp)
+			skip_use = status_mask & ZOMBIE_BIT != 0
 	if act and low:
 		if not skip_use:
 			_use(row)
@@ -307,6 +379,11 @@ func check(row: int) -> void:
 func _use(row: int) -> void:
 	var r: Row = rows[row]
 	if r.kind != KIND_QUICKSLOT:
+		return
+	if row == ROW_VIGOR:
+		# OURS: only a vigor in its slot.
+		if vigor_usable.is_valid() and bool(vigor_usable.call(r.slot)) and use_slot.is_valid():
+			use_slot.call(r.slot)
 		return
 	if slot_usable.is_valid() and bool(slot_usable.call(r.slot)) and use_slot.is_valid():
 		use_slot.call(r.slot)
@@ -352,10 +429,58 @@ func reset_timers() -> void:
 		(r as Row).armed = false
 
 ## The window's view of the settings: {"rows": [{enabled, percent, slot}],
-## "delay_enabled", "delay_ms"}.
+## "delay_enabled", "delay_ms"} -- HP, MP, abnormal and (round 876, OURS) the
+## vigor row fourth.
 func values() -> Dictionary:
 	var out_rows: Array = []
 	for r in rows:
 		var row := r as Row
 		out_rows.append({"enabled": row.enabled, "percent": row.percent, "slot": row.slot})
 	return {"rows": out_rows, "delay_enabled": delay_enabled, "delay_ms": delay_ms}
+
+# --- The vigor row (round 876, OURS) ----------------------------------------------
+
+## The window's Confirm for the vigor row, values["rows"][ROW_VIGOR], taken as
+## apply() takes the HP row's: all three when any differs, the armed flag
+## cleared (the timer left running), the threshold recomputed. Returns whether
+## it changed; the caller then saves it (World3D: ClientSettings). apply()
+## leaves it alone, so the original's "send only on a change" is unchanged.
+func apply_vigor(values: Dictionary) -> bool:
+	var vr: Array = values.get("rows", [])
+	if vr.size() <= ROW_VIGOR:
+		return false
+	var v: Dictionary = vr[ROW_VIGOR]
+	var r: Row = rows[ROW_VIGOR]
+	var en := bool(v.get("enabled", r.enabled))
+	var pct := clampi(int(v.get("percent", r.percent)), 1, 100)
+	var slot := clampi(int(v.get("slot", r.slot)), 0, MAX_SLOT)
+	if r.enabled == en and r.slot == slot and r.percent == pct:
+		return false
+	r.enabled = en
+	r.armed = false
+	r.percent = pct
+	r.kind = KIND_QUICKSLOT
+	r.slot = slot
+	_recompute(ROW_VIGOR)
+	return true
+
+## The vigor row as it is saved: {enabled, percent, slot}.
+func vigor_config() -> Dictionary:
+	var r: Row = rows[ROW_VIGOR]
+	return {"enabled": r.enabled, "percent": r.percent, "slot": r.slot}
+
+## A saved vigor row taken in: anything missing or out of range takes the
+## default's value (VIGOR_DEFAULT), and anything not a dictionary is all
+## default. The row's timer stops (a new character's settings).
+func load_vigor_config(saved: Variant) -> void:
+	var d: Dictionary = saved if saved is Dictionary else {}
+	var r: Row = rows[ROW_VIGOR]
+	r.enabled = bool(d.get("enabled", VIGOR_DEFAULT["enabled"]))
+	var pct := int(d.get("percent", VIGOR_DEFAULT["percent"]))
+	r.percent = pct if pct >= 1 and pct <= 100 else int(VIGOR_DEFAULT["percent"])
+	var slot := int(d.get("slot", VIGOR_DEFAULT["slot"]))
+	r.slot = slot if slot >= 1 and slot <= MAX_SLOT else int(VIGOR_DEFAULT["slot"])
+	r.kind = KIND_QUICKSLOT
+	r.armed = false
+	_kill_timer(VIGOR_TIMER_ID)
+	_recompute(ROW_VIGOR)
