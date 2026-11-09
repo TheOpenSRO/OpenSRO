@@ -38127,7 +38127,12 @@ func _on_equipment_result(items: Array, error: String) -> void:
 		# Round 800: a job suit's refusal names the client's own message
 		# (the server's suitErrKeys): its text in the system window.
 		if error.begins_with("UIIT_"):
-			_log_system(_resolve_any_text(error, error), HudSystemMessage.TYPE_ALWAYS)
+			var refused := _resolve_any_text(error, error)
+			# Round 877: a level or mastery requirement and the armour mix
+			# raise the warning banner too, as the original's 0x186c / 0x1832.
+			if EquipmentNet.refusal_banner(error):
+				_show_banner("warning", refused)
+			_log_system(refused, HudSystemMessage.TYPE_ALWAYS)
 		_awaiting_equip_ack = false
 		return
 

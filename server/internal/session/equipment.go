@@ -299,10 +299,55 @@ func equipRefusal(ctx context.Context, chars character.Store, store equipment.St
 	if err != nil {
 		c = nil
 	}
-	if err := equipment.Refusal(c, item, slot); err != nil {
-		return refusalMessage(err)
+	// Round 877: the masteries count (CheckEquipRequirements, READ
+	// s:0x491b25), worded as the original words every unmet requirement
+	// (0x186c, MEASURED: "The selected item is unusable because your
+	// character's level is too low." for a robe a Warrior/Cleric 100 tries
+	// on, and for a level-81 garment at level 69).
+	if err := equipment.Refusal(c, item, slot, gearMastery(ctx, gearSkills(), c)); err != nil {
+		return equipRefusalText(err, c)
+	}
+	// Round 877: then AttachEquipItem's armour-and-cloth test (0x1832).
+	if store != nil {
+		if worn, err := store.Get(ctx, characterID); err == nil {
+			bySlot := make(map[equipment.Slot]*refdata.Item, len(worn))
+			for _, w := range worn {
+				if it, err := items.GetItem(ctx, w.ItemID); err == nil && it != nil {
+					bySlot[w.Slot] = it
+				}
+			}
+			if err := equipment.ArmourMixRefusal(item, slot, bySlot); err != nil {
+				return equipRefusalText(err, c)
+			}
+		}
 	}
 	return ""
+}
+
+// The client's words for the refusals round 877 enforces (READ, the error
+// switch c:0x7b8b40: 0x186c, and 0x1832 by the player's Country; each raises
+// the warning banner and the system line, c:0x7b8ccc). A reply whose error
+// starts with UIIT_ is shown as the archive's text (World3D).
+const (
+	keyRequirementNotMet = "UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM"
+	keyArmourMixChina    = "UIIT_MSG_STRGERR_CANT_MIX_EXCLUSIVE_ARMOR_TYPE"
+	keyArmourMixEurope   = "UIIT_MSG_STRGERR_EU_CANT_MIX_EXCLUSIVE_ARMOR_TYPE"
+)
+
+// equipRefusalText is refusalMessage with the client's own key where round 877
+// has one: every unmet level or mastery requirement, and the armour mix by
+// the character's Country.
+func equipRefusalText(err error, c *character.Character) string {
+	switch {
+	case errors.Is(err, equipment.ErrLevelTooLow), errors.Is(err, equipment.ErrRequirementNotMet):
+		return keyRequirementNotMet
+	case errors.Is(err, equipment.ErrArmourMix):
+		if characterCountry(c) == equipment.CountryEurope {
+			return keyArmourMixEurope
+		}
+		return keyArmourMixChina
+	}
+	return refusalMessage(err)
 }
 
 // twoHandedDisplaced is the worn slot an equip must clear first: a
@@ -471,6 +516,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 		if err := store.Unequip(ctx, characterID, other); err != nil {
 			return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: refusalMessage(equipment.ErrTwoHandedShield)}).Encode()})
 		}
+		gearSlotChanged(characterID, other) // round 877
 		broadcastUnworn(hub, characterID, other, removed)
 	}
 	// Round 800: a job suit goes on over 10 seconds (jobsuit.go).
@@ -483,6 +529,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
+	gearSlotChanged(characterID, req.Slot) // round 877: an attached item passed the test
 	character.InvalidateBonus(characterID) // round 769: the worn options changed
 	clampHP(ctx, chars, characterID)       // a swap can lower the max (review F2)
 	err = sendWornList(ctx, sess, store, items, characterID)
@@ -527,6 +574,7 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
+	gearSlotChanged(characterID, req.Slot) // round 877: nothing held there now
 	character.InvalidateBonus(characterID) // round 769: the worn options changed
 	clampHP(ctx, chars, characterID)       // taking it off can lower the max (review F2)
 	err = sendWornList(ctx, sess, store, items, characterID)

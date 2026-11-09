@@ -32,6 +32,27 @@ const ARMOR_SLOTS := [SLOT_HELM, SLOT_MAIL, SLOT_SHOULDER_GUARD, SLOT_GAUNTLET, 
 ## the hands hold.
 const WEARABLE_SLOTS := [SLOT_HELM, SLOT_MAIL, SLOT_SHOULDER_GUARD, SLOT_GAUNTLET, SLOT_PANTS, SLOT_BOOTS, SLOT_WEAPON, SLOT_SHIELD]
 
+## Round 877: the equip refusals the server words with the client's own key,
+## each shown as the original shows it -- the warning banner (GDR_WARNING_WND,
+## c:0x77b580) and then the system line (c:0x7781b0). READ, the error switch
+## c:0x7b8b40: 0x186c (every unmet level or mastery requirement) and 0x1832 (a
+## body piece of cloth with armour, by the player's Country: c:0x7b8e01..
+## 0x7b8e57) jump to c:0x7b8ccc, which does both. MEASURED: "The selected item
+## is unusable because your character's level is too low." for a robe a
+## Cleric 100 puts on and for a level-81 garment at level 69, and "Armor and
+## robe cannot be equipped at the same time.", each in the banner and in the
+## system log.
+const REFUSAL_BANNER_KEYS := [
+	"UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM",
+	"UIIT_MSG_STRGERR_CANT_MIX_EXCLUSIVE_ARMOR_TYPE",
+	"UIIT_MSG_STRGERR_EU_CANT_MIX_EXCLUSIVE_ARMOR_TYPE",
+]
+
+## Whether an equip refusal (the server's error, a UIIT_ key or our own
+## words) raises the warning banner as well as the system line.
+static func refusal_banner(error: String) -> bool:
+	return REFUSAL_BANNER_KEYS.has(error)
+
 ## One equipped item.
 class Equipped:
 	var slot: int

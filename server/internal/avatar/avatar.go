@@ -122,7 +122,7 @@ const MaxEquipPosition = 12
 // OpenSRO has no rentals), ReqGender (0x1816; 2 is either), the razed flag
 // (not modelled), the four requirement pairs (0x186c, equipment.Check
 // Requirements: the character level; masteries and tiers are carried, not
-// enforced, as for equipment), ReqStr (0x1830), ReqInt (0x1831), the Country
+// enforced: no avatar row carries one, MEASURED round 877), ReqStr (0x1830), ReqInt (0x1831), the Country
 // (0x182f; 3 is either). 0 when every rule passes. c nil skips the
 // character's rules.
 func CanBeEquipedAt(c *character.Character, it *refdata.Item, position int) uint16 {

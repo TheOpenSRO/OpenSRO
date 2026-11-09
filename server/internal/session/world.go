@@ -1686,6 +1686,10 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	if err := mendAvatarsAtEntry(ctx, owned); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: (&EnterWorldResult{Reason: err.Error()}).Encode()})
 	}
+	// Round 877 (gearcount.go): the worn items tested as CGObjPC::Create's
+	// RefreshEquipParamEntryForPC tests them; one that fails stays worn and
+	// counts for nothing.
+	gearAtEntry(ctx, chars, owned)
 	// A character logged out dead enters alive at character.RespawnFraction
 	// (round 549). The FRACTION is the load path's own rule -- GObjPC::
 	// FUN_004e1120 restores a stored zero pool to MaxHP x 0.4 (the `fmul

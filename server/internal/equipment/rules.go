@@ -15,11 +15,12 @@ import (
 // and never sends the request).
 //
 // What is checked: the slot an item may go in (its TypeID4), the race
-// (Country), the gender (ReqGender) and the character's level where the
-// requirement is by character level (a requirement type of 1). What is
-// recorded but not yet enforced: requirements by mastery level (a type of
-// 513..518 -- nothing here tracks a mastery level yet), the job-tier type
-// 769, and ReqStr/ReqInt.
+// (Country), the gender (ReqGender), the character's level where the
+// requirement is by character level (a requirement type of 1) and, from
+// round 877, the masteries where it is by mastery level (513..518, any one of
+// the item's: Refusal's mastery lookup), and the armour-and-cloth mix
+// (ArmourMixRefusal). What is recorded but not enforced: the job-tier type
+// 769 (no equippable row carries it) and ReqStr/ReqInt (see below).
 //
 // ALL FOUR REQUIREMENT SLOTS ARE READ as of 2026-09-16, not just the first,
 // and the rule for combining them is the engine's -- see requirements.go,
@@ -62,8 +63,16 @@ var (
 	// Engine: 0x1816 UIIT_MSG_STRGERR_GENDER_MISMATCH.
 	ErrWrongGender = errors.New("equipment: item is for the other gender")
 	// ErrLevelTooLow means the character has not reached the item's level.
-	// Engine: 0x1810 UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED.
+	// Engine: 0x186c UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM,
+	// the code CheckEquipRequirements (s:0x4919e0) gives every unmet level or
+	// mastery requirement alike (round 877; this said 0x1810 before).
 	ErrLevelTooLow = errors.New("equipment: level too low")
+	// ErrArmourMix means a body piece of cloth (a garment or a robe) would be
+	// worn with armour, or armour with cloth (round 877, ArmourMixRefusal).
+	// Engine: 0x1832, worded UIIT_MSG_STRGERR_CANT_MIX_EXCLUSIVE_ARMOR_TYPE for
+	// a Chinese character and UIIT_MSG_STRGERR_EU_CANT_MIX_EXCLUSIVE_ARMOR_TYPE
+	// for a European one (READ, the client's error switch c:0x7b8e01..0x7b8e57).
+	ErrArmourMix = errors.New("equipment: armour and cloth cannot be worn together")
 )
 
 // Item type ids, from the table's TypeID1..4 columns.
@@ -287,7 +296,12 @@ func SlotAccepts(want, given Slot) bool {
 // something an item must be positively shown to do -- if we cannot tell, the
 // safe answer is no. Callers that genuinely have no reference data wired skip
 // the rules entirely rather than passing nil here (see session.equipRefusal).
-func Refusal(c *character.Character, it *refdata.Item, slot Slot) error {
+//
+// mastery is the character's level in a mastery id (513..518), a mastery it
+// does not hold reading 0 (Mastery_GetLevel s:0x59e750 returns 0 when
+// FUN_0059d6f0 finds none). nil leaves the mastery requirements unenforced,
+// as every caller did before round 877.
+func Refusal(c *character.Character, it *refdata.Item, slot Slot, mastery func(masteryID int) (int, bool)) error {
 	if it == nil {
 		return fmt.Errorf("%w: no reference data for the item", ErrNotEquippable)
 	}
@@ -324,13 +338,84 @@ func Refusal(c *character.Character, it *refdata.Item, slot Slot) error {
 			}
 		}
 		// All four requirement slots, by the engine's own rule -- see
-		// requirements.go. The mastery and tier categories are passed no
-		// lookup and so are carried but not enforced, which is the same
-		// decision as before, now stated in one place instead of by
-		// reading only the first slot.
-		if err := CheckRequirements(RequirementsOf(it), c.Level, nil, nil); err != nil {
+		// requirements.go. Round 877: the masteries through the caller's
+		// lookup (READ s:0x491b25..0x491b40: the requirement's own type is
+		// the mastery id passed to Mastery_GetLevel, any one of the item's
+		// masteries meets the category). The tier category is passed no
+		// lookup: no equippable row carries it.
+		if err := CheckRequirements(RequirementsOf(it), c.Level, mastery, nil); err != nil {
 			return fmt.Errorf("item %d: %w", it.ID, err)
 		}
 	}
 	return nil
+}
+
+// IsBodyArmour is CGItemEquip vtable slot 39 (s:0x4834c0 -> 0x488eb0): an
+// equipment row whose family is one of the six body-armour families, China's
+// garment, protector and armour and Europe's robe, light and heavy armour
+// (TypeID3 1, 2, 3, 9, 10, 11).
+func IsBodyArmour(it *refdata.Item) bool {
+	if it == nil || it.TypeID1 != TypeItem || it.TypeID2 != TypeEquipment {
+		return false
+	}
+	switch it.TypeID3 {
+	case FamilyChinaGarment, FamilyChinaProtector, FamilyChinaArmor,
+		FamilyEuropeRobe, FamilyEuropeLight, FamilyEuropeHeavy:
+		return true
+	}
+	return false
+}
+
+// IsCloth is CGItemEquip vtable slot 38 (s:0x4834e0): a garment or a robe
+// (TypeID3 1 or 9) -- the body pieces that are not armour.
+func IsCloth(it *refdata.Item) bool {
+	return IsBodyArmour(it) && (it.TypeID3 == FamilyChinaGarment || it.TypeID3 == FamilyEuropeRobe)
+}
+
+// ArmourMixRefusal is CGObjPC::AttachEquipItem's armour test (READ,
+// s:0x524cd0, after CanBeEquipedAt has passed): a body piece going into slot
+// is compared with the FIRST worn armour piece (the lowest of slots 0..5,
+// CGStorage::GetFirstItem(6)) through CGItemEquip::vslot_318 (s:0x4972c0),
+// which accepts when either is not body armour or both are cloth or both are
+// not. Refused (0x1832, ErrArmourMix) otherwise -- unless that piece is the
+// only one worn and sits in slot itself, when the two simply swap. So heavy
+// and light armour mix (MEASURED: a European's light armour with a robe
+// piece is refused, "Armor and robe cannot be equipped at the same time.").
+// worn is what is worn, by slot; a slot whose item has no reference data is
+// left out.
+func ArmourMixRefusal(it *refdata.Item, slot Slot, worn map[Slot]*refdata.Item) error {
+	if !IsBodyArmour(it) {
+		return nil
+	}
+	count := 0
+	var first *refdata.Item
+	firstSlot := Slot(-1)
+	for s := SlotHelm; s <= SlotBoots; s++ {
+		w := worn[s]
+		if w == nil {
+			continue
+		}
+		count++
+		if first == nil {
+			first, firstSlot = w, s
+		}
+	}
+	if first == nil || !IsBodyArmour(first) || IsCloth(first) == IsCloth(it) {
+		return nil
+	}
+	if count == 1 && firstSlot == slot {
+		return nil
+	}
+	return fmt.Errorf("%w: item %d with item %d worn", ErrArmourMix, it.ID, first.ID)
+}
+
+// Qualifies reports whether a worn item's level and mastery requirements are
+// met -- CGItemEquip::CheckEquipRequirements alone (s:0x4919e0), the test
+// GObjPC::PublishEquipItemParams (s:0x4e3760) puts before an item's params
+// count. mastery as Refusal's.
+func Qualifies(it *refdata.Item, level int, mastery func(masteryID int) (int, bool)) bool {
+	if it == nil {
+		return true
+	}
+	return CheckRequirements(RequirementsOf(it), level, mastery, nil) == nil
 }

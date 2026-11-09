@@ -324,7 +324,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /chatban|/tradeban <name|@account> <30m|12h|7d|forever> [reason], /unchatban|/untradeban <name|@account>, /questblock <name> <mask>|clear, /jobexp <n>, /jobweek, /guildlevel <1-5>, /guildperm <member> <mask>, /guildabsent <member> <days>, /guildgp <n>, /union <guild>|leave|expel <guild>, /silk <n> [own|gift|point], /lottery [draw [prize]]"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /mastery <id> <level>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /chatban|/tradeban <name|@account> <30m|12h|7d|forever> [reason], /unchatban|/untradeban <name|@account>, /questblock <name> <mask>|clear, /jobexp <n>, /jobweek, /guildlevel <1-5>, /guildperm <member> <mask>, /guildabsent <member> <days>, /guildgp <n>, /union <guild>|leave|expel <guild>, /silk <n> [own|gift|point], /lottery [draw [prize]]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -369,6 +369,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.durability(ctx, actor, args)
 	case "sp":
 		res = d.sp(ctx, actor, args)
+	case "mastery":
+		res = d.mastery(ctx, actor, args)
 	case "hwan":
 		res = d.hwan(ctx, actor, args)
 	case "notice":
@@ -1259,6 +1261,30 @@ func (d *Deps) sp(ctx context.Context, actor Actor, args []string) Result {
 		return refuse("changing skill points failed: " + err.Error())
 	}
 	return Result{Text: fmt.Sprintf("skill points now %d", total), RefreshStats: true}
+}
+
+// mastery is /mastery <id> <level> (round 877, OURS: a test tool with no
+// retail counterpart): the mastery's level written outright, up or down, with
+// no cost and no cap. What the worn items count is not tested again until
+// their next publish (a login, a level change, an equip), as after a raise.
+func (d *Deps) mastery(ctx context.Context, actor Actor, args []string) Result {
+	const usage = "usage: /mastery <id> <level> (e.g. /mastery 518 101: Cleric)"
+	if len(args) != 2 {
+		return refuse(usage)
+	}
+	id, err1 := strconv.Atoi(args[0])
+	level, err2 := strconv.Atoi(args[1])
+	if err1 != nil || err2 != nil || id <= 0 || level < 0 || level > 255 {
+		return refuse(usage)
+	}
+	setter, ok := d.Skills.(skill.MasterySetter)
+	if d.Skills == nil || !ok {
+		return refuse("no skill store")
+	}
+	if err := setter.SetMasteryLevel(ctx, actor.CharacterID, int64(id), level); err != nil {
+		return refuse("setting the mastery failed: " + err.Error())
+	}
+	return Result{Text: fmt.Sprintf("mastery %d now level %d", id, level), RefreshStats: true}
 }
 
 // findSpecies matches a lower-cased code name, display name or characterdata

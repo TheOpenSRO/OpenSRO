@@ -310,7 +310,7 @@ func TestAvatarNotInEquipmentSlots(t *testing.T) {
 	items := avatarItems()
 	for _, id := range []int64{avHat, avDress, avSpirit} {
 		for slot := equipment.Slot(0); slot < equipment.MaxEquipSlots; slot++ {
-			if err := equipment.Refusal(nil, items[id], slot); !errors.Is(err, equipment.ErrNotEquippable) {
+			if err := equipment.Refusal(nil, items[id], slot, nil); !errors.Is(err, equipment.ErrNotEquippable) {
 				t.Fatalf("item %d in slot %d: %v", id, slot, err)
 			}
 		}
