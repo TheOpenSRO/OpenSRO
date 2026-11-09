@@ -42,6 +42,9 @@ type AvatarDeps struct {
 // avatar enchant (0x34A7). The moves are ItemOpHandler's (0x7034).
 func AvatarHandler(d AvatarDeps) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case OpAvatarList:
 			return handleAvatarList(ctx, sess, p.Data, d)

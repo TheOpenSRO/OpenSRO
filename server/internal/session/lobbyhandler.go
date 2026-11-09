@@ -115,6 +115,9 @@ func (d *LobbyDeps) logger() *slog.Logger {
 // (world.go), which owns the path into the world.
 func LobbyHandler(d LobbyDeps) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		if p.Opcode != OpLobby {
 			return nil
 		}

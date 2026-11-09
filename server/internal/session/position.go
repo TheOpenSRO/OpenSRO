@@ -107,6 +107,11 @@ func savePosition(chars character.Store, sess *gateway.Session, e world.Entity) 
 	if chars == nil || !persistPosition.Load() {
 		return false
 	}
+	// Round 869: an instance position is never the home position; the return
+	// point stays on the character (game_worlds.md 6, READ s:0x4df666).
+	if instanceOf(sessionHub(sess)) != nil {
+		return false
+	}
 	p, ok := placeOf(sess)
 	if !ok {
 		return false

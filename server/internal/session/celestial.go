@@ -111,7 +111,7 @@ func broadcastCelestialUpdate(hub *world.Hub, t worldclock.Time) int {
 	}
 	data := EncodeCelestialUpdate(t)
 	n := 0
-	for _, e := range hub.AllEntities() {
+	for _, e := range allEntitiesAnywhere(hub) {
 		if e.Session == nil {
 			continue
 		}

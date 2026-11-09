@@ -89,6 +89,8 @@ type useNote struct {
 // out.
 func announceUses(hub *world.Hub, handle func(context.Context, *gateway.Session, *proto.Packet, *useNote) error) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		note := &useNote{}
 		if p.Opcode != OpUseItem || hub == nil {
 			return handle(ctx, sess, p, note)

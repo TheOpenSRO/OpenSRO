@@ -920,6 +920,9 @@ func dropTransportGoods(ctx context.Context, o *cosObj, killer int64) {
 // it.
 func pickGood(ctx context.Context, sess *gateway.Session, e world.Entity, it grounditem.Item, ground *grounditem.Hub,
 	hub *world.Hub, reply func(*PickUpResult) error) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
+	ground = groundFor(sess, ground)
 	refuse := func(code uint16) error {
 		ground.Release(it.ID)
 		return reply(&PickUpResult{Code: int32(code), GroundItemID: it.ID})

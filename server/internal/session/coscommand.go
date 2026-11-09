@@ -26,6 +26,8 @@ import (
 // COSHandler returns the handler for the COS requests.
 func COSHandler(hub *world.Hub, chars character.Store) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		case cos.OpCOSCommand, cos.OpCOSTerminate, cos.OpCOSRide, cos.OpCOSUnsummon, cos.OpCOSName, cos.OpCOSSetting:
 		default:
@@ -63,6 +65,8 @@ func cosReply(sess *gateway.Session, op uint16, code int) error {
 // that sends nothing for them (0x4406 no such COS, 0x4407 not controllable:
 // OPEN how the client hears them), so those are silent here.
 func handleCOSCommand(sess *gateway.Session, owner int64, e world.Entity, data []byte, hub *world.Hub, chars character.Store) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if len(data) < 5 {
 		return nil
 	}

@@ -396,6 +396,8 @@ func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gat
 	ops := guildOpsDeps{chars: chars, guilds: guilds, hub: hub}
 	guildOps.Store(&ops)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		// Round 822: the original's requests (guildops.go).
 		case guild.OpCreate:
@@ -536,6 +538,8 @@ func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Pack
 // The server pushes no gold update (as after founding): the client re-reads
 // the character's stats, and the guild's points, after a level-up.
 func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	reply := func(r *GuildLevelResult) error {
 		return sess.Send(&proto.Packet{Opcode: OpGuildLevelResult, Data: r.Encode()})
 	}
@@ -610,6 +614,8 @@ func guildMemberSnapshots(members []guild.Member) []GuildMemberSnapshot {
 }
 
 func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeGuildCreateRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: "malformed request"}).Encode()})
@@ -707,6 +713,8 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 }
 
 func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeGuildJoinRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: "malformed request"}).Encode()})
@@ -744,6 +752,8 @@ func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet
 }
 
 func handleGuildLeave(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{Reason: "malformed request"}).Encode()})

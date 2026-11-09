@@ -30,6 +30,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/duel"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/friend"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gameworld"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gm"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/grounditem"
@@ -982,6 +983,11 @@ func main() {
 			"takes its numbers from its row, and the GM console's /spawn knows every species in it by code "+
 			"name, id or English name. Without -full-map, who spawns where does not change; with it, every "+
 			"field nest spawns from this table (round 660). Without it the hand-typed roster is all the server knows. A configured path that does not load is fatal.")
+	gameWorldDir := flag.String("gameworld-dir", os.Getenv("OPENSRO_GAMEWORLD_DIR"),
+		"directory of the game worlds' reference tables (round 869: cmd/export-refdata -mode gameworlds on the "+
+			"operator's shard-database dumps): the worlds, their configs, groups, regions, start positions, event "+
+			"zones and triggers. With it the server runs instances (and world 1's triggers); without it the open "+
+			"world alone, as before. A configured path that does not load is fatal.")
 	npcsCSV := flag.String("npcs-csv", os.Getenv("OPENSRO_NPCS_CSV"),
 		"path to the NPC reference rows (from cmd/export-refdata -mode npcs on a client's own characterdata "+
 			"parts and refshopgroup.txt; round 708): the code names the NPC spawn record's interaction list "+
@@ -1511,6 +1517,8 @@ func main() {
 		// The job records (round 799, internal/jobs): _CharTrijob and its
 		// tables.
 		jobStore jobs.Store
+		// The characters' instance rows (round 869, _CharInstanceWorldData).
+		instanceRows gameworld.CharStore
 		// The item mall's purchase log and item chest (round 837,
 		// internal/mall).
 		mallStore mall.Store
@@ -1586,6 +1594,7 @@ func main() {
 		avatars = avatar.NewMem(memRef)
 		cosStore = cos.NewMemStore()
 		timedJobs = timedjob.NewMemStore()
+		instanceRows = gameworld.NewMemCharStore()
 		jobStore = jobs.NewMemStore()
 		memBags := inventory.NewMemStore(memRef)
 		memBags.SetDurabilityLookup(memRef)
@@ -1774,6 +1783,13 @@ func main() {
 			os.Exit(1)
 		}
 		timedJobs = sqlTimed
+		// Round 869: the instance rows (persistence.CharInstanceWorldSchema).
+		sqlInstances, err := gameworld.NewSQLCharStore(storePool)
+		if err != nil {
+			logger.Error("opening the instance row store", "err", err)
+			os.Exit(1)
+		}
+		instanceRows = sqlInstances
 
 		// The academies (round 865): new tables only (persistence.AcademySchema).
 		sqlAcademies, err := academy.NewSQLStore(storePool)
@@ -2653,6 +2669,10 @@ func main() {
 	loginService := &session.LoginService{Accounts: accounts, Status: serverStatus, Staff: gmGate.Allows,
 		Online: session.NewOnlineAccounts(), Rules: loginRules, Logger: logger}
 	gmDeps.Sessions = session.GMSessions{Hub: hub, Online: loginService.Online}
+	// Round 869: the game worlds (cmd/server/gameworlds.go).
+	installGameWorlds(logger, *gameWorldDir, *npcsCSV, hub, monsters, ground, nestDB, speciesTable, speciesSkills,
+		session.GameWorldDeps{Chars: chars, Equipment: eq, Zerk: zerkTracker, Timed: timedJobs, Instances: instanceRows,
+			Parties: parties, Logger: logger})
 	gmDeps.Punishments, _ = accounts.(account.PunishmentStore)
 	gmDeps.AccountLookup, _ = accounts.(account.AccountLookup)
 	// Round 840: the chat and trade bans (types 4 and 3) answer 0x3405.
@@ -2759,6 +2779,10 @@ func main() {
 	handle := gateway.Chain(
 		// The COS requests (round 795, internal/session/coscommand.go).
 		session.COSHandler(hub, chars),
+		// The instances' portal entry (0x705A kind 3) and exit NPC (0x751D),
+		// round 869 (session/gameworlds_run.go).
+		session.InstanceTeleportHandler(gmGate.Allows),
+		session.InstanceExitHandler(),
 		// The job guild (round 799, internal/session/jobguild.go).
 		session.JobGuildHandler(hub),
 		// The trade-info window (round 801, internal/session/specialtytrade.go).

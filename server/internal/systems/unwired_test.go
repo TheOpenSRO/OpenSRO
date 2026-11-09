@@ -45,6 +45,9 @@ var parked = map[string]string{
 	// Infrastructure -- these are not game mechanics at all.
 	"systems": "this package: it parses docs/SYSTEMS.md so tests can hold the repo to it",
 	"testdb":  "a test helper, imported only by tests by design",
+	// Round 869: the cross-instance bus (game_worlds.md 12.3), the interface and its
+	// in-process implementation; lane W2 wires it with the multi-process roles.
+	"bus": "the cross-instance bus interface (round 869); lane W2 wires it",
 
 	// File-format readers kept for tooling and documentation, not used by the
 	// running server.

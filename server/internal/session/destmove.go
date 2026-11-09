@@ -261,6 +261,8 @@ func DecodeMoveEcho(b []byte) (MoveEcho, bool) {
 
 // handleMovementRequest is 0x7021 (READ above; OURS where the comments say).
 func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars character.Store) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	// Round 795: a rider's own 0x7021 is dropped (s:0x4b0ea0, slot 0x540):
 	// its client steers the COS with 0x70C5 instead (riderMove).
 	if e, ok := hub.EntityBySession(sess.ID()); ok && riderMount(e.CharacterID) != nil {
@@ -272,11 +274,15 @@ func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hu
 // riderMove is a rider's 0x70C5 command 1: the movement body moves the COS,
 // and its rider with it (round 795, cosride.go).
 func riderMove(sess *gateway.Session, data []byte, hub *world.Hub, chars character.Store) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	return moveByRequest(sess, data, hub, chars)
 }
 
 // moveByRequest is a 0x7021 body's move of sess's character.
 func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars character.Store) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	// Round 860: the scroll state 1 holds every move (scrollhold.go, READ
 	// s:0x4296a0 group 11); OURS, the mover is told where it stands.
 	if scrollHolds(sess) {
@@ -374,6 +380,13 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 			order.Dest = world.Position{X: w.X, Y: w.Y, Z: w.Z}
 			order.Wall = true
 		}
+		// Round 869 (OURS, game_worlds.md 14 item 9; the original's block at
+		// a closed door is OPEN): a leg through a closed trigger door of the
+		// layer ends where it starts, as a wall at the first step does.
+		if gw := instanceOf(hub); gw != nil && gw.DoorBlocks(e.Pos.X, e.Pos.Z, order.Dest.X, order.Dest.Z) {
+			order.Dest = world.Position{X: e.Pos.X, Y: e.Pos.Y, Z: e.Pos.Z}
+			order.Wall = true
+		}
 		traceMove("move: leg", "character_id", e.CharacterID, "from_x", e.Pos.X, "from_y", fromY, "from_z", e.Pos.Z,
 			"to_x", x, "to_z", z, "wall", order.Wall, "end_x", order.Dest.X, "end_z", order.Dest.Z)
 	}
@@ -431,6 +444,8 @@ const (
 // is dropped as its 0x7021 is (it sends 0x70C5 command 3). OURS: a dead
 // character's is dropped (retail's slot-0x540 gate is not read).
 func handleMovementStopRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	e, ok := hub.EntityBySession(sess.ID())
 	if !ok || riderMount(e.CharacterID) != nil {
 		return nil
@@ -440,6 +455,8 @@ func handleMovementStopRequest(sess *gateway.Session, p *proto.Packet, hub *worl
 
 // arrowStop is a stop request's body (u16 angle) for sess's character.
 func arrowStop(sess *gateway.Session, data []byte, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if len(data) < 2 {
 		return nil
 	}
@@ -470,6 +487,8 @@ func arrowStop(sess *gateway.Session, data []byte, hub *world.Hub) error {
 // included. A rider's own is dropped (it sends 0x70C5 command 4). OURS: a
 // dead character's is dropped.
 func handleMovementTurnRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	e, ok := hub.EntityBySession(sess.ID())
 	if !ok || riderMount(e.CharacterID) != nil {
 		return nil
@@ -479,6 +498,8 @@ func handleMovementTurnRequest(sess *gateway.Session, p *proto.Packet, hub *worl
 
 // arrowTurn is a turn request's body (u16 angle) for sess's character.
 func arrowTurn(sess *gateway.Session, data []byte, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if len(data) < 2 {
 		return nil
 	}
@@ -553,6 +574,8 @@ func stopRelay(sess *gateway.Session, r world.MoveResult, self bool) {
 // the window, the mover included: a report or relocation the server did not
 // take. The client snaps there (FUN_008a4f80).
 func correctMover(sess *gateway.Session, hub *world.Hub) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	r, ok := hub.Correct(sess)
 	if !ok {
 		return
@@ -566,6 +589,8 @@ func correctMover(sess *gateway.Session, hub *world.Hub) {
 // engine stops a walker before it sits, slot 0x4b0, which sends 0xB023): its
 // client stopped before it asked, so only the window is told.
 func haltForSit(sess *gateway.Session, hub *world.Hub) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	r, moved, ok := hub.Halt(sess)
 	if !ok || !moved {
 		return

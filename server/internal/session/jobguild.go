@@ -197,6 +197,8 @@ func guildID(k jobs.Kind) byte {
 // JobGuildHandler answers 0x70E1..0x70E6.
 func JobGuildHandler(hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		case jobs.OpJoin, jobs.OpWithdraw, jobs.OpAlias, jobs.OpRanking, jobs.OpReward, jobs.OpPrevJob:
 		default:

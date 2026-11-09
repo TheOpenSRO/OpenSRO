@@ -133,6 +133,11 @@ type statusRuntime struct {
 	cdeps combatDeps
 	sdeps strikeDeps
 	mons  *combat.Hub
+	// mobDeps are the deps of the monsters of an instance (round 869,
+	// gameworlds.go): an instance's monster is looked up, damaged and told
+	// about through its own world's hubs, and a cast there never rebinds
+	// cdeps / mons, which stay the open world's.
+	mobDeps map[int64]combatDeps
 	// legPct is the speed percent each monster's current leg was started at
 	// (statusSpeed), for the republish when its states change (heldByStatus).
 	legPct map[int64]int
@@ -144,7 +149,7 @@ type statusRuntime struct {
 }
 
 func newStatusRuntime() *statusRuntime {
-	return &statusRuntime{mobs: map[int64]*statuseffect.Holder{}, pcs: map[int64]*statuseffect.Holder{}, legPct: map[int64]int{}, epoch: time.Now()}
+	return &statusRuntime{mobs: map[int64]*statuseffect.Holder{}, pcs: map[int64]*statuseffect.Holder{}, legPct: map[int64]int{}, mobDeps: map[int64]combatDeps{}, epoch: time.Now()}
 }
 
 // statusFX is the process's runtime, package-level like buffBooks and
@@ -206,7 +211,14 @@ func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow 
 		return 0
 	}
 	s.mu.Lock()
-	s.cdeps, s.mons = d, d.monsters
+	if instanceOf(d.hub) != nil {
+		if s.mobDeps == nil {
+			s.mobDeps = map[int64]combatDeps{}
+		}
+		s.mobDeps[monsterID] = d
+	} else {
+		s.cdeps, s.mons = d, d.monsters
+	}
 	h := s.mobs[monsterID]
 	if h == nil {
 		h = &statuseffect.Holder{}
@@ -230,7 +242,7 @@ func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow 
 	// and the clients kept drawing the leg (review H1). With no AI runtime
 	// (-monster-ai off) there is no tick to do it, and no push to send: the
 	// hub's leg is ended here (the re-review's L3).
-	if stops && monsterAIRuntime.Load() == nil {
+	if stops && aiOf(d.monsters) == nil {
 		d.monsters.StopMotion(monsterID)
 	}
 	pushMonsterStatus(d.hub, d.monsters, m, msg)
@@ -250,6 +262,9 @@ func statusCastAtMonster(castRow *refdata.Skill, isBuff, isGround, selfTarget, f
 // for either) and within the skill's reach (skillInReach, the damaging
 // cast's own test; "too far away").
 func statusCastRefusal(ctx context.Context, sess *gateway.Session, eq equipment.Store, items combat.ItemLookup, hub *world.Hub, monsters *combat.Hub, characterID, target int64, skillRange int) string {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
+	monsters = monstersFor(sess, monsters)
 	if hub == nil || monsters == nil {
 		return ""
 	}
@@ -420,6 +435,7 @@ func (s *statusRuntime) forgetMonster(id int64) {
 	s.mu.Lock()
 	delete(s.mobs, id)
 	delete(s.legPct, id)
+	delete(s.mobDeps, id)
 	s.mu.Unlock()
 	// Round 785: its knock, its debuffs and their rows go with it.
 	forgetKnock(id)
@@ -432,6 +448,8 @@ type monsterTick struct {
 	zone string
 	id   int64
 	tick statuseffect.Tick
+	// deps is the monster's world's (round 869), nil for the open world's.
+	deps *combatDeps
 }
 
 // characterTick is one damage tick on a character.
@@ -445,6 +463,10 @@ type statusPush struct {
 	monster bool
 	zone    string
 	msg     *ObjectStatus
+	// hub / mons are the world's the push goes to (round 869), nil for the
+	// pass's own.
+	hub  *world.Hub
+	mons *combat.Hub
 }
 
 // casterLookup answers the damage appliers' question about a record's caster
@@ -511,7 +533,8 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 	pcs := make(map[int64]pcNow, len(ids))
 	for _, id := range ids {
 		var p pcNow
-		p.e, p.in = entityOf(sd.hub, id)
+		// Round 869: a character's states run wherever it is.
+		p.e, p.in = entityOf(hubOfChar(sd.hub, id), id)
 		if sd.chars != nil && p.in && p.e.Life != world.LifeDead {
 			if c, err := sd.chars.GetByID(ctx, id); err == nil && c != nil && c.HP > 0 {
 				p.hp, p.alive = c.HP, true
@@ -522,26 +545,47 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 	caster := casterLookup(hub, mons)
 
 	s.mu.Lock()
+	// Each monster in its own world's hub (round 869): mobDeps names an
+	// instance's monsters, the rest are the open world's.
+	monsOf := func(id int64) (*combat.Hub, *combatDeps) {
+		if md, ok := s.mobDeps[id]; ok {
+			md := md
+			return md.monsters, &md
+		}
+		return mons, nil
+	}
 	for id := range s.legPct {
-		if _, ok := monsterOf(mons, id); !ok {
+		mm, _ := monsOf(id)
+		if _, ok := monsterOf(mm, id); !ok {
 			delete(s.legPct, id)
 		}
 	}
 	for id, h := range s.mobs {
-		m, ok := monsterOf(mons, id)
+		mm, md := monsOf(id)
+		m, ok := monsterOf(mm, id)
 		if !ok || m.HP <= 0 {
 			delete(s.mobs, id)
+			delete(s.mobDeps, id)
 			continue
 		}
-		ticks, changed := h.Step(nowMs, m.HP, caster)
+		stepCaster := caster
+		if md != nil {
+			stepCaster = casterLookup(md.hub, md.monsters)
+		}
+		ticks, changed := h.Step(nowMs, m.HP, stepCaster)
 		for _, t := range ticks {
-			mticks = append(mticks, monsterTick{zone: m.Zone, id: id, tick: t})
+			mticks = append(mticks, monsterTick{zone: m.Zone, id: id, tick: t, deps: md})
 		}
 		if changed {
-			pushes = append(pushes, statusPush{monster: true, zone: m.Zone, msg: &ObjectStatus{OwnerKind: OwnerMonster, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}})
+			sp := statusPush{monster: true, zone: m.Zone, msg: &ObjectStatus{OwnerKind: OwnerMonster, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}}
+			if md != nil {
+				sp.hub, sp.mons = md.hub, md.monsters
+			}
+			pushes = append(pushes, sp)
 		}
 		if h.Idle(nowMs) {
 			delete(s.mobs, id)
+			delete(s.mobDeps, id)
 		}
 	}
 	for id, h := range s.pcs {
@@ -573,24 +617,32 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 
 	for _, p := range pushes {
 		if p.monster {
-			if m, ok := monsterOf(mons, p.msg.OwnerID); ok {
-				pushMonsterStatus(hub, mons, m, p.msg)
+			ph, pm := hub, mons
+			if p.mons != nil {
+				ph, pm = p.hub, p.mons
+			}
+			if m, ok := monsterOf(pm, p.msg.OwnerID); ok {
+				pushMonsterStatus(ph, pm, m, p.msg)
 			}
 			continue
 		}
-		broadcastStatus(hub, p.zone, p.msg)
+		broadcastStatus(hubOfChar(hub, p.msg.OwnerID), p.zone, p.msg)
 	}
 	dead := map[int64]bool{}
 	for _, mt := range mticks {
 		if dead[mt.id] {
 			continue
 		}
-		if err := s.dealMonsterTick(ctx, cd, mt); err != nil {
+		td, tm := cd, mons
+		if mt.deps != nil {
+			td, tm = *mt.deps, mt.deps.monsters
+		}
+		if err := s.dealMonsterTick(ctx, td, mt); err != nil {
 			if s.logger != nil {
 				s.logger.Warn("status: a monster's damage tick", "monster", mt.id, "err", err)
 			}
 		}
-		if _, alive := monsterOf(mons, mt.id); !alive {
+		if _, alive := monsterOf(tm, mt.id); !alive {
 			dead[mt.id] = true
 		}
 	}
@@ -599,7 +651,10 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 		if gone[ct.id] {
 			continue
 		}
-		if died := s.dealCharacterTick(ctx, sd, st, ct); died {
+		// Round 869: in the character's own world.
+		csd := sd
+		csd.hub = hubOfChar(sd.hub, ct.id)
+		if died := s.dealCharacterTick(ctx, csd, st, ct); died {
 			gone[ct.id] = true
 		}
 	}
@@ -733,7 +788,16 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 // kill battleTick releases a monster on (a.kills) -- what runStrike records
 // for the monster whose blow killed her. A no-op with the AI off.
 func releaseTargetsOf(characterID int64) {
+	// Round 869: the AI of the world the character is in.
 	a := monsterAIRuntime.Load()
+	if h, ok := world.Locate(characterID); ok {
+		if w := instanceOf(h); w != nil {
+			a = nil
+			if rt := runtimeOfWorld(w); rt != nil {
+				a = rt.ai
+			}
+		}
+	}
 	if a == nil {
 		return
 	}

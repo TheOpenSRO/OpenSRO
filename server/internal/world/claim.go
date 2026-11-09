@@ -144,6 +144,9 @@ func anchorLocked(e *Entity, x, z float64, now time.Time) Position {
 // nothing changes (admitted false) and the caller corrects. ok is false when
 // the session is not in the world.
 func (h *Hub) Claim(sess *gateway.Session, pos Position, kind MoveKind, heading float64, b Bound) (r MoveResult, admitted, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.Claim(sess, pos, kind, heading, b)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.clock()

@@ -192,6 +192,9 @@ func StallHandler(d StallDeps) gateway.Handler {
 	}
 	stallRT.Store(&dd)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case OpStallOpen:
 			dd.open(ctx, sess, p.Data)
@@ -475,6 +478,8 @@ func stallEnd(characterID int64, reason uint16) {
 // leaving visitor out. It must run before WorldDisconnectHandler.
 func StallDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if e, ok := hub.EntityBySession(sess.ID()); ok {
 			stallEnd(e.CharacterID, StallErrHostLeft)
 			questBlockReset(e.CharacterID)

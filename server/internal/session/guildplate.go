@@ -286,6 +286,8 @@ func guildNicknameToMembers(hub *world.Hub, g *guild.Guild, name, nickname strin
 // handleGuildGrantName answers 0x7256: the sender's own grant name (OURS: the
 // target must be the sender; guild.CheckNickname has the ladder).
 func handleGuildGrantName(ctx context.Context, sess *gateway.Session, p *proto.Packet, guilds guild.Store, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if hub == nil {
 		return nil
 	}

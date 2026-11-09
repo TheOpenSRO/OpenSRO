@@ -389,6 +389,9 @@ func (h *Hub) crossingLocked(e *Entity, old, cell combat.Cell, now time.Time, r 
 // other players in view there, who are sent the 0xB021; a start in another
 // block than the one the character was filed under carries the crossing.
 func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveStatus) {
+	if to := h.routed(sess); to != nil {
+		return to.StartMove(sess, o)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.clock()
@@ -444,6 +447,9 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 // it stands now and may refuse (nothing changes; admitted false). ok is false
 // when the session is not in the world. A client's claim goes through Claim.
 func (h *Hub) StopAt(sess *gateway.Session, pos Position, kind MoveKind, heading float64, admit func(now time.Time, cur Entity) bool) (r MoveResult, admitted, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.StopAt(sess, pos, kind, heading, admit)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.clock()
@@ -627,6 +633,9 @@ func rebaseLocked(e *Entity, now time.Time, speed float64) {
 // is not in the world; moved says it had a leg. Round 822: the stop stands at
 // the leg's walked height (LegGround), not the straight line's.
 func (h *Hub) Halt(sess *gateway.Session) (r MoveResult, moved, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.Halt(sess)
+	}
 	leg, y, walked := h.walkedNow(sess)
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -677,6 +686,9 @@ func (h *Hub) walkedNow(sess *gateway.Session) (leg *Mover, y float64, walked bo
 // destination mover's vslot_005 is not read, and the retail client sends no
 // turn during one). ok is false when the session is not in the world.
 func (h *Hub) Turn(sess *gateway.Session, heading float64, wire uint16) (e Entity, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.Turn(sess, heading, wire)
+	}
 	leg, y, walked := h.walkedNow(sess)
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -708,6 +720,9 @@ func (h *Hub) Turn(sess *gateway.Session, heading float64, wire uint16) (e Entit
 // point now, or its trusted point -- after a claim it refused (round 749's
 // review, F1): the leg ends and the stored position is the trusted one.
 func (h *Hub) Correct(sess *gateway.Session) (r MoveResult, ok bool) {
+	if o := h.routed(sess); o != nil {
+		return o.Correct(sess)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.clock()
@@ -752,6 +767,10 @@ type runWalk struct {
 // (WalkHeadingRuns for one session): the session calls it right after a run
 // starts or turns, so the run moves from the first pass.
 func (h *Hub) WalkHeadingRun(sess *gateway.Session) {
+	if o := h.routed(sess); o != nil {
+		o.WalkHeadingRun(sess)
+		return
+	}
 	id := sess.ID()
 	h.walkRuns(func(e *Entity) bool { return e.Session.ID() == id })
 }

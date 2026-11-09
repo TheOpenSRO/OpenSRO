@@ -314,6 +314,8 @@ func ClearStallDecoration(characterID int64) { stallDecoOverride.Delete(characte
 // 0xB160 {1, key, decoration} answers, else {2, u16 code}.
 func AvatarStallHandler(hub *world.Hub, items ItemLookup) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode != OpAvatarStallUse || hub == nil {
 			return nil
 		}
@@ -360,6 +362,8 @@ func isBFI1Decoration(it *refdata.Item) bool {
 // spent and no COOLTIME is armed.
 func useScrollFill(ctx context.Context, sess *gateway.Session, hub *world.Hub, keeper *CompositeKeeper, zerk *berserk.Tracker,
 	characterID int64, fill *refdata.Item, g *compositeGrant, req *CompositeUseRequest, fail func(string, int64) error) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if deadBySession(hub, sess) {
 		return fail(deadRefusal, req.ItemID)
 	}

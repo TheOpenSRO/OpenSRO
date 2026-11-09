@@ -242,6 +242,8 @@ func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv
 // (equip_broadcast.go, round 735). A nil hub tells no one.
 func EquipmentHandlerWithBroadcast(chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub, hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		case OpEquipmentList:
 			return handleEquipmentList(ctx, sess, p, chars, store, items)
@@ -438,6 +440,8 @@ func sendWornList(ctx context.Context, sess *gateway.Session, store equipment.St
 }
 
 func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeEquipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -489,6 +493,8 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 }
 
 func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup, trades *trade.Hub, hub *world.Hub) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	req, err := DecodeUnequipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})

@@ -24,9 +24,9 @@ func (g GMSessions) KickCharacter(name string) (string, bool) {
 	if g.Hub == nil {
 		return "", false
 	}
-	e, ok := g.Hub.FindByName(name)
+	e, ok := findByNameAnywhere(g.Hub, name)
 	if !ok {
-		for _, x := range g.Hub.AllEntities() {
+		for _, x := range allEntitiesAnywhere(g.Hub) {
 			if strings.EqualFold(x.Name, name) {
 				e, ok = x, true
 				break
@@ -49,7 +49,7 @@ func (g GMSessions) KickAccount(accountID int64) bool {
 	if g.Hub == nil {
 		return false
 	}
-	for _, e := range g.Hub.AllEntities() {
+	for _, e := range allEntitiesAnywhere(g.Hub) {
 		if id, in := AuthenticatedAccountID(e.Session); in && id == accountID {
 			_ = e.Session.Close()
 			return true

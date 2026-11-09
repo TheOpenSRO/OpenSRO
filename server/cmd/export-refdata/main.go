@@ -563,6 +563,18 @@ func main() {
 		}
 		return
 	}
+	if *mode == "gameworlds" {
+		// The game worlds (round 869, docs/protocol/game_worlds.md 14 item
+		// 1): the operator's shard-database table dumps and/or the client's
+		// gameworlddata.txt / gameworldconfigdata.txt / eventzonedata.txt
+		// into the directory -out names, one <table>.csv each: what
+		// cmd/server's -gameworld-dir loads (internal/gameworld).
+		if err := exportGameWorlds(*out, inputArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "specialty" && *mode != "mall" && *mode != "gacha" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign" && *mode != "itemoptlevel") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")

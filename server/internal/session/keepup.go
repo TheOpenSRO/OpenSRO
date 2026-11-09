@@ -334,6 +334,8 @@ const refusedTooFar = "too far away"
 // the one it drew. Read and written under the session's motion-wire lock, so
 // it cannot overtake a newer leg the AI tick is writing (monsterWireLock).
 func resyncMonster(sess *gateway.Session, monsters *combat.Hub, id int64) {
+	// Round 869: the session's own world (gameworlds.go).
+	monsters = monstersFor(sess, monsters)
 	if sess == nil || monsters == nil || id == 0 {
 		return
 	}
@@ -409,7 +411,7 @@ func armKeepUp(
 			// The engine would walk here. See the package comment. The
 			// monster AI's trace names the end (round 537): with the AI on,
 			// a keep-up that ends this way releases the monster it held.
-			if rt := monsterAIRuntime.Load(); rt != nil {
+			if rt := aiOf(deps.monsters); rt != nil {
 				rt.tracef("ai: keep-up of %d on monster %d ended out of reach", characterID, target)
 			}
 			// Round 785: the client is told, so it walks back into reach
@@ -529,6 +531,9 @@ func firstSwingInReach(
 	monsters *combat.Hub,
 	characterID, target int64,
 ) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
+	monsters = monstersFor(sess, monsters)
 	if hub == nil || monsters == nil {
 		return true
 	}
@@ -582,6 +587,9 @@ func skillInReach(
 	characterID, target int64,
 	skillRange int,
 ) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
+	monsters = monstersFor(sess, monsters)
 	if hub == nil || monsters == nil {
 		return true
 	}

@@ -179,6 +179,9 @@ func (d ItemOpDeps) avatarDeps() AvatarDeps {
 // ItemOpHandler returns the gateway.Handler for 0x7034 and 0x7168.
 func ItemOpHandler(d ItemOpDeps) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		switch p.Opcode {
 		case OpItemMove:
 			return handleItemMove(ctx, sess, p.Data, d)

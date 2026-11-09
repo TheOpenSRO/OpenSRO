@@ -300,9 +300,9 @@ func (g gmRestrictions) QuestBlock(name string, mask uint32, clear bool) (uint32
 	if g.hub == nil {
 		return 0, "", false
 	}
-	e, ok := g.hub.FindByName(name)
+	e, ok := findByNameAnywhere(g.hub, name)
 	if !ok {
-		for _, x := range g.hub.AllEntities() {
+		for _, x := range allEntitiesAnywhere(g.hub) {
 			if strings.EqualFold(x.Name, name) {
 				e, ok = x, true
 				break

@@ -108,6 +108,8 @@ func closedView(sess *gateway.Session, d viewDeps) *playerView {
 // for a stale session of a reconnect, whose entity the hub still holds by
 // session after the new one took the character (world.Hub.Enter).
 func liveOn(hub *world.Hub, characterID int64, sess *gateway.Session) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if hub == nil || sess == nil {
 		return false
 	}
@@ -122,6 +124,8 @@ func liveOn(hub *world.Hub, characterID int64, sess *gateway.Session) bool {
 // took the character after the read finds its own view kept: its close comes
 // before its hub entry, its open after.
 func storeViewIfLive(hub *world.Hub, characterID int64, sess *gateway.Session, v *playerView) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	for {
 		cur, loaded := playerViews.Load(characterID)
 		if !liveOn(hub, characterID, sess) {

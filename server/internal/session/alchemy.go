@@ -296,6 +296,9 @@ type alchemist struct {
 func AlchemyHandler(d AlchemyDeps) gateway.Handler {
 	a := &alchemist{AlchemyDeps: d, jobs: map[int64]*alchemyJob{}}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		d := d
+		d.Hub = d.Hub.For(sess)
 		if p.Opcode != OpAlchemy {
 			return nil
 		}

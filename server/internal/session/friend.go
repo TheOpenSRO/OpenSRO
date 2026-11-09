@@ -271,7 +271,7 @@ func (rt *friendRuntime) ask(ctx context.Context, sess *gateway.Session, data []
 		fail(FriendCodeFullList)
 		return
 	}
-	target, ok := rt.hub.FindByName(name)
+	target, ok := findByNameAnywhere(rt.hub, name)
 	if !ok {
 		fail(FriendCodeUnknownUser)
 		return
@@ -466,6 +466,8 @@ func friendAfterEnter(ctx context.Context, sess *gateway.Session, owned *charact
 // before WorldDisconnectHandler, while the hub still knows the session.
 func FriendDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		rt := friendRT.Load()
 		if rt == nil {
 			return

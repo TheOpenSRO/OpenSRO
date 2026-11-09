@@ -130,6 +130,8 @@ func DropGuildStorage(ctx context.Context, guildID int64) {
 // GuildStorageDisconnectHandler releases what a leaving character holds.
 func GuildStorageDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		d := guildStorageRT.Load()
 		if d == nil || hub == nil {
 			return
@@ -218,7 +220,7 @@ func (d *GuildStorageDeps) open(ctx context.Context, sess *gateway.Session, data
 	if !ok {
 		return
 	}
-	e, ok := d.Hub.EntityBySession(sess.ID())
+	e, ok := d.Hub.For(sess).EntityBySession(sess.ID())
 	if !ok {
 		return
 	}
@@ -245,7 +247,7 @@ func (d *GuildStorageDeps) close(ctx context.Context, sess *gateway.Session, dat
 	if !ok {
 		return
 	}
-	e, ok := d.Hub.EntityBySession(sess.ID())
+	e, ok := d.Hub.For(sess).EntityBySession(sess.ID())
 	if !ok {
 		return
 	}
@@ -276,7 +278,7 @@ func (d *GuildStorageDeps) list(ctx context.Context, sess *gateway.Session, data
 	if !ok {
 		return
 	}
-	e, ok := d.Hub.EntityBySession(sess.ID())
+	e, ok := d.Hub.For(sess).EntityBySession(sess.ID())
 	if !ok {
 		return
 	}
@@ -343,7 +345,7 @@ func guildStorageMove(ctx context.Context, sess *gateway.Session, data []byte) e
 	if d == nil || d.Svc == nil {
 		return fail(guildstorage.CodeDB)
 	}
-	e, ok := d.Hub.EntityBySession(sess.ID())
+	e, ok := d.Hub.For(sess).EntityBySession(sess.ID())
 	if !ok {
 		return fail(guildstorage.CodeDB)
 	}
@@ -384,7 +386,7 @@ func guildStorageMove(ctx context.Context, sess *gateway.Session, data []byte) e
 			return fail(guildstorage.CodeOf(err))
 		}
 		// OffsetGold (reason 0x1d in, 0x27 out): 0x304E, unshown.
-		tellGold(ctx, d.Chars, d.Hub, e.CharacterID, false)
+		tellGold(ctx, d.Chars, hubOfChar(d.Hub, e.CharacterID), e.CharacterID, false)
 		return sess.Send(&proto.Packet{Opcode: OpItemMoveResult, Data: binary.LittleEndian.AppendUint64([]byte{itemOpOK, t}, uint64(amount))})
 	case ItemMoveGuildInside:
 		if len(b) < 8 {
@@ -422,7 +424,7 @@ func guildStorageMove(ctx context.Context, sess *gateway.Session, data []byte) e
 			if err != nil {
 				return fail(guildstorage.CodeOf(err))
 			}
-			tellGold(ctx, d.Chars, d.Hub, e.CharacterID, false)
+			tellGold(ctx, d.Chars, hubOfChar(d.Hub, e.CharacterID), e.CharacterID, false)
 			return sess.Send(&proto.Packet{Opcode: OpItemMoveResult, Data: []byte{itemOpOK, t, byte(src), byte(used)}})
 		}
 		if dst < ItemWireBagOffset {

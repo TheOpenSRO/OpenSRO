@@ -182,6 +182,8 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 	// Round 764's review, F3: a GM's zone change may name any spot.
 	zoneSpotGate.Store(gate)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode != OpGMCommand {
 			return nil
 		}
@@ -261,7 +263,12 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// Round 865 (OURS, a bots' QA aid the client's console does not
 		// offer): /academytime moves the academy's clock (academylive.go).
 		out, isAcademyTime := academyTimeCommand(req.Line)
+		// Round 869 (OURS, a QA aid): /instance (gameworlds_gm.go).
+		isInstance := false
 		if !isAcademyTime {
+			out, isInstance = instanceCommand(ctx, sess, req.Line)
+		}
+		if !isAcademyTime && !isInstance {
 			out = deps.Run(ctx, actor, req.Line)
 		}
 		// Round 858: every GM command run is counted (gm.Deps.Run logs it,

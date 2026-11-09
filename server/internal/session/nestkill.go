@@ -37,6 +37,23 @@ func SetMonsterKillObserver(f MonsterKillObserver) {
 // paid (planKill's armCount; round 712). hits is the monster's damage list as
 // the killing blow returned it.
 func noteMonsterKilled(hub *world.Hub, parties *party.Hub, hits []combat.Hit, m combat.Monster) {
+	// Round 869: the world's MONSTER_KILL trigger event (internal/trigger),
+	// its event user the kill credit (INFERRED: the biggest hitter, as the
+	// nests' party count reads it).
+	if w := unitOf(hub); w != nil {
+		var user int64
+		best := 0
+		for _, h := range hits {
+			if h.Damage > best {
+				user, best = h.AttackerID, h.Damage
+			}
+		}
+		level := 0
+		if e, ok := hub.EntityByCharacterID(user); ok {
+			level = e.Level
+		}
+		w.MonsterKilled(m, user, level)
+	}
 	f := monsterKillObserver.Load()
 	if f == nil {
 		return

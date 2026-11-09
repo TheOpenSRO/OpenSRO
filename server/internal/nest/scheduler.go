@@ -414,3 +414,13 @@ func (s *Scheduler) ArmParty(id int64, members int) bool {
 	sl.Input.PartyArmed = true
 	return true
 }
+
+// Activate wakes a dormant nest (col 17 != 0, Slot.Active false): a
+// trigger's MONSTER_ACTIVE_NEST, which sets the layer copy's +0x14 (READ
+// s:0x682fb0, docs/protocol/game_worlds.md 1.2; round 869). The next pass
+// hatches it as any other nest.
+func (s *Scheduler) Activate(sl *Slot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sl.Active = true
+}

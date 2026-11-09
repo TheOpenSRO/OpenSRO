@@ -163,11 +163,14 @@ func monsterListPages(snaps []MonsterSnapshot) [][]byte {
 // paged is the request's capability byte (MonsterListFlagPaged): without it
 // the reply is the old single frame (monsterListNearestThatFit).
 func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.Hub, paged bool) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
+	monsters = monstersFor(sess, monsters)
 	entity, ok := hub.EntityBySession(sess.ID())
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Error: "not in the world"}).Encode()})
 	}
-	rt := monsterAIRuntime.Load()
+	rt := aiOf(monsters)
 	wire := monsterWireLock(sess)
 	wire.Lock()
 	defer wire.Unlock()

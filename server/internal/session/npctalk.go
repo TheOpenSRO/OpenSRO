@@ -108,6 +108,8 @@ func NPCInteractionMode(id uint64) (entity uint32, mode byte) {
 // NPCTalkHandler answers 0x7045, 0x7046 and 0x704B.
 func NPCTalkHandler(hub *world.Hub, trades *trade.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		switch p.Opcode {
 		case npctalk.OpSelect:
 			handleNPCSelect(sess, p.Data, hub, trades)
@@ -127,7 +129,7 @@ func sendNPCTalk(sess *gateway.Session, op uint16, data []byte) {
 // npcTarget resolves entity in the player's zone and measures the reach:
 // npctalk.CodeNoTarget when there is none, CodeTooFar beyond the radius.
 func npcTarget(e world.Entity, entity uint32) (npcPlacement, uint16) {
-	pl, ok := npcInZone(entity, e.Zone)
+	pl, ok := npcInWorld(world.HubOf(nil, e.CharacterID), entity, e.Zone)
 	if !ok {
 		return pl, npctalk.CodeNoTarget
 	}
@@ -184,6 +186,8 @@ func selectIDsFor(ctx context.Context, npc *npcspawn.NPC, level int, characterID
 // the range code beyond reach, else {1, entity} and the select's set
 // (PublishAvailableInteractions), and the requester flag set.
 func handleNPCSelect(sess *gateway.Session, data []byte, hub *world.Hub, trades *trade.Hub) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	entity, err := npctalk.DecodeEntity(data)
 	if err != nil {
 		return
@@ -223,6 +227,8 @@ func handleNPCSelect(sess *gateway.Session, data []byte, hub *world.Hub, trades 
 // then the target and the offered-id test (5) on the select's set, then the
 // id's own gate, then {1, id} and the mode.
 func handleNPCOpen(sess *gateway.Session, data []byte, hub *world.Hub, trades *trade.Hub) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	entity, id, err := npctalk.DecodeOpen(data)
 	if err != nil {
 		return
@@ -326,6 +332,8 @@ func handleNPCOpen(sess *gateway.Session, data []byte, hub *world.Hub, trades *t
 // (mode 0 with the flag, 0x5107f0..0x5107f9): after a mode-6 end a second
 // 0x704B still gets {1}.
 func handleNPCEnd(sess *gateway.Session, data []byte, hub *world.Hub) {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if _, err := npctalk.DecodeEntity(data); err != nil {
 		return
 	}
@@ -336,6 +344,8 @@ func handleNPCEnd(sess *gateway.Session, data []byte, hub *world.Hub) {
 // request 0x704B and the quest talk's TerminateMenu (CGObjPC vslot 0x154, a
 // thunk to it; round 819). It reports whether an interaction was open.
 func endInteraction(sess *gateway.Session, hub *world.Hub) bool {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	npcInteractions.mu.Lock()
 	st, ok := npcInteractions.m[sess.ID()]
 	open := ok && (st.mode == 5 || st.mode == 6 || st.selected)

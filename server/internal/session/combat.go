@@ -116,6 +116,8 @@ func DecodeBerserkResult(data []byte) (*BerserkResult, error) {
 }
 
 func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, zerk *berserk.Tracker) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
 	if zerk == nil {
 		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{}).Encode()})
 	}
@@ -1106,6 +1108,10 @@ func combatHandler(
 	potions *PotionQueue,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
+		monsters := monstersFor(sess, monsters)
+		ground := groundFor(sess, ground)
 		switch p.Opcode {
 		case OpBerserk:
 			return handleBerserk(ctx, sess, p, chars, hub, zerk)
@@ -1301,6 +1307,10 @@ func performAttack(
 	// record's blocked flag, 0x5906c0).
 	landed *blowReport,
 ) error {
+	// Round 869: the session's own world (gameworlds.go).
+	hub = hub.For(sess)
+	monsters = monstersFor(sess, monsters)
+	ground = groundFor(sess, ground)
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})

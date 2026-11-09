@@ -178,7 +178,7 @@ func guildCrestChanged(hub *world.Hub, guildID uint32, name string, rev uint32) 
 		return
 	}
 	msg := &proto.Packet{Opcode: OpGuildCrestUpdate, Data: EncodeGuildCrestUpdate(guildID, name, rev)}
-	for _, e := range hub.AllEntities() {
+	for _, e := range allEntitiesAnywhere(hub) {
 		if e.Session != nil {
 			e.Session.Send(msg)
 		}

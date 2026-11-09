@@ -70,6 +70,8 @@ func DecodeEmote(data []byte) (*Emote, bool) {
 // the character's watchers and to the character.
 func EmoteHandler(hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// Round 869: the session's own world (gameworlds.go).
+		hub := hub.For(sess)
 		if p.Opcode != OpEmote {
 			return nil
 		}
