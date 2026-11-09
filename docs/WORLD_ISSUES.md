@@ -7483,6 +7483,161 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-fifth round: combat numbers at level 101-110 as the original's -- Strength and Intellect in the armour's defence, a monster's magical skills on magic defence with their percentage, the defence curses, the monsters' own hit and parry rates, truncated panels; and why a warrior in a robe was dying
+
+The user: "101+ mobs can easily kill me. I have the highest end gear that should tank even 110 mobs
+easily and barely have to use potions yet I can hardly fight one monster. Either the gear is
+underpowered or the monsters are overpowered." The player is a level-110 European Warrior (mastery
+513 at 110, no other mastery) with Str 456 / Int 129, wearing a +12 perfect-white Seal of Nova
+**robe** set (ITEM_EU_M_CLOTHES_11_*), a +12 two-handed sword and four +12 accessories, every
+piece with full blues (Str/Int +7, durability +200 %, parry +60 % and HP/MP +1300 on the armour,
+attack rate +60 % and block-evasion +100 on the sword, five resists +20 on the accessories). His
+client log on v0.1.647: phy def 2062, mag def 3180 (a buff added 436 to the 1626 of the items),
+blows from a level-101 Ghost Seiren of 5,156..5,726 and a critical of 11,614.
+
+### MEASURED: what that character reads, and what it takes
+
+A European man at level 110, Str 456 / Int 129, mastery 513 at 110, those eleven items at +12
+with perfect white stats and those blues (option ids 72/78/90/138/150/162, 102/114, 168..192)
+reads on the character window (0x303D):
+
+| worn | Str / Int | phy def | mag def | parry | hit | max HP / MP |
+|---|---|---|---|---|---|---|
+| the robe set, Warrior 110 only (the player's exact case) | 491 / 164 | **93** | **50** | 120 | 524 | 42,510 / 14,199 |
+| the +12 heavy set (Warrior 101 required -- met) | 533 / 206 | **3,182** | **3,205** | 617 | 524 | 50,047 / 21,735 |
+| the robe set with a caster mastery at 101 (its requirement met) | 533 / 206 | **2,602** | **3,984** | 617 | 524 | 50,047 / 21,735 |
+
+1. **A Warrior cannot wear a robe.** ITEM_EU_M_CLOTHES_* asks for Wizard, Warlock, Bard or Cleric
+   mastery 101 (ReqLevelType 514/516/517/518, any one); the tooltip shows all four in red. Worn
+   anyway, the pieces count for NOTHING -- their defence, their parry, and their blues (Str 491 =
+   456 + the five other items' 7s): CheckEquipRequirements gates PublishEquipItemParams (READ,
+   round 769's note). The original refuses the equip in the first place (CanBeEquipedAt). OpenSRO
+   checks the level, race and gender at equip time and has never checked a mastery
+   (`equipment.CheckRequirements` is passed no mastery lookup) -- so the player wore a set the
+   original would not have let him wear. **OPEN, a decision for the user (not built):** enforcing
+   the requirement as the original does would make his robes count for nothing (phy def ~100).
+   The warrior's armour is heavy (or light: Warrior/Rogue/Cleric 101).
+2. **Strength is part of the physical defence, Intellect of the magical** (READ below):
+   `phy def = sum of the armour's PD + Str x sum(PDStr)/1000`, `mag def = sum MD + Int x
+   sum(MDInt)/1000`, PDStr/MDInt being itemdata columns 82..85 (the tooltip's "Phy. reinforce
+   41.0 %" is a PDStr of 410). An empty body slot keeps a naked scale (head 3.2/5.2, shoulder
+   2.7/4.3, chest 4.2/6.7, legs 3.4/5.5, hands 2.5/3.9, feet 3.0/4.9 %): 491 x 0.190 = 93.3 and
+   164 x 0.305 = 50.0, the first row. Heavy: 1,989.1 + 533 x 2.239 = 3,182.5; 2,602.2 + 206 x
+   2.931 = 3,205.99 -> **3,205: the panel truncates**, as it does the parry (617.6 -> 617) and the
+   max HP (39,480.58 -> 39,480 at Str 456, 42,510.89 -> 42,510). OpenSRO had no Str/Int term at
+   all (the round-769 note "OpenSRO still models no flat absorb"), and it rounded.
+3. **Max HP is Str x 10 x 1.02^(level-1) + the 'hp' blues, truncated** (50,047 = 46,147.9 + 3,900).
+4. **Fighting three level-104 Blood Hyenas** (MOB_SD_BLOOD_HYENA; skills ATTACK01 physical 76 % x2
+   hits, ATTACK02 physical 152 % with darkness `dn`, ATTACK03 physical 152 % with `cspd`), damage
+   per hit:
+   - heavy (3,182 / absorption 119.8 %): ATTACK01 13..689 (always the floor band: the mitigated
+     blow is under 5 % of its base, so it lands 1 + (base/10 - 1) x rand), ATTACK03 572..688;
+     criticals only on these physical blows (435, 439); no block, no miss.
+   - then a `cspd` landed ("You are under decay status", state mask 0x20000): ATTACK01
+     1,510..1,687 a hit, ATTACK02/03 3,021..3,559, a critical 7,008 -- the defence less 2,000.
+     The character is dead 36 s after the first blow (and loses a level to the death penalty).
+   - the robe with its requirement met (2,602): ATTACK03 862 at the bottom of its range (several
+     times) .. 1,316, ATTACK01 439..679; after a decay 1,815 and 2,144 a hit, a critical 3,888,
+     ATTACK02's critical 7,261; dead in about 35 s.
+
+### READ: the server's formula, end to end (SR_GameServer.exe)
+
+- **Armour (Char_BuildAggregateStats 0x495d60):** PD/MD = L + q x (U - L) + Inc x plus, the plus
+  linear (0x459c70: OptLevel + elixir + 'nier'); neither rarity nor durability scales it; a broken
+  piece publishes nothing (0x497860). PDStr/MDInt are divided by 1000 at load (RefObjItem::
+  ExtractData 0x6a42b2 / 0x6a4305), rolled from variance groups 1 / 2, published x100 into params
+  37+TypeID4 / 43+TypeID4 at slot 0, context 0 (Char_PublishCombatStats 0x497c73..0x497cf8),
+  replacing the slot's naked default (GObjPC_InitStats' loop 0x4e3430..0x4e34c5, table
+  0xc640d0); params 50/51 sum them, param 21 = Str x p50/100 and 22 = Int x p51/100 land in
+  params 5/6. stat_graph.md's "50 <- 58/59" was the shield's branch (0x497e50), not this.
+- **Accessories:** PAR/MAR -> params 7/8, one entry per item (0x4978ca / 0x4978f5); the blow is
+  divided by 1 + p/100 (0x40e524 / 0x40e8c6). Matches `accessoryAbsorb`.
+- **A monster's base** is its skill's 'att' min/max (params 13..16 are never written for a mob,
+  GObjMob_PublishStats 0x4c3730), x1.2 for a party monster and x1.5 for an elite (0x40da20); the
+  att block is [flags, percent, min, max, HP share]. Flags 0x4 run the physical formula and 0x8
+  the magical one (Combat_ResolveDamage 0x58f15d / 0x58f186): magic defence, param 8. **The
+  percentage applies after the mitigation and its clamp, before the critical, the level term and
+  the floor band** (0x40e56e / 0x40e8fd). The critical is rolled only for 0x4 (0x58e80b): a
+  magical blow never crits. The monster's attack rate is its col 77, its parry col 75 (0x4c38b4),
+  not 2 x level + 25 (MOB_SD_BLOOD_HYENA, level 104: 181, not 233). Str/Int level ratios are 1
+  for a monster (0x410a00 / 0x410ab0). The level term needs the attacker above the defender.
+  A census of the monster skills: 4,207 physical, 2,566 magical, none both.
+- **The curses** (Combat_ApplyStatusEffects): each block ORs its SLOT's bit, not kind - 1, from
+  `ds` on -- ds 15, ca 16, **cspd 17 (decay)**, **csmd 18 (weakness)**, cssr 19, csit 20, cshp 21,
+  csmp 22, tb 24 (OR sites 0x592339, 0x59256a, 0x592b85, 0x592d8e, 0x592773, 0x59297c, 0x592fb1,
+  0x5931d2, 0x59351f). The letters mean what they say; round 278's "the cs* codes do not mean
+  their letters" had read the kind as the bit. Decay writes p5 slot 0 = -min(value[3], current)
+  (0x4a5160), weakness the same on p6 (0x4a5240); darkness cuts the hit rate by value[3] %
+  (0x4a4e20). The roll: value[1] scaled by the level overshoot (as `NonElementalChance`).
+
+### Differences, and what each did
+
+| # | difference | effect on a +12 SoN level-110 against 101-110 monsters |
+|---|---|---|
+| D1 | no Str x PDStr / Int x MDInt in the defences | players weaker: about -976 phy def and -805 mag def for the player's robes (Str 533 / Int 206), -1,193 / -604 for heavy |
+| D2 | prod's item table has no accessory absorption ranges (0 on all 381 accessories; an import from before round 838) and no PDStr/MDInt (not exported until now) | players weaker: every blow divided by 1.12 instead of 2.198 -- about 1.96x the damage before the defence comes off. Data, not code: a re-export and re-import fixes it |
+| D3 | monster magical skills mitigated by PHYSICAL defence and absorption, and the skill percentage never applied | both ways: on the robe (high magic defence) magic blows hit harder than they should; the missing 233 % / 333 % made them weaker. Net for the Ghost Seiren's ATTACK02 on the player: 5,156..5,726 against 1..1,257 now |
+| D4 | magical monster blows could crit | monsters stronger (the 11,614 was a magical ATTACK03 critical) |
+| D5 | monster hit/parry rate 2 x level + 25 instead of cols 77/75 | monsters slightly stronger (Blood Hyena 233 vs 181: blows sit higher in their range), players' blows slightly lower on high monsters |
+| D6 | the curses did nothing, and their bits were shifted | monsters weaker: a decay is -2,000 phy def for 30 s; the client showed the wrong icon |
+| D7 | panels and max HP rounded | +1 here and there |
+| D8 | mastery requirements never checked | players stronger than the original (a Warrior's robe counts) -- not built, OPEN |
+
+### What changed
+
+- `refdata.Item.PDStrMin/Max, MDIntMin/Max` (itemdata 82..85), exported as item CSV columns
+  97..100 and imported into `items.pd_str_min..md_int_max`; `armourReinforce` + `nakedReinforce`
+  add Str x p50/100 and Int x p51/100 to `defenderArmor` / `defenderMagicArmor` (both now take the
+  wearer's Str / Int); the defences, the parry and the attack rate are truncated.
+- `combat.MonsterSkill.AttPercent/AttType` (from the skill table's 'att'), `combat.ResolveSkillBlow`
+  (percentage inside the pipeline, floats, truncation), and `monsterStrike`: a magical skill takes
+  magic defence and param 8 and no critical.
+- `combat.Monster.HitRate/ParryRate` from cols 77/75 (`MonsterHitRate`, `MonsterParryRate`).
+- `statuseffect.States`: the bits from `ds` on; `Record.CurseCut` and `statusRuntime.cursedDefence`
+  (decay, weakness; bleeding's cut now reaches a player too).
+- `character` max HP / MP truncated; `character.BaseStats` caches a row's Str/Int so a monster's
+  swing reads no character row (OURS: a cache).
+
+### Before and after, the same fight (Pain's robes, Str 543 / Int 216, no buff; Ghost Seiren B1)
+
+| | before (v0.1.647, prod's log) | after (this code, prod's items re-imported) |
+|---|---|---|
+| phy / mag def | 1,626 (+436 buff) / 3,180 | 2,621 / 4,023 |
+| accessory absorption | 12 % (ranges missing) | 119.8 % |
+| ATTACK01 (physical 100 %) | 3,173 | 1..726 (mostly the floor band) |
+| ATTACK02 (magical 233 %) | 5,156..5,726 | 1..1,257, never critical |
+| ATTACK03 (magical 333 %, `csmd` 2,934 weakness) | 11,614 critical | 1..1,796; under weakness 10,104..11,566 |
+
+The Forgotten World's monsters stay what they are on the original: party content whose curses
+strip 2,000-3,000 defence.
+
+### Tests
+
+`defence875_test.go` (the measured panels 3182/3205 and 2602/3984, the naked 93/50, a decay),
+`fight875_test.go` (absorption 119.8 %, the 152 % blow), `skillblow875_test.go` (862, 431, 1510,
+the floor band's 696, the percentage before the band), the curse bits in `statuseffect_test.go`,
+the item CSV columns in `refdata/csv_test.go`; the fight tests that hit a starting character now
+take its naked 3 (Str 20 x 19.0 %).
+
+### Deploy note
+
+`export-refdata -mode items` again and `import-refdata` the result into prod: without it the
+accessories still absorb only their plus and the armour carries no PDStr/MDInt.
+
+### OPEN
+
+- Mastery requirements (D8): enforce at equip time and in the stats as the original does? The
+  user's robe set would stop counting for a Warrior.
+- The robe's decayed blows (1,815 repeated, 2,144) imply a cut of about 1,820, not 2,000; the heavy
+  set's fit 2,000. Unexplained.
+- The shield's PDStr/MDInt (params 58/59) are not read anywhere here.
+- `cssr`, `csit`, `cshp`, `csmp` and darkness's hit-rate cut are not applied (their bits are now
+  right); disease (`ds`) is.
+- Damage DEALT was not measured this round; the player's own blow (`StrLevelDamageRatio`, the
+  window's "Phy. balance 109 %") is unwired in OpenSRO (combat/statratio.go says so) -- next.
+- Not run with a real OpenSRO client this round: the numbers above are the server's own code in
+  tests; perf gate skipped (server only).
+
 ## Eight-hundred-and-seventy-sixth round: "auto use vigors" -- a Vigor row in the Auto potion window (OURS, the user's request), drunk when HP or MP falls to its percent, saved on the client
 
 The user: "also, instead of waiting until I code in a bot can you please add "auto use vigors" to
