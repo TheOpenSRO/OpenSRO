@@ -2673,6 +2673,13 @@ func main() {
 	installGameWorlds(logger, *gameWorldDir, *npcsCSV, hub, monsters, ground, nestDB, speciesTable, speciesSkills,
 		session.GameWorldDeps{Chars: chars, Equipment: eq, Zerk: zerkTracker, Timed: timedJobs, Instances: instanceRows,
 			Parties: parties, Logger: logger})
+	// Round 869 lane W3: which hole item names each Forgotten World (the GM
+	// gate's record, session/fgw_gm.go).
+	if lister, ok := refItems.(interface {
+		ListAll(context.Context) ([]*refdata.Item, error)
+	}); ok {
+		session.SetFGWHoleRefs(fgwHoleRefs(lister.ListAll))
+	}
 	gmDeps.Punishments, _ = accounts.(account.PunishmentStore)
 	gmDeps.AccountLookup, _ = accounts.(account.AccountLookup)
 	// Round 840: the chat and trade bans (types 4 and 3) answer 0x3405.
@@ -2783,6 +2790,8 @@ func main() {
 		// round 869 (session/gameworlds_run.go).
 		session.InstanceTeleportHandler(gmGate.Allows),
 		session.InstanceExitHandler(),
+		// Round 869 lane W3: the Forgotten World's party recall (fgw_recall.go).
+		session.FGWRecallHandler(),
 		// The job guild (round 799, internal/session/jobguild.go).
 		session.JobGuildHandler(hub),
 		// The trade-info window (round 801, internal/session/specialtytrade.go).

@@ -1470,6 +1470,8 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		if ok {
 			forgetPlayerView(left.CharacterID, sess)
 		}
+		// Round 869 lane W3: the gates its client held (fgw.go).
+		forgetGateWindow(sess.ID())
 		if !ok {
 			return
 		}
@@ -1836,6 +1838,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// Round 869: a running group re-entry limit's buff-bar icon (0x320C kind
 	// 0x0C at world entry, game_worlds.md 5).
 	sendGroupCoolTimes(ctx, sess, owned.ID)
+	// Round 869 lane W3: a Dimension hole's cool time kept across the relog
+	// (fgw.go, the timed job of category 6).
+	restoreItemCoolTimes(ctx, owned.ID, time.Now())
 	metrics.WorldEntry()
 	username, _ := AuthenticatedUsername(sess)
 	slog.Info("entered world", "character", owned.Name, "character_id", owned.ID, "account", username,
@@ -2017,6 +2022,18 @@ func warpAcross(ctx context.Context, sess *gateway.Session, eq equipment.Store, 
 			holdArrival(d, now, via, nil)
 		}
 	}
+	// Round 869: the instances count who is in them (the shard manager's
+	// user count, m:0x658e30 / m:0x658f10) -- before the client hears the
+	// result (round 869 lane W3), so the entry's triggers are posted to the
+	// instance before its 0x3012 can release the arrival.
+	if from != to {
+		if w := instanceOf(from); w != nil {
+			w.Leave(old.CharacterID)
+		}
+		if w := instanceOf(to); w != nil {
+			w.Enter(old.CharacterID, old.Level)
+		}
+	}
 	data, _ := result.EncodeFitting()
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data}); err != nil {
 		return true, err
@@ -2033,16 +2050,6 @@ func warpAcross(ctx context.Context, sess *gateway.Session, eq equipment.Store, 
 	// insertion are, and its new spawn follows. Each client sent the 0x3016
 	// hears the OURS zone notice (left) ahead of it, and only those.
 	departPlayer(from, old, world.WatchersOf(remainingOld))
-	// Round 869: the instances count who is in them (the shard manager's
-	// user count, m:0x658e30 / m:0x658f10).
-	if from != to {
-		if w := instanceOf(from); w != nil {
-			w.Leave(old.CharacterID)
-		}
-		if w := instanceOf(to); w != nil {
-			w.Enter(old.CharacterID, old.Level)
-		}
-	}
 
 	// The arrival faces the way the character last moved: the hub carries
 	// the heading through the change (world.Hub.ChangeZone). A zone change

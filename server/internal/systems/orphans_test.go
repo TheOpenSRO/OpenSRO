@@ -43,15 +43,13 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
-	// Round 869: the game worlds' seams for the lanes after W1 -- W3's gate
-	// (RegisterPortal / UnregisterPortal), the doors' placements once their
-	// source is found (SetZonePlaces; OPEN), W2's registry rows (Word) -- and
-	// the tests' clock.
-	"RegisterPortal":   "internal/session/gameworlds_run.go",
-	"UnregisterPortal": "internal/session/gameworlds_run.go",
-	"SetZonePlaces":    "internal/gameworld/manager.go",
-	"Word":             "internal/registry/registry.go",
-	"NewFakeClock":     "internal/gameworld/clock.go",
+	// Round 869: the game worlds' seams for the lanes after W1 -- the
+	// doors' placements once their source is found (SetZonePlaces; OPEN),
+	// W2's registry rows (Word) -- and the tests' clock. (W3's gate now
+	// calls RegisterPortal / UnregisterPortal.)
+	"SetZonePlaces": "internal/gameworld/manager.go",
+	"Word":          "internal/registry/registry.go",
+	"NewFakeClock":  "internal/gameworld/clock.go",
 	// W2's re-route carries a character's runtime between processes.
 	"SnapshotCarried": "internal/session/carried.go",
 	"RestoreCarried":  "internal/session/carried.go",

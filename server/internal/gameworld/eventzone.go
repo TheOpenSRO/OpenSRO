@@ -20,8 +20,9 @@ const (
 // the server is OPEN -- no navigation-mesh switch was found).
 const DoorBlockRadius = 40.0
 
-// zoneUIDSeq numbers the event-zone objects' unique ids (OURS range, beside
-// the COS 0x7e000000 and NPC 0x7f000000 ones).
+// zoneUIDSeq numbers the event-zone objects' unique ids (OURS range
+// 0x7d000000..0x7d3fffff -- round 869 lane W3 gives 0x7d400000.. to the
+// Dimension-hole gates --, beside the COS 0x7e000000 and NPC 0x7f000000 ones).
 var zoneUIDSeq atomic.Uint32
 
 const zoneUIDBase uint32 = 0x7d000000
@@ -96,7 +97,7 @@ func (w *World) buildZones() {
 				continue
 			}
 			ref := w.mgr.ref.EventZones[n]
-			z := &EventZoneObj{Ref: ref, UID: zoneUIDBase + zoneUIDSeq.Add(1)&0x00ffffff, State: ZoneOff}
+			z := &EventZoneObj{Ref: ref, UID: zoneUIDBase + zoneUIDSeq.Add(1)&0x003fffff, State: ZoneOff}
 			if ref != nil {
 				z.StructureCode = ref.Str[0]
 			}

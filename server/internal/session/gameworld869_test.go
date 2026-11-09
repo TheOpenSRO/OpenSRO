@@ -85,6 +85,9 @@ type gwPlayer struct {
 	sess   *gateway.Session
 }
 
+// gwRigExtra, when set, adds handlers to the next newGWRig's chain.
+var gwRigExtra func(rig *gwRig) []gateway.Handler
+
 type gwRig struct {
 	t       *testing.T
 	chars   *character.MemStore
@@ -122,8 +125,13 @@ func newGWRig(t *testing.T, timed timedjob.Store, levels map[string]int) *gwRig 
 		SetGameWorlds(nil)
 		SetGameWorldDeps(GameWorldDeps{})
 	})
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub),
-		InstanceTeleportHandler(nil), InstanceExitHandler())
+	handlers := []gateway.Handler{LoginHandler(accounts), WorldHandler(chars, eq, hub),
+		InstanceTeleportHandler(nil), InstanceExitHandler()}
+	// Round 869 lane W3: a test's own handlers (fgw_hole_test.go).
+	if gwRigExtra != nil {
+		handlers = append(handlers, gwRigExtra(rig)...)
+	}
+	handle := gateway.Chain(handlers...)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -1,9 +1,11 @@
 package session
 
 import (
+	"sync"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
@@ -98,11 +100,84 @@ func releaseArrival(sess *gateway.Session, arrival uint64, why string) bool {
 	// broadcasts to the block as 0x30BF kind 4.
 	released.Session = sess
 	arrivePlayer(d, released)
+	// Round 869 lane W3: what waited for the arrival (an instance's entry
+	// notices, its re-entry icon -- sendAfterArrival). An instance's own
+	// goroutine runs the entry's triggers: it is caught up first, so their
+	// notices are queued before the flush.
+	if w := instanceOf(hub); w != nil {
+		w.Sync()
+	}
+	flushArrivalSends(id, sess, false)
 	if then != nil {
 		then(released)
 	}
 	startProtection(hub, id, sess, why)
+	flushArrivalSends(id, sess, true)
 	return true
+}
+
+// arrivalSends are packets for a held character that go out with its
+// arrival (round 869 lane W3). MEASURED: an instance's entry notice pair
+// (0x300C 0x0C1C, banner then system line) comes right after the client's
+// 0x3012, and the re-entry icon (0x320C) after the arrival state.
+var arrivalSends = struct {
+	sync.Mutex
+	early, late map[int64][]*proto.Packet
+}{early: map[int64][]*proto.Packet{}, late: map[int64][]*proto.Packet{}}
+
+// sendAfterArrival sends pkt to characterID's sess now, or with its arrival
+// when it is held (late: after the arrival state).
+func sendAfterArrival(characterID int64, sess *gateway.Session, pkt *proto.Packet, late bool) {
+	if sess == nil {
+		return
+	}
+	arrivalSends.Lock()
+	if arrivalHeld(characterID) {
+		m := arrivalSends.early
+		if late {
+			m = arrivalSends.late
+		}
+		m[characterID] = append(m[characterID], pkt)
+		arrivalSends.Unlock()
+		return
+	}
+	arrivalSends.Unlock()
+	_ = sess.Send(pkt)
+}
+
+// queueForArrival files pkt for characterID's next arrival whether or not
+// it is held yet (a warp about to hold it).
+func queueForArrival(characterID int64, pkt *proto.Packet, late bool) {
+	arrivalSends.Lock()
+	defer arrivalSends.Unlock()
+	m := arrivalSends.early
+	if late {
+		m = arrivalSends.late
+	}
+	m[characterID] = append(m[characterID], pkt)
+}
+
+// dropArrivalSends forgets what waited for characterID's arrival.
+func dropArrivalSends(characterID int64) {
+	arrivalSends.Lock()
+	delete(arrivalSends.early, characterID)
+	delete(arrivalSends.late, characterID)
+	arrivalSends.Unlock()
+}
+
+// flushArrivalSends sends what waited for characterID's arrival.
+func flushArrivalSends(characterID int64, sess *gateway.Session, late bool) {
+	arrivalSends.Lock()
+	m := arrivalSends.early
+	if late {
+		m = arrivalSends.late
+	}
+	pkts := m[characterID]
+	delete(m, characterID)
+	arrivalSends.Unlock()
+	for _, p := range pkts {
+		_ = sess.Send(p)
+	}
 }
 
 // startProtection is CGObjPC::vslot_391's SetBodyMode(2, 0, t, 0) (READ,
@@ -183,6 +258,7 @@ func untouchable(hub *world.Hub, characterID int64, now time.Time) bool {
 // forgetArrival drops characterID's arrival state (a disconnect): no timer
 // outlives the session.
 func forgetArrival(characterID int64) {
+	dropArrivalSends(characterID)
 	arrivals.Lock()
 	if e := arrivals.byChar[characterID]; e != nil {
 		if e.timer != nil {

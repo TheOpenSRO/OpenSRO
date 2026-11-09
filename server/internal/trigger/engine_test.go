@@ -161,16 +161,12 @@ func TestToguiScriptOnFakeLayer(t *testing.T) {
 	f := &fakeLayer{nests: nests, players: []int64{7, 8}}
 	e := NewEngine(ts, f)
 
-	// The entry notice: to the entering player only, the system line at once
-	// and the banner 20 s later (each action's own Delay).
+	// The entry notice: to the entering player only, the banner and the
+	// system line at once, banner first (MEASURED round 869: both arrive
+	// with the arrival; the banner's Delay 20,000 does not delay it).
 	e.Fire(Event{Kind: EventWorldEntrance, User: 7, UserLevel: 40})
-	f.advance(19 * time.Second)
-	if len(f.msgs) != 1 || f.msgs[0] != "2 "+pfx+"MONSTER_KILL [7] @0s" {
-		t.Fatalf("at 19 s: %q", f.msgs)
-	}
-	f.advance(time.Second)
-	if len(f.msgs) != 2 || f.msgs[1] != "1 "+pfx+"MONSTER_KILL [7] @20s" {
-		t.Fatalf("at 20 s: %q", f.msgs)
+	if len(f.msgs) != 2 || f.msgs[0] != "1 "+pfx+"MONSTER_KILL [7] @0s" || f.msgs[1] != "2 "+pfx+"MONSTER_KILL [7] @0s" {
+		t.Fatalf("at the entry: %q", f.msgs)
 	}
 	f.msgs = nil
 

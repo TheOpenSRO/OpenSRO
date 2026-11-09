@@ -204,6 +204,11 @@ func handleNPCSelect(sess *gateway.Session, data []byte, hub *world.Hub, trades 
 		sendNPCTalk(sess, npctalk.OpSelectResult, npctalk.EncodeFail(npctalk.CodeNoTarget))
 		return
 	}
+	// Round 869 lane W3 (fgw.go): a Dimension-hole gate answers its own
+	// select.
+	if gateSelect(sess, e, entity) {
+		return
+	}
 	pl, code := npcTarget(e, entity)
 	if code != 0 {
 		sendNPCTalk(sess, npctalk.OpSelectResult, npctalk.EncodeFail(code))

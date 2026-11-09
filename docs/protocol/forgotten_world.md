@@ -425,6 +425,62 @@ ticket clears the group cool time (`GROUP_INS_GOD`) and belongs to a later clien
 8. **GM aids (OURS, for QA)** -- `/fgw <world>` opens a layer and warps the GM; `/fgwtime <duration>`
    moves an instance's clock. Not in the original's console.
 
+**Stage 2 notes (round 869, lane W3; the server as built -- the client lane reads the same):**
+- **The hole's replies** ride OpenSRO's own use reply (OpUseItemResult, OURS opcode, its `Code`
+  the refusal: 0x184b, 0x1851, 0x184f, 0x1852, 0x183e, and 0x185b for a use in the cool time, which
+  the client refuses first). On success the order is the MEASURED one: the use reply, `0x305C {u32
+  user, u32 hole}` to the user and everyone in view, **`0xB034 {01, 0x0F, u8 bag slot + 13, 02}`**
+  (type 0x0F, a consumed slot -- new on OpenSRO's wire), then the gate's `0x3015`. The measured gap
+  to the `0x3015` (41 ms and 111 ms) is the shard manager's round trip (INFERRED); OpenSRO opens the
+  layer in process and sends it at once.
+- **The band** is the item's Param3 / Param4 (the item table's RestoreMP / RestoreMPPct columns:
+  Param1..Param4 are columns 118/120/122/124). MEASURED: they equal the world's ENTER_LIMIT band on
+  every row, the Wreck 100_110 holes included (101).
+- **The hole's cool time** is kept as a timed job of category 6 (MEASURED `_TimedJob` row: the
+  item's id, 18,000,000) and re-armed at every world entry.
+- **The gate** is a structure in the open world at the user's point, uids 0x7d400000.. (OURS
+  range), sent to every player whose window holds it (the NPCs' window) and taken down (`0x3016`)
+  with its layer. Its select answers the MEASURED `0xB045` and sets no interaction state; anything
+  but the owner's character through a type-6 gate is 0x1c2f (READ); a type-7 gate admits the owner's
+  party.
+- **The entry notice** comes with the arrival (MEASURED): the trigger engine runs every action at
+  once -- the `Delay` column is not a wait (its only non-zero value, the banner's 20,000, MEASURED
+  not to delay it); a notice or 0x320C for a character still held by the arrival guard goes out
+  right after its `0x3012` (the notices) and after the arrival state (the 0x320C, sent twice as
+  MEASURED). In the data, world 69 binds its system line before its banner and world 72 has two
+  banners: sent as bound.
+- **The recall** answers 0x7519 at once (MEASURED 113 ms; the READ 15 s is the original's job
+  limit), rows {u32 char, u8 state, u8 level, u16 minutes} for every member but the master: state 1
+  in the master's layer, 2 possible, 3 not (INFERRED: in an instance 0x1c35, dead 0x1c36, outside a
+  town 0x1c37, a stall or an exchange 0x1c0b, then CanEnter's codes); the minutes are the member's
+  own re-entry limit (INFERRED; MEASURED 0 for a member with none). A summon sends nothing to the
+  master and the push `{u32 master uid, u32 master char, u32 5, str name}` to the member; a refusal
+  is `0xB51A {02, code}`; a second summon within 20 s is 0x1c3a. The Yes: `0x30BF {member, 0x0B,
+  1}`, `0xB51C {01}`, and 5 s later the ordinary entry at the world's start. A No answers `{01}` and
+  tells the master nothing (OPEN).
+- **The pillars**: world 1's triggers load the pillar at the killer (the engine's LOAD_MONSTER,
+  0.001). The pillar's skill is an `'ssou'` summon with AI_AttackChance 0 and AI_SkillType `'D'`;
+  READ s:0x5614d0 files a `'D'` skill apart from the attack list (the selector's +0x34) and
+  s:0x593738 runs the minion executor on any cast of a summon skill -- INFERRED: the pillar summons
+  at its death (the reader of +0x34 is OPEN). The 35-50 pillar's block is {36048, class 1, 4..6} and
+  {36048, class 1, 1..1}: 5-7 ENVY_DROP champions around it.
+- **The holes' drop** is the ENVY_DROP's `_RefMonster_AssignedItemDrop` rows (the game-world export
+  now carries the table; served for MOB_GOD_* monsters only, OURS scope). READ s:0x724a00: a row's
+  attempts are `rand % (max - min + 1) + min`, each at the ratio, so the 0..1 rows give a grade-1
+  hole on **15 %** of the kills, grades 2 and 3 on 10 %, grade 4 on 5 % -- not the rows' 30 / 20 /
+  20 / 10.
+- **Rewards**: MEASURED `_RefMonster_AssignedItemRndDrop` gives the talisman groups
+  (`ITEM_TALISMAN_TOGUI_DROPGROUP` and the Wreck's) to the treasure boxes and the bosses (e.g.
+  `TOGUIELDER_A1` 0.15, `TREASUREBOX_A1` 0.15, `_A2` 2 x 1.0, `_C2` 2 x 1.0); they drop through the
+  ordinary drop path when the operator's drop tables are loaded. What else a box gives is OPEN.
+- **Death inside**: the return-point revive takes the character to its designated return point in
+  the open world, which counts it out of the layer (OURS; the original's place is OPEN).
+- **GM aids (OURS)**: `/fgw <world>` opens a layer and stands its gate at the GM (no item, no
+  checks; the entry is the gate's own); `/fgwtime <duration>` ages the GM's layer (or its newest
+  gate's); `/fgwtime limit <duration>` moves the GM's re-entry limit and hole cool time;
+  `/fgwkill [n]` kills the layer's live monsters as the GM's kills (the triggers hear them; no
+  exp, gold or drops); `/fgwpillar [band]` loads a pillar at the GM in the open world.
+
 ### CLIENT
 1. **Hole use** -- `UI` item use for type word 0x3E6C opens box 0x2e with
    `UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE`, sends 0x704C on OK, plays `gacha_change_2.wav` on success;

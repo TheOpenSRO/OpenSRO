@@ -216,17 +216,19 @@ func (e *Engine) targets(p Params, ev Event) []int64 {
 	return e.host.Players()
 }
 
-// runActions runs t's actions in order, each after its own Delay from the
-// trigger's firing (INFERRED: game_worlds.md 9 reads Delay as "the action
-// runs that long after the trigger fires"; READ semantics OPEN). The
-// targets are chosen when the action runs.
+// runActions runs t's actions in order, at once.
+//
+// Round 869 lane W3: the Delay column is not a wait. MEASURED: the only
+// non-zero Delay in the measured data is the Forgotten World entry notice's
+// banner action (20,000 ms), and in the running game that banner and its
+// system line (Delay 0) both arrive with the arrival itself, banner first --
+// right after the client's 0x3012, on every entry. So the engine runs every
+// action when the trigger fires, in binding order; what the column means in
+// the binary stays OPEN (game_worlds.md 9). Round 869 lane W1 had read it as
+// a per-action delay (the banner 20 s late), which the measurement refutes.
+// The targets are chosen when the action runs.
 func (e *Engine) runActions(t *Trigger, ev Event) {
 	for _, a := range t.Actions {
-		a := a
-		if a.Delay > 0 {
-			e.host.After(a.Delay, func() { e.act(a, ev) })
-			continue
-		}
 		e.act(a, ev)
 	}
 }
