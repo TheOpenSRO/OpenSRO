@@ -87,6 +87,38 @@ const OpNpcShopDef uint16 = 0x00ba
 // white stats"). docs/protocol/test_items_npc.md.
 const OpNpcShopGoods uint16 = 0x00bb
 
+// OpNpcActionDef is OpenSRO's own message too (OURS, server -> client, round
+// 872): the talk lines of an NPC of OpenSRO's own that DO something at once
+// instead of opening a store -- the Test Items NPC's "Reset Forgotten World
+// Timers". Sent right after the NPC's OpNpcShopDef and OpNpcShopGoods, before
+// the 0xB045 select reply. 0x00BD was free in server/ and client/scripts
+// (grep, 2026-11-09). Layout:
+//
+//	u32 NPC unique id
+//	u8 n
+//	  u8 action id                 what OpNpcAction names
+//	  u16 n, n bytes   the line's label (UTF-8; a text key or text)
+//	  u16 n, n bytes   the confirm box's text key ("" asks nothing)
+//
+// A message of its own, not lines on OpNpcShopDef, for the reason
+// OpNpcShopGoods is one: a client from before round 872 refuses an
+// OpNpcShopDef with more in it, and only logs an unknown opcode. Such a
+// client simply shows no action line; the store lines are untouched.
+const OpNpcActionDef uint16 = 0x00bd
+
+// OpNpcAction is the client's request (OURS, client -> server, round 872):
+// run the action with that id of the NPC talked to. 0x00BE was free (grep,
+// 2026-11-09). Layout: u32 NPC unique id, u8 action id.
+const OpNpcAction uint16 = 0x00be
+
+// ActionResetForgottenWorld is the "do" of the action that clears the
+// character's Forgotten World timers (round 872, OURS: the user's "reset
+// dimensional gate time and stuff"; session/fgwreset.go).
+const ActionResetForgottenWorld = "reset_forgotten_world"
+
+// knownActions are the "do" values a definition may name.
+var knownActions = map[string]bool{ActionResetForgottenWorld: true}
+
 // MaxTabs is the store window's tab count (READ: CIFStoreForPackage builds
 // tabs from x = 16 stepping 56 while x < 240, so four; hud_panels.gd
 // SHOP_MAX_TABS).
@@ -138,6 +170,21 @@ type Line struct {
 	Tabs  []Tab  `json:"tabs"`
 }
 
+// Action is a talk line that does something at once (round 872, OURS): it is
+// listed after the store lines and, behind its confirm box, the client sends
+// OpNpcAction with its id.
+type Action struct {
+	// ID is what OpNpcAction names: 1..255, unique in the definition.
+	ID uint8 `json:"id"`
+	// Label is the line's text (a text key or text).
+	Label string `json:"label"`
+	// Confirm is the text key of the confirm box's line; "" asks nothing.
+	Confirm string `json:"confirm"`
+	// Do is what the server runs (ActionResetForgottenWorld). Not on the
+	// wire.
+	Do string `json:"do"`
+}
+
 // Definition is the whole NPC.
 type Definition struct {
 	Name     string  `json:"name"`
@@ -153,6 +200,9 @@ type Definition struct {
 	// everywhere else.
 	Free  bool   `json:"free"`
 	Lines []Line `json:"lines"`
+	// Actions are the talk lines after the store lines that run something
+	// on the server (round 872, OURS).
+	Actions []Action `json:"actions"`
 }
 
 // Builtin is the embedded definition (test_items.json).
@@ -169,6 +219,16 @@ func Parse(b []byte) (*Definition, error) {
 	}
 	if len(d.Lines) == 0 || len(d.Lines) > 255 {
 		return nil, fmt.Errorf("testnpc: %d lines", len(d.Lines))
+	}
+	if len(d.Lines)+len(d.Actions) > 255 {
+		return nil, fmt.Errorf("testnpc: %d lines and %d actions", len(d.Lines), len(d.Actions))
+	}
+	seen := map[uint8]bool{}
+	for i, a := range d.Actions {
+		if a.ID == 0 || seen[a.ID] || a.Label == "" || !knownActions[a.Do] {
+			return nil, fmt.Errorf("testnpc: action %d (id %d, do %q) needs a unique id 1..255, a label and a known do", i, a.ID, a.Do)
+		}
+		seen[a.ID] = true
 	}
 	for i, l := range d.Lines {
 		if len(l.Tabs) == 0 || len(l.Tabs) > MaxTabs {
@@ -268,6 +328,21 @@ type Shop struct {
 	Greeting string
 	Free     bool // not on the wire: the server prices the goods (OpShopList)
 	Lines    []ResolvedLine
+	// Actions are the definition's action lines (round 872; OpNpcActionDef,
+	// not OpNpcShopDef).
+	Actions []Action
+}
+
+// Action is the shop's action with that id, if any.
+func (s *Shop) Action(id uint8) (Action, bool) {
+	if s != nil {
+		for _, a := range s.Actions {
+			if a.ID == id {
+				return a, true
+			}
+		}
+	}
+	return Action{}, false
 }
 
 // Goods is every item id the shop sells (each once).
@@ -303,7 +378,7 @@ func (d *Definition) Resolve(items []*refdata.Item) *Shop {
 		}
 		return a.ID < b.ID
 	})
-	shop := &Shop{Name: d.Name, Greeting: d.Greeting, Free: d.Free}
+	shop := &Shop{Name: d.Name, Greeting: d.Greeting, Free: d.Free, Actions: append([]Action(nil), d.Actions...)}
 	for _, l := range d.Lines {
 		rl := ResolvedLine{Label: l.Label}
 		// A set rule's sets, where the line's tabs have got to in them, and
@@ -480,6 +555,54 @@ func appendStr(out []byte, s string) []byte {
 	}
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(s)))
 	return append(out, s...)
+}
+
+// EncodeActions is OpNpcActionDef's payload for the NPC with unique id uid
+// (round 872); nil when the shop has no action.
+func (s *Shop) EncodeActions(uid uint32) []byte {
+	if s == nil || len(s.Actions) == 0 {
+		return nil
+	}
+	out := binary.LittleEndian.AppendUint32(nil, uid)
+	out = append(out, byte(len(s.Actions)))
+	for _, a := range s.Actions {
+		out = append(out, a.ID)
+		out = appendStr(out, a.Label)
+		out = appendStr(out, a.Confirm)
+	}
+	return out
+}
+
+// DecodeActions reads an OpNpcActionDef payload (tests, and the client's
+// mirror). The actions carry no Do: the wire names only the id.
+func DecodeActions(b []byte) (uint32, []Action, error) {
+	r := &rd{b: b}
+	uid := r.u32()
+	n := int(r.u8())
+	var out []Action
+	for i := 0; i < n && r.err == nil; i++ {
+		a := Action{ID: r.u8()}
+		a.Label = r.str()
+		a.Confirm = r.str()
+		out = append(out, a)
+	}
+	if r.err == nil && len(r.b) != 0 {
+		r.err = fmt.Errorf("testnpc: %d trailing bytes", len(r.b))
+	}
+	return uid, out, r.err
+}
+
+// EncodeAction is OpNpcAction's payload (tests; the client sends it).
+func EncodeAction(uid uint32, id uint8) []byte {
+	return append(binary.LittleEndian.AppendUint32(nil, uid), id)
+}
+
+// DecodeAction reads OpNpcAction: the NPC's unique id and the action's id.
+func DecodeAction(b []byte) (uint32, uint8, error) {
+	if len(b) != 5 {
+		return 0, 0, fmt.Errorf("testnpc: OpNpcAction of %d bytes", len(b))
+	}
+	return binary.LittleEndian.Uint32(b), b[4], nil
 }
 
 // Decode reads an OpNpcShopDef payload (tests, and the client's mirror).

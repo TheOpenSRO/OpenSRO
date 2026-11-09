@@ -1,5 +1,5 @@
 {
-  "_comment": "OURS (round 783): the Test Items NPC. Every value here is OpenSRO's own choice: the NPC is not in the retail archives. Goods are RULES over the player's own item table (CodeName128 prefix/suffix or pattern, TypeID, ItemClass), resolved by the server at boot against the reference data it loaded; no item row is listed here. Tab labels that start SN_/UIIT_ are the client's own text keys (the retail vendors' tab names, refshoptab.txt column 5); other text is ours. Every good is free at this NPC (free: the user's choice); the same items keep their own price at any other store. The Seal of Nova rules take the UNLOCKED rows, _A_RARE_ACTIVE (round 786: required level 101, SN_ITEM_UNLOCKED_TT_DESC), not the locked _A_RARE ones (level 111); the anchored $ leaves the _A_RARE_SWITCHnn_ACTIVE variants out. docs/protocol/test_items_npc.md.",
+  "_comment": "OURS (round 783): the Test Items NPC. Every value here is OpenSRO's own choice: the NPC is not in the retail archives. Goods are RULES over the player's own item table (CodeName128 prefix/suffix or pattern, TypeID, ItemClass), resolved by the server at boot against the reference data it loaded; no item row is listed here. Tab labels that start SN_/UIIT_ are the client's own text keys (the retail vendors' tab names, refshoptab.txt column 5); other text is ours. Every good is free at this NPC (free: the user's choice); the same items keep their own price at any other store. The Seal of Nova rules take the UNLOCKED rows, _A_RARE_ACTIVE (round 786: required level 101, SN_ITEM_UNLOCKED_TT_DESC), not the locked _A_RARE ones (level 111); the anchored $ leaves the _A_RARE_SWITCHnn_ACTIVE variants out. Round 872: the actions are talk lines after the store lines that run something on the server at once, behind a confirm box (the Forgotten World timer reset); the Ticket tab lists the Forgotten World entrance ticket where the player's item table has its row. docs/protocol/test_items_npc.md.",
   "name": "Test Items",
   "model": "NPC_SD_T_AREA_POTION",
   "greeting": "Every 11th degree alchemy item, every Seal of Nova item, avatars, pets, rides, job suits and Dimension Holes, for testing.",
@@ -180,8 +180,12 @@
       "tabs": [
         {"label": "Togui", "rules": [{"prefix": "ITEM_ETC_TELEPORT_HOLE_TOGUI_", "type": "3/3/12/7"}]},
         {"label": "Flame", "rules": [{"prefix": "ITEM_ETC_TELEPORT_HOLE_FLAME_", "type": "3/3/12/7"}]},
-        {"label": "Wreck", "rules": [{"prefix": "ITEM_ETC_TELEPORT_HOLE_WRECK_", "type": "3/3/12/7"}]}
+        {"label": "Wreck", "rules": [{"prefix": "ITEM_ETC_TELEPORT_HOLE_WRECK_", "type": "3/3/12/7"}]},
+        {"label": "Ticket", "rules": [{"code": "^ITEM_(PRE_)?MALL_DUNGEON_FREE_TICKET_FORGOTTEN_WORLD$", "type": "3/3/13/23"}]}
       ]
     }
+  ],
+  "actions": [
+    {"id": 1, "label": "Reset Forgotten World Timers", "confirm": "UIIT_STT_DUNGEON_FREE_TICKET_ENTER_FORGOTTEN", "do": "reset_forgotten_world"}
   ]
 }

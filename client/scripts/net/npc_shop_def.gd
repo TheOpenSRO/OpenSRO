@@ -39,6 +39,26 @@ const OP_SHOP_DEF := 0x00ba
 ## the variance the bought piece has (OURS: the user's "100% white stats").
 const OP_SHOP_GOODS := 0x00bb
 
+## OpNpcActionDef 0x00BD (round 872, OURS; server/internal/testnpc): the
+## NPC's talk lines that run something on the server at once (the Test Items
+## NPC's "Reset Forgotten World Timers"), sent after OP_SHOP_DEF and
+## OP_SHOP_GOODS, before the select reply:
+##
+##   u32 NPC unique id
+##   u8 n
+##     u8 action id
+##     u16 n, n bytes   the line's label (a text key or text)
+##     u16 n, n bytes   the confirm box's text key ("" asks nothing)
+##
+## A message of its own: a client from before round 872 refuses an
+## OP_SHOP_DEF with more in it and only logs an unknown opcode, so it keeps
+## its store lines and shows no action line.
+const OP_ACTION_DEF := 0x00bd
+## OpNpcAction 0x00BE (OURS, client -> server): {u32 NPC unique id, u8 action id}.
+const OP_ACTION := 0x00be
+## The talk-window key of an action line: this prefix and the action's id.
+const ACTION_KEY_PREFIX := "npcaction:"
+
 ## The prefix of a store line's tab group for such an NPC: "custom:<line>"
 ## (NpcServiceReader's "shop:" key then carries it, as a retail line carries
 ## its tab group's code).
@@ -146,3 +166,64 @@ static func tabs(def: Dictionary, index: int, code_of: Callable) -> Array:
 				t.instances.append(listed.get(int(id)))
 		out.append(t)
 	return out
+
+## Decodes OP_ACTION_DEF: {} when short or malformed, else {"uid": int,
+## "actions": [{"id": int, "label": String, "confirm": String}]}.
+static func decode_actions(data: PackedByteArray) -> Dictionary:
+	if data.size() < 5:
+		return {}
+	var actions: Array = []
+	var n := int(data[4])
+	var at := 5
+	for _i in range(n):
+		if at + 1 > data.size():
+			return {}
+		var id := int(data[at])
+		at += 1
+		var texts: Array = []
+		for _j in range(2):
+			if at + 2 > data.size():
+				return {}
+			var ln := data.decode_u16(at)
+			at += 2
+			if at + ln > data.size():
+				return {}
+			texts.append(data.slice(at, at + ln).get_string_from_utf8())
+			at += ln
+		actions.append({"id": id, "label": String(texts[0]), "confirm": String(texts[1])})
+	if at != data.size():
+		return {}
+	return {"uid": data.decode_u32(0), "actions": actions}
+
+## Adds a decoded OP_ACTION_DEF to its definition (replacing any before).
+static func merge_actions(def: Dictionary, acts: Dictionary) -> void:
+	def["actions"] = acts.get("actions", [])
+
+## OP_ACTION's payload.
+static func encode_action(uid: int, id: int) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(5)
+	b.encode_u32(0, uid)
+	b[4] = id & 0xff
+	return b
+
+## The talk window's action lines of a definition: [{"key", "label"}], keyed
+## ACTION_KEY_PREFIX + id, in the definition's order (after the store lines).
+static func action_lines(def: Dictionary) -> Array:
+	var out: Array = []
+	for a in def.get("actions", []):
+		out.append({"key": "%s%d" % [ACTION_KEY_PREFIX, int(a["id"])], "label": String(a["label"])})
+	return out
+
+## The action an action line's key names ({} for another key or an id the
+## definition lacks).
+static func action_of(def: Dictionary, key: String) -> Dictionary:
+	if not key.begins_with(ACTION_KEY_PREFIX):
+		return {}
+	var rest := key.substr(ACTION_KEY_PREFIX.length())
+	if not rest.is_valid_int():
+		return {}
+	for a in def.get("actions", []):
+		if int(a["id"]) == int(rest):
+			return a
+	return {}

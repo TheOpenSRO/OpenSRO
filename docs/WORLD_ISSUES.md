@@ -7483,6 +7483,100 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-second round: the Forgotten World timer reset -- a Test Items NPC line and the entrance ticket clear the hole cool time, the re-entry limit and the instance row at once; a login trusts the kept rows
+
+The user (2026-11-09): "add an item to the test item npc to reset dimensional gate time and stuff. There
+might already be something in the files for it". Lane TK, base `29661359`. Labels: READ (`c:`
+sro_client.exe, `s:` the game server), MEASURED, INFERRED, OURS, OPEN.
+
+### What the files have (MEASURED, READ)
+
+- The game's own free entrance ticket, `ITEM_MALL_DUNGEON_FREE_TICKET_FORGOTTEN_WORLD` (36781) and
+  `ITEM_PRE_MALL_DUNGEON_FREE_TICKET_FORGOTTEN_WORLD` (38295): TypeID 3/3/13/23, stack 50, CanUse 255,
+  Param1 1 / Desc1 `GROUP_INS_GOD`, no COOLTIME, Service 0 (MEASURED, the rows; 3/3/13/22 are the Egypt
+  tickets). Its confirm text `UIIT_STT_DUNGEON_FREE_TICKET_ENTER_FORGOTTEN` ("If you use the Dungeon
+  entrance ticket, dungeon cooltime will  disappear. Do you want to use the entrance ticket?") and
+  `UIIT_MSG_DUNGEON_FREE_TICKET_ENTERD_NOT_USED` are in this project's archive (textuisystem); **its item
+  row is not** (MEASURED: `itemdata` has no `FREE_TICKET` row; textdata_object has its name only). Round
+  868: neither binary references it (`forgotten_world.md` 9).
+- **The original has no message that clears a running cool time or the re-entry icon (READ).** 0x320C
+  (c:0x88dad0) kind 0x0C acts only on a remaining > 0 (-> c:0x778f90, the kind-0xE board entry); 0x3077
+  (c:0x88e090: {u8 n, n x (u32 item, u32 ms)}, then the skills') sets a timer through std::map inserts --
+  c:0x9b95d0 for a COOLTIME group (via c:0x77b660 -> 0x9ba460), c:0x9b99d0 for an id (c:0x9ba620) --
+  which keep an entry already there, so it can neither shorten nor clear one; an entry goes only when the
+  per-frame tick (c:0x9b9f60) finds it spent.
+
+### Built (all OURS)
+
+- **Line 19 of the Test Items NPC, "Reset Forgotten World Timers"**, after the 18 store lines. Its click
+  opens a confirm box with the ticket's text (box 0x2e's shell, the text split after its first sentence
+  onto two lines); Yes clears, for the character: the Dimension holes' shared cool time (the category-6
+  timed job keyed by group 0x71 **and** the server's process-wide timer of 0x71), the re-entry limit (the
+  category-12 job of every world group an `INS_GOD_*` world is bound to: `GROUP_INS_GOD`) and the stored
+  `char_instance_world` rows of the `INS_GOD_*` worlds -- nothing else (another item's or skill's timer, a
+  per-item timer, another group's limit, another world's row and every other timed job stay). Answers:
+  status 1 with "Your Forgotten World timers have been reset: a Dimension Hole can be used and a new layer
+  opened at once.", status 2 "You have no Forgotten World timers to reset." when nothing ran and no row
+  was kept, status 3 for an id the NPC lacks or an NPC out of reach (300).
+- **Wire:** `0x00BD` OpNpcActionDef (the action lines, after OpNpcShopGoods and before 0xB045 -- a
+  message of its own, so a pre-872 client keeps its store lines and shows no line 19), `0x00BE`
+  OpNpcAction {u32 npc, u8 id}, `0x00BF` OpTimersReset {u8 status, str line, u8 n x u32 cool groups, u8 n
+  x u32 world groups}. The client drops `g113` from ItemCooldowns (the hotbar's sweep and time, the
+  tooltip's re-use time, the hole's own re-use check) and the group-1 icon from the buff board at once.
+  `test_items_npc.md`, round 872.
+- **The ticket:** a fourth tab "Ticket" on line 18 lists 3/3/13/23 rows named
+  `^ITEM_(PRE_)?MALL_DUNGEON_FREE_TICKET_FORGOTTEN_WORLD$` -- empty on this archive (boot log
+  `18/4:Ticket=0`). Where an item table has the row, its bag use asks the same box and its use does the
+  same reset, spending one; with nothing to reset it is kept and refused with
+  `UIIT_MSG_DUNGEON_FREE_TICKET_ENTERD_NOT_USED` (INFERRED from the Korean: "the entry limit is lifted, so
+  the ticket is not used").
+- **A login re-arms the holes' cool time from the kept rows alone** (`restoreItemCoolTimes` clears group
+  0x71 in the tracker first). MEASURED on prod: a character's category-6 and -12 rows deleted while it
+  was logged out, and its next hole was still refused "Still have time to reuse the item." -- the tracker
+  is process-wide and outlived the logout.
+
+### Tests
+
+- `session/fgwreset_test.go` over a real socket: **TestFGWResetClearsExactly** (a hole used, its layer
+  entered and left, a second hole refused 0x185b; the NPC's reset leaves exactly the premium job, the
+  group-2 limit, world 999's row, group 0xA7's timer and a key-0 per-item timer; at once the kept hole
+  opens a **new** layer whose gate lets the character in, a new row with EnterCount 1);
+  **TestFGWResetNothingAndRefusals**; **TestFGWResetHoldsAcrossRelog** (reset, a real relog, a hole is
+  allowed; the rows deleted by hand with the tracker running, relog, a hole is allowed -- this case FAILS
+  without the login change; a kept row still refuses after a relog); **TestFGWTicket** (refused and kept
+  with nothing to reset; spent, accepted and followed by OpTimersReset after a hole);
+  **TestFGWResetLineAtSelect** (0x00BA, 0x00BD, then 0xB045); **TestTimersResetBytes**.
+  `testnpc/action_test.go`: the builtin's action, the Ticket tab with and without the rows, the bytes,
+  the refusals of a bad definition.
+- Client `net/fgw_reset_test.gd`: the same bytes decoded, the line after the store lines, the request,
+  `ItemCooldowns.clear_group` (0x71 only), `HudBuffBoard.remove_world_group` (group 1 only), the box.
+
+### QA (real clicks, lane server on 17761 with prod's `-full-map` and `-test-items-npc`)
+
+Run t4 (`/var/tmp/r872t/runs/t4*` on the box; frames in `t4/snaps`), one client, level 40: the NPC's line
+18, two Togui 35-50 grade-1 holes bought; the first used (box 0x2e, Yes): `hole_reuse_ms` 17,998,550;
+its gate clicked, line 1: inside world 63 layer 1, the 0x320C twice (18,000 s), the icon up; the exit NPC,
+back in Jangan with the icon (left 17,981 s); the second hole: box, Yes -> "Still have time to reuse the
+item.", nothing sent (frame `refused_by_cooltime`). Then the NPC again, line 19 "Reset Forgotten World
+Timers" (frame `talk2`), the box (frame `reset_box`), Yes: server `forgotten world timers reset ...
+cool_rows=1 cool_running=true limit_rows=1 limit_running=true instance_rows=1`; client `TIMERS RESET status
+1: cool [113] cleared ["g113"], world [1] icons removed [1]`; the report: `group_icons []`,
+`hole_reuse_ms 0`, `item_timers 0` (frame `after_reset`: the icon beside the level is gone, the system
+line shown). At once the second hole: accepted, the server opened **world 63 layer 2** (gate 0x7d400002;
+the first gate, layer 1, still standing); its gate clicked, line 1: inside, a fresh 18,000 s limit. Run t2
+(no hole used): the line answered "You have no Forgotten World timers to reset.".
+
+No world drawing changed (UI, net and server only): the perf gate is skipped. `go test ./...` passes (`internal/session` 329-345 s; two
+reruns while the host's load average was ~50 ran into go's 10-minute default timeout, and pass with
+`-timeout 40m`);
+`remote_godot.sh check` ALL LOAD (1,175 scripts, 9 scenes); `tests` ran 450 suites, 4 failing under a
+box load average of 28-32 (`buff_persist`, `crowd_ghost`, `crowd_main_thread`, `seated_spawn`: frame-count
+waits, none touched here), each ALL PASS when run alone.
+
+OPEN: what the original's ticket does when used (unreferenced by both binaries); a ticket's use in a game
+whose item table has the row was not run with a real client (this archive has none) -- only the server
+test.
+
 ## Eight-hundred-and-seventy-first round: the Forgotten World on prod -- a Wreck entry put back in Jangan by the void line (the layer named in the one frame), /unstuck to the sea floor, the gate drawn as the original's crystal fifty units ahead
 
 The user on prod (v0.1.642): "it's supposed to drop a crystal teleporter. Next I teleported to the

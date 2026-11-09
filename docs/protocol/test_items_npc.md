@@ -232,3 +232,51 @@ each rule the prefix and TypeID 3/3/12/7 (`docs/protocol/forgotten_world.md` 3).
 `ITEM_ETC_TELEPORT_HOLE`, `_ARABIAN_GARDEN` and `_DUNGEON` rows are not Forgotten World holes and stay out.
 Free, as every good here; the hole keeps its own rules when used (a town, its level band, the shared
 5-hour cool time).
+
+**Round 872: the Forgotten World timer reset (OURS).** The user (2026-11-09): "add an item to the test
+item npc to reset dimensional gate time and stuff. There might already be something in the files for
+it". What is in the files is the game's own free entrance ticket (`forgotten_world.md` 9), switched off in
+the data, referenced by neither binary, and with **no item row in this project's client archive**
+(MEASURED: only its text strings), so a client on that archive cannot show it as an item. So two things:
+
+- **Line 19, "Reset Forgotten World Timers"**, an *action line*: after the 18 store lines, it opens a
+  confirm box with the ticket's own text (`UIIT_STT_DUNGEON_FREE_TICKET_ENTER_FORGOTTEN`, "If you use the
+  Dungeon entrance ticket, dungeon cooltime will  disappear. Do you want to use the entrance ticket?") and
+  its Yes clears the character's Forgotten World timers at once, free: the Dimension holes' shared cool
+  time (the category-6 timed job of group 0x71 and the server's in-memory timer), the re-entry limit (the
+  category-12 timed job of `GROUP_INS_GOD`, the `0x320C` icon's) and the stored instance rows
+  (`char_instance_world`) of the 22 `INS_GOD_*` worlds -- nothing else. The client drops the hotbar's
+  hole cool time and the re-entry icon at once, with no relog, and prints the server's system line
+  (`session/fgwreset.go`).
+- **The ticket itself**, the Dimension Holes line's fourth tab **"Ticket"**
+  (`^ITEM_(PRE_)?MALL_DUNGEON_FREE_TICKET_FORGOTTEN_WORLD$`, 3/3/13/23): an item table with the rows lists
+  them there (36781 and 38295 in the measured data); this project's archive lists nothing and the tab is
+  empty. Used from the bag it asks the same box and does the same reset; with nothing to reset it is kept
+  and refused with the client's `UIIT_MSG_DUNGEON_FREE_TICKET_ENTERD_NOT_USED`.
+
+**How the action line reaches the client: OpNpcActionDef 0x00BD (OURS).** The store lines are the
+definition's `lines` (OpNpcShopDef); an action is the definition's `actions`
+(`{"id", "label", "confirm", "do"}`), sent as a message of its own right after OpNpcShopGoods, before
+the `0xB045` reply:
+
+```
+S->C 0x00BD: u32 NPC unique id, u8 n, n x (u8 action id, u16+UTF-8 label, u16+UTF-8 confirm text key)
+C->S 0x00BE OpNpcAction: u32 NPC unique id, u8 action id
+S->C 0x00BF OpTimersReset: u8 status (1 done, 2 nothing to reset, 3 refused), u16+UTF-8 system line,
+     u8 n + n x u32 item cool time groups cleared, u8 n + n x u32 world groups whose icon goes
+```
+
+A message of its own for the reason OpNpcShopGoods is one: a client from before round 872 refuses an
+OpNpcShopDef with more bytes and drops an unknown opcode, so it keeps its 18 store lines and shows no
+19th; the store lines' keys (`shop:custom:<i>`) and their 0x7046 opens are unchanged. The new client lists
+the actions after the store lines (`npcaction:<id>`); the line's click opens the box, its Yes sends
+0x00BE. The server answers only an NPC whose definition names the id, within the talk reach (300):
+otherwise status 3 ("This NPC does not offer that." / "You are too far away from the NPC."). With nothing
+running and no instance row it answers status 2, "You have no Forgotten World timers to reset.".
+0x00BD..0x00BF were free in `server/` and `client/scripts` (grep, 2026-11-09).
+
+Why a message of OpenSRO's own clears the client (READ, sro_client.exe): the original has none. Its
+0x320C kind 0x0C does nothing for a remaining time <= 0 (c:0x88dad0), and its 0x3077 restore
+(c:0x88e090: {u8 n, n x (u32 item, u32 ms)}, then the skills') sets a cool time through std::map inserts
+(c:0x9b95d0 by group, c:0x9b99d0 by id), which keep an entry already there -- it cannot shorten or clear
+one; an entry goes only when the per-frame tick (c:0x9b9f60) finds it spent.
