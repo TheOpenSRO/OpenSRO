@@ -7612,8 +7612,8 @@ gate skipped.
 
 ### Prod: who is affected (read-only count)
 
-19 non-bot characters wear gear; **2 wear items they do not qualify for**: peesucker900 (level
-110, every mastery 0, a heavy 11th-degree set: the six body pieces need Warrior 101) and tybug360
+19 non-bot characters wear gear; **2 wear items they do not qualify for**: one character (level
+110, every mastery 0, a heavy 11th-degree set: the six body pieces need Warrior 101) and another
 (level 140, Warrior 7, a heavy 11th-degree set needing Warrior 111). 12 items in all, every one a
 mastery requirement. **Pain is not affected**: he now holds Cleric 110 (and Warrior 110), so his
 robes qualify. Of the 16,888 load-test bots (`swarm*`), 8,593 wear 51,559 unqualified items
