@@ -42,25 +42,28 @@ var hud: HudPanels
 var state: AcademyState
 var _invite_box: AcademyMsgBox = null
 var _judge_wired := false
+## Round 866 (lane AX): the connections to NetClient.academy (it outlives
+## the world); World3D cuts them as it leaves the tree (detach).
+var _links := SignalLinks.new()
 
 func _init(w: Node, h: HudPanels) -> void:
 	world = w
 	hud = h
 	state = NetClient.academy
-	state.line.connect(_on_line)
-	state.banner.connect(_on_banner)
-	state.refused.connect(refusal)
-	state.window_wanted.connect(func() -> void: hud.open("academy"))
-	state.store_cleared.connect(func() -> void: hud.close_academy_windows())
-	state.invitation.connect(_on_invitation)
-	state.invitation_closed.connect(_close_invitation)
-	state.honor_rows.connect(func(rows: Array) -> void: hud.open_academy_honor(rows))
-	state.join_asked.connect(_on_join_asked)
-	state.match_reply.connect(_on_match_reply)
-	state.result.connect(func(op: int, ok: bool, code: int) -> void:
+	_links.link(state.line, _on_line)
+	_links.link(state.banner, _on_banner)
+	_links.link(state.refused, refusal)
+	_links.link(state.window_wanted, func() -> void: hud.open("academy"))
+	_links.link(state.store_cleared, func() -> void: hud.close_academy_windows())
+	_links.link(state.invitation, _on_invitation)
+	_links.link(state.invitation_closed, _close_invitation)
+	_links.link(state.honor_rows, func(rows: Array) -> void: hud.open_academy_honor(rows))
+	_links.link(state.join_asked, _on_join_asked)
+	_links.link(state.match_reply, _on_match_reply)
+	_links.link(state.result, func(op: int, ok: bool, code: int) -> void:
 		print("ACADEMY result 0x%04X ok=%s code=0x%x" % [op, ok, code]))
 	# The character window's Honor Point follows the store.
-	state.changed.connect(hud.apply_academy_honor)
+	_links.link(state.changed, hud.apply_academy_honor)
 	hud.academy_pane_built.connect(_wire_pane)
 	if hud.academy_pane != null:
 		_wire_pane(hud.academy_pane)
@@ -68,6 +71,14 @@ func _init(w: Node, h: HudPanels) -> void:
 		NetClient.academy_send(AcademyNet.OP_NOTICE, AcademyNet.encode_notice(t, b)))
 	hud.academy_local_refused.connect(refusal)
 	hud.academy_line.connect(func(type: int, t: String) -> void: world.call("_log_system", t, type))
+
+## Round 866 (lane AX): the world is leaving the tree. Cuts every connection
+## to the store, so this flow is freed and nothing it holds (the HUD, the
+## world, the buff board -- freed with the world) is called again.
+func detach() -> void:
+	_links.cut()
+	_invite_box = null
+	board = null
 
 func _wire_pane(pane: AcademyWindow) -> void:
 	pane.dismiss_pressed.connect(ask_disband)
@@ -310,8 +321,8 @@ func attach_board(b: HudBuffBoard) -> void:
 	if board == null:
 		return
 	board.academy_buff_clicked.connect(_on_buff_clicked)
-	state.buff_message.connect(on_buff_message)
-	state.store_cleared.connect(func() -> void:
+	_links.link(state.buff_message, on_buff_message)
+	_links.link(state.store_cleared, func() -> void:
 		for t in board.academy_buff_tokens():
 			if int(t) >= BUFF_TOKEN_RESERVE:
 				board.remove_academy_buff(int(t))

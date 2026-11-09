@@ -219,7 +219,7 @@ func next_key_ms(skeleton: Object, anim: Object, clip_ms: float, loops: bool) ->
 		_sets[anim] = per
 	var sound_set = per.get(owner.parsed, false)
 	if typeof(sound_set) == TYPE_BOOL:
-		var tag = anim.get_meta(BsrReader.CLIP_META, null)
+		var tag = (anim.get_meta(BsrReader.CLIP_META) if anim.has_meta(BsrReader.CLIP_META) else null)
 		sound_set = owner.parsed.sound_set_for(int(tag[0]), String(tag[1])) if tag != null else null
 		per[owner.parsed] = sound_set
 	if sound_set == null or (sound_set as BsrReader.SoundSet).tracks.is_empty():
@@ -266,7 +266,7 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 	if skeleton == null or anim == null:
 		return
 	# Round 794: the body's clip, for its worn items' own clips (WornItemFx).
-	if skeleton is Node and (skeleton as Node).get_meta(WornItemFx.BODY_CLIP_META, null) != anim:
+	if skeleton is Node and ((skeleton as Node).get_meta(WornItemFx.BODY_CLIP_META) if (skeleton as Node).has_meta(WornItemFx.BODY_CLIP_META) else null) != anim:
 		(skeleton as Node).set_meta(WornItemFx.BODY_CLIP_META, anim)
 	var id := skeleton.get_instance_id()
 	var pair = _owners.get(id)
@@ -284,7 +284,7 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 	else:
 		prev = -1.0
 	_state[id] = [anim, start, clip_ms]
-	var tag = anim.get_meta(BsrReader.CLIP_META, null)
+	var tag = (anim.get_meta(BsrReader.CLIP_META) if anim.has_meta(BsrReader.CLIP_META) else null)
 	if not same and trace:
 		print("AUDIO clip %s %s %s %d ms%s" % [owner.label, "loop" if loops else "once",
 			"untagged" if tag == null else "%d:%s" % [int(tag[0]), String(tag[1])], int(anim.get("duration_ms")),

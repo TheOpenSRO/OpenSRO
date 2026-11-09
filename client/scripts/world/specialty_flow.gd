@@ -34,6 +34,10 @@ var store_npc := 0
 var store_code := ""
 var trade_info_box: TradeInfoBox
 
+## Round 866 (lane AX): the connections to NetClient (an autoload, it
+## outlives the world); World3D cuts them as it leaves the tree (detach).
+var _links := SignalLinks.new()
+
 func _init(w: Node, h: HudPanels, c: HudCos) -> void:
 	world = w
 	hud = h
@@ -42,11 +46,16 @@ func _init(w: Node, h: HudPanels, c: HudCos) -> void:
 	# Round 841: the store's companion -- the transport's window, not the bag --
 	# while the 0xc lock holds (store_opened .. store_closed; c:0x79dbd0).
 	h.specialty_lock = func() -> bool: return store_npc != 0
-	NetClient.trade_result.connect(_on_result)
-	NetClient.trade_scale_changed.connect(func(_s: int) -> void: _refresh_cos())
-	NetClient.trade_prices.connect(func(_p: Dictionary) -> void: _refresh_cos())
-	NetClient.trade_leash.connect(_on_leash)
-	NetClient.trade_info.connect(_on_info)
+	_links.link(NetClient.trade_result, _on_result)
+	_links.link(NetClient.trade_scale_changed, func(_s: int) -> void: _refresh_cos())
+	_links.link(NetClient.trade_prices, func(_p: Dictionary) -> void: _refresh_cos())
+	_links.link(NetClient.trade_leash, _on_leash)
+	_links.link(NetClient.trade_info, _on_info)
+
+## Round 866 (lane AX): the world is leaving the tree; nothing here is
+## called again (SignalLinks).
+func detach() -> void:
+	_links.cut()
 
 func _text(key: String, fallback: String) -> String:
 	return String(world.call("_resolve_any_text", key, fallback))

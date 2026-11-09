@@ -8042,6 +8042,16 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	# Round 866 (lane AX, the guardian's crash): the flows this world made cut
+	# their connections to NetClient's stores, which outlive it; a flow left
+	# connected was kept alive by its own lambdas and, after a re-entry, called
+	# this world's freed HUD (SignalLinks).
+	for flow in [_academy_flow, _union_world, _specialty_flow]:
+		if flow != null:
+			flow.detach()
+	_academy_flow = null
+	_union_world = null
+	_specialty_flow = null
 	# Round 786: the display pass goes with the world.
 	if RenderingServer.frame_pre_draw.is_connected(_submit_efp_pass):
 		RenderingServer.frame_pre_draw.disconnect(_submit_efp_pass)
@@ -13431,7 +13441,7 @@ func _step_body_fidgets(delta: float) -> void:
 		if not is_instance_valid(entry[0]):
 			continue
 		var skel: Skeleton3D = entry[0]
-		var src = skel.get_meta(FIDGET_META, null)
+		var src = (skel.get_meta(FIDGET_META) if skel.has_meta(FIDGET_META) else null)
 		if src == null:
 			continue
 		var id := skel.get_instance_id()
@@ -19239,7 +19249,7 @@ func _qa_input_step() -> void:
 		"click", "rclick":
 			var xy := arg.split(",")
 			_qa_push_click(Vector2(float(xy[0]), float(xy[1])),
-				MOUSE_BUTTON_RIGHT if kind == "rclick" else MOUSE_BUTTON_LEFT)
+				MOUSE_BUTTON_RIGHT if kind == "rclick" else MOUSE_BUTTON_LEFT, false)
 			var hov := get_viewport().gui_get_hovered_control()
 			_qa_input_report = "%s (hovered %s)" % [action, hov.get_path() if hov != null else "nothing"]
 		"node":
@@ -19971,7 +19981,12 @@ func _qa_pmi_order_report() -> String:
 		strip.get_index(), strip.get_parent().name if strip.get_parent() != null else "-",
 		", ".join(under), ", ".join(over)]
 
-func _qa_push_click(at: Vector2, button: MouseButton, local: bool = false) -> void:
+## Round 866 (lane AX): `local` defaults to true -- every caller but the raw
+## click:x,y passes a control's global rect or an unprojected point, both in
+## the UI's own units, and at a UI scale other than 1 a window-pixel push
+## landed elsewhere (MEASURED: npcclick at (494, 311) clicked (330, 208) at
+## 150 %).
+func _qa_push_click(at: Vector2, button: MouseButton, local: bool = true) -> void:
 	_qa_push_mouse(at, button, true, local)
 	_qa_push_mouse(at, button, false, local)
 
@@ -31295,7 +31310,7 @@ func _pose_ride(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, t: float,
 		r.src = anim
 		var c = r._clips.get(anim.get_instance_id(), false)
 		if typeof(c) == TYPE_BOOL:
-			var tag = anim.get_meta(BsrReader.CLIP_META, null)
+			var tag = (anim.get_meta(BsrReader.CLIP_META) if anim.has_meta(BsrReader.CLIP_META) else null)
 			c = _assembled_clip(r.assembled, int(tag[0]), MonsterRide.GROUP) if tag != null else null
 			if c != null and _frame_count(c) <= 1:
 				c = null
@@ -39923,7 +39938,7 @@ func _cos_seat_height(mount: Node3D) -> float:
 ## A COS's +0x228 (see COS_RIDER_PLATE_RAISE): its characterInfo Size x 10;
 ## its measured height when no table is loaded.
 func _cos_plate_height(mount: Node3D) -> float:
-	var rec = mount.get_meta("cos_rec", null)
+	var rec = (mount.get_meta("cos_rec") if mount.has_meta("cos_rec") else null)
 	var row := _cos_table.row(rec.ref_id) if rec != null and _cos_table != null else null
 	var svc := AudioService.instance()
 	if row != null and svc != null:

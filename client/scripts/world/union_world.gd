@@ -8,16 +8,20 @@ class_name UnionWorld
 
 var world: Node
 
+## Round 866 (lane AX): the connections to NetClient's stores (they outlive
+## the world); World3D cuts them as it leaves the tree (detach).
+var _links := SignalLinks.new()
+
 func _init(w: Node) -> void:
 	world = w
 	var ops := NetClient.union_ops
 	# Refusals through category 0x10, as the guild's (0x778190).
-	ops.notice.connect(func(key: String, args: Array, code: int) -> void:
+	_links.link(ops.notice, func(key: String, args: Array, code: int) -> void:
 		print("UNION notice %s code 0x%x" % [key, code])
 		world._on_guild_ops_notice(key, args, code))
-	ops.result.connect(func(op: int, ok: bool, code: int) -> void:
+	_links.link(ops.result, func(op: int, ok: bool, code: int) -> void:
 		print("UNION result 0x%04x ok=%s code=0x%x frame %d" % [op, ok, code, Engine.get_frames_drawn()]))
-	ops.request_box.connect(_on_request_box)
+	_links.link(ops.request_box, _on_request_box)
 	var hud = world._hud_panels
 	if hud != null:
 		hud.union_request_requested.connect(_on_apply)
@@ -30,10 +34,15 @@ func _init(w: Node) -> void:
 	var chat = world._hud_chat
 	if chat != null:
 		chat.union_guild = func() -> String: return NetClient.guild_data.guild_name
-	NetClient.guild_data.union.changed.connect(func() -> void:
+	_links.link(NetClient.guild_data.union.changed, func() -> void:
 		var u := NetClient.guild_data.union
 		print("UNION record: id %d lead %d guilds %s frame %d" % [u.union_id, u.leader_guild_id, _names(u),
 			Engine.get_frames_drawn()]))
+
+## Round 866 (lane AX): the world is leaving the tree; nothing here is
+## called again (SignalLinks).
+func detach() -> void:
+	_links.cut()
 
 static func _names(u: UnionData) -> String:
 	var out: PackedStringArray = []

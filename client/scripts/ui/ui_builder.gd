@@ -741,7 +741,7 @@ func set_static_text(node: Control, text: String) -> Label:
 		return node as Label
 	var label := node.get_node_or_null("Text") as Label
 	if label == null:
-		var def = node.get_meta(STATIC_DEF_META, null)
+		var def = (node.get_meta(STATIC_DEF_META) if node.has_meta(STATIC_DEF_META) else null)
 		if def == null:
 			return null
 		label = _make_text_label(def)
@@ -759,7 +759,7 @@ func set_button_text(node: Control, text: String) -> Label:
 		return null
 	var label := node.get_node_or_null("ButtonLabel") as Label
 	if label == null:
-		var def = node.get_meta(STATIC_DEF_META, null)
+		var def = (node.get_meta(STATIC_DEF_META) if node.has_meta(STATIC_DEF_META) else null)
 		if def == null:
 			return null
 		label = _make_text_label(def)

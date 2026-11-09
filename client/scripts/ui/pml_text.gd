@@ -165,7 +165,7 @@ static func put_on(host: Control, builder: UiBuilder, markup_text: String, colou
 		halign := -1) -> PmlText:
 	if host == null:
 		return null
-	var def = host.get_meta(UiBuilder.PML_DEF_META, null)
+	var def = (host.get_meta(UiBuilder.PML_DEF_META) if host.has_meta(UiBuilder.PML_DEF_META) else null)
 	var c := colour
 	var h := halign
 	if def != null:
