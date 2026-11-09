@@ -105,3 +105,31 @@ func TestSprintLandsOnTheSurface(t *testing.T) {
 		t.Errorf("no mesh: %+v, want the height kept", p)
 	}
 }
+
+// TestEveryReviveFindsTheCharactersWorld (round 873): a revive handed the
+// open world's hub finds a character dead inside a layer (the skill's
+// resurrection, the scroll and the in-place revive all take the hub the
+// character is in).
+func TestEveryReviveFindsTheCharactersWorld(t *testing.T) {
+	rig := newGWRig(t, nil, map[string]int{"Aria": 40})
+	w := rig.open(t)
+	aria := rig.players["Aria"]
+	if err := EnterInstance(context.Background(), aria.sess, w, "test"); err != nil {
+		t.Fatal(err)
+	}
+	rig.until("Aria", OpChangeZoneResult)
+	w.Hub.SetLifeState(aria.charID, world.LifeAlive, world.LifeDead, time.Now())
+	if _, _, err := revivePlayer(context.Background(), rig.chars, nil, rig.hub, aria.charID); err != nil {
+		t.Fatalf("revive through the open world's hub: %v", err)
+	}
+	if e, _ := w.Hub.EntityByCharacterID(aria.charID); e.Life != world.LifeAlive {
+		t.Errorf("life %d in the layer, want alive", e.Life)
+	}
+	w.Hub.SetLifeState(aria.charID, world.LifeAlive, world.LifeDead, time.Now())
+	if _, _, _, err := reviveByScroll(context.Background(), rig.chars, RegenDeps{}, rig.hub, aria.charID, 100, 0); err != nil {
+		t.Fatalf("scroll through the open world's hub: %v", err)
+	}
+	if e, _ := w.Hub.EntityByCharacterID(aria.charID); e.Life != world.LifeAlive {
+		t.Errorf("life %d in the layer after the scroll, want alive", e.Life)
+	}
+}

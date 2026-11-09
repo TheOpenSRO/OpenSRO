@@ -466,6 +466,9 @@ func reviveWith(ctx context.Context, chars character.Store, mp *mana.Tracker, hu
 	if hub == nil {
 		return nil, 0, errNotDead
 	}
+	// Round 873: the hub the character is in, whichever world (the
+	// return-point revive used to ask the layer it had just left).
+	hub = hubOfChar(hub, characterID)
 	e, ok := hub.EntityByCharacterID(characterID)
 	if !ok || e.Life != world.LifeDead {
 		return nil, 0, errNotDead
@@ -761,6 +764,9 @@ func returnAfterKill(ctx context.Context, chars character.Store, eq equipment.St
 	if playerDeadState.Load() || hub == nil {
 		return
 	}
+	// Round 873: wherever the character is (an instanced world's hub when
+	// it died inside one); the caller may hold the open world's.
+	hub = hubOfChar(hub, characterID)
 	e, ok := hub.EntityByCharacterID(characterID)
 	if !ok || e.Session == nil || e.Life != world.LifeAlive {
 		return

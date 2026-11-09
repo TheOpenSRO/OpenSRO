@@ -123,6 +123,8 @@ func reviveByScroll(ctx context.Context, chars character.Store, deps RegenDeps, 
 	if hub == nil {
 		return nil, 0, 0, errNotDead
 	}
+	// Round 873: the hub the character is in, whichever world.
+	hub = hubOfChar(hub, characterID)
 	e, ok := hub.EntityByCharacterID(characterID)
 	if !ok || e.Life != world.LifeDead {
 		return nil, 0, 0, errNotDead
