@@ -2839,6 +2839,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.revive_requested.connect(_on_revive_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to the system window (round 639).
 	_hud_panels.system_notice.connect(_log_system)
+	# Round 869: the Dimension hole's re-use check asks this player's timers.
+	_hud_panels.item_reuse_left = func(key: String) -> int: return _item_cooldowns.left_ms(key)
 	# Round 837 (OURS): the server's big notice, across the screen.
 	var big := HudBigNotice.new()
 	big.setup(_ui_builder)
