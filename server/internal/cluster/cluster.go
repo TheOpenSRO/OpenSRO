@@ -616,16 +616,3 @@ func (n *Node) Everyone() []registry.Character {
 	}
 	return out
 }
-
-// CountOn is the characters online on host.
-func (n *Node) CountOn(host string) int {
-	n.dirMu.RLock()
-	defer n.dirMu.RUnlock()
-	k := 0
-	for _, c := range n.byChar {
-		if c.Host == host {
-			k++
-		}
-	}
-	return k
-}

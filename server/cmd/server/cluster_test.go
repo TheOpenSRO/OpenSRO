@@ -294,7 +294,13 @@ func TestClusterFourProcesses(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "opensro-server")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+	// OPENSRO_TEST_CLUSTER_RACE builds the processes with the race detector;
+	// a race any of them reports fails the test.
+	args := []string{"build", "-o", bin}
+	if os.Getenv("OPENSRO_TEST_CLUSTER_RACE") != "" {
+		args = append(args, "-race")
+	}
+	if out, err := exec.Command("go", append(args, ".")...).CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	// Clean registry rows from an earlier run (the tables exist once a
@@ -360,6 +366,9 @@ func TestClusterFourProcesses(t *testing.T) {
 			if p.cmd.ProcessState == nil {
 				p.cmd.Process.Kill()
 				p.cmd.Wait()
+			}
+			if all, _ := os.ReadFile(p.log); strings.Contains(string(all), "WARNING: DATA RACE") {
+				t.Errorf("%s reported a data race", p.name)
 			}
 			if t.Failed() || os.Getenv("OPENSRO_TEST_CLUSTER_LOGS") != "" {
 				t.Logf("---- %s ----\n%s", p.name, p.tail())

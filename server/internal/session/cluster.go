@@ -13,7 +13,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,14 +54,6 @@ type clusterState struct {
 }
 
 var clusterRT atomic.Pointer[clusterState]
-
-// ClusterNode is the installed node, nil in one process.
-func ClusterNode() *cluster.Node {
-	if cs := clusterRT.Load(); cs != nil {
-		return cs.node
-	}
-	return nil
-}
 
 // clusterOn reports several processes.
 func clusterOn() bool { return clusterRT.Load() != nil }
@@ -493,12 +484,6 @@ func ClusterPresenceChanged(c registry.Character, online bool) {
 		return
 	}
 	partyMemberMoved(c.ID, cs.stubFor(c))
-}
-
-// marshal is json.Marshal for the bodies (never fails for them).
-func marshal(v any) json.RawMessage {
-	b, _ := json.Marshal(v)
-	return b
 }
 
 // clusterMsg is a bus message.

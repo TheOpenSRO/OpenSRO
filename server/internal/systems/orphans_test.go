@@ -52,9 +52,9 @@ var knownOrphans = map[string]string{
 	"SetZonePlaces":    "internal/gameworld/manager.go",
 	"Word":             "internal/registry/registry.go",
 	"NewFakeClock":     "internal/gameworld/clock.go",
-	// W2's re-route carries a character's runtime between processes.
-	"SnapshotCarried": "internal/session/carried.go",
-	"RestoreCarried":  "internal/session/carried.go",
+	// Round 869 lane W2: the in-memory registry's lease, which the cluster
+	// tests shorten (a process runs on the default or PostgreSQL's).
+	"SetLease": "internal/registry/cluster.go",
 	// Round 860 lane E: 0x304E kind 4's decoder; the Godot client decodes the
 	// message over the socket, so only the golden-bytes test calls it in Go.
 	"ForcedGraduationLevel": "round 865: the 41 / 61 floors named by their role (0x7476's forced graduation); the handler tests them through MeetsMembershipLevel, academy_test.go holds the two together.",

@@ -84,6 +84,3 @@ func (s *Session) RequestEnd() {
 		_ = s.conn.SetReadDeadline(time.Now())
 	}
 }
-
-// EndRequested reports a RequestEnd.
-func (s *Session) EndRequested() bool { return s != nil && s.endRequested.Load() }

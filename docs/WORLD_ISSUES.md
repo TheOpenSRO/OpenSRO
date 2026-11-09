@@ -7483,6 +7483,171 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-ninth round, lane W2: instanced worlds on as many processes as there are machines -- the PostgreSQL registry and bus, the front's relay and the hand-off, parties and every social line across processes, the reaper, the drain, a four-process test and the load test
+
+The user: "make sure instanced worlds are virtually infinitely horizontally scalable", and the
+decision before stage 2: build it and load-test it now, the single process stays the default, prod
+stays on one process until the user says otherwise. The contract is `docs/protocol/game_worlds.md`
+12 (OURS) and 14 SERVER item 11, on lane W1's instanced worlds (base `99ca8f73`). Everything in this
+lane is OpenSRO's own architecture: labels are OURS, MEASURED (on this lane's runs) and OPEN; nothing
+here is the original's, and the client's wire is unchanged. Server only: no perf gate (no client or
+world drawing changed).
+
+### What was built
+
+| part | where | what |
+|---|---|---|
+| registry | `internal/registry/cluster.go` (Memory), `postgres.go` | W1's `Registry` plus `Cluster`: host rows with heartbeat, load, state (active / draining / dead) and start; `Pick` (least open instances, then players, then CPU; same version first); `Open` with `Pick` places in the slot's own transaction (the world's advisory lock, the host row `FOR UPDATE SKIP LOCKED`, then plain `FOR UPDATE` when every host is taken); `Reap` under an advisory lock: hosts past the lease dead, their layers `lost` with their members, their presence cleared, the fence (a dead host's beat is refused); presence (`world_presence`) and return points (`world_returns`). Times are the database's |
+| bus | `internal/bus/postgres.go` | LISTEN/NOTIFY: one dedicated pgx connection listens on every subscribed channel, `pg_notify` on the pool publishes, base64 inline up to 7,800 bytes and a `bus_spill` row past it, reconnect with backoff (at-most-once: a message published while the connection is down is lost) |
+| node | `internal/cluster` | one process's membership: the beat every 2 s with players, instances and its CPU (rusage), the reaper on every beat, the presence directory replicated by broadcast (an offline only removes a character still on the host that sent it, so a hand-off's two events can arrive in either order), requests with replies, one-way messages in publish order |
+| relay | `internal/relay` | the front (`-role front`): every client on its one connection, a stream to the open world's host first (login, select and entry run there as in one process), the re-route on `OpReroute` (client frames buffered, the ones the old host had not handled replayed: `Reroute.Consumed`), the recovery when a stream breaks without one (the bound character put back at its return point on the open world's host; `OpBind` / unbind tell it who is on the stream), `HostDown` for a host the registry has dead; the host side is a `gateway.Codec` (the hello's shared secret and version checked, the player's own address kept) |
+| roles | `cmd/server/cluster.go` | `-role all` (default, nothing of this runs), `front`, `world` with `-world-layers open / instances / both`; `-host-id`, `-relay-listen`, `-relay-advertise`, `-relay-secret`, `-cluster-dsn`, `-host-lease`, `-drain-deadline`, `-load-report`; a world host without the open world serves no client listener and keeps the open world's game clock (its epoch is the open world's host's start) |
+| the move | `session/handoff.go`, `gateway/remote.go` | a hand-off looks to the player and the watchers like `warpAcross` between two worlds of one process: `RequestEnd` ends the source's session after the packet it handles; its disconnect runs in hand-off form (no offline line to guild, academy, friends; the party, the party-match entry and the login kept); the carried runtime is taken first (`HandoffPrepare`) and the re-route sent last (`HandoffSend`); the target authenticates the session as the account, reads the character from the shared database, restores the carried runtime, enters it held and sends `OpChangeZoneResult`. Into a layer another host runs (`EnterInstance` with a proxy), out to the open world from a host that does not run it (the hook at the top of `warpAcross`: the exit NPC, a close, a drain, a scroll, a /tp outside), and the recovery |
+| carried | `session/carried.go`, `buff/carry.go`, `mana` | W1's OPEN closed: the buff book is carried whole (`buff.BookState`: records with their tokens and starts, the state bits, the speed and wall holders, the GM /speed factor; each process draws tokens from its own range), the item and cool-time groups, the live MP, the return point |
+| placement | `gameworld/remote.go` | with a `Placer` the manager's `Open` lets the registry pick the host; another host builds the layer from the record (`Attach`, refused while draining); the opener holds a proxy (identity from the record, members and state read from the registry, no hub, no goroutine); `Find` for `/instance enter` |
+| parties | `party/cluster.go`, `session/clusterparty.go` | every process keeps every party: each change is broadcast as the whole party with a sequence (the newest applies; two changes in the same instant keep the higher sequence and origin), party ids carry the forming host's range, a member elsewhere is held with a remote session, only its own process samples its 0x3864 kind 6 updates |
+| delivery | `session/cluster.go`, `clustersocial.go` | `reachOf` (the hub, any world of this process, the directory) in every guild, academy and union line and update, the friends' pushes and requests, the guild and academy chat, the union chat; `findByNameCluster` for a whisper, a friend request and a GM kick; the global, the unique notices and Magic POP's announcement in one message to every process (`sendEverywhere`); a crest change, a guild line's refresh and a GM ban replayed on the process holding the cache; a friend request's answer sent to the asker's process; per-host outboxes (1 ms batches, identical frames once) |
+| logins | `session/onlineaccounts.go` | the open world's host holds every login: a character away holds it with a remote session; its logout elsewhere frees it (`account.gone`); a dead host's are released unless a recovery claimed them |
+| drain | `cmd/server/cluster.go` | SIGTERM on a world host: no new layer, the close warning 0x0C1A with the deadline's minutes (OURS reuse of the original's warning), the layers run until the deadline or their own close, then close (their players to their return points), the host exits |
+| metrics | `metrics/cluster.go` | `opensro_world_tick_seconds{world}`, `opensro_handoff_seconds`; a `world load` line per host every 10 s |
+
+Lane W1's interfaces kept as they were: `registry.Registry` (Memory unchanged in behaviour),
+`bus.Bus`, `world.Locate` / `HubOf` (still the in-process index; the directory is beside it),
+`gameworld.ManagerConfig{Registry, Host}`.
+
+### Tests
+
+- `internal/registry`: slots, members, presence, placement (spread, version, draining), the reaper
+  and the fence, on Memory AND on PostgreSQL (`OPENSRO_TEST_CLUSTER_DSN`, a throwaway
+  `opensro_r869w2` on this host); 40 concurrent openings over two hosts on PostgreSQL never share a
+  slot and spread over both hosts (at least 15 each, asserted).
+- `internal/bus`: two processes' buses on one database (order, broadcast, a 36 kB payload through
+  the spill table, a late subscription).
+- `internal/cluster`: three nodes on the in-memory registry and bus: requests, the directory, a
+  hand-off's two events in either order, a host gone silent reaped and fenced, the drain kept by the
+  beats.
+- `internal/relay`: a front and two hosts on loopback: relay, the player's address, a forged control
+  frame dropped, the re-route with the client frames sent meanwhile delivered to the new host, a host
+  killed and the character recovered, a logout closing the client, a bad secret and an old version
+  refused.
+- `internal/gameworld`: three managers on one registry: placement by load, proxies, `Find`, a close
+  ending the proxy, a draining host refusing.
+- `internal/party`, `internal/buff`: snapshots across two hubs (formation, join, leave, dissolution,
+  a stale one ignored, ids per range, rebind); a book through JSON to another `Books` (tokens, run
+  speed, the recast rule).
+- `cmd/server/cluster_test.go`, **four processes on loopback** on PostgreSQL (a front, the open
+  world's host, two instance hosts; this package's own binary; a synthetic world 63): three characters
+  log in through the front; a party formed; `/instance 63` placed on an instance host and the
+  character handed off with the zone change; a whisper and a party line each way across processes; a
+  member follows into the same layer on the same host; a third character's layer goes to the other
+  host; `/instance leave` back to the open world; `kill -9` of a host with a player inside: the
+  player back in the open world 6-10 ms later (MEASURED, three runs), the host dead and its layer
+  lost after the 3 s test lease; SIGTERM of the last instance host with a player inside: the 0x0C1A
+  warning, the player home at the deadline, the host exits; a party line afterwards. PASS, also with
+  every process built `-race` (`OPENSRO_TEST_CLUSTER_RACE=1`: no race reported). Hand-offs MEASURED
+  there 6-14 ms from the source's send to the target's zone change. The relay's added latency,
+  MEASURED there: 200 echoes through the front p50 133 us / p99 518 us against 53 / 199 us straight
+  to the host (about 80 us on loopback); to the instance host through the front 124 / 378 us.
+- `cd server && go build ./... && go test ./...`: pass (100 packages ok). `-race`: registry, bus, cluster,
+  relay, party, buff, gameworld, gateway, mana, metrics pass. `internal/systems`' guards updated
+  (`cmd/loadworld` in `server/README.md`; `internal/bus` no longer parked; the carried-state seams
+  no longer orphans); the opcode table regenerated (the relay's control range).
+- Single process, behaving as before (the lane server on the render box, `-role all`, lane W1's flags
+  and data, this branch against the base `99ca8f73`): partybot `-mode instance` 8 / 8 PASS on both;
+  `-mode scenario` (party) and `-mode academy` exit 0 on both, with the same messages (sorted, the
+  only differences the bots' interleaving and the timestamps inside the academy records). Two test
+  fixes: `TestRound786EveryRelocationGoesThroughWarpVia` lists `enterAdopted` (a hand-off holds as a
+  warp does); `TestAcademy866MatchJoinRefusedAndTimeout` waits for its last request's backstop (its
+  timer answered the next test's Bram, now found in whichever world he is). And a partybot fix:
+  `-mode instance` ran a second reader on the connection beside `connect`'s, which split the frames
+  between them -- its checks failed by turns (MEASURED: 3 of 8 on one run, 8 of 8 on another, the
+  same server).
+
+### The load test (game_worlds.md 12.7)
+
+`server/cmd/loadworld/run.sh` on this lane's host (16 threads of a machine it shares with the render
+box and the other lanes; its load average was 42-78 during the runs, so every wall-clock number
+below is under contention): a front, the open world's host and N instance hosts on loopback, a
+throwaway PostgreSQL database (`opensro_r869w2_load`, `OPENSRO_PG_MAX_CONNS=10`), the synthetic
+game of `cmd/loadworld` (10 instanced worlds of 50 layers, each layer 58 nests x 2 monsters --
+world 63's nest count, MEASURED in lane W1's export -- of a made-up level-40 species; no game data),
+the monster AI, aggro, battle and pushes on. `partybot -mode instload`: P parties of 4 GM bots log in
+through the front, form a real party (a create, three invitations), the leader opens a layer
+(`/instance`), the members follow (`/instance enter`), then for 120 s each bot takes the nearest
+live monster of its layer each second, stands beside it and swings (an attack a second, a move, a
+monster list now and then). CPU is each process's utime + stime over the fight (`/proc`), the ticks
+each instance host's `world load` lines (the instances' 100 ms ticks: nest pass, monster AI, area
+of interest), the entries and hand-offs the bots' and the servers' own times. MEASURED, all runs:
+
+| instance hosts | parties (bots) | layers per host | CPU per instance host (cores) | front CPU | open world's host CPU | instance tick mean / p50 / p99 | tick CPU per host | entry p50 / p95 (GM line to zone change) | hand-off p50 / p95 (send to zone change) |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 40 (160) | 40 | 0.85 | 0.13 | 0.00 | 201 / 172 / 632 us | 0.081 | 58 / 167 ms | 52 / 83 ms |
+| 2 | 80 (320) | 40, 40 | 0.82, 0.85 | 0.24 | 0.00 | 221 / 181 / 844 us | 0.089 | 66 / 197 ms | 53 / 90 ms |
+| 3 | 120 (480) | 40, 40, 40 | 0.91, 0.90, 0.89 | 0.37 | 0.00 | 307 / 212 / 2,044 us | 0.123 | 132 / 442 ms | 78 / 193 ms |
+| 1 | 80 (320) | 80 | 1.56 | 0.24 | 0.00 | 205 / 170 / 699 us | 0.165 | 106 / 376 ms | 107 / 218 ms |
+| 3 | 80 (320) | 26, 27, 27 | 0.58, 0.60, 0.59 | 0.25 | 0.00 | 223 / 182 / 851 us | 0.060 | 84 / 201 ms | 53 / 96 ms |
+
+Every run: every party entered (0 refused), 0 bots lost, 99 % of the blows answered (the rest still
+in flight when the fight stopped), 99-280 kills; the instance hosts' memory 88-97 MB at 26-40 layers,
+the front 40-65 MB, the open world's host 42-56 MB.
+
+What the table says (MEASURED unless marked):
+
+- **Capacity grows linearly with hosts at a fixed per-host load**: 40, 80, 120 layers on 1, 2, 3 hosts
+  at 0.85, 0.84 and 0.90 cores a host. The 6 % at N = 3 came with a load average of 62-78 on the
+  shared machine (the others' work and 480 bots on the same CPU); the ticks' p99 rose with it, their
+  p50 barely (172 -> 212 us).
+- **A fixed load spreads**: 80 layers on one host took 1.56 cores; on three, 0.58-0.60 each (1.77 in
+  all: each host carries about 0.1 core of its own -- its idle open-world unit, its roster monsters,
+  its loops -- INFERRED from the difference).
+- **One layer with its four fighting players costs about 0.02 of a core** (0.85 / 40, 1.56 / 80,
+  0.59 / 26.7), of which its own ticks are about a tenth (200 us of CPU every 100 ms, 0.2 % of a core);
+  the rest is its players' requests (a blow, a move, a monster list) and the party sampler. INFERRED
+  from it, not run: a host of 8 free cores carries some 350 such layers (1,400 players).
+- **No shared part is near saturation at these sizes**: the front used 0.13 / 0.24 / 0.37 cores for
+  160 / 320 / 480 clients (about 0.8 ms of CPU per client-second, linear); the database connections
+  were 17 a world host + 7 for the front (75 at N = 3, of 100); the bus carried the entries' messages
+  (the open world's host sent 1,440 for the 480 entries of N = 3: presence, the layers' openings, the
+  parties) and nothing during the fight, since a party fights on one host. The bus's own capacity
+  between two processes (`internal/bus` `TestPostgresBusThroughput`, 8 publishers, 200-byte
+  messages): 17,170 messages a second, delay p50 286 us, p99 4.9 ms, max 19 ms.
+- **Entries**: under the burst of every party entering at once the hand-off took 52-107 ms at p50; one
+  at a time on a quiet machine (the four-process test) 6-14 ms. The relay's own cost (that test, 200
+  echoes each): through the front p50 133 us / p99 518 us, straight to the host 53 / 199 us -- about
+  80 us added on loopback.
+
+- **Fault drills under load** (3 instance hosts, 30 parties fighting, `-drain-deadline 10s`; the
+  spec's pass: everyone back in the open world in under 15 s): 20 s into the fight `kill -TERM` of
+  w1 (10 layers, 40 players): it took no new layer, closed its 10 layers at the deadline and handed
+  its 40 players to the open world 10.03-10.08 s after the signal (each hand-off 9-47 ms), then
+  exited with no player left; 20 s later `kill -9` of w2 (11 layers, 44 players): all 44 were back in
+  the open world 24-45 ms after the kill (the front saw the streams break and recovered them; the
+  reaper declared w2 dead 10 s after its last beat, its 11 layers lost). 0 of 120 bots lost: every
+  one fought on in the open world.
+
+Not run (OPEN): the spec's 200 / 500 / 2,000 parties and 4 / 8 hosts, and any run across machines
+(this host and the box share one CPU; the box has no PostgreSQL, and exposing this host's to it was
+not done) -- the sizes above are what one shared machine carries while the other lanes work.
+
+### Differences from 12.1-12.7, choices, OPEN
+
+- OURS (as built, recorded in `game_worlds.md` 12.8): the roles are `front` and `world` with
+  `-world-layers`; the front frames and routes and does not log in (logins run on the open world's
+  host); parties are replicated to every process rather than kept on the home role; NATS not built.
+- OPEN: moving a live layer to another host at a drain (the drain closes them); the abnormal states
+  and a `lnks` link to another character are not carried (they end at a move); the COS are put away
+  and called out again at the arrival; the party-match list is each process's own; a GM's
+  `/questblock` reaches only a character on the GM's process; a GM kick by account after a character
+  moved twice reaches the first host only; the open world's host is a single point (its death drops
+  everyone in the open world, as a restart does today); relay authentication is a shared secret over
+  a private network (no TLS); `deploy/update.sh` restarts the whole stack (no drain step); the bus is
+  at-most-once across a reconnect of its listening connection; the retail listeners are `-role all`'s
+  only; more than one front was not tested.
+- Prod: nothing enabled. `deploy/README.md`, "Several processes (round 869 lane W2) -- NOT
+  ENABLED", has what turning it on takes (the processes, the secret, the connection budget against
+  `max_connections` 100, the data every world host needs, one metrics port each, the rolling
+  update).
+
 ## Eight-hundred-and-sixty-ninth round, lane W1: the server's instanced game worlds -- the reference data, the world unit, the session plumbing off the global hub, warps between worlds, the lifecycle, the entry rules, the re-entry limit, the exit NPC, event zones and the trigger engine
 
 The user: "let's start forgotten world work", "and make sure instanced worlds are virtually
