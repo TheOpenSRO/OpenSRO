@@ -361,16 +361,17 @@ server's 0x000E ends it). MEASURED boxes of this kind: the invitation 402 x 167,
 disband question 498 x 168, the leave question 618 x 151, the ban question 754 x 151 (one
 text line 151 high, two 167 / 168). Server on the answer (READ
 s:0x5df910): inviter gone 0x680c; target gone 3; refused (answer byte != 1) -> 0xB472
-{02, 0x6811} to the inviter and 0x3C80 {0a, 02, 0x6811} to the invitee; accepted -> the
-store adds the member; success per section 6.
+{02, 0x6811} to the inviter and 0x3C80 {0a, 02, 0x6811} to the invitee (READ; not what
+was MEASURED, below); accepted -> the store adds the member; success per section 6.
 
 MEASURED (round 866, twice): a No answers `3080 {02 00 00}`, and both sides got code **0**,
 not 0x6811 -- the inviter `B472 {02 00 00}`, the invitee `3C80 {0a 02 00 00}` in the same
 instant -- so neither printed anything (code 0 has no row); the inviter's last line stays
 "Request for Academy registration to [name] is in process.". The READ above (s:0x5df910's
-`mov eax,0x6811` for an answer byte other than 1) and this measurement disagree; OpenSRO
-keeps the READ (0x6811, "Invitation has been refused." on both sides) until the user
-decides (round 866 report).
+`mov eax,0x6811` for an answer byte other than 1) is not what was sent. **OpenSRO follows
+the measurement** (round 866, the user's decision): a refusal answers code 0 both ways
+(`academy.InviteRefusedCode`) and neither client prints anything; the client's 0x1d table
+keeps 0x6811's row ("Invitation has been refused.") as READ.
 
 ### 7.3 Leave — 0x7474 {}
 

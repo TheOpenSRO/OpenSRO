@@ -669,8 +669,9 @@ func (rt *academyRuntime) inviteTimedOut(inv *acInvite) {
 // academyInviteAnswer takes the invitee's 0x3080 answer when an academy
 // invitation waits for it (false otherwise): the server's order on the
 // answer (s:0x5df910) -- the inviter gone 0x680c (to the invitee), a refusal
-// (answer byte not 1) 0x6811 both ways, else the store adds the member and
-// the join's sequence goes out (section 6).
+// (answer byte not 1) code 0 both ways (round 866: MEASURED, no text either
+// side; READ s:0x5df910 has 0x6811 there), else the store adds the member
+// and the join's sequence goes out (section 6).
 func academyInviteAnswer(ctx context.Context, sess *gateway.Session, me world.Entity, data []byte) bool {
 	rt := academyRT.Load()
 	if rt == nil {
@@ -695,7 +696,7 @@ func academyInviteAnswer(ctx context.Context, sess *gateway.Session, me world.En
 	rt.log().Info("academy invite answered", "character_id", me.CharacterID, "name", me.Name, "inviter", inv.inviter,
 		"accept", accept, "answer", fmt.Sprintf("% x", data))
 	if !accept {
-		rt.failInvite(inv, academy.ErrInviteRejection)
+		rt.failInvite(inv, academy.InviteRefusedCode)
 		return true
 	}
 	c, err := rt.Store.AddMember(ctx, inv.campID, rt.joinerOf(ctx, me), rt.now())

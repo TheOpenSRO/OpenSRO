@@ -7570,7 +7570,7 @@ and logging only: no perf gate (no world drawing changed).
 | matching: delete | MEASURED (stage 1) | stage 3 and `TestAcademy865MatchingBoard` | MATCH |
 | found | MEASURED (stage 1) | reg run4..7 | MATCH |
 | invite: accept | MEASURED (stage 1) | reg run4: "[ArAppr] has been added to the Academy." | MATCH |
-| invite: refuse | MEASURED this round: code **0** both ways (`B472 02 0000`, `3C80 0a 02 0000`), no text either side | READ s:0x5df910: 0x6811 -> "Invitation has been refused." both sides (reg run5) | DIFFERS, not changed (the user's call, below) |
+| invite: refuse | MEASURED this round: code **0** both ways (`B472 02 0000`, `3C80 0a 02 0000`), no text either side | was READ s:0x5df910's 0x6811 -> "Invitation has been refused." both sides (reg run5); now code 0, no text | FIXED (the user's decision, below) |
 | invite: 30 s | MEASURED (stage 1) | reg run5 | MATCH |
 | notice, chat | MEASURED (stages 1, 3) | reg run4 / run9 | MATCH |
 | the window from each role | MEASURED (stage 3) | reg run9 | MATCH |
@@ -7591,12 +7591,15 @@ stage 3's table, and the server now logs each request and reply (e.g. `academy r
 character_id=2 name=ArNovice opcode=0x747e`, `academy reply ... opcode=0xb47e result=1
 state=0x0001`, `academy joined ... by=matching`).
 
-### Differs, not changed (the user's call)
+### Refusing an invitation: the measurement followed
 
-- **Refusing an invitation**: MEASURED this round (twice), the original sends code 0 to both
-  sides and neither prints a line; the binary READ (s:0x5df910 `mov eax,0x6811` for an answer
-  byte other than 1) sends 0x6811, and OpenSRO (built from the READ) prints "Invitation has
-  been refused." on both sides. The two disagree; not changed.
+MEASURED this round (twice), the original sends code 0 to both sides and neither prints a
+line; the binary READ (s:0x5df910 `mov eax,0x6811` for an answer byte other than 1) has
+0x6811, which OpenSRO had built ("Invitation has been refused." on both sides). The user's
+decision: follow the measured behaviour. The server answers `academy.InviteRefusedCode` (0)
+both ways (`session/academy.go`; `TestAcademy865InviteRefusals`, `partybot -mode academy`'s
+step); the client's 0x1d table keeps 0x6811's row as READ and prints nothing for 0
+(`academy_join_ask_test.gd`).
 
 ### OPEN
 

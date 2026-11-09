@@ -102,6 +102,13 @@ func _net() -> void:
 	st.join_asked.connect(func(a: Dictionary) -> void: asked.append(a))
 	_check(st.handle(AcademyNet.OP_MATCH_JOIN, _ask_bytes()) and asked.size() == 1 and asked[0]["name"] == "Ab",
 		"AcademyState routes 747E down to join_asked")
+	# Round 866: a refused invitation answers code 0 both ways (MEASURED);
+	# code 0 has no category-0x1d row, so neither side prints a line.
+	var codes := []
+	st.refused.connect(func(c: int) -> void: codes.append(c))
+	st.handle(AcademyNet.OP_INVITE_RESULT, PackedByteArray([2, 0, 0]))
+	st.handle(AcademyNet.OP_PUSH, PackedByteArray([0x0a, 2, 0, 0]))
+	_check(codes.has(0) and AcademyNet.error_key(0) == "", "a refusal's code 0 reaches category 0x1d and has no text")
 
 func _box(builder: UiBuilder) -> void:
 	var box := AcademyJoinAskBox.new()
