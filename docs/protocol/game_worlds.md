@@ -182,6 +182,12 @@ item use).
   `UIIT_MSG_EGYPT_DUNGEON_DESTROY_ALARM` ("After %d minute, instance dungeon will vanish. When it
   vanish, user will move to saved return place.") and shows it as the blue notice banner (c:0x77b580)
   and as a system line (c:0x7781b0). The game server never reads the key; only the shard manager.
+  MEASURED (round 869): `300C {1A 0C 3C}` to every player in the layer 3,609.9 s after its creation
+  (the 60-minute threshold of a 2-hour world, plus the tick); `{1A 0C 0A}` at 6,609.9 s, `{1A 0C 05}`
+  at 6,909.9 s.
+  MEASURED close at 7,209.9 s: no text. The players in the layer get the despawns and an ordinary
+  teleport (`34B5 {0x61A8}`, `34A5`, `3013`, `34A6`), each to its own return point (a summoned
+  member: where it accepted). `320C` keeps running.
 
 **Close** (READ s:0x5f80b0): every player still inside is warped to the return point on the
 character (`_Char` LatestRegion/Pos/WorldID, which the warp in did not overwrite: s:0x4df666..0x4df68f
@@ -258,10 +264,14 @@ close (the decompiler drops them).
   for 0x1c36, 0x1c10 or 2, so a refused exit shows nothing (READ round 869: 0x7b8c82 sends every code
   outside 3, 0x1807 and 0x180b..0x18ff to the default 0x7b913a).
 - **The layer closes** (section 4): everyone to the return point.
-- OPEN (not read, not measured): where a player revives after dying inside; what a logout or a
-  disconnect inside keeps (INFERRED from the table: `_CharInstanceWorldData` keeps the region and
-  position, so a re-login while the layer is open may return inside); a member leaving the party
-  inside.
+- MEASURED (round 869, `forgotten_world.md` 5): the exit NPC's `751D` -> `B51D {01}` puts the player
+  at the return point (where the gate was used). A **logout inside** writes nothing to
+  `_CharInstanceWorldData` and leaves `_Char`'s region and world at the return point, so the next
+  login is at the return point; while the layer lives, its gate takes the player back into **the
+  same layer**, and `320C` then carries the remaining time. A member dismissed from the party inside
+  stays in the layer. The arrival in a layer sends the same `34B5`/`34A5`/`3013`/`34A6` sequence
+  as any teleport; `34B5`'s u16 was 0x61A8 (the return-point region) on the way in and on the way
+  out. OPEN: where a player revives after dying inside; a disconnect inside.
 
 ## 6. Persistence
 
@@ -557,11 +567,11 @@ players back in the open world in under 15 s) and a drain under load.
 5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
    process until the user says otherwise.
 
-OPEN (not read, not measured): the close messages' kind bytes; where a player revives after dying
-inside; re-login into a still-open instance; a member leaving the party inside; the trigger chain
+OPEN (not read, not measured): the close messages' kind bytes (the close itself: MEASURED, section 4); where a player revives after dying
+inside (re-login and a member leaving the party inside: MEASURED, section 5); the trigger chain
 rule (OnTrue/OnFalse), Delay and IsRepeat in the binary; `NUM_INPUT_1` of LOAD_MONSTER; the door's
 server-side block; the loading backdrop and world map inside
-Togui / Wreck; whether neighbouring unlisted regions are drawn; `MAX_SQUAD_MEMBER_COUNT` and
+Wreck (Togui: the ordinary loading screen, no world-map page -- MEASURED, `forgotten_world.md` 5); whether neighbouring unlisted regions are drawn; `MAX_SQUAD_MEMBER_COUNT` and
 `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG`'s consumers; a full 0x3013 audit for a world field.
 
 Choices:

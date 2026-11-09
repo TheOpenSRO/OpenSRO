@@ -239,7 +239,7 @@ teleport sequence into the layer's random start position; or `{02, code}`:
 | 0x1c28 | (party rule: not the master's layer) -- `EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_02` ("Party master has not move or difficulty does not match party masters choice. Therefore unable to move."; READ round 869, table 0x7bbaac) |
 | 0x1c29 | `INSTANCEDUNGEON_ERROR_MSG_01` ("Unable to create instance dungeon now") |
 | 0x1c2a | party condition -- `EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_05` ("Party over 2 members are able to enter.") |
-| 0x1c2b | job suit or voucher -- `FLAGWAR_GAME_JOB_NOT_ENTER` ("Cannot enter while in Free PvP mode or wearing Job outfit.") |
+| 0x1c2b | job suit or voucher -- `FLAGWAR_GAME_JOB_NOT_ENTER` ("Cannot enter while in Free PvP mode or wearing Job outfit."; MEASURED round 869 with a job suit worn) |
 | 0x1c2c | level -- `EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_01` ("Unable to move. Level requirement does not match.") |
 | 0x1c2f | portal access refused -- `EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_02` ("Has no right to move on.") |
 | 0x1c30 | `CANT_USE_TELEPORT_WITH_RIDE` |
@@ -308,6 +308,90 @@ binaries and the data, **not measured**.
   `_RefInstance_World_Region` list (OURS: `game_worlds.md` 12 places whole instances, not areas).
   Stage 2 needs no change for this; the instanced worlds' regions must simply be loaded.
 
+**MEASURED with the four `GOD_*` areas bound to the game server** (round 869, world 67 = Togui
+61-70 grade 1, the creator level 70 alone, then a party of two, levels 70 and 65):
+
+- **A worn job suit refuses entry**: `B04B {02, 0x1c0d}`, `B05A {02, 0x0001}`, then
+  **`B05A {02, 0x1c2b}`** 25 ms later (the CanEnter job-suit check, `game_worlds.md` 5); the system line (yellow) reads "Cannot enter
+  while in Free PvP mode or wearing Job outfit."
+- **Entry** (no suit, no party), byte for byte:
+  1. C `704B {gate}` -> S `B04B {02, 0x1c0d}`; C `705A {gate, 03, 00}` -> S `B05A {02, 0x0001}`.
+  2. 77 ms later: `3019` group-despawns of the town objects around the player, **`B05A {01}`**, then
+     `34B5 {u16 0x61A8}` 26 ms later. The client answers `34B6`.
+  3. `34A5`, `3013` (the character data, as on any teleport), `34A6`, `3020`; the client sends
+     `3012` 457 ms later.
+  4. At once after the `3012` (same burst, < 50 ms): the group spawn of the layer's NPCs near the
+     start; **`300C {0x0C1C, 01, "UIIT_MGS_GOD_TRIGGER_NOTICE_COMMON_MONSTER_KILL"}`** and the same with
+     kind **02**; then the usual arrival state; **`320C {0x0C, u32 1, u32 18000}`** (the re-entry
+     icon: group 1, 18,000 s) -- sent twice in the burst; `B50E {01 00}`.
+  - So the entry notice is **not** 20 s after entry: it comes with the arrival, to the entering
+    player, on every entry (re-entry and a summoned member too). The banner and the system line both
+    show "In the dungeons of the Forgotten World, all monsters must be eliminated before the next
+    passageway opens and the players can go on." (frames).
+  - The arrival point is the world's start (0x7EE4 (1063, 693, 1125); the minimap reads X 17962,
+    Y 6640, the open world's coordinate formula). The area name is "Togui Village".
+- **The loading screen** is the ordinary one (a town picture and the "loading" bar); the first
+  frame inside came 2.5 s after the click (frames 0.7 s apart).
+- **Minimap and maps inside**: the minimap draws Togui's own tiles with the area name "Togui
+  Village" and X/Y in open-world coordinates. The area map (M) is titled "Regional map - Togui
+  village" with the label "Camp No. 1". The world map ("Entire map") shows no Forgotten World page.
+- **NPCs**: the world's NPC hive spawns with the layer: "Dungeon Exit" (`NPC_INS_EXIT_TELEPORT`, a
+  blue crystal with lightning) 160 units west of the start and "Pillar of Party Member Recall"
+  (`NPC_FWORLD_RECALL_PARTY`, a dark stone pillar with red light) 200 units south-east of it.
+  - Selecting the exit NPC: `B045 {01, npc, 00 00 00 01 29 00}` (one interaction, 0x29); the talk
+    window "Dungeon Exit": "1. Exit Dungeon", "2. End conversation."
+  - Selecting the recall pillar: `B045 {01, npc, 00 00 00 01 27 00}` (0x27); "Pillar of Party Member
+    Recall": "1. Summon Party member", "2. End conversation."
+- **Monsters: none appeared.** In this layer none of world 67's 116 monster nests (hives 838..854)
+  spawned anything -- no monster spawn reached either player at the start, at the camp-1 nest
+  (0x7EE3 (1066, 820, 512)) or at camp 2, over 35 minutes; the area map's monster option showed
+  none. The NPC hive (837) did spawn. Why is OPEN (the nest data has normal values: btType 0 for the
+  86 always-on nests, Service 1 monsters). So the trigger chain, the doors (0x351E), the Envy, the
+  boss, the treasure boxes and the rewards are **still not measured**.
+- **Exit NPC**: C `751D {npc}` -> S `3019` (the layer's objects despawn), **`B51D {01}`**, `34B5
+  {0x61A8}`, then the ordinary teleport. The player is back **at the gate's spot in Jangan** (the
+  return point; X 6435, Y 1055), with the gate still standing. The `320C` icon stays (remaining
+  16,719 s).
+- **Re-entry**: selecting the same gate again and clicking line 1 puts the player back in **the
+  same layer** (`B05A {01}`); `320C` carries the remaining time (17,004 s after 996 s), not 18,000.
+- **Logout inside** (System > Restart): `_CharInstanceWorldData` stayed empty and `_Char`
+  kept `LatestRegion` 0x61A8 / `WorldID` 1; the next login put the character **at the return point
+  in Jangan**, with the `320C` icon (tooltip "Forgotten World - Re-entry Time Limit", "Once the
+  instance dungeon re-entry time limit expires, players can enter a different instance dungeon.",
+  "Remaining time: 4Hour 44Minute 59Second"). The gate was still there and led back in.
+- **The re-entry job in the database**: `_TimedJob` category 12, JobID 1 (the world group),
+  TimeToKeep = the entry time + 18,000 s (Unix seconds), Data1 14 (the same for both players of the
+  layer; INFERRED the layer id).
+- **The party recall** (the master inside at the pillar, the member in Jangan):
+  1. C `7519 {npc}` -> S **`B519 {01, 01, u32 0x597, 02, 0x41, u16 0}`** 113 ms later, **with no
+     wait**: per member {u32 member id, u8 state (2 = possible), **u8 the member's level** (65),
+     u16 minutes}. The window "Summon Party member" has the columns "Party Member Name",
+     "Eligibility", "Level", "Time Limit for Entry" and the row "<member> | Possible (green) | 65 |
+     0 Minutes", and a "Summon" button.
+  2. Selecting the row and Summon: C **`751A {u32 member id}`**. The member gets **`751A {u32
+     0x1F5, u32 0x596, u32 5, str master's name}`** and the box "<master> is summoning you. Do you
+     wish to accept the summon?" Yes / No. Nothing came back to the master.
+  3. Yes: C **`751C {u32 0x1F5, u32 member id, 01}`** -> S `30BF {member uid, 0B 01}`, **`B51C {01}`**.
+  4. **5.4 s later** the member is teleported into the master's layer (`34B5`, the ordinary
+     sequence) at the world's start, gets the same `300C` notice pair and its own `320C {0C, 1,
+     18000}`, and its own category-12 job. The master sees the member's party row move to region
+     0x7EE4 (`3864`, `3C80`). INFERRED: the u32 5 in the member's `751A` is that 5-second delay.
+- **The 60-minute warning**: **`300C {u16 0x0C1A, u8 60}`** (3 bytes) reached both players in the
+  layer 3,609.9 s after the hole was used (the layer's creation), at the same millisecond; the
+  system line read "After 60 minute, instance dungeon will vanish. When it vanish, user will move to
+  saved return place." (with the banner).
+- **The 10- and 5-minute warnings and the close** (both players kept inside, no party):
+  `300C {1A 0C 0A}` at 6,609.9 s and `300C {1A 0C 05}` at 6,909.9 s.
+  - **The close** came at **7,209.9 s** (2 h + 9.9 s after the hole was used), to both players in
+    the same millisecond, **with no text**: `3019` despawns of the layer's objects, then `34B5
+    {0x61A8}` and the ordinary teleport.
+  - Each player landed **at their own return point**: the creator at the gate's spot, and the
+    summoned member where it had accepted the summon.
+  - `320C` came back with the remaining limit (12,903 s): the re-entry limit outlives the layer.
+- **Leaving the party inside**: the master banished the only member (C `7063 {member id}`; both got
+  `3864 {01, 0x0B}`, "The party is dismissed."). **Nobody was moved**: the former member stayed in
+  the layer, and was still there minutes later.
+
 **The party** (READ): a type-6 gate admits only its creator; the rest of the party comes in through
 the recall NPC inside (section 8). With Param6 = 7 a party gate would admit the creator's party
 (choice 1). The layer pick's party rule: the master gets a new layer, members follow the master's
@@ -326,7 +410,9 @@ system line's 0 -- read per action, round 869's engine sends the system line at 
 20 s later; the cumulative reading of this sentence is OPEN, `game_worlds.md` 14 notes), "In the dungeons of the Forgotten World, all monsters must be
 eliminated before the next passageway opens and the players can go on."
 (`UIIT_MGS_GOD_TRIGGER_NOTICE_COMMON_MONSTER_KILL`; IsRepeat 1, the only repeating trigger). Every
-other notice goes to all players in the layer, as banner **and** system line.
+other notice goes to all players in the layer, as banner **and** system line. MEASURED (round 869):
+this notice arrives with the arrival itself (right after the client's `3012`), not 20 s later, on
+every entry -- section 5.
 
 **Togui, world 63** (MEASURED, `_RefTrigger*`; worlds 64..68 are the same script with their own hives
 and nests). "Kill hive N" = every monster of hive N dead (`MONSTER_HIVE_KILL`):
@@ -441,10 +527,13 @@ All on **0x300C {u16 0x0C1C, u8 1 | 2, str key}** (1 = banner, 2 = system line),
      never sent. The box is a MsgBoxSimple (GInterface::FUN_007884e0, 360 x 151, style 1 Yes / No,
      `UIIT_STT_CONFIRM_BOX`); a push while one is up keeps its text and restarts the timer.
      Reply 0xB51C {u8 1} or {u8 2, u16 code} (category 0xd); the master gets 0xB51A.
-  INFERRED: an accepted member is warped from the town into the master's layer (the member's
-  CanEnter applies). Not measured (nobody entered, section 5).
+  MEASURED (round 869, section 5): the member is warped from the town into the master's layer 5.4 s
+  after its Yes, at the world's start; `B519`'s per-member u8 is the member's **level**; the window
+  opened at once (no 15 s wait was seen); the master got no `B51A` for an accepted summon.
 - **Time-out**: the warnings, then everyone to their return point (`game_worlds.md` 4).
-- OPEN: death inside, logout / disconnect inside, leaving the party inside.
+- MEASURED (round 869, section 5): logout inside -> the next login is at the return point, the
+  gate leads back into the same layer; the party dismissed inside -> nobody is moved. OPEN: death
+  inside (no monster spawned in the measured layer); a disconnect (not a clean logout) inside.
 
 ## 9. The free entrance ticket
 
@@ -597,7 +686,10 @@ start in parallel with the world unit because it only needs the interfaces):
    process until the user says otherwise.
 
 OPEN (the refusal's cause, the type-6 gate's client test and the category-0xd texts are settled in
-round 869, sections 4-5 and 8): the gate record's +0x260; the hole's "24
+round 869, sections 4-5 and 8): why no monster spawned in the measured layer (section 5) and, with it,
+everything the monsters drive: the trigger notices after the first, the doors (0x351E), the Envy, the
+boss, the treasure boxes and rewards; death inside; the gate record's +0x260 (1 in every record
+measured); the hole's "24
 hours" expiry; how the talismans (`ITEM_TALISMAN_TOGUI_*`, `_FLAME_*`, `_WRECK_A_*` / `_B_*`) and
 other rewards drop (no assigned drops on any FGW monster but the ENVY_DROP pillars; the drop groups
 were not read); the treasure boxes' contents; what the 0x751A push's second and third u32 mean; everything in
