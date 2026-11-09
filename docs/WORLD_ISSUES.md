@@ -7483,6 +7483,81 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-eighth round, stage 1 (spec): the Forgotten World
+
+The user: "while working on fixing academy stuff, let's start forgotten world work", with the standing
+"Make sure you're comparing against the original game and make no mistakes". OpenSRO serves the open
+world only (`inOpenWorld`, OURS round 642), so stage 1 specifies two layers: the instanced-world
+foundation (`docs/protocol/game_worlds.md`) and the Forgotten World on it
+(`docs/protocol/forgotten_world.md`); each ends with a numbered SERVER / CLIENT build checklist, the
+foundation first. A later requirement from the user, verbatim: "make sure instanced worlds are
+virtually infinitely horizontally scalable" -- `game_worlds.md` 12 (OURS). Labels: READ (`c:`
+sro_client.exe, `s:` SR_GameServer.exe, `m:` SR_ShardManager.exe), MEASURED, INFERRED, OURS, OPEN.
+Base `60b40fca` (v0.1.639). Docs and opcode names only: no perf gate (no world drawing changed).
+
+### What was measured
+
+Two characters in band 35-50 (levels 39 and 40), packets of every step decoded:
+
+- **The hole item's tooltip**: "Creates a teleport gate to the Forgotten World. Gates can only be
+  created in a town. Hole items lose their function in 24 hours. ...", "Level : 35 - 50", "Grade :
+  ★★", "Number of Players Allowed: 1-4", "Reuse time 16956Second" 17 min 24 s after another grade's
+  use: the five-hour cool time (group 0x71) is shared by every hole.
+- **Using it in the field**: `B04C {02, 0x184b}`. **In town, alone**: success -- `B04C {01, slot, 00
+  00, 3E6C}`, `305C {user, 35883}`, `B034 {01 0F slot 02}`, and 111 ms after the request the gate's
+  `3015`. A party member who is not its master made a gate too. A second hole during the cool time:
+  the client's own line "Still have time to reuse the item." and no packet.
+- **The gate's spawn record**: {19556, uid, region, x, y, z, angle, 1, 0, 1, **6**, str creator's name,
+  u32 35883}: access type 6 (a named owner), the hole's id, no lifetime field. Another party member
+  received the record and drew nothing.
+- **Selecting it**: `7045` -> `B045 {01, uid, 01 1c, 01, 02, u16 0x7EE4, i32 1063, 693, 1125}` -- one
+  destination, the world's start position; the "Gap of Dimensions" window with
+  `UIIT_STT_GOD_TELTOPRT_GATE_1/2`, "Level : 35 - 50", "Grade : ★", "1. Teleport to [Togui
+  Village]area.".
+- **Entering**: `704B` + `705A {uid, 03, 00}` -> `B05A {02, 0x0001}` then `B05A {02, 0x0003}`, alone and
+  in a party of two. Read: {2, 1} is the accept and {1} the warp's success, so code 3 is the warp's
+  refusal (a player-set check, a missing layer, or a region the server cannot load); which one is
+  OPEN. **Nobody entered: the inside is READ and from the data, not measured.**
+- **The gate's life**: removed (`3016`) 604.9 s and 601.0 s after creation with nobody inside -- the
+  layer's 10-minute empty close (read: the gate lives exactly as long as its layer).
+
+### What was read
+
+- **Data** (the reference tables): the 94 game worlds (22 `INS_GOD_*`: 50 layers,
+  4 or 8 players, 2 h, 10 min empty), their configs (level bands, job suit / ride / trade / voucher
+  limits, the 60/10/5-minute warnings), the world group (5-hour re-entry limit; the client archive's
+  copy says 480 minutes), regions (Togui 48 field regions shared by six worlds, Flame dungeon 0x8012,
+  Wreck 224 + 224), start positions, hives and nests (dormant nests woken by triggers), the hole items'
+  params, the pillars (a 0.1 % open-world trigger spawns a pillar that summons the hole-dropping one,
+  30/20/20/10 %), and the full trigger scripts of the Togui, Flame and Wreck worlds.
+- **Server**: worlds and layers ({u16 world, u16 layer}, per-layer visibility over shared regions),
+  creation through the shard manager (0x7C14 / 0x3C15), its timers and warnings (0x300C 0x0C1A), the
+  close back to the return point, the teleport's two replies, the portal checks and CanEnter in order
+  with their codes, the layer pick, the re-entry timed job (category 0xC), the hole's checks
+  (0x184b, 0x1851, 0x184f, 0x1852), the access types 6 / 7, the trigger engine (hive-kill rule,
+  nest wake, event-zone switch 0x351E, notices 0x300C 0x0C1C), the exit NPC 0x751D and the recall NPC
+  0x7519 / 0x751A / 0x751C.
+- **Client**: the hole's box and plain 0x704C, the gate class and its type-7 party test, the talk
+  window, 0x705A kind 3, the category-0xd and 0x23 error tables, 0x320C's buff icon, the 0x300C
+  notice kinds, the door redraw, the summon window and the member's 20 s box; texts it never shows.
+
+### Wired
+
+`server/internal/proto/opcodes.go` names the game-world opcodes (0x705A/0xB05A, 0x751D, 0x7519,
+0x751A, 0x751C and their replies, 0x351E, 0x320C, the 0x300C sub-words) with
+`gameworld868_test.go`; the metrics opcode table regenerated. `go build ./...` and `go test ./...`
+pass.
+
+### OPEN and choices
+
+OPEN (each page's last section): the measured warp refusal's cause, death / logout /
+party loss inside, the trigger chain's rules, the door's server-side block, the loading backdrop
+and world map inside, the talisman drops. Choices for the user: gate access creator-only (the data)
+or party; the re-entry limit 300 or 480 minutes; the free entrance ticket (off in the data and in
+neither binary); building the unmeasured inside from the read behaviour; multi-process from the start
+or after the load test. Stage 2 estimate: four lanes (world unit, scaling, triggers + FGW server,
+client), the world unit the largest.
+
 ## Eight-hundred-and-sixty-sixth round, the guardian's crash: an academy flow left over from an earlier world entry called the freed HUD
 
 The user, on the v0.1.638 Linux release (an AMD Steam Machine, RADV NAVI33, native readers on):
