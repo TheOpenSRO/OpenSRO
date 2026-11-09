@@ -42,6 +42,7 @@ func specFromRow(base monsterSpec, row species.Row, lookup species.SkillLookup) 
 	}
 	spec.Level, spec.Rarity, spec.MaxHP = row.Level, row.Rarity, row.MaxHP
 	spec.Defense, spec.Block, spec.Critical = row.Defense(), row.Block(), row.Critical()
+	spec.HitRate, spec.ParryRate = row.HitRate(), row.ParryRate() // round 875
 	spec.BCRadius = row.BCRadius
 	spec.WalkSpeed, spec.RunSpeed = row.WalkSpeed, row.RunSpeed
 	spec.ExpToGive, spec.HasExpToGive = row.ExpToGive, row.HasExpToGive

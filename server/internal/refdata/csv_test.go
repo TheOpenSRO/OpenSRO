@@ -733,8 +733,8 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	if got := load(append(append([]string(nil), row...), "1")).ChildItemCount; got != 1 {
 		t.Errorf("column 89 loaded ChildItemCount %d, want 1", got)
 	}
-	if ItemCSVColumnCount != 97 {
-		t.Errorf("ItemCSVColumnCount %d, want 97", ItemCSVColumnCount)
+	if ItemCSVColumnCount != 101 {
+		t.Errorf("ItemCSVColumnCount %d, want 101", ItemCSVColumnCount)
 	}
 	// Round 795: column 90 is Desc2, a ride scroll's level list.
 	withDesc := append(append([]string(nil), row...), "1", "120")
@@ -764,5 +764,14 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	}
 	if got := load(append(append([]string(nil), withRevive...), "ITEM_CH_W_HEAVY_01_BA_A_DEF")).OrgCodeName; got != "ITEM_CH_W_HEAVY_01_BA_A_DEF" {
 		t.Errorf("column 96 loaded OrgCodeName %q", got)
+	}
+	// Round 875: columns 97..100 are a body armour piece's PDStr / MDInt
+	// ranges (synthetic numbers); a 97-column export reads 0.
+	withOrg := append(append([]string(nil), withRevive...), "")
+	if it := load(withOrg); it.PDStrMax != 0 || it.MDIntMax != 0 {
+		t.Errorf("a 97-column export loaded PDStr/MDInt %v / %v, want 0", it.PDStrMax, it.MDIntMax)
+	}
+	if it := load(append(append([]string(nil), withOrg...), "111", "123", "222", "246")); it.PDStrMin != 111 || it.PDStrMax != 123 || it.MDIntMin != 222 || it.MDIntMax != 246 {
+		t.Errorf("columns 97..100 loaded %v %v %v %v, want 111 123 222 246", it.PDStrMin, it.PDStrMax, it.MDIntMin, it.MDIntMax)
 	}
 }

@@ -134,7 +134,7 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 	// The monster's own block and parry through its debuffs (p10, p9 on its
 	// book: Water Cancel's 'terd', ...).
 	blockChance := combat.EvadedChance(monsterStat(m.ID, buff.ParamBlock, m.Block), playerEvadeBlock(c.ctx, c.casterID, d.eq))
-	parry := float64(monsterStat(m.ID, buff.ParamParry, int(combat.MonsterRate(m.Level))))
+	parry := float64(monsterStat(m.ID, buff.ParamParry, int(combat.MonsterParryRate(m))))
 	c.kindIn.TargetCodeName = m.CodeName
 	perHitFixed, fixed := combat.FixedDamagePerHit(combat.SelectDamageKind(c.kindIn), m.CodeName)
 	magical := c.terms.attackType.IsMagical() && !c.terms.attackType.IsPhysical()

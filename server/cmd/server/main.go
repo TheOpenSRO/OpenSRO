@@ -162,8 +162,12 @@ type monsterSpec struct {
 	// combat yet: docs/TODO.md's "A blocked hit with a skill percentage deals
 	// 1, not 0" is to be fixed before any spawned monster blocks.
 	Block int
-	X, Z  float64 // own-design spawn anchor (see the roster comment)
-	Count int     // how many to keep alive around the anchor (default 1)
+	// HitRate and ParryRate are characterdata cols 77 and 75 (round 875,
+	// combat.Monster.HitRate); 0 for the typed roster, which takes
+	// combat.MonsterRate.
+	HitRate, ParryRate int
+	X, Z               float64 // own-design spawn anchor (see the roster comment)
+	Count              int     // how many to keep alive around the anchor (default 1)
 	// Spawns are the species' REAL placements, straight out of the client's
 	// own npcpos table, as the table states them: a region id and a position
 	// local to that region. When a species has these, they replace the
@@ -644,6 +648,7 @@ func combatSpeciesOf(spec monsterSpec) combat.Species {
 	return combat.Species{Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
 		AttackMin: spec.AttackMin, AttackMax: spec.AttackMax, Skills: spec.Skills,
 		GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
+		HitRate: spec.HitRate, ParryRate: spec.ParryRate,
 		WalkSpeed: spec.WalkSpeed, RunSpeed: spec.RunSpeed,
 		ExpToGive: spec.ExpToGive, HasExpToGive: spec.HasExpToGive,
 		Knockdown: spec.Knockdown, KORecoverMs: spec.KORecoverMs, HasKnockdown: spec.HasKnockdown}

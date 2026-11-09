@@ -1398,7 +1398,7 @@ func TestCounterOnACasterAliveAtZeroKills(t *testing.T) {
 			if blow.Error != "" {
 				t.Fatalf("the swing at 0 HP: %+v; want it to go through (alive, life state 1)", blow)
 			}
-			if !blow.PlayerDied || blow.PlayerDamageTaken != 15 {
+			if !blow.PlayerDied || blow.PlayerDamageTaken != nakedBlow {
 				t.Fatalf("the counter on a caster alive at 0: %+v; want PlayerDied with the 15-point blow (round 550 dropped it)", blow)
 			}
 			after, _ := chars.GetByID(ctx, c.ID)

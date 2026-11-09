@@ -51,7 +51,7 @@ func TestDefenceReadsTheInstanceVariance(t *testing.T) {
 		{Slot: equipment.SlotWeapon, ItemID: 200, Variance: full(durability.ArmourPhysDefenseGroup), Durability: 55},
 	}}
 
-	phys, err := defenderArmor(ctx, 1, eq, items)
+	phys, err := defenderArmor(ctx, 1, 0, eq, items)
 	if err != nil {
 		t.Fatalf("defenderArmor: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestDefenceReadsTheInstanceVariance(t *testing.T) {
 		t.Errorf("physical defence: got %d, want %d", phys, wantPhys)
 	}
 
-	mag, err := defenderMagicArmor(ctx, 1, eq, items)
+	mag, err := defenderMagicArmor(ctx, 1, 0, eq, items)
 	if err != nil {
 		t.Fatalf("defenderMagicArmor: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestDefenceReadsTheInstanceVariance(t *testing.T) {
 
 	// A broken piece defends for nothing, variance or not.
 	eq.worn[0].Durability = durability.Broken
-	phys, err = defenderArmor(ctx, 1, eq, items)
+	phys, err = defenderArmor(ctx, 1, 0, eq, items)
 	if err != nil {
 		t.Fatalf("defenderArmor (broken helm): %v", err)
 	}
@@ -87,7 +87,7 @@ func TestDefenceIsNotTheSumOfMaxima(t *testing.T) {
 	ctx := context.Background()
 	items := stubCombatItems{200: {ID: 200, PhysDefenseMin: 10, PhysDefenseMax: 20, DurabilityMin: 50, DurabilityMax: 60}}
 	eq := fixedEquipment{worn: []equipment.Equipped{{Slot: equipment.SlotHelm, ItemID: 200, Variance: 0, Durability: 50}}}
-	phys, err := defenderArmor(ctx, 1, eq, items)
+	phys, err := defenderArmor(ctx, 1, 0, eq, items)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,14 +145,14 @@ func TestShieldDefenceCountsWithItsOwnGroups(t *testing.T) {
 		{Slot: equipment.SlotShield, ItemID: 300, Variance: full(durability.ShieldPhysDefenseGroup), Durability: 45},
 		{Slot: equipment.SlotWeapon, ItemID: 100, Variance: full(durability.ArmourPhysDefenseGroup), Durability: 45},
 	}}
-	phys, err := defenderArmor(ctx, 1, eq, items)
+	phys, err := defenderArmor(ctx, 1, 0, eq, items)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if phys != 20 {
 		t.Errorf("shield with a full group 4: got %d, want 20 (and nothing from the weapon)", phys)
 	}
-	mag, err := defenderMagicArmor(ctx, 1, eq, items)
+	mag, err := defenderMagicArmor(ctx, 1, 0, eq, items)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestShieldDefenceCountsWithItsOwnGroups(t *testing.T) {
 	// The armour group 3 is the shield's BLOCK group, not its defence: a full
 	// group 3 leaves the shield's defence at the bottom.
 	eq.worn[0].Variance = full(durability.ArmourPhysDefenseGroup)
-	phys, _ = defenderArmor(ctx, 1, eq, items)
+	phys, _ = defenderArmor(ctx, 1, 0, eq, items)
 	if phys != 10 {
 		t.Errorf("shield read the armour group: got %d, want 10", phys)
 	}

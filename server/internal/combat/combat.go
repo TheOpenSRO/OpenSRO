@@ -176,6 +176,14 @@ type Monster struct {
 	// value rather than an unmodelled one: blocking is a shield mechanic and
 	// monsters carry no shields. 938 of the game's other monsters do read 20.
 	Block int
+	// HitRate and ParryRate are the species' own attack rate and parry rate,
+	// characterdata cols 77 ('hra', param 11) and 75 ('era', param 9) --
+	// round 875, READ: GObjMob_PublishStats s:0x4c38b4 publishes them. They
+	// equal MonsterRate(level) only on low rows (MOB_SD_BLOOD_HYENA, level
+	// 104, reads 181, not 233 -- MEASURED on the table). 0 means not known
+	// (a species without the row), and MonsterHitRate / MonsterParryRate
+	// fall back to MonsterRate.
+	HitRate, ParryRate int
 	// ExpReward is the disclosed toughness-derived fallback (ExpFor), used only
 	// when no level table is loaded. The real reward is leveldata.KillExp, and
 	// it is NOT per-species: Formula_MonsterExpReward reads the level table's
@@ -953,6 +961,9 @@ type Species struct {
 	// Block is the species' real block chance, characterdata col 76. See
 	// Monster.Block.
 	Block int
+	// HitRate and ParryRate are characterdata cols 77 and 75. See
+	// Monster.HitRate.
+	HitRate, ParryRate int
 	// WalkSpeed/RunSpeed are the species' Speed1 and Speed2, characterdata
 	// _RefObjChar cols 46 and 47, in world units per second (ParamKeeper
 	// params 23/24; the engine's mover multiplies the object's speed by
@@ -1061,7 +1072,18 @@ type MonsterSkill struct {
 	ID             int64
 	ReuseMs, Range int
 	AttMin, AttMax int
-	Chance         int
+	// AttPercent and AttType are the skill's 'att' value[1] (the damage
+	// percentage) and value[0] (the type mask, AttackType) -- round 875. READ:
+	// Formula_MitigatePhysicalDamage / _MagicalDamage s:0x40e56e / s:0x40e8fd
+	// multiply the mitigated blow by value[1] / 100, and the mask's 0x4 / 0x8
+	// bits pick the physical or the magical formula (s:0x58f15d / s:0x58f186).
+	// MEASURED: a level-104 monster's 76 % two-hit skill and its
+	// 152 % skill land on the same defender in that proportion. A zero
+	// percentage is "not known" (an older export) and leaves the blow whole; a
+	// zero type is physical (AttackType.Known).
+	AttPercent int
+	AttType    int
+	Chance     int
 	// Status is the skill's status runs, refdata.Skill.StatusParams
 	// (statuseffect.ParseRuns reads it): what a blow of this skill applies to
 	// the character it lands on (round 659). "" applies nothing.
@@ -1157,7 +1179,7 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, HitRate: species.HitRate, ParryRate: species.ParryRate, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP), ExpToGive: species.ExpToGive, HasExpToGive: species.HasExpToGive, Knockdown: species.Knockdown, KORecoverMs: species.KORecoverMs, HasKnockdown: species.HasKnockdown,
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: hatch.HomeX, HomeZ: hatch.HomeZ, DestX: x, DestZ: z,
 		Party: hatch.Party, Tactics: hatch.Tactics, Summon: species.Summon, Triggers: species.Triggers, Leader: hatch.Leader,
@@ -1455,6 +1477,67 @@ func ResolveBlow(base int, mitigationPercent float64, flat, critChance, blockCha
 	// before the attacker percentages OpenSRO cannot reach. See
 	// ApplyFloorBand.
 	out.Damage = ApplyFloorBand(out.Damage, base, r)
+	return out
+}
+
+// ResolveSkillBlow is ResolveBlow for a blow that carries a skill's damage
+// percentage, applied where the engine applies it: after the mitigation and its
+// clamp at 0 and BEFORE the critical, the level term and the floor band
+// (Formula_MitigatePhysicalDamage stage 6, s:0x40e56e; the magical twin
+// s:0x40e8fd -- READ, docs/protocol/damage_pipeline.md). Round 875: a monster's
+// skill blow. percent <= 0 leaves the blow whole (an export without the
+// column); SkillPercentZero is a real zero.
+//
+// The pipeline is carried in floats and the result truncated, as the engine's
+// is (stage 19: `or eax,0xc00` before `fistp`); a computed 0 becomes 1
+// (Combat_ResolveDamage's floor). MEASURED on a defender with phy def 3182.49
+// and an accessory absorption of 119.8 %: a level-104 monster's 152 % skill
+// of 6969..8038 landed 572..688 per hit, and after a decay of 2000 flat
+// 3021..3559 (a critical 7008); its 76 % skill never cleared 5 % of its
+// base before the decay and landed floor-band amounts (13..689).
+func ResolveSkillBlow(base, percent int, mitigationPercent float64, flat float64, critChance, blockChance, attackerLevel, defenderLevel int, r *rand.Rand, mem *ChanceMemory) Blow {
+	if mem.roll(blockChance, r, mem.defender(), ChanceBlock) {
+		return Blow{Blocked: true}
+	}
+	if mitigationPercent < 0 {
+		mitigationPercent = 0
+	}
+	d := float64(base)/(1+mitigationPercent/100) - flat
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case percent == SkillPercentZero:
+		d = 0
+	case percent > 0:
+		d = d * float64(percent) / 100
+	}
+	var out Blow
+	if mem.roll(critChance, r, mem.attacker(), ChanceCritical) {
+		d *= CriticalMultiplier
+		out.Critical = true
+	}
+	if attackerLevel > 0 && defenderLevel > 0 {
+		d *= LevelAdvantage(attackerLevel, defenderLevel)
+	}
+	if base > 0 && d < float64(base)*FloorBandThreshold {
+		v := float64(base) * FloorBandScale / 100
+		if v <= 0 {
+			v = 1
+		}
+		frac := 1.0
+		if r != nil {
+			frac = float64(r.Intn(FloorBandRandMax+1)) / FloorBandRandMax
+		}
+		d = 1 + (v-1)*frac
+	}
+	if d > MaxDamage {
+		d = MaxDamage
+	}
+	out.Damage = int(d)
+	if out.Damage < 1 {
+		out.Damage = 1
+	}
 	return out
 }
 

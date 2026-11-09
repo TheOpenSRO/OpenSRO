@@ -124,3 +124,18 @@ equipment-fed percentage. That is a different model, not a different constant, s
 changing it is a real behaviour change and it needs the two unread pieces above first --
 otherwise a character with armour and no Strength would come out with an absorb of zero
 on a reading that is only three quarters done.
+
+## Round 875: the Strength / Intellect term of the defences, read and measured
+
+The "50 <- 58/59" edges above are the SHIELD's branch (Char_PublishCombatStats `0x497e50`). The
+body armour's own term is a separate loop, GObjPC_InitStats `0x4e3430..0x4e34c5`: param 50 sums
+params 38..43 and param 51 sums 44..49, each seeded with a naked default from the table at
+`0xc640d0` (head 3.2/5.2, shoulder 2.7/4.3, chest 4.2/6.7, legs 3.4/5.5, hands 2.5/3.9, feet
+3.0/4.9). A worn piece's PDStr / MDInt (itemdata columns 82..85, divided by 1000 at load,
+RefObjItem::ExtractData `0x6a42b2` / `0x6a4305`; rolled from variance groups 1 / 2) is published
+x100 into param 37+TypeID4 / 43+TypeID4 at slot 0 with context 0 (`0x497c73..0x497cf8`),
+replacing that slot's default. ParamKeeper_EvaluateParam (`0x4b3210`) sums a slot's
+contributors. So **phy def = sum(PD) + Str x p50 / 100 and mag def = sum(MD) + Int x p51 / 100**,
+and the window truncates. MEASURED: a level-110 character reads 93 / 50 naked (Str 491 x 0.190,
+Int 164 x 0.305) and 3182 / 3205 in a +12 heavy set (1989.1 + 533 x 2.239, 2602.2 + 206 x 2.931).
+OpenSRO: `session.armourReinforce`, WORLD_ISSUES "Eight-hundred-and-seventy-fifth round".

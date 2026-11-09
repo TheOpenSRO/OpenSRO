@@ -88,8 +88,9 @@ func TestWornPlusAndOptionsCount(t *testing.T) {
 	if got.PhysAttackMin != 13 || got.PhysAttack != 16 {
 		t.Errorf("phys attack %d~%d, want 13~16 (the plus on both ends)", got.PhysAttackMin, got.PhysAttack)
 	}
-	if got.PhysDefense != 12 {
-		t.Errorf("phys defence %d, want 12 (10 + 1 x +2)", got.PhysDefense)
+	// Round 875: + Str 25 x the five empty body slots' naked scales.
+	if got.PhysDefense != 15 {
+		t.Errorf("phys defence %d, want 15 (10 + 1 x +2 + the naked reinforce)", got.PhysDefense)
 	}
 	// 10 + level 2 + 24 * 1.5; 10 + 2 + 4 * 1.25.
 	if got.HitRate != 48 || got.ParryRate != int32(math.Round(17)) {
@@ -172,8 +173,9 @@ func TestWornOptionsTheRestOfTheRules(t *testing.T) {
 	if got.PhysAttackMin != 13 {
 		t.Errorf("phys attack min %d, want 13 (+1 and a level-2 rein)", got.PhysAttackMin)
 	}
-	if got.MagDefense != 11 {
-		t.Errorf("mag defence %d, want 5 + 2 x 3", got.MagDefense)
+	// Round 875: + Int 24 x the five empty body slots' naked scales.
+	if got.MagDefense != 16 {
+		t.Errorf("mag defence %d, want 5 + 2 x 3 + the naked reinforce", got.MagDefense)
 	}
 	if cr := attackerCritical(ctx, 1, eq, items); cr != 33 {
 		t.Errorf("critical %d, want 33 (group 6 at the top)", cr)

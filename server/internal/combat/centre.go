@@ -66,6 +66,24 @@ const (
 // land in their range. Read cols 75/77 for the new row rather than assuming.
 func MonsterRate(level int) float64 { return float64(2*level + 25) }
 
+// MonsterHitRate is m's attack rate: its species' col 77 (Monster.HitRate),
+// or MonsterRate(level) when the species carries none (round 875).
+func MonsterHitRate(m Monster) float64 {
+	if m.HitRate > 0 {
+		return float64(m.HitRate)
+	}
+	return MonsterRate(m.Level)
+}
+
+// MonsterParryRate is m's parry rate: its species' col 75 (Monster.ParryRate),
+// or MonsterRate(level) when the species carries none (round 875).
+func MonsterParryRate(m Monster) float64 {
+	if m.ParryRate > 0 {
+		return float64(m.ParryRate)
+	}
+	return MonsterRate(m.Level)
+}
+
 // CharacterRate is a character's attack or parry rate: the innate 10, plus the
 // level edge, plus whatever equipment contributes -- a weapon's attack rate
 // (itemdata col 113, refdata Item.HitRateMin) for `hra`, body armour's parry

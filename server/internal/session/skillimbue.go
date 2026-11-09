@@ -84,7 +84,7 @@ func imbueHit(ctx context.Context, d combatDeps, characterID int64, it *imbueTer
 	if !atk.Known() {
 		atk = combat.AttackMagical
 	}
-	base, err := attackerDamageOf(ctx, characterID, str, intel, d.eq, d.items, atk, level, m.Level, combat.MonsterRate(m.Level))
+	base, err := attackerDamageOf(ctx, characterID, str, intel, d.eq, d.items, atk, level, m.Level, combat.MonsterParryRate(m))
 	if err != nil {
 		return 0
 	}

@@ -1218,12 +1218,12 @@ func TestMonsterChasesToItsBand(t *testing.T) {
 		t.Fatalf("no OpMonsterAttacked within 2 s of the monster reaching its band (%d pushed)", len(f.rec.strikesOf(m.ID)))
 	}
 	got := f.rec.strikesOf(m.ID)[0]
-	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: f.aria, Damage: 15, TargetHP: int32(character.StartingMaxHP) - 15}
+	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: f.aria, Damage: nakedBlow, TargetHP: int32(character.StartingMaxHP) - nakedBlow}
 	if got != want {
 		t.Errorf("the blow %+v, want %+v", got, want)
 	}
-	if c, err := f.chars.GetByID(context.Background(), f.aria); err != nil || c.HP != character.StartingMaxHP-15 {
-		t.Errorf("Aria's HP after the blow = %d (err %v), want %d", c.HP, err, character.StartingMaxHP-15)
+	if c, err := f.chars.GetByID(context.Background(), f.aria); err != nil || c.HP != character.StartingMaxHP-nakedBlow {
+		t.Errorf("Aria's HP after the blow = %d (err %v), want %d", c.HP, err, character.StartingMaxHP-nakedBlow)
 	}
 
 	// The cadence: the next blows at exactly ReuseDelay, 3000 ms, after the
@@ -1253,8 +1253,8 @@ func TestMonsterChasesToItsBand(t *testing.T) {
 	if n := len(f.rec.of(m.ID)); n != movesBefore {
 		t.Errorf("%d move(s) pushed while the monster stood in its band: %+v", n-movesBefore, f.rec.of(m.ID)[movesBefore:])
 	}
-	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP-4*15 {
-		t.Errorf("Aria's HP after four blows = %d, want %d", c.HP, character.StartingMaxHP-4*15)
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP-4*nakedBlow {
+		t.Errorf("Aria's HP after four blows = %d, want %d", c.HP, character.StartingMaxHP-4*nakedBlow)
 	}
 	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
 		t.Errorf("state %v with the target still in the band, want BATTLE", st)
@@ -1478,8 +1478,8 @@ func TestStrikeWorkerSurvivesAPanic(t *testing.T) {
 	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
 		t.Fatalf("the swing after the panic never landed (%d pushed): the worker died with the panic", len(f.rec.strikesOf(m.ID)))
 	}
-	if got := f.rec.strikesOf(m.ID)[0]; got.Damage != 15 || got.TargetHP != int32(character.StartingMaxHP)-15 {
-		t.Errorf("the blow after the panic %+v, want 15 on Aria from full", got)
+	if got := f.rec.strikesOf(m.ID)[0]; got.Damage != nakedBlow || got.TargetHP != int32(character.StartingMaxHP)-nakedBlow {
+		t.Errorf("the blow after the panic %+v, want %d on Aria from full", got, nakedBlow)
 	}
 }
 
@@ -1979,8 +1979,8 @@ func TestPanickingPushLeavesTheWireLockFree(t *testing.T) {
 	if !strings.Contains(log.String(), "strike panicked") {
 		t.Fatalf("no 'strike panicked' line: the test session's Send did not panic inside the push; log:\n%s", log.String())
 	}
-	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP-15 {
-		t.Errorf("Aria's HP %d, want %d: the blow lands before the push", c.HP, character.StartingMaxHP-15)
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP-nakedBlow {
+		t.Errorf("Aria's HP %d, want %d: the blow lands before the push", c.HP, character.StartingMaxHP-nakedBlow)
 	}
 	e, ok := f.hub.EntityByCharacterID(f.aria)
 	if !ok || e.Session == nil {
@@ -2263,8 +2263,8 @@ func TestMonsterNoticesAPlayerWalkingIntoRange(t *testing.T) {
 	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) >= 1 }) {
 		t.Fatal("no blow on Aria within 4 s of the monster noticing her")
 	}
-	if s := f.rec.strikesOf(m.ID)[0]; s.TargetCharacterID != f.aria || s.Damage != 15 {
-		t.Errorf("the first blow %+v, want 15 on Aria %d", s, f.aria)
+	if s := f.rec.strikesOf(m.ID)[0]; s.TargetCharacterID != f.aria || s.Damage != nakedBlow {
+		t.Errorf("the first blow %+v, want %d on Aria %d", s, nakedBlow, f.aria)
 	}
 }
 
@@ -3013,8 +3013,8 @@ func TestMonsterStrikeRollsTheNamedSkill(t *testing.T) {
 	bare := cur
 	bare.AttackMin, bare.AttackMax, bare.Skills = 0, 0, nil
 	out, err = monsterStrike(ctx, f.a.deps, bare, combat.MonsterSkill{}, f.aria, 1)
-	if err != nil || out.damage < 15 {
-		t.Fatalf("a swing of a monster with no range at all = %+v (err %v), want its flat Attack, at least 15", out, err)
+	if err != nil || out.damage < 15-3 {
+		t.Fatalf("a swing of a monster with no range at all = %+v (err %v), want its flat Attack less the naked 3, at least 12", out, err)
 	}
 }
 

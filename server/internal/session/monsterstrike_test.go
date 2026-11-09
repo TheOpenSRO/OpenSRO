@@ -453,8 +453,8 @@ func TestMonsterStrikePushOffIsTheOldWire(t *testing.T) {
 	m := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x, 0, z.aria.z, 1000, 0, 15, 0)
 
 	res, ariaAfter := z.aria.attack(t, m.ID)
-	if res.PlayerDamageTaken != 15 || res.PlayerHP != int32(character.StartingMaxHP)-15 {
-		t.Fatalf("the counter in the result: got %+v, want 15 taken and %d HP", res, character.StartingMaxHP-15)
+	if res.PlayerDamageTaken != nakedBlow || res.PlayerHP != int32(character.StartingMaxHP)-nakedBlow {
+		t.Fatalf("the counter in the result: got %+v, want %d taken and %d HP", res, nakedBlow, character.StartingMaxHP-nakedBlow)
 	}
 	if len(ariaAfter) != 0 {
 		t.Errorf("after her result Aria received %#04x, want nothing", opcodesOf(ariaAfter))
@@ -627,12 +627,12 @@ func TestBowShotIsNotAnsweredAtRange(t *testing.T) {
 		}
 	}
 	blow, err := DecodeMonsterAttacked(strike.Data)
-	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: z.ariaChar, Damage: 15, TargetHP: int32(character.StartingMaxHP) - 15}
+	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: z.ariaChar, Damage: nakedBlow, TargetHP: int32(character.StartingMaxHP) - nakedBlow}
 	if err != nil || *blow != want {
 		t.Errorf("the blow %+v (err %v), want %+v", blow, err, want)
 	}
-	if c, err := z.chars.GetByID(ctx, z.ariaChar); err != nil || c.HP != character.StartingMaxHP-15 {
-		t.Errorf("Aria's HP = %d (err %v), want %d", c.HP, err, character.StartingMaxHP-15)
+	if c, err := z.chars.GetByID(ctx, z.ariaChar); err != nil || c.HP != character.StartingMaxHP-nakedBlow {
+		t.Errorf("Aria's HP = %d (err %v), want %d", c.HP, err, character.StartingMaxHP-nakedBlow)
 	}
 	bramStrikes := strikes(t, z.bram.barrier(t))
 	if len(bramStrikes) != 1 || *bramStrikes[0] != want {
@@ -753,7 +753,7 @@ func TestCounterKillLeavesThePlayerDeadUntilRevived(t *testing.T) {
 	}
 	z.aria.x, z.aria.z = 50, 50
 	m := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x, 0, z.aria.z, 1000, 0, 15, 0)
-	if res2, _ := z.aria.attack(t, m.ID); res2.PlayerDamageTaken != 15 || res2.PlayerHP != int32(wantHP-15) {
-		t.Errorf("the revived player's next fight %+v; want a 15-point counter from %d", res2, wantHP)
+	if res2, _ := z.aria.attack(t, m.ID); res2.PlayerDamageTaken != nakedBlow || res2.PlayerHP != int32(wantHP-nakedBlow) {
+		t.Errorf("the revived player's next fight %+v; want a %d-point counter from %d", res2, nakedBlow, wantHP)
 	}
 }

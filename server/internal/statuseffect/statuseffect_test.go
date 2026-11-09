@@ -184,15 +184,17 @@ func TestNonElementalFalloffsStopAtTheirFloors(t *testing.T) {
 	}
 }
 
-// Kind is always the bit plus one, the fields ascend with the kinds, and the
-// codes are unique. If any of those breaks, the table was mis-transcribed.
+// Kind is the bit plus one up to stun (round 875: from `ds` on the bit is the
+// state's slot, READ at the OR sites), the fields ascend with the kinds, and
+// the codes and bits are unique. If any of those breaks, the table was
+// mis-transcribed.
 func TestStateTableIsInternallyConsistent(t *testing.T) {
 	seenCode := map[string]bool{}
 	seenBit := map[int]bool{}
 	prevField, prevKind := 0, 0
 	for _, s := range States {
-		if s.Kind != s.Bit+1 {
-			t.Errorf("%s: kind %d, bit %d -- kind must be bit+1", s.Code, s.Kind, s.Bit)
+		if s.Kind <= 15 && s.Kind != s.Bit+1 {
+			t.Errorf("%s: kind %d, bit %d -- up to stun kind must be bit+1", s.Code, s.Kind, s.Bit)
 		}
 		if seenCode[s.Code] || seenBit[s.Bit] {
 			t.Errorf("%s / bit %d listed twice", s.Code, s.Bit)
@@ -206,28 +208,31 @@ func TestStateTableIsInternallyConsistent(t *testing.T) {
 	if len(States) != 23 {
 		t.Errorf("%d states, want the 23 blocks Combat_ApplyStatusEffects carries", len(States))
 	}
-	// The three absent bits.
-	for _, bit := range []int{12, 15, 23} {
-		if s, ok := StateByBit(bit); ok && s.Label != "" {
-			t.Errorf("bit %d should have no applying block with a label, got %q", bit, s.Label)
+	// The absent bits: 12 and 23 have no block.
+	for _, bit := range []int{12, 23} {
+		if s, ok := StateByBit(bit); ok {
+			t.Errorf("bit %d should have no applying block, got %q", bit, s.Code)
 		}
 	}
 }
 
-// The trap, pinned: the cs* letters are not the state. Anyone reading `cshp`
-// as "curse HP" gets the MP curse.
-func TestTheCurseCodesDoNotMeanTheirLetters(t *testing.T) {
-	cshp, ok := StateByCode("cshp")
-	if !ok || cshp.Label != "CURSIE_MP" {
-		t.Errorf("cshp -> %+v; it is the MP curse, not HP", cshp)
-	}
-	csmd, ok := StateByCode("csmd")
-	if !ok || csmd.Label != "CURSE_HP" {
-		t.Errorf("csmd -> %+v; it is the HP curse, not MD", csmd)
-	}
-	cssr, _ := StateByCode("cssr")
-	if cssr.Label != "CURSE_MD" {
-		t.Errorf("cssr -> %q; it is the MD curse, not STR", cssr.Label)
+// Round 875: the cs* letters mean the state (READ: each block ORs its slot's
+// bit; MEASURED: `cspd` arrives as mask 0x20000 and the client reports decay).
+// This replaces round 278's "the codes do not mean their letters", which had
+// read the kind as the bit.
+func TestTheCurseCodesMeanTheirLetters(t *testing.T) {
+	for code, want := range map[string]struct {
+		bit   int
+		label string
+	}{
+		"ds": {15, "DISEASE"}, "ca": {16, "CHAOS"}, "cspd": {17, "CURSE_PD"}, "csmd": {18, "CURSE_MD"},
+		"cssr": {19, "CURSE_STR"}, "csit": {20, "CURSE_INT"}, "cshp": {21, "CURSE_HP"},
+		"csmp": {22, "CURSIE_MP"}, "tb": {24, "TIME_BOMB"},
+	} {
+		s, ok := StateByCode(code)
+		if !ok || s.Bit != want.bit || s.Label != want.label {
+			t.Errorf("%s -> %+v, want bit %d %s", code, s, want.bit, want.label)
+		}
 	}
 	// And the ones that DO agree, which is why the join is trustworthy.
 	for code, label := range map[string]string{

@@ -466,6 +466,7 @@ func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, 
 	if err != nil {
 		return nil, fmt.Errorf("character: getting character: %w", err)
 	}
+	noteBaseStats(c.ID, c.Str, c.Int)
 	return c, nil
 }
 
@@ -484,6 +485,7 @@ func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int
 	if n == 0 {
 		return ErrNotFound
 	}
+	noteBaseStats(characterID, str, intel)
 	return nil
 }
 

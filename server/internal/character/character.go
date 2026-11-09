@@ -280,7 +280,10 @@ func derivedStat(stat, perPoint, level int) int {
 	if stat < 0 {
 		stat = 0
 	}
-	return int(math.Round(float64(stat) * float64(perPoint) * math.Pow(StatGrowth, float64(level-1))))
+	// TRUNCATED (round 875, MEASURED): a level-110 character's max HP reads
+	// 39480 at Str 456 (39480.58), 42510 at Str 491 (42510.89) and its max MP
+	// 14199 at Int 164 -- rounding gave 39481 and 42511.
+	return int(float64(stat) * float64(perPoint) * math.Pow(StatGrowth, float64(level-1)))
 }
 
 // HighestLevel is the character's max level, _CHAR.MaxLevel (round 874):

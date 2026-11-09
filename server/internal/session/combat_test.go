@@ -274,8 +274,8 @@ func TestCombatFullFlow(t *testing.T) {
 	if ar.Error != "" || ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 20 || ar.MonsterDied {
 		t.Fatalf("first hit (monster side): got %+v, want damage=20 remaining=20 died=false", ar)
 	}
-	if ar.PlayerDamageTaken != 15 || ar.PlayerHP != int32(character.StartingMaxHP)-15 || ar.PlayerDied {
-		t.Fatalf("first hit (player side): got %+v, want damageTaken=15 hp=%d died=false", ar, character.StartingMaxHP-15)
+	if ar.PlayerDamageTaken != nakedBlow || ar.PlayerHP != int32(character.StartingMaxHP)-nakedBlow || ar.PlayerDied {
+		t.Fatalf("first hit (player side): got %+v, want damageTaken=%d hp=%d died=false", ar, nakedBlow, character.StartingMaxHP-nakedBlow)
 	}
 
 	// Second hit: monster 20 -> 0 HP, dies -- no counterattack, gold reward
@@ -288,8 +288,8 @@ func TestCombatFullFlow(t *testing.T) {
 	if ar.Error != "" || ar.MonsterRemainingHP != 0 || !ar.MonsterDied {
 		t.Fatalf("second hit (monster side): got %+v, want remaining=0 died=true", ar)
 	}
-	if ar.PlayerDamageTaken != 0 || ar.PlayerHP != int32(character.StartingMaxHP)-15 {
-		t.Fatalf("second hit (player side): got %+v, want no further damage, hp still %d", ar, character.StartingMaxHP-15)
+	if ar.PlayerDamageTaken != 0 || ar.PlayerHP != int32(character.StartingMaxHP)-nakedBlow {
+		t.Fatalf("second hit (player side): got %+v, want no further damage, hp still %d", ar, character.StartingMaxHP-nakedBlow)
 	}
 
 	list, err := chars.ListByAccount(ctx, 1)
@@ -412,14 +412,16 @@ func TestCombatArmorMitigation(t *testing.T) {
 		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
 	}
 
-	// 15 attack - 10 armor = 5 net damage taken, not the raw 15.
+	// 15 attack - 10 armor = 5 net damage taken, not the raw 15 -- less the
+	// four empty body slots' naked reinforce (round 875): Str 20 x (19.0 - the
+	// helm's 3.2 - the mail's 4.2) % = 2.32, so 12.32 defence, 3 taken.
 	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
 	ar, err := DecodeAttackResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.PlayerDamageTaken != 5 || ar.PlayerHP != int32(character.StartingMaxHP)-5 || ar.PlayerDied {
-		t.Fatalf("armored hit: got %+v, want damageTaken=5 hp=%d died=false", ar, character.StartingMaxHP-5)
+	if ar.PlayerDamageTaken != 3 || ar.PlayerHP != int32(character.StartingMaxHP)-3 || ar.PlayerDied {
+		t.Fatalf("armored hit: got %+v, want damageTaken=3 hp=%d died=false", ar, character.StartingMaxHP-3)
 	}
 
 	// Re-equip the huge-defense shoulderguard and confirm the 1-damage floor
@@ -432,8 +434,8 @@ func TestCombatArmorMitigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.PlayerDamageTaken != 1 || ar.PlayerHP != int32(character.StartingMaxHP)-5-1 {
-		t.Fatalf("overarmored hit: got %+v, want damageTaken=1 (floor) hp=%d", ar, character.StartingMaxHP-5-1)
+	if ar.PlayerDamageTaken != 1 || ar.PlayerHP != int32(character.StartingMaxHP)-3-1 {
+		t.Fatalf("overarmored hit: got %+v, want damageTaken=1 (floor) hp=%d", ar, character.StartingMaxHP-3-1)
 	}
 }
 
@@ -815,8 +817,10 @@ func TestLevelAdvantageAppliedInCombat(t *testing.T) {
 	if ar.MonsterDamage != 17 {
 		t.Errorf("player's blow = %d, want 17 (out-levelled, so no bonus)", ar.MonsterDamage)
 	}
-	if ar.PlayerDamageTaken != 20 {
-		t.Errorf("counterattack = %d, want 20 (15 * the capped 1.30)", ar.PlayerDamageTaken)
+	// Round 875: (15 - the naked 3) x 1.30 = 15.6, truncated as the engine
+	// truncates the finished blow.
+	if ar.PlayerDamageTaken != 15 {
+		t.Errorf("counterattack = %d, want 15 ((15 - 3) * the capped 1.30)", ar.PlayerDamageTaken)
 	}
 }
 
@@ -1092,9 +1096,9 @@ func TestMonsterCriticalAppliedInCombat(t *testing.T) {
 	if !ar.MonsterCritical {
 		t.Fatalf("a critical chance of 100 must always crit, got %+v", ar)
 	}
-	if ar.PlayerDamageTaken != 15*combat.CriticalMultiplier {
-		t.Errorf("counterattack = %d, want %d (15 doubled by the critical)",
-			ar.PlayerDamageTaken, 15*combat.CriticalMultiplier)
+	if ar.PlayerDamageTaken != nakedBlow*combat.CriticalMultiplier {
+		t.Errorf("counterattack = %d, want %d (15 - the naked 3, doubled by the critical)",
+			ar.PlayerDamageTaken, nakedBlow*combat.CriticalMultiplier)
 	}
 }
 

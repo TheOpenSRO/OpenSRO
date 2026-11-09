@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
@@ -266,12 +265,16 @@ func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equ
 // (durability.ArmourMagDefenseGroup; Char_BuildAggregateStats' block at
 // 0x495fa0 -> item+0x1a8, param 6) and group 5 for the shield (0x4968a4).
 // The same walk, so the two defence rows are built the same way.
-func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
+//
+// Round 875: intel is the wearer's total Intellect, scaled by the body
+// armour's MDInt (armourReinforce).
+func defenderMagicArmor(ctx context.Context, characterID int64, intel int, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	v, err := defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
 		return it.MagDefenseMin, it.MagDefenseMax, it.PlusIncMagDef
-	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup)
+	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup, intel, true)
 	// Round 785: the buffs' param-6 entries (buffstats.go).
-	return buffStatInt(characterID, buff.ParamMagDefFlat, v), err
+	// Round 875: then the states that cut it (statusRuntime.cursedDefence).
+	return statusFX.cursedDefence(characterID, buffStatInt(characterID, buff.ParamMagDefFlat, v), true), err
 }
 
 // characterRates is the character's attack rate and parry rate as combat uses
@@ -311,7 +314,9 @@ func characterRates(ctx context.Context, level int, characterID int64, eq equipm
 	if err != nil {
 		return 0, 0, err
 	}
-	return int(math.Round(combat.CharacterRate(level, weaponRate))), int(math.Round(combat.CharacterRate(level, era))), nil
+	// Truncated, not rounded (round 875, MEASURED: a parry of 617.6 and an
+	// attack rate of 524.8 read 617 and 524 on the character window).
+	return int(combat.CharacterRate(level, weaponRate)), int(combat.CharacterRate(level, era)), nil
 }
 
 // buildCharacterStats fills a CharacterStatsResult for owned from every
@@ -360,11 +365,11 @@ func buildCharacterStats(ctx context.Context, owned *character.Character, charac
 		if err != nil {
 			return nil, err
 		}
-		armor, err := defenderArmor(ctx, characterID, eq, items)
+		armor, err := defenderArmor(ctx, characterID, owned.TotalStr(), eq, items)
 		if err != nil {
 			return nil, err
 		}
-		magic, err := defenderMagicArmor(ctx, characterID, eq, items)
+		magic, err := defenderMagicArmor(ctx, characterID, owned.TotalInt(), eq, items)
 		if err != nil {
 			return nil, err
 		}

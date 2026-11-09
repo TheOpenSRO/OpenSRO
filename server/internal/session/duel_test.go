@@ -283,7 +283,8 @@ func TestDuelFullFightFlow(t *testing.T) {
 	// 30 damage a hit against the character's real starting health. Derived
 	// rather than written out, so it follows the recovered Str-based maximum
 	// instead of pinning a number that moves the moment the formula does.
-	const perHit = 30
+	// Round 875: less Bram's naked defence, Str 20 x 19.0 % = 3.8 -> 3.
+	const perHit = 30 - 3
 	var wantHPs []int32
 	for hp := int32(character.StartingMaxHP); hp > 0; {
 		hp -= perHit
@@ -295,8 +296,8 @@ func TestDuelFullFightFlow(t *testing.T) {
 	for i, wantHP := range wantHPs {
 		resp = doSend(connA, rA, OpDuelAttack, (&DuelAttackRequest{CharacterName: "Aria"}).Encode())
 		ar, err := DecodeDuelAttackResult(resp.Data)
-		if err != nil || ar.Error != "" || ar.Damage != 30 || ar.OpponentHP != wantHP {
-			t.Fatalf("hit %d: err=%v result=%+v, want damage=30 hp=%d", i+1, err, ar, wantHP)
+		if err != nil || ar.Error != "" || ar.Damage != perHit || ar.OpponentHP != wantHP {
+			t.Fatalf("hit %d: err=%v result=%+v, want damage=%d hp=%d", i+1, err, ar, perHit, wantHP)
 		}
 
 		if i < len(wantHPs)-1 {
@@ -451,11 +452,13 @@ func TestDuelArmorMitigation(t *testing.T) {
 		t.Fatalf("reading Aria's OpDuelStarted: %v", err)
 	}
 
-	// 30 attack - 12 armor (Bram's real equipped mail) = 18 net, not 30.
+	// 30 attack - 12 armor (Bram's real equipped mail) = 18 net, not 30 --
+	// less the five empty body slots' naked reinforce (round 875): Str 20 x
+	// (19.0 - 4.2) % = 2.96, so 14.96 defence and 16 taken.
 	resp = doSend(connA, rA, OpDuelAttack, (&DuelAttackRequest{CharacterName: "Aria"}).Encode())
 	ar, err := DecodeDuelAttackResult(resp.Data)
-	if err != nil || ar.Error != "" || ar.Damage != 18 || ar.OpponentHP != int32(character.StartingMaxHP)-18 {
-		t.Fatalf("armored hit: err=%v result=%+v, want damage=18 hp=%d", err, ar, character.StartingMaxHP-18)
+	if err != nil || ar.Error != "" || ar.Damage != 16 || ar.OpponentHP != int32(character.StartingMaxHP)-16 {
+		t.Fatalf("armored hit: err=%v result=%+v, want damage=16 hp=%d", err, ar, character.StartingMaxHP-16)
 	}
 }
 
@@ -614,7 +617,7 @@ func TestDuelBlowOnAnOpponentAliveAtZeroEndsTheDuel(t *testing.T) {
 	if err != nil || ar.Error != "" {
 		t.Fatalf("the blow on an opponent alive at 0: %+v (err %v)", ar, err)
 	}
-	if !ar.OpponentDied || ar.Damage != 30 || ar.OpponentHP != 0 {
+	if !ar.OpponentDied || ar.Damage != 27 || ar.OpponentHP != 0 { // round 875: 30 - the naked 3
 		t.Fatalf("the blow on an opponent alive at 0: %+v; want the duel's kill (OpponentDied, 30 damage, HP 0) -- round 550 read (0, false) and the duel went on", ar)
 	}
 	if p := read(connA, rA, "Aria's OpDuelEnded"); p.Opcode != OpDuelEnded {

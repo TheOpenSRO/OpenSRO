@@ -335,6 +335,19 @@ func (h *Holder) Thawing(nowMs uint32) bool {
 	return h.thawing && int32(nowMs-h.thawUntilMs) < 0
 }
 
+// CurseCut is the flat defence a decay (physical) or a weakness (magical)
+// takes off, before the cap at the defence there is (Record.CurseCut).
+func (h *Holder) CurseCut(magical bool) int {
+	slot := SlotDecay
+	if magical {
+		slot = SlotWeakness
+	}
+	if r := h.recs[slot]; r != nil {
+		return r.CurseCut
+	}
+	return 0
+}
+
 // DefenceCut is the flat defence bleeding takes off (params 5 and 6,
 // `-(float)record+0x40` in the abnormal context, 0x4a4cc0 mode 0). READ.
 func (h *Holder) DefenceCut() int {

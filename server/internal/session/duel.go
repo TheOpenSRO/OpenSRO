@@ -398,7 +398,11 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "damage calculation failed"}).Encode()})
 	}
-	armor, err := defenderArmor(ctx, opponent.CharacterID, eq, items)
+	opponentStr := 0
+	if c, err := chars.GetByID(ctx, opponent.CharacterID); err == nil && c != nil {
+		opponentStr = c.TotalStr() // round 875: Str x the armour's PDStr
+	}
+	armor, err := defenderArmor(ctx, opponent.CharacterID, opponentStr, eq, items)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "damage calculation failed"}).Encode()})
 	}
