@@ -414,6 +414,17 @@ start in parallel with the world unit because it only needs the interfaces):
 
 ## 13. OPEN, and choices for the user
 
+**Choices, decided (2026-11-09, before stage 2):**
+1. Gate access: follow the data, the access type read per hole item (every hole today is type 6: only the
+   creator enters by the gate; the party follows through the recall NPC inside).
+2. Re-entry limit: 300 minutes on the server (the database and the item's cooldown); the client keeps reading
+   its own text.
+3. The free entrance ticket: not built (switched off in the data, referenced by neither binary).
+4. The inside: built from what was READ; measured in stage 3 if entry can be made to work (the refusal's cause
+   is being looked for).
+5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
+   process until the user says otherwise.
+
 OPEN: why the measured warp was refused (code 3); the type-6 gate's client test; the gate
 record's +0x260; codes 0x1c28, 0x1c2a..0x1c2c and 0x1c2f's texts in category 0xd; the hole's "24
 hours" expiry; how the talismans (`ITEM_TALISMAN_TOGUI_*`, `_FLAME_*`, `_WRECK_A_*` / `_B_*`) and

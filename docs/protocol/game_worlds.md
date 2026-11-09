@@ -509,6 +509,17 @@ players back in the open world in under 15 s) and a drain under load.
 
 ## 13. OPEN, and choices for the user
 
+**Choices, decided (2026-11-09, before stage 2):**
+1. Gate access: follow the data, the access type read per hole item (every hole today is type 6: only the
+   creator enters by the gate; the party follows through the recall NPC inside).
+2. Re-entry limit: 300 minutes on the server (the database and the item's cooldown); the client keeps reading
+   its own text.
+3. The free entrance ticket: not built (switched off in the data, referenced by neither binary).
+4. The inside: built from what was READ; measured in stage 3 if entry can be made to work (the refusal's cause
+   is being looked for).
+5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
+   process until the user says otherwise.
+
 OPEN (not read, not measured): the close messages' kind bytes; where a player revives after dying
 inside; re-login into a still-open instance; a member leaving the party inside; the trigger chain
 rule (OnTrue/OnFalse), Delay and IsRepeat in the binary; `NUM_INPUT_1` of LOAD_MONSTER; the door's
