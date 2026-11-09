@@ -43,6 +43,11 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 872: the Test Items NPC's action lines (OpNpcActionDef) and
+	// request (OpNpcAction): the Godot client decodes the one and sends the
+	// other, so in Go only the golden-bytes tests use these two.
+	"DecodeActions": "round 872: OpNpcActionDef's decoder, the client's side; testnpc/action_test.go and session/fgwreset_test.go.",
+	"EncodeAction":  "round 872: OpNpcAction's encoder, the client's side; testnpc/action_test.go and session/fgwreset_test.go.",
 	// Round 869: the game worlds' seams for the lanes after W1 -- the
 	// doors' placements once their source is found (SetZonePlaces; OPEN),
 	// W2's registry rows (Word) -- and the tests' clock. (W3's gate calls

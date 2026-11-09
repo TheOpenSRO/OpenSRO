@@ -69,10 +69,16 @@ func appendTestItemsNPC(logger *slog.Logger, npcs []npcspawn.NPC, table npcspawn
 	// buy gives (+12, full variance, full blue; session.testShopInstance).
 	// Built after the magic option tables are installed (main).
 	listed := session.TestShopGoodsPayloads(context.Background(), uid, ids)
+	// Round 872: its action lines (the Forgotten World timer reset).
+	actions := map[uint8]string{}
+	for _, a := range spec.shop.Actions {
+		actions[a.ID] = a.Do
+	}
 	session.InstallNPCShopDefs(map[uint32]session.NPCShopDef{uid: {
-		Payload: spec.shop.Encode(uid), GoodsPayloads: listed, Goods: goods, Free: spec.shop.Free}})
+		Payload: spec.shop.Encode(uid), GoodsPayloads: listed, Goods: goods, Free: spec.shop.Free,
+		ActionsPayload: spec.shop.EncodeActions(uid), Actions: actions}})
 	logger.Info("Test Items NPC spawned (round 783, OURS)", "name", spec.def.Name, "uid", uid, "body", spec.def.Model,
 		"ref", refID, "region", spec.def.Region, "x", spec.def.X, "y", spec.def.Y, "z", spec.def.Z, "angle", spec.def.Angle, "free", spec.shop.Free,
-		"listed_instance_messages", len(listed))
+		"listed_instance_messages", len(listed), "actions", len(actions))
 	return npcs
 }

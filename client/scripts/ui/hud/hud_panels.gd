@@ -7345,6 +7345,11 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		if DimensionHole.is_hole(item_types(item_id)):
 			open_magic_hole_box(slot)
 			return
+		# Round 872 (OURS): the Forgotten World entrance ticket (3/3/13/23)
+		# asks first with its own text; Yes is the plain use.
+		if is_fgw_ticket(item_types(item_id)):
+			open_fgw_reset_box("", use_fgw_ticket.bind(slot), "FgwTicketConfirm")
+			return
 		# Round 838: an item used ON another item enters the use-on mode.
 		if is_use_on_item(item_types(item_id)):
 			_begin_use_on(slot)
@@ -10401,6 +10406,44 @@ func use_magic_hole(slot: int) -> String:
 		system_notice.emit(line)
 	var done := DimensionHole.on_yes(item, slot, item_reuse_left, send, refuse)
 	return done
+
+# --- Round 872: the Forgotten World timer reset (OURS) -------------------------
+
+## The reset's confirm box up (QA), or null.
+var fgw_reset_box: MsgBoxInif = null
+
+## The Forgotten World entrance ticket: TypeID 3/3/13/23 (MEASURED: its two
+## rows, 36781 and 38295, are the only items of that type; this project's
+## client archive has neither).
+static func is_fgw_ticket(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 23
+
+## The ticket box's Yes: the plain item use (the server does the reset).
+func use_fgw_ticket(slot: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	print("HudPanels: Forgotten World ticket at bag slot %d used" % slot)
+	NetClient.use_item(NetClient.current_character_name, slot)
+
+## The reset's confirm box (MsgBoxInif.Kind.DUNGEON_TICKET) with `text_key`
+## (its default, UIIT_STT_DUNGEON_FREE_TICKET_ENTER_FORGOTTEN, when ""); Yes
+## calls `on_yes`. Named `box_name` (OPENSRO_QA_INPUT's `boxyes:<name>`).
+func open_fgw_reset_box(text_key: String, on_yes: Callable, box_name: String = "FgwResetConfirm") -> MsgBoxInif:
+	if is_instance_valid(fgw_reset_box):
+		fgw_reset_box.close()
+	if _builder == null:
+		return null
+	var box := MsgBoxInif.new()
+	if not box.build_kind(_builder, MsgBoxInif.Kind.DUNGEON_TICKET, box_name, "", text_key):
+		box.free()
+		return null
+	box.accepted.connect(func(_t: String) -> void: on_yes.call())
+	add_child(box)
+	box.place_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	fgw_reset_box = box
+	_qa_print_buttons(box, str(box.name))
+	print("HudPanels: Forgotten World reset box '%s' (%s)" % [box_name, text_key if text_key != "" else MsgBoxInif.DUNGEON_TICKET_TEXT])
+	return box
 
 ## The recall scroll: TypeID 3/3/12/3 (c:0x667000).
 static func is_guild_recall_item(types: PackedInt32Array) -> bool:

@@ -11,6 +11,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/npctalk"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/testnpc"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/trade"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
@@ -106,7 +107,8 @@ func NPCInteractionMode(id uint64) (entity uint32, mode byte) {
 	return 0, 0
 }
 
-// NPCTalkHandler answers 0x7045, 0x7046 and 0x704B.
+// NPCTalkHandler answers 0x7045, 0x7046 and 0x704B, and OpenSRO's own
+// OpNpcAction (round 872, fgwreset.go).
 func NPCTalkHandler(hub *world.Hub, trades *trade.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		// Round 869: the session's own world (gameworlds.go).
@@ -118,6 +120,8 @@ func NPCTalkHandler(hub *world.Hub, trades *trade.Hub) gateway.Handler {
 			handleNPCOpen(sess, p.Data, hub, trades)
 		case npctalk.OpEnd:
 			handleNPCEnd(sess, p.Data, hub)
+		case testnpc.OpNpcAction:
+			handleNPCAction(ctx, sess, p.Data, hub)
 		}
 		return nil
 	}

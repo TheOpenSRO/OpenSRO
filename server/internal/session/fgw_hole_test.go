@@ -411,4 +411,5 @@ func (t *itemCooldownTracker) clearCharacter(characterID int64) {
 	defer t.mu.Unlock()
 	delete(t.until, characterID)
 	delete(t.perItem, characterID)
+	delete(t.perItemKey, characterID)
 }

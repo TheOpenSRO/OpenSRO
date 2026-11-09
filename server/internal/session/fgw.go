@@ -216,6 +216,12 @@ func restoreItemCoolTimes(ctx context.Context, characterID int64, now time.Time)
 	if err != nil {
 		return
 	}
+	// Round 872: the kept rows are the truth for the holes' group. The
+	// tracker is process-wide and outlives a logout, so a row taken away
+	// while the character was out (the Forgotten World timer reset, or an
+	// operator's hand) must not leave the old timer in memory: the group
+	// is cleared first and armed again from the rows alone.
+	itemCooldowns.ClearGroup(characterID, gameworld.HoleCoolGroup, now)
 	for _, j := range jobs {
 		if j.Type == TimedJobItemCoolTime && now.Before(j.End) {
 			itemCooldowns.ArmItem(characterID, j.Ref, uint32(j.Key), j.End.Sub(now), now)

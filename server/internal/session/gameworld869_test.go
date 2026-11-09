@@ -111,6 +111,8 @@ type gwRig struct {
 	rows    *gameworld.MemCharStore
 	parties *party.Hub
 	players map[string]*gwPlayer
+	// addr is the rig's server (round 872: a relog dials it again).
+	addr string
 }
 
 func newGWRig(t *testing.T, timed timedjob.Store, levels map[string]int) *gwRig {
@@ -151,6 +153,7 @@ func newGWRig(t *testing.T, timed timedjob.Store, levels map[string]int) *gwRig 
 	}
 	addr := ln.Addr().String()
 	ln.Close()
+	rig.addr = addr
 	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub, chars)}
 	srvCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
