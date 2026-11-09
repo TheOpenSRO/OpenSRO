@@ -13985,6 +13985,7 @@ func _wire_auto_potion() -> void:
 	_auto_potion.can_act = _auto_potion_can_act
 	_auto_potion.slot_usable = _auto_potion_slot_usable
 	_auto_potion.use_slot = _auto_potion_use_slot
+	_auto_potion.vigor_usable = _auto_potion_vigor_usable
 	if _hud_panels != null:
 		_hud_panels.auto_potion = _auto_potion
 		if not _hud_panels.auto_potion_confirmed.is_connected(_on_auto_potion_confirmed):
@@ -14011,6 +14012,13 @@ func _auto_potion_slot_usable(slot: int) -> bool:
 	var t := _hud_panels.bag_item_types(int(item["slot"]))
 	return t.size() >= 3 and t[0] == 3 and t[1] == 3 and (t[2] == 1 or t[2] == 2)
 
+## Round 876 (OURS): the vigor row's slot holds a vigor potion (3/3/1/3).
+func _auto_potion_vigor_usable(slot: int) -> bool:
+	var item = _quickslot_items.get(slot)
+	if item == null or _hud_panels == null:
+		return false
+	return AutoPotion.is_vigor(_hud_panels.bag_item_types(int(item["slot"])))
+
 ## 0x60b850: the quick slot fired as its key fires it.
 func _auto_potion_use_slot(slot: int) -> void:
 	var item = _quickslot_items.get(slot)
@@ -14019,6 +14027,9 @@ func _auto_potion_use_slot(slot: int) -> void:
 		_auto_potion.hp, _auto_potion.max_hp, (_auto_potion.rows[0] as AutoPotion.Row).threshold,
 		_auto_potion.mp, _auto_potion.max_mp, (_auto_potion.rows[1] as AutoPotion.Row).threshold,
 		_auto_potion.status_mask, Time.get_ticks_msec(), _auto_potion.now_ms])
+	var vr := _auto_potion.rows[AutoPotion.ROW_VIGOR] as AutoPotion.Row
+	if vr.enabled and vr.slot == slot:
+		print("AUTOPOT vigor row (OURS) on quickslot %d: at %d %% -- HP row %d, MP row %d" % [slot, vr.percent, vr.threshold, vr.threshold_mp])
 	_on_quickslot_activated(slot)
 
 func _on_auto_potion_pool(kind: int, current: int, maximum: int) -> void:
@@ -14029,14 +14040,23 @@ func _on_auto_potion_pool(kind: int, current: int, maximum: int) -> void:
 
 func _on_auto_potion_config(settings: PackedByteArray) -> void:
 	_auto_potion.load_bytes(settings)
+	# Round 876 (OURS): the vigor row, kept on the client for this server and
+	# character (ClientSettings.SECTION_AUTO_POTION).
+	_auto_potion.load_vigor_config(ClientSettings.get_value(ClientSettings.SECTION_AUTO_POTION, _hotbar_key(), null))
 	print("AUTOPOT settings %s -> %s" % [settings.hex_encode(), str(_auto_potion.values())])
 
-## Confirm (0x741590): applied, and sent only when something changed.
+## Confirm (0x741590): applied, and sent only when something changed. The
+## vigor row (round 876, OURS) is saved on the client when it changed; the
+## server is sent only the original's seven bytes, and only on their change.
 func _on_auto_potion_confirmed(values: Dictionary) -> void:
 	var changed := _auto_potion.apply(values)
-	print("AUTOPOT confirm %s: %s" % ["changed, saving" if changed else "unchanged", str(_auto_potion.values())])
+	var vigor_changed := _auto_potion.apply_vigor(values)
+	print("AUTOPOT confirm %s%s: %s" % ["changed, saving" if changed else "unchanged",
+		", vigor row saved on the client" if vigor_changed else "", str(_auto_potion.values())])
 	if changed:
 		NetClient.save_auto_potion(_auto_potion.encode())
+	if vigor_changed and NetClient.current_character_name != "":
+		ClientSettings.set_value(ClientSettings.SECTION_AUTO_POTION, _hotbar_key(), _auto_potion.vigor_config())
 
 ## This player's own mask from an OpObjectStatus.
 func _auto_potion_status(st: StatusNet.ObjectStatus) -> void:
@@ -14133,11 +14153,14 @@ func _qa_autopot_step(tick: int) -> void:
 			var w := _hud_panels.auto_potion_window()
 			var v := step.trim_prefix("cfg:").split(",")
 			if w != null and v.size() >= 10:
-				w.fill({"rows": [
+				var cfg_rows: Array = [
 					{"enabled": v[0] == "1", "percent": int(v[1]), "slot": int(v[2])},
 					{"enabled": v[3] == "1", "percent": int(v[4]), "slot": int(v[5])},
-					{"enabled": v[6] == "1", "percent": 0, "slot": int(v[7])}],
-					"delay_enabled": v[8] == "1", "delay_ms": int(v[9])})
+					{"enabled": v[6] == "1", "percent": 0, "slot": int(v[7])}]
+				# Round 876: three more, the vigor row's <on>,<%>,<slot> (OURS).
+				if v.size() >= 13:
+					cfg_rows.append({"enabled": v[10] == "1", "percent": int(v[11]), "slot": int(v[12])})
+				w.fill({"rows": cfg_rows, "delay_enabled": v[8] == "1", "delay_ms": int(v[9])})
 		elif step == "confirm" and _hud_panels != null:
 			var w := _hud_panels.auto_potion_window()
 			var ok := w.window.node("GDR_AUTO_POTION_OK_BTN") as BaseButton if w != null else null
@@ -14159,6 +14182,33 @@ func _qa_autopot_step(tick: int) -> void:
 			print("QA AUTOPOT state %s hp %d/%d mp %d/%d mask 0x%x timers %s stacks %s" % [str(_auto_potion.values()),
 				_auto_potion.hp, _auto_potion.max_hp, _auto_potion.mp, _auto_potion.max_mp, _auto_potion.status_mask,
 				str(_auto_potion._timers), ", ".join(stacks)])
+
+## Round 876 (QA): the OPENSRO_QA_INPUT steps apnode / apstate / qslot.
+func _qa_autopot_input(kind: String, arg: String) -> String:
+	var action := "%s:%s" % [kind, arg]
+	if kind == "qslot":
+		var sn: Control = _hud_underbar.slot_node(int(arg)) if _hud_underbar != null else null
+		if sn == null or not sn.is_visible_in_tree():
+			return action + " (slot not shown)"
+		var at := sn.get_global_rect().get_center()
+		_qa_push_click(at, MOUSE_BUTTON_LEFT)
+		return "%s at %s (slot has item: %s)" % [action, at, _hud_underbar.slot_has_item(int(arg))]
+	var w := _hud_panels.auto_potion_window() if _hud_panels != null else null
+	if w == null or not w.window.visible:
+		return action + " (the Auto potion window is not open)"
+	if kind == "apstate":
+		var v := _auto_potion.rows[AutoPotion.ROW_VIGOR] as AutoPotion.Row
+		return "%s window %s at %s, read %s, saved %s, vigor thresholds HP %d MP %d, problems %s" % [action,
+			str(w.window.size), str(w.window.position), str(w.read()), str(_auto_potion.values()),
+			v.threshold, v.threshold_mp, str(w.layout_problems())]
+	var a := arg.split(":")
+	var c := w.qa_control(a[0], a[1] if a.size() > 1 else "")
+	if c == null or not c.is_visible_in_tree():
+		return action + " (no such control shown)"
+	var centre := c.get_global_rect().get_center()
+	_qa_push_click(centre, MOUSE_BUTTON_LEFT)
+	var hov := get_viewport().gui_get_hovered_control()
+	return "%s at %s (hovered %s)" % [action, centre, hov.get_path() if hov != null else "nothing"]
 
 ## A bag item was dragged onto the quickslot bar: remember which bag slot it
 ## came from and show its icon there. Activating that quickslot uses the item.
@@ -19465,6 +19515,14 @@ func _qa_input_step() -> void:
 				# Round 841: what took the click (the control under the pointer).
 				var nhov := get_viewport().gui_get_hovered_control()
 				_qa_input_report = "%s at %s (%s; hovered %s)" % [action, centre, node.get_path(), nhov.get_path() if nhov != null else "nothing"]
+		"apnode", "apstate", "qslot":
+			# Round 876 (QA): apnode:<row>:<control> left-clicks a control of
+			# the open Auto potion window (rows hp, mp, vigor, abn, delay, ok,
+			# cancel; controls check, prev, next, belt, quick, spinup,
+			# spindown); apstate reports its values and layout check;
+			# qslot:<n> left-clicks quick slot n on the underbar (a held icon's
+			# drop).
+			_qa_input_report = _qa_autopot_input(kind, arg)
 		"bagitem", "rbagitem":
 			# Round 791: left click the bag cell holding that item id (the
 			# shown page), as a player picks an item up; round 838: `rbagitem`

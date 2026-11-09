@@ -7,12 +7,15 @@ extends SceneTree
 ## slot (0x7413d0), the thumb's travel (0x6598a0: 276 px over 1..100), the
 ## spin's text and range (0x6583f0, 500..9500), the check box re-enabling its
 ## slider on the SAVED percent (0x741460), Confirm handing the values out and
-## closing (0x741590), Cancel closing (0x7417c0).
+## closing (0x741590), Cancel closing (0x7417c0). Round 876 (OURS): the vigor
+## row -- built under the MP row, everything below moved down a row pitch, the
+## window grown, no two controls overlapping, its controls working.
 ##   godot4 --headless --path client --script res://scripts/ui/hud/auto_potion_window_test.gd
 
 const PATH := "res://scripts/ui/hud/auto_potion_window.gd"
 
 var _failures := 0
+var _size_before := Vector2.ZERO
 
 func _check(cond: bool, msg: String) -> void:
 	if cond:
@@ -34,14 +37,24 @@ func _window_layout() -> String:
 			+ _control("GDR_AUTO_POTION_OK_BTN", "CIFButton", "117,462,80,24", 30, "UIIT_CTL_CONFIRM")
 			+ _control("GDR_AUTO_POTION_SLOT_MP", "CIFAutoPotionSlot", "23,283,347,73", 11, "", "\t\tADDID=INTEGER,\"200\"\n")
 			+ _control("GDR_AUTO_POTION_SLOT_HP", "CIFAutoPotionSlot", "23,197,347,73", 10, "", "\t\tADDID=INTEGER,\"100\"\n")
-			+ _control("GDR_AUTO_POTION_DESC_PML", "CIFPML", "43,76,309,83", 7, "UIIT_STT_MACROPOTION_CONTENTS")) \
+			+ _control("GDR_AUTO_POTION_DESC_PML", "CIFPML", "43,76,309,83", 7, "UIIT_STT_MACROPOTION_CONTENTS")
+			+ _control("GDR_AUTO_POTION_FRAME_2", "CIFStatic", "24,55,346,126", 5)
+			+ _control("GDR_AUTO_POTION_BG_1", "CIFStatic", "29,58,336,433", 4)
+			+ _control("GDR_AUTO_POTION_FRAME_1", "CIFStatic", "13,42,368,465", 3)) \
 		+ _section("AbnormalSlot",
 			_control("GDR_AUTO_POTION_ABNORMAL_QUICKSLOT_COMBOBOX", "CIFComboBox", "306,375,57,20", 20)
+			+ _control("GDR_AUTO_POTION_ABNORMAL_QUICKSLOT_STA", "CIFStatic", "255,379,45,12", 19, "Slot", RIGHT)
 			+ _control("GDR_AUTO_POTION_ABNORMAL_QUICKSLOT_BELT_COMBOBOX", "CIFComboBox", "188,375,57,20", 18)
+			+ _control("GDR_AUTO_POTION_ABNORMAL_QUICKSLOT_BELT_STA", "CIFStatic", "136,379,45,12", 17, "Belt", RIGHT)
+			+ _control("GDR_AUTO_POTION_ABNORMAL_NAME", "CIFStatic", "55,379,61,12", 16, "Abnormal")
 			+ _control("GDR_AUTO_POTION_ABNORMAL_CHECKBOX", "CIFCheckBox", "30,377,16,16", 15)) \
 		+ _section("PotionDelaySlot",
 			_control("GDR_AUTO_POTION_DELAY_VERTSPINCTRL", "CIFVerticalSpinCtrl", "306,413,58,25", 27)
+			+ _control("GDR_AUTO_POTION_DELAY_NAME", "CIFStatic", "55,417,105,12", 26, "Potion use delay")
 			+ _control("GDR_AUTO_POTION_DELAY_CHECKBOX", "CIFCheckBox", "30,416,16,16", 25))
+
+## HAlign 2 (right), as the real layouts' belt and quick-slot statics have it.
+const RIGHT := "\t\tHAlign=INTEGER,\"2\"\n"
 
 func _slot_layout() -> String:
 	return "Interface Text\n\n" + _section("Create",
@@ -50,9 +63,12 @@ func _slot_layout() -> String:
 		+ _control("GDR_AUTOPOTION_SLOT_MIN_STA", "CIFStatic", "10,55,26,12", 17)
 		+ _control("GDR_AUTOPOTION_SLOT_SLIDERCTRL", "CIFSliderCtrl", "6,32,334,21", 15)
 		+ _control("GDR_AUTOPOTION_SLOT_QUICKSLOT_COMBOBOX", "CIFComboBox", "282,6,57,20", 13)
+		+ _control("GDR_AUTOPOTION_SLOT_QUICKSLOT_STA", "CIFStatic", "232,10,45,12", 12, "Slot", RIGHT)
 		+ _control("GDR_AUTOPOTION_SLOT_QUICKSLOT_BELT_COMBOBOX", "CIFComboBox", "165,6,57,20", 11)
+		+ _control("GDR_AUTOPOTION_SLOT_QUICKSLOT_BELT_STA", "CIFStatic", "113,10,45,12", 10, "Belt", RIGHT)
 		+ _control("GDR_AUTOPOTION_SLOT_DATA_UNIT_STA", "CIFStatic", "91,10,14,12", 7)
-		+ _control("GDR_AUTOPOTION_SLOT_DATA", "CIFStatic", "59,11,25,12", 6)
+		+ _control("GDR_AUTOPOTION_SLOT_DATA", "CIFStatic", "59,11,25,12", 6, "", RIGHT)
+		+ _control("GDR_AUTOPOTION_SLOT_DATA_BOX", "CIFStatic", "54,8,34,18", 5)
 		+ _control("GDR_AUTOPOTION_SLOT_NAME", "CIFStatic", "32,10,19,12", 2)
 		+ _control("GDR_AUTOPOTION_SLOT_CHECKBOX", "CIFCheckBox", "7,8,16,16", 1))
 
@@ -93,6 +109,7 @@ func _compose(script: Script) -> void:
 	if not window.build(builder, "resinfo\\ifautopotion.txt", "Auto potion", PackedStringArray(["AbnormalSlot", "PotionDelaySlot"])):
 		_check(false, "the synthetic window builds")
 		return
+	_size_before = window.size
 	var c = script.call("compose", window, builder)
 	_check(c != null, "the controls compose")
 	if c == null:
@@ -103,7 +120,8 @@ func _compose(script: Script) -> void:
 	var name_label := window.find_child("GDR_AUTOPOTION_SLOT_NAME", true, false) as Label
 	_check(name_label != null and name_label.text == "HP", "the HP row is named from UIIT_STT_MACROPOTION_HP")
 	var values := {"rows": [{"enabled": true, "percent": 40, "slot": 1}, {"enabled": false, "percent": 60, "slot": 12},
-		{"enabled": true, "percent": 0, "slot": 3}], "delay_enabled": true, "delay_ms": 1500}
+		{"enabled": true, "percent": 0, "slot": 3}, {"enabled": false, "percent": 35, "slot": 24}],
+		"delay_enabled": true, "delay_ms": 1500}
 	c.fill(values)
 	var back: Dictionary = c.read()
 	_check(back == values, "fill then read gives the values back (got %s)" % str(back))
@@ -136,7 +154,63 @@ func _compose(script: Script) -> void:
 	window.show()
 	(window.node("GDR_AUTO_POTION_CANCEL_BTN") as BaseButton).emit_signal("pressed")
 	_check(got.size() == 1 and not window.visible, "Cancel closes and hands nothing out")
+	window.show()
+	_vigor(c, window)
 	window.queue_free()
+
+## Round 876 (OURS): the vigor row.
+func _vigor(c, window: HudWindow) -> void:
+	var v: Dictionary = c.row_controls(3)
+	_check(v.get("check") != null and v.get("slider") != null and v.get("belt") != null and v.get("quick") != null,
+		"vigor: the row has its check box, slider and two combos")
+	var host := window.node("GDR_AUTO_POTION_SLOT_VIGOR") as Control
+	_check(host != null and host.position == Vector2(23, 369) and host.size == Vector2(347, 73),
+		"vigor: the row sits one row pitch under MP, at 23,369 347x73 (got %s)" % (str(host.get_rect()) if host != null else "none"))
+	var hp := window.node("GDR_AUTO_POTION_SLOT_HP") as Control
+	var mp := window.node("GDR_AUTO_POTION_SLOT_MP") as Control
+	_check(hp.position == Vector2(23, 197) and mp.position == Vector2(23, 283), "vigor: the HP and MP rows stay where the layout puts them")
+	var name_label := host.find_child("GDR_AUTOPOTION_SLOT_NAME", true, false) as Label
+	_check(name_label != null and name_label.text == "Vigor", "vigor: the row is named Vigor")
+	_check(c.vigor_pitch == 86, "vigor: the pitch is the layout's HP -> MP step, 86 (got %d)" % c.vigor_pitch)
+	_check(window.size == _size_before + Vector2(0, 86), "vigor: the window grows by it (%s -> %s; the real one 394x520 -> 394x606)" % [str(_size_before), str(window.size)])
+	var moved := {"GDR_AUTO_POTION_OK_BTN": Vector2(117, 548), "GDR_AUTO_POTION_CANCEL_BTN": Vector2(205, 548),
+		"GDR_AUTO_POTION_ABNORMAL_CHECKBOX": Vector2(30, 463), "GDR_AUTO_POTION_ABNORMAL_QUICKSLOT_COMBOBOX": Vector2(306, 461),
+		"GDR_AUTO_POTION_DELAY_CHECKBOX": Vector2(30, 502), "GDR_AUTO_POTION_DELAY_VERTSPINCTRL": Vector2(306, 499),
+		"GDR_AUTO_POTION_DESC_PML": Vector2(43, 76)}
+	for n in moved:
+		var ctl := window.node(n) as Control
+		_check(ctl != null and ctl.position == moved[n], "vigor: %s at %s (got %s)" % [n, str(moved[n]), str(ctl.position) if ctl != null else "none"])
+	var frame := window.node("GDR_AUTO_POTION_FRAME_1") as Control
+	var bg := window.node("GDR_AUTO_POTION_BG_1") as Control
+	var pml_frame := window.node("GDR_AUTO_POTION_FRAME_2") as Control
+	_check(frame.size.y == 551 and bg.size.y == 519 and pml_frame.size.y == 126,
+		"vigor: the window's frame and tile grow by 86, the description's frame does not (got %s, %s, %s)" % [frame.size.y, bg.size.y, pml_frame.size.y])
+	var problems: Array = c.layout_problems()
+	_check(problems.is_empty(), "vigor: no two controls overlap and all are inside the window (%s)" % str(problems))
+	# A box too close: the check catches it.
+	var unit := host.find_child("GDR_AUTOPOTION_SLOT_DATA_UNIT_STA", true, false) as Control
+	var box := host.find_child("GDR_AUTOPOTION_SLOT_DATA_BOX", true, false) as Control
+	_check(box.position.x >= 54 and unit.position.x - box.position.x == 37, "vigor: the value box and unit keep their spacing (box at %d)" % int(box.position.x))
+	# The controls work: the box on, the next arrow, the combos.
+	var check := v.get("check") as Control
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = false
+	check.gui_input.emit(ev)
+	var slider := v.get("slider") as Control
+	_check(AutoPotionWindow.is_checked(check) and bool(slider.get_meta("enabled")) and int(c.read()["rows"][3]["percent"]) == 35,
+		"vigor: its check box turns it on, the slider on the saved 35")
+	slider.get_node("Next").emit_signal("pressed")
+	slider.get_node("Next").emit_signal("pressed")
+	_check(int(c.read()["rows"][3]["percent"]) == 37, "vigor: the next arrow steps it up (got %d)" % int(c.read()["rows"][3]["percent"]))
+	(v.get("belt") as OptionButton).select(2)
+	(v.get("quick") as OptionButton).select(4)
+	_check(int(c.read()["rows"][3]["slot"]) == 25, "vigor: F3 '5' is slot 25 (got %d)" % int(c.read()["rows"][3]["slot"]))
+	_check(c.read()["rows"][0] == {"enabled": true, "percent": 41, "slot": 1}, "vigor: the HP row is untouched by it")
+	var got := []
+	c.on_confirm = func(vals: Dictionary) -> void: got.append(vals)
+	(window.node("GDR_AUTO_POTION_OK_BTN") as BaseButton).emit_signal("pressed")
+	_check(got.size() == 1 and got[0]["rows"][3] == {"enabled": true, "percent": 37, "slot": 25}, "vigor: Confirm hands the row out fourth")
 
 func _finish() -> void:
 	if _failures == 0:

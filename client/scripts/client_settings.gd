@@ -69,6 +69,11 @@ const KEY_PING_FPS_POS := "ping_fps_position"
 ## controls, which its layout parks off screen -- in the layout of the user's
 ## private-server screenshots. On unless turned off.
 const KEY_EXCHANGE_PORTRAITS := "exchange_portraits"
+## Round 876 (OURS): the Auto potion window's vigor row (AutoPotion.ROW_VIGOR),
+## which the original's seven saved bytes have no room for: one entry per
+## server and character, keyed as the quick-slot bar's (HotbarStore.key_for),
+## the value {enabled, percent, slot}.
+const SECTION_AUTO_POTION := "auto_potion_vigor"
 ## Round 833: the Key Map tab's keys (KeyMap.set_keys): 33 Godot keycodes in
 ## slot order.
 const SECTION_KEYMAP := "keymap"

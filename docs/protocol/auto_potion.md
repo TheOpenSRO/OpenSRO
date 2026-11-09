@@ -132,3 +132,45 @@ use inside an item's reuse lock (0x185b).
 - **OPEN:** CIFPML's own alignment and scrolling; whether `+0x504` (`0x60b850`'s last test) is ever
   set for a player; the zombie's HP potion on the server (`0x49b912` hurts a zombie by the HP
   amount; OpenSRO's potion path does not read the bit yet).
+
+## The vigor row (round 876, OURS)
+
+The user asked for "auto use vigors" in the Auto potion window. **The original has no such row**
+(READ): `0x82cd50` asserts `byType < AUTO_POTION_COUNT` whenever `2 < byType`, so the object has
+three rows; `CIFAutoPotion::Create` builds two slot children (10 and 11); `0x82ce90` fires a slot
+holding any recovery potion (3/3/1) or cure (3/3/2), so a vigor on the HP or MP row's slot is
+already drunk for that row, by that row's pool alone. The archive's text table has no key naming
+"Vigor" by itself; its vigor strings are the items' names (`SN_ITEM_ETC_ALL_POTION_01..05`,
+"Vigor Recovery Herb", "Vigor Recovery Potion (Small)" ..., MEASURED), and an add-on's keys
+(`VPLUS_UI_AUTO_POTION_HP_VIGOR_CHECK_BOX_TEXT` "HP Vigors", `..._MP_VIGOR_...` "MP Vigors",
+MEASURED in the text table) that the client does not use.
+
+OpenSRO adds a fourth row, all OURS:
+
+- **The window.** A third `CIFAutoPotionSlot` named `GDR_AUTO_POTION_SLOT_VIGOR`, built from
+  `ifautopotionslot.txt` like the HP and MP rows (check box, the 1..100 slider and its statics,
+  the belt and quick-slot combos), named "Vigor". It sits one row pitch under the MP row -- the
+  layout's HP -> MP step, 86, so at (23, 369, 347, 73) -- and every window control below it (the
+  abnormal row, the delay row, Confirm and Cancel) moves down 86; the controls it crosses (the
+  window frame `GDR_AUTO_POTION_FRAME_1` and the tile `GDR_AUTO_POTION_BG_1`) grow by 86, and so does
+  the window, 394x520 -> 394x606 (re-centred at its first open). The name static widens to the
+  text, and the row's value box, value and "%" move right just enough to leave 6 px after it.
+  `AutoPotionWindow.layout_problems()` checks that no two controls overlap and none leaves the
+  window. Without HP and MP rows (a test fixture) nothing is added.
+- **The rule** (`AutoPotion`, row 3): enabled and able to act, the row is low when
+  `HP <= trunc(max HP x pct)` **or** `MP <= trunc(max MP x pct)` (`0x82cdb0`'s rule against each
+  maximum; a pool whose maximum is not known yet is not low). Checked on every HP and every MP
+  update while not armed and on its own timer (id `0x876`, ours); armed for the delay (the window's
+  one delay box and spin) or 500 ms, as the HP row. The HP row's guards: no use while zombie
+  (a vigor's HP half would hurt a zombie), the timer armed all the same; no stun guard. It fires
+  its quick slot only when the slot holds a vigor, TypeID 3/3/1/3 (`ITEM_ETC_ALL_POTION_01..05`,
+  `ITEM_ETC_ALL_SPOTION_01`, `ITEM_ETC_GNGWC_ALL_POTION_100`, MEASURED in itemdata). With the HP
+  (or MP) row due on the same update, that row drinks first, then the vigor.
+- **Saved on the client.** The original's seven bytes (0x7158 type 2, the character data) are
+  unchanged and still carry only the three rows: `apply()` and `encode()` ignore the vigor row, so
+  a Confirm that changed only it sends nothing. The row goes to `user://settings.cfg`, section
+  `[auto_potion_vigor]`, one entry per server and character (the quick-slot bar's key,
+  `HotbarStore.key_for`), the value `{enabled, percent, slot}`; it is read when the settings
+  arrive at entry (`0x0116`). The quick-slot bar it points into is kept the same way (round 639),
+  so the two always travel together; the server and older clients are untouched. Defaults: off,
+  50 %, F1 "4".
