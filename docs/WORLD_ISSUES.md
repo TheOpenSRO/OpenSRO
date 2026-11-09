@@ -7483,6 +7483,67 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-ninth round, lane W1: the server's instanced game worlds -- the reference data, the world unit, the session plumbing off the global hub, warps between worlds, the lifecycle, the entry rules, the re-entry limit, the exit NPC, event zones and the trigger engine
+
+The user: "let's start forgotten world work", "and make sure instanced worlds are virtually
+infinitely horizontally scalable", and "Make sure you're comparing against the original game and
+make no mistakes". The contract is `docs/protocol/game_worlds.md` (round 868); this lane is its
+section 14 SERVER items 1-10 (item 11, the multi-process scaling, is lane W2's; the Forgotten
+World's content is lane W3's). Labels: READ (`s:` the game server, `m:` the shard manager, `c:` the
+client; all from round 868's reading unless named here), MEASURED, INFERRED, OURS, OPEN. Base
+`3df5a0fe`. Server only: no perf gate (no client or world drawing changed).
+
+### What was built
+
+| item | where | test |
+|---|---|---|
+| 1 reference data | `cmd/export-refdata -mode gameworlds` (gameworlds.go) writes one `<table>.csv` per database table from the operator's dumps (any console or CSV shape, `internal/reftable`) and/or the client's `gameworlddata.txt` / `gameworldconfigdata.txt` / `eventzonedata.txt`; `internal/gameworld/refdata.go` (worlds, configs, groups, regions, start positions, event zones) and `internal/trigger/ref.go` (every `_RefTrigger*` table and the category bindings) load them | `gameworld/refdata_test.go`: a synthetic set and, with `OPENSRO_GAMEWORLD_DIR`, the operator's export -- MEASURED on it: 94 worlds, 22 `INS_GOD_*` (50 layers, 4 or 8 players, 2 h, 10 min), 48 Togui regions 0x79E1..0x7EE8, start 0x7EE4 (1063, 693, 1125), group cool time 300 -> 18,000 s, three warnings 1 h / 10 min / 5 min, 17 triggers in world 63, 7 in world 1 |
+| 2 the world unit | `internal/gameworld/world.go`, `manager.go`: a `World` per layer {ref, layer, key, created, expires, empty since} with its own `world.Hub`, `combat.Hub` (ids from a base of its own), `grounditem.Hub`, nest scheduler, trigger engine, event zones, timers and one goroutine; the `Manager` opens slots 1..WorldMaxCount through the registry, finds, closes; the open world is world 1 layer 1 (`AttachOpenWorld`, run by cmd/server's own loops) | `gameworld/world_test.go`: two layers of world 63 in the same region and coordinates see none of each other's characters or monsters; both driven at once under `-race`; the 51st layer refused |
+| 3 session plumbing | every handler and every function taking a session and a hub resolves the session's world at its start (`hub.For(sess)`, `monstersFor`, `groundFor`, the deps structs' `Hub`: 93 functions, inserted by a syntax-tree pass; `session/gameworlds.go`); the hub methods keyed by a session also hand themselves to the session's hub (`world.Hub.routed`); per-world runtimes (monster AI, area of interest, NPCs) live on the instance (`worldRuntime`) and are ticked by its goroutine; the abnormal states keep each instance monster's deps (`statusRuntime.mobDeps`) so an instance cast never rebinds the open world's; what must reach a character anywhere (a whisper, the world chat, the clock, a crest, a GM look-up, a party sample, a buff's end) finds it through the presence index (`world.Locate`, `findByNameAnywhere`, `allEntitiesAnywhere`, `hubOfChar`) | the whole suite green; `TestCarriedStateAcrossWorlds` (a buff and a cool-time group survive a warp in and out; `SnapshotCarried` / `RestoreCarried` for W2) |
+| 4 warps | `warpVia` is `warpAcross` within one world; `warpAcross` moves between units (`world.Hub.Transfer`, the hold, the result with the region label, never a world id); `placeArrival` places an instanced world's point when the region is that world's; a warp from an instance to a place outside its regions lands in the open world (OURS rule) | `TestPortalEntrySucceedsWithTwoReplies`, `TestExitNPCAndBack` (the return point untouched), `TestInstanceUnseenFromTheOpenWorld` (under `-single-frame`) |
+| 5 lifecycle | the instance's own `time.Timer`s (no scan): the end at open + WorldDurationTime, the empty close WorldEmptyRemainTime after the last one left (or the opening), the warnings at each `GAMEWORLD_DISAPPEARANCE_TIME` threshold -- 0x300C {0x0C1A, u8 minutes} to everyone inside -- and the close back to the return point | `TestEmptyClose` (599 s open, 600 s closed, the slot reused with a new key), `TestDurationEndAndWarnings` (60 / 10 / 5 min at 1 h, 1 h 50, 1 h 55; closed at 2 h with both members; the bytes `1a 0c 3c`, `1a 0c 0a`, `1a 0c 05`), `TestCloseWarnsAndReturns` (on the wire) |
+| 6 entry rules | `gameworld/enter.go` CanEnter in the READ order with its codes and `ReplyCode` (2 and 6 -> 3); a random start position; `session.InstanceTeleportHandler`: 0x705A kind 3 -> {2, 1} accepted, then the portal path (trade transport 0x1c10, access 0x1c2f, destination 2, CanEnter) -> {1} and the zone change, or {2, code}; portals registered by `RegisterPortal` (W3's gate) | `TestCanEnterOrder`, `TestPortalEntryRefusalsInOrder` (access, destination, full before level, level, another instance's cool time, an unknown portal), `TestPortalEntrySucceedsWithTwoReplies` |
+| 7 persistence | `persistence.CharInstanceWorldSchema` (`char_instance_world`, `_CharInstanceWorldData`'s columns) with `gameworld.SQLCharStore` / `MemCharStore`; an instance position is never saved as home (`savePosition`); the group cool time is timed job type 0xC {group, key, world, layer, start, end} with 0x320C {0x0C, group, remaining s} at the entry and at every world entry; a login lands at the return point | `TestReEntryLimit`: the same instance again allowed, another refused 0x1c32, a new manager on the same store still refuses |
+| 8 exit NPC | `session.InstanceExitHandler`: 0x751D {npc} -> refusals dead 0x1c36, trade transport 0x1c10, busy 2, a non-exit NPC 2 (OURS) as {2, code}; else {1} and the warp to the return point. The instance's NPCs are its NPC nests (`SetInstanceNPCs`, interaction 0x29 / 0x27 by `npcspawn.Interactions`) | `TestExitNPCAndBack` |
+| 9 event zones, structures | `gameworld/eventzone.go`: a layer's `EventZoneObj` for every zone its triggers name (OFF = closed at the start), SWITCH_EVENTZONE's state and 0x351E {uid, 0x10, state}; the structure spawn record with the gate's measured tail and a door's; a closed placed door refuses a leg through it (`destmove.go`, OURS) | `TestWorldRunsItsScript`, `TestStructureRecordBytes` |
+| 10 trigger engine | `internal/trigger/engine.go`: per layer and in world 1; the events, conditions (MONSTER_HIVE_KILL true when the layer's kills of the hive reach the sum of its nests' dwMaxTotalCount), actions (ACTIVE_NEST, LOAD_MONSTER, SWITCH_EVENTZONE, both MESSAGE kinds to their targets, Delay), the rest handed to a hook for W3 | `TestToguiScriptOnFakeLayer` (the camp-1 line of `forgotten_world.md` 6), `TestPillarChain`, and with the export `TestWorld63ScriptExport`: world 63's whole script killed hive by hive to the boss -- 17 triggers, 16 hives, 36 nests woken (the 36 dormant), 15 doors, 18 notices |
+
+The scaling seams (game_worlds.md 12, for W2): `internal/registry.Registry` (Open / Get / Close /
+Join / Leave / Presence / List / Now; `Memory` here), `internal/bus.Bus` (Publish / Subscribe;
+`Memory` here, parked for W2 to wire), `world.Locate` (the in-process presence), `session.CarriedState`.
+
+### The live check (the lane server, 17711; `partybot -mode instance`, OURS GM aid `/instance`)
+
+On the lane server with `-gameworld-dir` (the export above), `-nest-db-dir`, `-monsters-csv`,
+`-npcs-csv` and the server navmesh: `/instance 63` opened layer 63.1 (116 nests, 36 dormant, 7 NPCs,
+17 triggers; the first hatch pass 80 monsters; the entry notice trigger fired for the GM) and warped
+the bot to `126/228` at the start; 12 monsters in view beside nest 30050; the exit NPC spawned (uid
+0x7fc00002); a `/tp` inside stayed in the layer; 0x751D -> 0xB51D {01} and back to Jangan where it
+stood; the empty layer aged 9 min 30 s was still open and closed 40 s later ("instance closing ...
+reason=empty"); a second layer aged 60 / 50 / 5 minutes sent `1a 0c 3c`, `1a 0c 0a`, `1a 0c 05` and at
+its 2 h end took the bot back to its return point. Every check PASS.
+
+Regressions on the same lane server: `partybot -mode scenario` (party) all steps passed; `-mode
+academy` every step passed; `-mode job` (with the job lanes' `-full-map -npc-thieves` set) identical
+to the base build's run line for line.
+
+`cd server && go build ./... && go test ./...`: pass.
+
+### Differences, choices, OPEN
+
+- OURS: the GM aid `/instance` (open, enter, leave, close, age, list); the export's file format; the
+  monster id bases per layer; the NPC uid range 0x7fc00000; the warp rule out of an instance; the
+  door's 40-unit block; the 0x300C payloads on OpenSRO's 0x0110 (round 657's convention).
+- INFERRED: action Delay per action (the FGW entry notice: system line at once, banner 20 s later;
+  `forgotten_world.md` 6 read it cumulatively -- OPEN); the condition chain; SIGN_SELECT's
+  meaning; the party condition only with EntryType 6; 0x351E's state mapping; the door's tail; the
+  kill credit as MONSTER_KILL's event user.
+- OPEN: where the doors stand (no placement source found); re-entering a still-open instance at
+  login (a login lands at the return point); death inside; a COS, caravan, guild war or job state
+  inside an instance (their runtimes are still the open world's singletons); USER_ITEM /
+  USER_QUEST / SWITCH_TRIGGER params (unused by the data); PARTYMONSTER_SPAWN (instance nests are
+  never party-armed, so OFF holds).
+
 ## Eight-hundred-and-sixty-eighth round, stage 1 (spec): the Forgotten World
 
 The user: "while working on fixing academy stuff, let's start forgotten world work", with the standing

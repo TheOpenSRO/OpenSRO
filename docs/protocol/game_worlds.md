@@ -541,6 +541,31 @@ Choices:
 
 The wire is the original's (`PROTOCOL_DECISION.md`); OpenSRO's own zone-change message stays.
 
+**Stage 2 notes (round 869, lane W1; the server side as built -- the client lanes read the same):**
+- **The 0x300C payloads ride OpenSRO's notice opcode 0x0110** (`session.OpUniqueNotice`, round 657's
+  convention: the client's `UniqueNoticeNet` / `notice_word` path already carries 0x300C's 0x0C05 /
+  0x0C06 / 0x0C01 payloads there). So the close warning is 0x0110 {u16 0x0C1A, u8 minutes} and a
+  trigger notice 0x0110 {u16 0x0C1C, u8 1 | 2, u16 len, key}. 0x351E, 0x320C, 0x705A / 0xB05A and
+  0x751D / 0xB51D are on their retail opcodes (`proto.OpEventZoneState`, `OpTimedJobPush`,
+  `OpTeleportUse` / `Ack`, `OpInstanceExit` / `Ack`).
+- **0x351E's state byte** (INFERRED): the server's ON (2) is the wire's 1 (the door removed), OFF (1)
+  the wire's 0 (built). The door's spawn tail is {u32 event-zone key = the `_RefEventZone` ID, u8 0}
+  after the structure fields (INFERRED order; section 7). Where the doors stand is OPEN (no table, nest
+  or map list found names their positions), so no door is spawned or blocks yet; a placement fed to
+  `gameworld.Manager.SetZonePlaces` makes one block the server's move (OURS, 40 units).
+- **Action Delay** (INFERRED, OPEN in the binary): each action runs its own Delay after the trigger
+  fires. MEASURED in the data: the FGW entry notice's banner action has Delay 20,000 and its system line
+  0, so with this reading the system line comes at once and the banner 20 s later
+  (`forgotten_world.md` 6 read it as both after 20 s: the cumulative reading). Which is right is OPEN.
+- **The party condition** (CanEnter's 2) is applied only to a world whose EntryType is 6 (INFERRED: the
+  type READ to switch the party rule on; every FGW world's is 0, and a solo entry MEASURED was refused 3,
+  not 0x1c2a).
+- **The event user of MONSTER_KILL** is the kill credit, the biggest hitter (INFERRED).
+- **A warp from an instance** to a place outside the instance's regions lands in the open world; to a
+  place inside, it stays (OURS rule: `session.warpTarget`). A re-login lands at the return point (the
+  instance position is never saved: READ s:0x4df666); re-entering a still-open instance at login is not
+  built (OPEN, section 13).
+
 ### SERVER
 1. **Reference data** -- `server/cmd/export-refdata` (new `-mode gameworlds`) writes the world,
    world-config, group, group-config, group-bind, region, start-position and every `_RefTrigger*`
