@@ -88,10 +88,15 @@ type OpenRequest struct {
 	// Layer, when non-zero, asks for that slot exactly (the open world's
 	// layer 1); a slot in use is ErrNoSlot.
 	Layer uint16
+	// Pick places the instance on the least-loaded live host (Cluster.Pick,
+	// in the same transaction as the slot: lane W2), overriding Host;
+	// Version is the opener's, preferred by the pick. ErrNoHost for none.
+	Pick    bool
+	Version string
 }
 
 // Registry is the instance registry. Implementations: Memory (one process),
-// PostgreSQL (W2). Every method is safe for concurrent use.
+// Postgres (several, lane W2; postgres.go). Every method is safe for concurrent use.
 type Registry interface {
 	// Open allocates the first free layer of the world and records the
 	// instance, empty since now.
@@ -122,6 +127,8 @@ type Memory struct {
 	byID     map[InstanceID]*Instance
 	presence map[int64]Place
 	nextKey  uint32
+	// cl is the cluster half (cluster.go), made on first use.
+	cl *memCluster
 }
 
 // NewMemory makes an empty in-process registry on clock (nil: time.Now).
@@ -161,6 +168,13 @@ func (m *Memory) Open(_ context.Context, req OpenRequest) (Instance, error) {
 	}
 	if layer == 0 {
 		return Instance{}, ErrNoSlot
+	}
+	if req.Pick {
+		h, err := m.pickLocked(req.Version)
+		if err != nil {
+			return Instance{}, err
+		}
+		req.Host = h.ID
 	}
 	m.nextKey++
 	if m.nextKey == 0 {
@@ -270,11 +284,19 @@ func (m *Memory) List(_ context.Context) ([]Instance, error) {
 	for _, in := range m.byID {
 		out = append(out, copyInstance(in))
 	}
+	sortInstances(out)
+	return out, nil
+}
+
+func sortInstances(out []Instance) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ID.World != out[j].ID.World {
 			return out[i].ID.World < out[j].ID.World
 		}
 		return out[i].ID.Layer < out[j].ID.Layer
 	})
-	return out, nil
+}
+
+func sortHosts(out []Host) {
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 }
