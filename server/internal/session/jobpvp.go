@@ -226,10 +226,15 @@ func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *re
 	} else {
 		defLevel = t.owner.Level
 		var err error
+		// Round 875: the wearer's Str / Int scale the armour's PDStr / MDInt.
+		str, intel := 0, 0
+		if c, cerr := d.chars.GetByID(ctx, t.char); cerr == nil && c != nil {
+			str, intel = c.TotalStr(), c.TotalInt()
+		}
 		if magical {
-			def, err = defenderMagArmor(ctx, t.char, d.eq, d.items)
+			def, err = defenderMagArmor(ctx, t.char, intel, d.eq, d.items)
 		} else {
-			def, err = defenderArmor(ctx, t.char, d.eq, d.items)
+			def, err = defenderArmor(ctx, t.char, str, d.eq, d.items)
 		}
 		if err != nil {
 			return nil, err
@@ -288,10 +293,10 @@ func pvpStrike(ctx context.Context, d combatDeps, attacker world.Entity, row *re
 
 // defenderMagArmor is defenderArmor's magical half (the items' MagDefense
 // and their white groups, the buffs' param 6 not modelled: OURS).
-func defenderMagArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
+func defenderMagArmor(ctx context.Context, characterID int64, intel int, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
 		return it.MagDefenseMin, it.MagDefenseMax, it.PlusIncMagDef
-	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup)
+	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup, intel, true)
 }
 
 // pvpOutcome is what a blow did.

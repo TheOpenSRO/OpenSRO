@@ -619,6 +619,15 @@ func (r Row) Block() int { return r.Params[5] }
 // Critical is col 78, tag 'cri' (param 12).
 func (r Row) Critical() int { return r.Params[7] }
 
+// HitRate is col 77, tag 'hra' (param 11): the monster's attack rate, the
+// numerator of the centre of its blow's roll (round 875; READ,
+// GObjMob_PublishStats s:0x4c38b4 publishes ref +0x248 as param 11).
+func (r Row) HitRate() int { return r.Params[6] }
+
+// ParryRate is col 75, tag 'era' (param 9): the rate a player's attack rate
+// is divided by (round 875; READ, the same publisher).
+func (r Row) ParryRate() int { return r.Params[4] }
+
 // DisplayName is what a server line calls the species: the client's English
 // name when the export resolved one it would draw as text, else the code name.
 // OURS: the fallback to the code name is our choice (the client would draw
@@ -801,8 +810,11 @@ func parseRecord(rec []string) (Row, error) {
 type SkillRow struct {
 	ReuseMs, Range int
 	AttMin, AttMax int
-	Chance         int
-	ChanceKnown    bool
+	// AttPercent / AttType are 'att' value[1] / value[0] (round 875,
+	// combat.MonsterSkill.AttPercent).
+	AttPercent, AttType int
+	Chance              int
+	ChanceKnown         bool
 	// Status is the row's status runs (refdata.Skill.StatusParams, round 659).
 	Status string
 	// ActionMs is PreparingTime + CastingTime + ActionDuration (cols 7-9;
@@ -826,6 +838,7 @@ func RefdataLookup(get func(id int64) (*refdata.Skill, error)) SkillLookup {
 		return SkillRow{
 			ReuseMs: sk.ReuseDelayMs, Range: sk.Range,
 			AttMin: sk.DamageMin, AttMax: sk.DamageMax,
+			AttPercent: sk.AttackPercent, AttType: sk.AttackType,
 			Chance: sk.AIAttackChance, ChanceKnown: sk.AIAttackChance >= 0,
 			Status:   sk.StatusParams,
 			ActionMs: sk.PreparingTimeMs + sk.CastingTimeMs + sk.ActionDurationMs,
@@ -870,7 +883,7 @@ func (r Row) Attacks(lookup SkillLookup) Attacks {
 		if !sr.ChanceKnown {
 			a.WholeList = false
 		}
-		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, Chance: sr.Chance, Status: sr.Status, ActionMs: sr.ActionMs}
+		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, AttPercent: sr.AttPercent, AttType: sr.AttType, Chance: sr.Chance, Status: sr.Status, ActionMs: sr.ActionMs}
 		if k == 0 {
 			a.Primary, a.HasPrimary = ms, true
 		}

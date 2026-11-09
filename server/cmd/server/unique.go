@@ -98,7 +98,7 @@ func buildUniqueAI(row species.Row, tac *nest.TacticsRow, db *nest.DB, lookup sp
 		if !ok {
 			continue
 		}
-		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, Chance: sr.Chance, ActionMs: sr.ActionMs}
+		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, AttPercent: sr.AttPercent, AttType: sr.AttType, Chance: sr.Chance, ActionMs: sr.ActionMs}
 		dbRow := db.Skills[id]
 		if dbRow != nil {
 			if r, ok := ai[dbRow.Code]; ok {

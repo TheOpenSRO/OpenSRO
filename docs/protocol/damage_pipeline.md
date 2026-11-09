@@ -701,3 +701,15 @@ minimum of three, biased toward zero, which is why blows cluster near the centre
 "attack rate" in one command. Round 373 ran it first and the contradiction surfaced immediately.
 Rounds 370-372 did not run it, and went to the dump first every time.
 unexplained. Settle that before wiring a hit roll; do not assume equipment closes the gap.
+
+## Round 875: a monster's skill blow
+
+A monster's base is its skill's 'att' min/max (params 13..16 are never written for a mob), x1.2
+for a party monster and x1.5 for an elite (`0x40da20`). 'att' value[0] picks the formula: 0x4 the
+physical one, 0x8 the magical one (Combat_ResolveDamage `0x58f15d` / `0x58f186`; each returns 0
+unless its bit is set), so a magical skill is mitigated by param 6 (magic defence) and param 8.
+Value[1], the percentage, is stage 6 of either formula (`0x40e56e` / `0x40e8fd`): after the
+mitigation and its clamp, before the critical, the level term and the floor band. The critical
+roll needs the 0x4 bit (`0x58e80b`): a magical blow never crits. OpenSRO:
+`combat.ResolveSkillBlow` and `session.monsterStrike`; MEASURED numbers in WORLD_ISSUES
+"Eight-hundred-and-seventy-fifth round".

@@ -172,8 +172,8 @@ func TestStatusStunnedMonsterDoesNotCounter(t *testing.T) {
 	}
 	fx.forgetMonster(k.ID)
 	time.Sleep(time.Duration(strikeMangyang.AttackReuseMs+50) * time.Millisecond)
-	if res, _ := z.aria.attack(t, k.ID); res.PlayerDamageTaken != 15 {
-		t.Errorf("the stun gone, the counter %+v; want its 15", res)
+	if res, _ := z.aria.attack(t, k.ID); res.PlayerDamageTaken != nakedBlow {
+		t.Errorf("the stun gone, the counter %+v; want its %d", res, nakedBlow)
 	}
 }
 

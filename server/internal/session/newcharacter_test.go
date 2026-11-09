@@ -168,8 +168,10 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 	if stats.PhysAttack <= 0 {
 		t.Errorf("physical attack is %d; an unarmed character still hits", stats.PhysAttack)
 	}
-	if stats.PhysDefense != 0 {
-		t.Errorf("physical defence is %d, want 0 from armour with no reference data", stats.PhysDefense)
+	// Round 875: armour with no reference data defends nothing, and its slots
+	// keep their naked reinforce: Str 20 x 19.0 % = 3.8, truncated.
+	if stats.PhysDefense != 3 {
+		t.Errorf("physical defence is %d, want the naked 3 from armour with no reference data", stats.PhysDefense)
 	}
 }
 
@@ -190,7 +192,7 @@ func TestCombatWorksWithoutReferenceData(t *testing.T) {
 		t.Fatalf("GiveStartingKit: %v", err)
 	}
 
-	armor, err := defenderArmor(ctx, 1, eq, refItems)
+	armor, err := defenderArmor(ctx, 1, 0, eq, refItems)
 	if err != nil {
 		t.Fatalf("defenderArmor with no reference data: %v", err)
 	}

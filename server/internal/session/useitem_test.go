@@ -440,8 +440,9 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 		t.Fatalf("set leveling: %v", err)
 	}
 	c, _ = chars.GetByID(ctx, c.ID)
-	if c.MaxHP() != 359 {
-		t.Fatalf("MaxHP at level 10 / Str 30 = %d, want 359", c.MaxHP())
+	// Round 875: 300 x 1.02^9 = 358.53, truncated (MEASURED).
+	if c.MaxHP() != 358 {
+		t.Fatalf("MaxHP at level 10 / Str 30 = %d, want 358", c.MaxHP())
 	}
 	if c.HP != 200 {
 		t.Fatalf("HP = %d, want the fresh character's 200", c.HP)
@@ -492,8 +493,8 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 	if res.Error != "" {
 		t.Fatalf("the HP potion was refused: %q", res.Error)
 	}
-	if res.RestoredHP != 30 || res.HP != 230 || res.MaxHP != 359 {
-		t.Errorf("restored %d HP to %d/%d at once, want 30 to 230/359 (153/5; 153 = 120 * 1.02^9 * (1 + 30/416))", res.RestoredHP, res.HP, res.MaxHP)
+	if res.RestoredHP != 30 || res.HP != 230 || res.MaxHP != 358 { // round 875: the max HP truncated
+		t.Errorf("restored %d HP to %d/%d at once, want 30 to 230/358 (153/5; 153 = 120 * 1.02^9 * (1 + 30/416))", res.RestoredHP, res.HP, res.MaxHP)
 	}
 	if after, _ := chars.GetByID(ctx, c.ID); after.HP != 230 {
 		t.Errorf("stored HP = %d, want 230", after.HP)

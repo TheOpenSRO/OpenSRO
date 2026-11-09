@@ -418,6 +418,23 @@ func (s *statusRuntime) addHeld(insistent map[int64]struct{}, hasBrain func(id i
 	knocks.Unlock()
 }
 
+// cursedDefence is a character's flat defence after the states on it (round
+// 875): bleeding's flat cut (Holder.DefenceCut, both defences), then a decay
+// (physical) or a weakness (magical) takes its value[3] off, never below 0
+// (READ: the appliers write -min(v3, current); MEASURED, Record.CurseCut).
+func (s *statusRuntime) cursedDefence(characterID int64, def int, magical bool) int {
+	s.mu.Lock()
+	h := s.pcs[characterID]
+	bleed, curse := 0, 0
+	if h != nil {
+		bleed, curse = h.DefenceCut(), h.CurseCut(magical)
+	}
+	s.mu.Unlock()
+	def -= bleed
+	def -= min(curse, max(def, 0))
+	return max(def, 0)
+}
+
 // monsterDefenceCut is the flat defence bleeding takes off monsterID.
 func (s *statusRuntime) monsterDefenceCut(id int64) int {
 	s.mu.Lock()

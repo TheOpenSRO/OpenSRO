@@ -1743,7 +1743,7 @@ func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
 	m.AttackMin, m.AttackMax = combat.ScaleMonsterAttack(m.AttackMin, f), combat.ScaleMonsterAttack(m.AttackMax, f)
 	if parry > 0 {
 		centre := combat.DamageCentrePercent(
-			combat.MonsterRate(m.Level),
+			combat.MonsterHitRate(m),
 			combat.CharacterRate(playerLevel, parry),
 			m.Level, playerLevel)
 		return rollCentred(m.AttackMin, m.AttackMax, centre)
@@ -1814,12 +1814,16 @@ func armourParry(e equipment.Equipped, it *refdata.Item) float64 {
 	return v * (1 + float64(optionSum(optionsOf(e.MagParams), tagER))/100)
 }
 
-func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
+// Round 875: str is the wearer's total Strength (param 1, character.TotalStr),
+// which adds Str x the body armour's PDStr scale (armourReinforce) -- READ,
+// MEASURED; 0 leaves the term out.
+func defenderArmor(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	v, err := defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
 		return it.PhysDefenseMin, it.PhysDefenseMax, it.PlusIncPhysDef
-	}, durability.ArmourPhysDefenseGroup, durability.ShieldPhysDefenseGroup)
+	}, durability.ArmourPhysDefenseGroup, durability.ShieldPhysDefenseGroup, str, false)
 	// Round 785: the buffs' param-5 entries ('defp', 'defr', ...; buffstats.go).
-	return buffStatInt(characterID, buff.ParamPhysDefFlat, v), err
+	// Round 875: then the states that cut it (statusRuntime.cursedDefence).
+	return statusFX.cursedDefence(characterID, buffStatInt(characterID, buff.ParamPhysDefFlat, v), false), err
 }
 
 // defenderDefence is the shared walk behind defenderArmor and its magical
@@ -1831,7 +1835,12 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 // Round 769: each piece also adds its per-plus increment (rangeOf's third
 // value: column 67 physical, 78 magical) times its plus (READ,
 // Char_BuildAggregateStats).
-func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64, float64), armourGroup, shieldGroup int) (int, error) {
+//
+// Round 875: and the wearer's Strength (Intellect for the magical twin, `stat`)
+// scaled by the six body slots' PDStr (MDInt) -- armourReinforce. The total is
+// TRUNCATED, not rounded (MEASURED: a magic defence of 3205.99 reads 3205 on
+// the character window, a parry of 617.6 reads 617).
+func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64, float64), armourGroup, shieldGroup int, stat int, magical bool) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1874,7 +1883,79 @@ func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store,
 		}
 		total += durability.WhiteStat(lo, hi, e.Variance, group)
 	}
-	return int(math.Round(total)), nil
+	if stat > 0 {
+		total += float64(stat) * armourReinforce(ctx, equipped, items, magical) / 100
+	}
+	return int(total), nil
+}
+
+// nakedReinforce is each body slot's scale when nothing that counts is worn
+// there, in percent: physical (Strength) and magical (Intellect). READ:
+// GObjPC_InitStats' loop s:0x4e3430..0x4e34c5 seeds params 38..43 / 44..49
+// from the table at s:0xc640d0 (head 3.2/5.2, shoulder 2.7/4.3, chest
+// 4.2/6.7, legs 3.4/5.5, hands 2.5/3.9, feet 3.0/4.9). MEASURED: a level-110
+// character with Str 491 / Int 164 whose six worn pieces all fail their
+// requirement reads phy def 93 and mag def 50 -- 491 x 0.190 and 164 x 0.305.
+var nakedReinforce = map[equipment.Slot][2]float64{
+	equipment.SlotHelm:          {3.2, 5.2},
+	equipment.SlotShoulderGuard: {2.7, 4.3},
+	equipment.SlotMail:          {4.2, 6.7},
+	equipment.SlotPants:         {3.4, 5.5},
+	equipment.SlotGauntlet:      {2.5, 3.9},
+	equipment.SlotBoots:         {3.0, 4.9},
+}
+
+// armourReinforce is param 50 (physical) or 51 (magical): the sum over the six
+// body slots of the worn piece's reinforce -- PDStr (MDInt) through the
+// instance's variance group 1 (2), in tenths of a percent, so /10 -- or the
+// slot's naked default when nothing that counts is worn there. Param 21 = Str
+// x p50 / 100 is added to param 5 (22 = Int x p51 / 100 to param 6).
+//
+// READ: RefObjItem::ExtractData s:0x6a42b2 / s:0x6a4305 (/1000);
+// Char_BuildAggregateStats' armour branch rolls them into item +0x1b0 /
+// +0x1b4; Char_PublishCombatStats s:0x497c73..0x497cf8 publishes them x100
+// into params 37+TypeID4 / 43+TypeID4 at slot 0 with context 0, replacing the
+// slot's default; GObjPC_InitStats binds 50 <- 38..43 and 51 <- 44..49 and
+// ParamKeeper_EvaluateParam s:0x4b3210 sums a slot's contributors.
+// MEASURED: a +12 perfect European heavy set (PDStr 223.9 % in all) on Str
+// 533 reads phy def 3182 (1989.1 + 533 x 2.239 = 3182.5) and mag def 3205
+// (2602.2 + 206 x 2.931 = 3205.99).
+//
+// A broken piece publishes nothing, so its slot keeps the default. The
+// shield publishes into params 58/59 (s:0x497e50), which nothing here reads
+// (OPEN).
+func armourReinforce(ctx context.Context, worn []equipment.Equipped, items combat.ItemLookup, magical bool) float64 {
+	k, group := 0, durability.ArmourPDStrGroup
+	if magical {
+		k, group = 1, durability.ArmourMDIntGroup
+	}
+	slot := make(map[equipment.Slot]float64, len(nakedReinforce))
+	for s, d := range nakedReinforce {
+		slot[s] = d[k]
+	}
+	for _, e := range worn {
+		if _, body := nakedReinforce[e.Slot]; !body || durability.IsBroken(e.Durability) {
+			continue
+		}
+		it, err := items.GetItem(ctx, e.ItemID)
+		if err != nil || it == nil {
+			continue
+		}
+		lo, hi := it.PDStrMin, it.PDStrMax
+		if magical {
+			lo, hi = it.MDIntMin, it.MDIntMax
+		}
+		v := hi
+		if e.Durability != durability.Untracked {
+			v = durability.WhiteStat(lo, hi, e.Variance, group)
+		}
+		slot[e.Slot] = v / 10
+	}
+	sum := 0.0
+	for _, v := range slot {
+		sum += v
+	}
+	return sum
 }
 
 // attackerCritical is the player's critical-hit chance: the equipped weapon's
@@ -2044,6 +2125,16 @@ func playerEvadeCrit(_ context.Context, characterID int64, _ equipment.Store) fl
 // resolveBlow is combat.ResolveBlow under the SAME lock as every other roll in
 // this package -- it takes two chance rolls, and rand.Rand is not safe for
 // concurrent use.
+// resolveSkillBlow is resolveBlow with a skill's damage percentage
+// (combat.ResolveSkillBlow): a monster's skill blow, round 875.
+func resolveSkillBlow(base, percent int, mitigationPercent float64, flat, critChance, blockChance, attackerLevel, defenderLevel int, attackerID, defenderID int64) combat.Blow {
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.ResolveSkillBlow(base, percent, mitigationPercent, float64(flat), critChance, blockChance,
+		attackerLevel, defenderLevel, damageRollNG,
+		&combat.ChanceMemory{Tracker: chanceMemory, AttackerID: attackerID, DefenderID: defenderID})
+}
+
 func resolveBlow(base int, mitigationPercent float64, flat, critChance, blockChance, attackerLevel, defenderLevel int, attackerID, defenderID int64) combat.Blow {
 	damageRollMu.Lock()
 	defer damageRollMu.Unlock()

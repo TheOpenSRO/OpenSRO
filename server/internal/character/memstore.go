@@ -286,6 +286,7 @@ func (m *MemStore) GetByID(_ context.Context, characterID int64) (*Character, er
 		return nil, ErrNotFound
 	}
 	cp := *c
+	noteBaseStats(cp.ID, cp.Str, cp.Int)
 	return &cp, nil
 }
 
@@ -320,6 +321,7 @@ func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, 
 	c.StatPoints = statPoints
 	c.Str = str
 	c.Int = intel
+	noteBaseStats(characterID, str, intel)
 	return nil
 }
 

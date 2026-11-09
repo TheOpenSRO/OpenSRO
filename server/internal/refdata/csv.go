@@ -150,6 +150,11 @@ var itemCSVColumns = []string{
 	// Item.OrgCodeName). A strict suffix; an older export reads "", and the
 	// gender switch tool finds no twin.
 	"OrgCodeName",
+	// Appended later still (round 875): a body armour piece's Strength and
+	// Intellect reinforce ranges, itemdata columns 82..85 (see Item.PDStrMin).
+	// A strict suffix; an older export reads 0, and the wearer's Strength and
+	// Intellect add nothing to the piece's defence.
+	"PDStrMin", "PDStrMax", "MDIntMin", "MDIntMax",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -471,6 +476,10 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 96 {
 		it.OrgCodeName = strings.TrimSpace(f[96])
+	}
+	if len(f) > 100 {
+		it.PDStrMin, it.PDStrMax = parseFloat(f[97]), parseFloat(f[98])
+		it.MDIntMin, it.MDIntMax = parseFloat(f[99]), parseFloat(f[100])
 	}
 
 	if err != nil {

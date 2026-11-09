@@ -61,7 +61,7 @@ import (
 // the base one, which is never lower than retail's; the stun block's own
 // guards (`[esp+0x43]`, and its skip when the call's fifth argument is set);
 // the incubation block ('tb', +0x474), which has neither the 2.5 nor the 0.5
-// -- it is NOT applied; and 'csmp' (bit 23), which has no applier and no icon
+// -- it is NOT applied; and 'csmp' (bit 22; its applier, Apply22 s:0x4a54a0, is unread)
 // -- NOT applied either.
 
 // Run is one status run off a skill's Param block: its code and the values
@@ -128,7 +128,7 @@ func IsElemental(code string) bool {
 
 // Applied reports whether OpenSRO applies a code at all: every state the
 // table names except 'tb' (its block's computation is unread) and 'csmp'
-// (bit 23: no applier, no icon). See the package notes above.
+// (bit 22: its applier is unread). See the package notes above.
 func Applied(code string) bool {
 	s, ok := StateByCode(code)
 	if !ok {
@@ -182,6 +182,13 @@ type Record struct {
 	ParryPercent int
 	// DefenceCut is bleeding's value[4], taken off both flat defences.
 	DefenceCut int
+	// CurseCut is decay's ('cspd', slot 17) or weakness's ('csmd', slot 18)
+	// value[3] (record+0x34): the flat physical / magical defence the state
+	// takes away, never more than there is (round 875; READ, the appliers
+	// s:0x4a5160 / Apply18 s:0x4a5240 write p5 / p6 slot 0 = -min(v3,
+	// current)). MEASURED: `cspd 30000,30,10,2000` on a defender of phy def
+	// 3182 moved a 152 % 6969..8038 blow from 572..688 to 3021..3559.
+	CurseCut int
 	// SourceID is who applied it (record+0x4c): a character id, or a monster
 	// id when SourceIsMonster.
 	SourceID        int64
@@ -239,6 +246,9 @@ func Resolve(run Run, t Target, nowMs uint32, roll Roller) (Record, bool) {
 	}
 	rec.DurationMs = uint32(dur)
 	rec.Level = run.Value(2) & 0xff
+	if slot == SlotDecay || slot == SlotWeakness {
+		rec.CurseCut = run.Value(3)
+	}
 	if slot == SlotBleeding {
 		rec.TickValue = run.Value(3)
 		rec.DefenceCut = run.Value(4)

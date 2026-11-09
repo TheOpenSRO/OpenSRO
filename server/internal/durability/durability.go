@@ -55,6 +55,8 @@ const (
 	// param 5), 4 magic defence (+0x1ec/+0x1f0/+0x1f4 -> +0x1a8, param 6),
 	// 5 ER. A shield inserts block rate at 3 (+0x1e0.. -> +0x1a4, param 10)
 	// and shifts the two defences to 4 and 5.
+	ArmourPDStrGroup       = 1 // round 875: PDStr -> item+0x1b0 (params 38..43)
+	ArmourMDIntGroup       = 2 // round 875: MDInt -> item+0x1b4 (params 44..49)
 	ArmourPhysDefenseGroup = 3 // 0x495f26
 	ArmourMagDefenseGroup  = 4 // 0x495fa0
 	ArmourParryGroup       = 5 // 0x496062: ER, ref +0x1c8/+0x1cc (itemdata 68/69) -> item+0x19c -> param 9

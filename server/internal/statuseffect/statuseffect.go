@@ -65,6 +65,10 @@ const (
 	SlotPoison        = 4
 	SlotZombie        = 5 // its applier pointer is the shared 3-byte `return 0`
 	SlotBleeding      = 11
+	// SlotDecay and SlotWeakness are the defence curses, 'cspd' and 'csmd'
+	// (round 875, READ: the OR sites s:0x592b85 / s:0x592d8e).
+	SlotDecay    = 17
+	SlotWeakness = 18
 )
 
 // TickIntervalMs is the period the three damaging states check against their
@@ -301,7 +305,8 @@ func NonElementalChance(value1, overshoot int) int {
 //   - the KIND, the literal each block loads into ECX as `kind << 24` before
 //     asking the target's effect map whether the state may be applied
 //     (`mov ecx,0xN000000` before `call 0x5a1a20`, all 23 sites in
-//     Combat_ApplyStatusEffects) -- and kind is always bit + 1;
+//     Combat_ApplyStatusEffects) -- kind is bit + 1 up to stun, not after
+//     (round 875, below);
 //   - the client's mask BIT, its icon file, and the LABEL the client carries
 //     beside the icon (`0x7fdab0` in sro_client.exe).
 //
@@ -311,13 +316,22 @@ func NonElementalChance(value1, overshoot int) int {
 // ends of the run and throughout, which leaves no room for the table to be
 // off by a row.
 //
-// **The trap**: the `cs*` codes do NOT mean what their letters suggest.
-// `cshp` applies the MP curse and `csmd` the HP curse. Read the code off the
-// kind, never off the letters.
+// CORRECTED IN ROUND 875: from `ds` on, the client bit is NOT kind - 1. Each
+// block ORs its state's SLOT bit into the result, and the slot is the one
+// AbnormalState_UpdateOwnerClear (s:0x4a4390) indexes the applier table and
+// the slot->mask table (0xc63ec8, the identity but for slots 2/3) with --
+// READ, the OR sites s:0x592339 (ds 0x8000), s:0x59256a (ca 0x10000),
+// s:0x592b85 (cspd 0x20000), s:0x592d8e (csmd 0x40000), s:0x592773 (cssr
+// 0x80000), s:0x59297c (csit 0x100000), s:0x592fb1 (cshp 0x200000),
+// s:0x5931d2 (csmp 0x400000), s:0x59351f (tb 0x1000000). MEASURED: a
+// monster's `cspd` arrives as mask 0x20000 and the client says "You are under
+// decay status". So the letters DO mean what they say -- `cspd` curses the
+// physical defence, `csmd` the magical -- and the round-278 note that they
+// did not ("the trap") had read the kind as the bit.
 type State struct {
 	Code  string // the skilldata param code, and its CRefSkill field
 	Field int    // that field's offset
-	Kind  int    // the `kind << 24` literal, = Bit + 1
+	Kind  int    // the `kind << 24` literal (= Bit + 1 up to stun only)
 	Bit   int    // the client's mask bit
 	Icon  string // icon\stateodd\s_<Icon>_icon.ddj
 	Label string // the client's own label beside the icon
@@ -342,14 +356,14 @@ var States = []State{
 	{"bl", 0x444, 12, 11, "bleeding", "BLOOD"},
 	{"dn", 0x44c, 14, 13, "dark", "DN"},
 	{"st", 0x450, 15, 14, "stun", "STUN"},
-	{"ds", 0x454, 17, 16, "confusion", "CHAOS"},
-	{"ca", 0x458, 18, 17, "decay", "CURSE_PD"},
-	{"cssr", 0x45c, 19, 18, "weakness", "CURSE_MD"},
-	{"csit", 0x460, 20, 19, "powerless", "CURSE_STR"},
-	{"cspd", 0x464, 21, 20, "dissociation", "CURSE_INT"},
-	{"csmd", 0x468, 22, 21, "panic", "CURSE_HP"},
-	{"cshp", 0x46c, 23, 22, "combustion", "CURSIE_MP"}, // the engine's own typo
-	{"csmp", 0x470, 24, 23, "", ""},                    // no icon case, no applier
+	{"ds", 0x454, 17, 15, "disease", "DISEASE"},
+	{"ca", 0x458, 18, 16, "confusion", "CHAOS"},
+	{"cssr", 0x45c, 19, 19, "powerless", "CURSE_STR"},
+	{"csit", 0x460, 20, 20, "dissociation", "CURSE_INT"},
+	{"cspd", 0x464, 21, 17, "decay", "CURSE_PD"},
+	{"csmd", 0x468, 22, 18, "weakness", "CURSE_MD"},
+	{"cshp", 0x46c, 23, 21, "panic", "CURSE_HP"},
+	{"csmp", 0x470, 24, 22, "combustion", "CURSIE_MP"}, // the engine's own typo
 	{"tb", 0x474, 25, 24, "incubation", "TIME_BOMB"},
 }
 

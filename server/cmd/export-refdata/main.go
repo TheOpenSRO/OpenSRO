@@ -133,6 +133,14 @@ const (
 	fPhysAbsorbMax = 72
 	fMagAbsorbMin  = 79
 	fMagAbsorbMax  = 80
+	// A body armour piece's Strength and Intellect reinforce ranges (round
+	// 875; refdata.Item.PDStrMin): PDStr low/high and MDInt low/high, in
+	// tenths of a percent, which RefObjItem::ExtractData divides by 1000
+	// (READ s:0x6a42b2 / s:0x6a4305).
+	fPDStrMin = 82
+	fPDStrMax = 83
+	fMDIntMin = 84
+	fMDIntMax = 85
 	// fOrgCodeName is OrgObjCodeName (round 838): RefObjCommon_ExtractData's
 	// third string, into ref+0x48, cleared when it reads "xxx" (gs:0x6a3162..
 	// 0x6a318c) -- deserializer field 5, text column 4 (refdata.Item.OrgCodeName).
@@ -1041,6 +1049,12 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 96: OrgCodeName, itemdata column 4 (round 838, see fOrgCodeName),
 		// "" for the table's `xxx`, as the server's parser stores it.
 		orgName(str(fOrgCodeName)), // 96 OrgObjCodeName (col 4)
+		// 97..100: a body armour piece's Strength and Intellect reinforce
+		// ranges (round 875, see refdata.Item.PDStrMin).
+		num(fPDStrMin), // 97 PDStrMin (col 82)
+		num(fPDStrMax), // 98 PDStrMax (col 83)
+		num(fMDIntMin), // 99 MDIntMin (col 84)
+		num(fMDIntMax), // 100 MDIntMax (col 85)
 	}, true
 }
 

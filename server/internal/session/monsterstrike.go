@@ -290,6 +290,24 @@ func fallen(ctx context.Context, chars character.Store, hub *world.Hub, characte
 	return c, nil
 }
 
+// wearerStats is a character's total Strength and Intellect (param 1 / 2, the
+// worn items' options included) for its armour's reinforce (round 875): the
+// base the character store last saw (character.BaseStats -- no read per
+// swing) or, failing that, one read.
+func wearerStats(ctx context.Context, chars character.Store, characterID int64) (str, intel int) {
+	if s, i, ok := character.BaseStats(characterID); ok {
+		b := character.BonusOf(characterID)
+		return s + b.Str, i + b.Int
+	}
+	if chars == nil {
+		return 0, 0
+	}
+	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
+		return c.TotalStr(), c.TotalInt()
+	}
+	return 0, 0
+}
+
 // message is the outcome as the OpMonsterAttacked the zone is sent.
 func (o monsterStrikeOutcome) message(monsterID, targetID int64) *MonsterAttacked {
 	return &MonsterAttacked{
@@ -318,7 +336,24 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// Round 800: a blow taken is the battle state (jobsuit.go).
 	markBattle(deps.hub, characterID, time.Now())
 	var out monsterStrikeOutcome
-	armor, err := defenderArmor(ctx, characterID, eq, items)
+	// Round 875: a skill whose 'att' mask is magical only (0x8 without 0x4)
+	// takes the magical formula: magic defence (param 6, the armour's MDInt
+	// x Int) and the accessories' magical absorption (param 8), and it cannot
+	// be a critical (the roll at s:0x58e80b needs the 0x4 bit). READ
+	// (Combat_ResolveDamage s:0x58f15d / s:0x58f186, each formula returns 0
+	// unless its bit is set; a mask with both bits runs both and sums them --
+	// no monster skill in the retail table carries both, MEASURED by the
+	// census in round 875's entry, so that case is not built).
+	at := combat.AttackType(skill.AttType)
+	magical := skill.ID != 0 && at.IsMagical() && !at.IsPhysical()
+	str, intel := wearerStats(ctx, chars, characterID)
+	var armor int
+	var err error
+	if magical {
+		armor, err = defenderMagicArmor(ctx, characterID, intel, eq, items)
+	} else {
+		armor, err = defenderArmor(ctx, characterID, str, eq, items)
+	}
 	if err != nil {
 		return monsterStrikeOutcome{}, fmt.Errorf("combat: reading armor: %w", err)
 	}
@@ -438,8 +473,15 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 			return out, nil
 		}
 	}
-	counter := resolveBlow(raw, playerMitigationPercent(ctx, characterID, eq, items, false), armor,
-		combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq)),
+	critChance := combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq))
+	if magical {
+		critChance = 0
+	}
+	// Round 875: the skill's 'att' percentage applies after the mitigation and
+	// before the critical, the level term and the floor band
+	// (combat.ResolveSkillBlow).
+	counter := resolveSkillBlow(raw, skill.AttPercent, playerMitigationPercent(ctx, characterID, eq, items, magical), armor,
+		critChance,
 		combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
 		monster.Level, playerLevel, monster.ID, characterID)
 	incoming := counter.Damage

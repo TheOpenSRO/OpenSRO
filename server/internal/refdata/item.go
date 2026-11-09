@@ -456,6 +456,18 @@ type Item struct {
 	PhysAbsorbMin, PhysAbsorbMax float64
 	MagAbsorbMin, MagAbsorbMax   float64
 
+	// PDStrMin/Max and MDIntMin/Max are a body armour piece's Strength and
+	// Intellect reinforce ranges (round 875): itemdata columns 82/83 (PDStr)
+	// and 84/85 (MDInt), in tenths of a percent -- the tooltip's "Phy.
+	// reinforce 41.0 %" is a PDStr of 410. READ: RefObjItem::ExtractData
+	// divides them by 1000 (s:0x6a42b2, s:0x6a4305); Char_BuildAggregateStats
+	// rolls a worn piece's value from its variance groups 1 and 2 and
+	// Char_PublishCombatStats makes it a scale on the wearer's Strength
+	// (Intellect) that lands in physical (magical) defence -- see session's
+	// armourReinforce. 0 on an older import.
+	PDStrMin, PDStrMax float64
+	MDIntMin, MDIntMax float64
+
 	// OrgCodeName is the row's OrgObjCodeName, itemdata column 4 (round 838),
 	// "" for the table's `xxx`. RefObjCommon_ExtractData (gs:0x6a3090) reads
 	// it as the record's third string into the std::string at ref+0x48 and
