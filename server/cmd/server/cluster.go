@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/cluster"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gameworld"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/registry"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/relay"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
@@ -42,6 +44,7 @@ type clusterFlags struct {
 	clusterDSN    *string
 	drainDeadline *time.Duration
 	lease         *time.Duration
+	loadEvery     *time.Duration
 }
 
 func registerClusterFlags() clusterFlags {
@@ -67,6 +70,8 @@ func registerClusterFlags() clusterFlags {
 				"their players go to their return points -- and exits"),
 		lease: flag.Duration("host-lease", registry.DefaultLease,
 			"-role world/front: how long a host may miss its heartbeat before the reaper declares it dead"),
+		loadEvery: flag.Duration("load-report", 10*time.Second,
+			"-role world: how often the host logs its instances' tick cost and its load (a \"world load\" line; 0 never)"),
 	}
 }
 
@@ -247,6 +252,52 @@ func (wc *worldCluster) start(ctx context.Context) {
 		os.Exit(1)
 	}
 	wc.logger.Info("cluster joined", "host", wc.id, "relay", wc.relay, "open_world", wc.home, "layers", *wc.flags.layers)
+	if *wc.flags.loadEvery > 0 {
+		go wc.reportLoad(ctx, *wc.flags.loadEvery)
+	}
+}
+
+// reportLoad logs this host's instance ticks every period (the load test's
+// numbers, game_worlds.md 12.7): their count and percentiles since the last
+// line, the live instances, the players, the CPU score of the last beat and
+// the bus messages.
+func (wc *worldCluster) reportLoad(ctx context.Context, period time.Duration) {
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		ticks := metrics.DrainTicks()
+		players, live := session.ClusterStats()
+		out, in, rec := session.HandoffCounts()
+		pct := func(p float64) time.Duration {
+			if len(ticks) == 0 {
+				return 0
+			}
+			i := int(p*float64(len(ticks))) - 1
+			if i < 0 {
+				i = 0
+			}
+			return ticks[i]
+		}
+		sort.Slice(ticks, func(i, j int) bool { return ticks[i] < ticks[j] })
+		var sum time.Duration
+		for _, d := range ticks {
+			sum += d
+		}
+		mean := time.Duration(0)
+		if len(ticks) > 0 {
+			mean = sum / time.Duration(len(ticks))
+		}
+		wc.logger.Info("world load", "host", wc.id, "instances", live, "players", players, "ticks", len(ticks),
+			"tick_mean_us", mean.Microseconds(), "tick_p50_us", pct(0.5).Microseconds(), "tick_p99_us", pct(0.99).Microseconds(),
+			"tick_max_us", pct(1).Microseconds(), "tick_busy", float64(sum)/float64(period),
+			"cpu", fmt.Sprintf("%.2f", wc.node.Load()), "bus_sent", wc.node.Sent.Load(), "bus_received", wc.node.Received.Load(),
+			"handoffs_out", out, "handoffs_in", in, "recoveries", rec)
+	}
 }
 
 // relayServer is the listener the fronts open streams to.

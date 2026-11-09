@@ -87,6 +87,7 @@ func SetCluster(n *cluster.Node, home bool) {
 	n.Handle(kindAccount, onAccountGone)
 	n.Handle(kindBroadcast, cs.onEveryone)
 	n.Handle(kindCrest, onCrest)
+	n.Handle(kindFriendAnswer, onFriendAnswer)
 	go func() {
 		for f := range cs.presence {
 			f()

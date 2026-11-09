@@ -335,8 +335,19 @@ func (rt *friendRuntime) answer(ctx context.Context, sess *gateway.Session, data
 	asker := binary.LittleEndian.Uint32(data[4:])
 	answer := data[8]
 	rt.mu.Lock()
+	_, here := rt.jobs[id]
+	rt.mu.Unlock()
+	if !here && forwardFriendAnswer(id, asker, me.CharacterID, answer) {
+		return
+	}
+	rt.answerJob(ctx, id, asker, me.CharacterID, answer)
+}
+
+// answerJob is the answer to job id from targetID.
+func (rt *friendRuntime) answerJob(ctx context.Context, id, asker uint32, targetID int64, answer byte) {
+	rt.mu.Lock()
 	job := rt.jobs[id]
-	match := job != nil && uint32(job.askerID) == asker && job.targetID == me.CharacterID
+	match := job != nil && uint32(job.askerID) == asker && job.targetID == targetID
 	rt.mu.Unlock()
 	if !match || rt.take(id) == nil {
 		return

@@ -734,8 +734,8 @@ func TestRound786EveryRelocationGoesThroughWarpVia(t *testing.T) {
 		"ChangeZoneHeld": {"warpAcross"},
 		"Transfer":       {"warpAcross"},
 		"warpAcross":     {"warpVia", "EnterInstance", "returnFromInstance"},
-		"Enter":          {"enterOwned"},
-		"EnterHeld":      {"enterOwned"},
+		"Enter":          {"enterOwned", "enterAdopted"}, // round 869 lane W2: a hand-off in holds as a warp does (handoff.go)
+		"EnterHeld":      {"enterOwned", "enterAdopted"},
 		"Release":        {"releaseArrival"},
 		"Relocate":       {"handleUnstuck", "moveBySkill"},
 		"warpTo":         {"handleChangeZone"},

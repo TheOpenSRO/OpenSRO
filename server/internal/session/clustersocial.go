@@ -63,3 +63,42 @@ func onCrest(_ context.Context, m clusterMsg) (any, error) {
 	}
 	return nil, nil
 }
+
+// A friend request's answer from another process (OURS): the request's job
+// lives on the asker's process, so an answer whose job is not here goes
+// there.
+const kindFriendAnswer = "friend.answer"
+
+type friendAnswerBody struct {
+	ID     uint32 `json:"id"`
+	Asker  uint32 `json:"asker"`
+	Target int64  `json:"target"`
+	Answer byte   `json:"answer"`
+}
+
+// forwardFriendAnswer sends an answer to the asker's process when the asker
+// plays on another; false when it does not (the answer is this one's).
+func forwardFriendAnswer(id, asker uint32, target int64, answer byte) bool {
+	cs := clusterRT.Load()
+	if cs == nil {
+		return false
+	}
+	c, ok := cs.node.Lookup(int64(asker))
+	if !ok || c.Host == cs.node.ID() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return cs.node.Send(ctx, c.Host, kindFriendAnswer, friendAnswerBody{ID: id, Asker: asker, Target: target, Answer: answer}) == nil
+}
+
+func onFriendAnswer(ctx context.Context, m clusterMsg) (any, error) {
+	var b friendAnswerBody
+	if err := m.Decode(&b); err != nil {
+		return nil, err
+	}
+	if rt := friendRT.Load(); rt != nil {
+		rt.answerJob(ctx, b.ID, b.Asker, b.Target, b.Answer)
+	}
+	return nil, nil
+}
