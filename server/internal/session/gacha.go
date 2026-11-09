@@ -252,8 +252,13 @@ func (d GachaDeps) play(ctx context.Context, sess *gateway.Session, data []byte,
 	if out.Win && out.Row.Visible && d.Hub != nil {
 		msg := binary.LittleEndian.AppendUint32(nil, uint32(out.Row.RefItemID))
 		msg = binary.LittleEndian.AppendUint16(msg, uint16(out.Row.Count))
-		for _, other := range d.Hub.AllEntities() {
-			other.Session.Send(&proto.Packet{Opcode: OpGachaAnnounce, Data: msg})
+		// Round 869 lane W2: every world, every process.
+		pkt := &proto.Packet{Opcode: OpGachaAnnounce, Data: msg}
+		for _, other := range allEntitiesAnywhere(d.Hub) {
+			other.Session.Send(pkt)
+		}
+		if clusterOn() {
+			sendEverywhere(0, pkt)
 		}
 	}
 	return []byte{1, win}

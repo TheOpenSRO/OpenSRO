@@ -32,6 +32,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/session"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/txn"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/worldclock"
 )
 
 type clusterFlags struct {
@@ -235,6 +236,33 @@ func startWorldCluster(ctx context.Context, c clusterFlags, dsn string, logger *
 	session.SetClusterOpenHub(hub)
 	session.SeedBuffTokens(session.HostBase(id))
 	return &worldCluster{flags: c, node: n, home: home, id: id, relay: *c.relayListen, logger: logger}
+}
+
+// syncClock keeps a host without the open world on the open world's game
+// clock (OURS: one clock for every process, so a character moving between
+// them sees no jump): the clock's epoch is the open world's host's start,
+// read from its host row, again whenever that host restarts.
+func (wc *worldCluster) syncClock(ctx context.Context, hour, minute int) {
+	if wc == nil || wc.home {
+		return
+	}
+	go func() {
+		var epoch time.Time
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for {
+			if h, ok := wc.node.Home(); ok && !h.Started.IsZero() && !h.Started.Equal(epoch) {
+				epoch = h.Started
+				session.SetGameClock(worldclock.New(epoch, 0, hour, minute))
+				wc.logger.Info("game clock kept to the open world's host", "host", h.ID, "epoch", epoch)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
 }
 
 // managerConfig is the world manager's registry and host (lane W1's seam).

@@ -2464,3 +2464,114 @@ The server serves Prometheus metrics on `127.0.0.1:9469` by default (`-metrics-a
 `-log-file` (env `OPENSRO_LOG_FILE`), writes and rotates its own log. Grafana Alloy on the host
 feeds both to the monitoring stack (CT 111, `192.168.10.86`). What runs where, the metric list,
 the dashboards, the alert rules and what to set on the Mac mini: `deploy/observability/README.md`.
+
+## Several processes (round 869 lane W2) -- NOT ENABLED
+
+> **Not enabled on prod.** Prod runs ONE process (`-role all`, the default) and stays that way
+> until the user decides otherwise. Nothing below is installed, configured or required today;
+> it is what turning it on would take. The design is `docs/protocol/game_worlds.md` 12 (OURS);
+> what was built and measured is `docs/WORLD_ISSUES.md`, "Eight-hundred-and-sixty-ninth round,
+> lane W2".
+
+**What runs.** One binary, three roles:
+
+| process | flags | what it does |
+|---|---|---|
+| the front | `-role front -addr :15779` | the only public port: accepts the clients and relays each one's frames to a world host; re-routes a client when its character moves; recovers a client whose host died |
+| the open world's host | `-role world -world-layers open -relay-listen 10.0.0.2:15790` | the open world, every login, the social services' authority (parties are replicated to every host); takes no instances |
+| an instance host (N of them) | `-role world -world-layers instances -relay-listen 10.0.0.3:15790` | instance layers only; a new layer goes to the least-loaded live host |
+
+`-world-layers both` (the default) is a host that runs the open world and takes instances too.
+Every world host also needs `-host-id` (stable across restarts: the registry row's key) and,
+when it listens on an address the fronts cannot dial as written, `-relay-advertise`.
+
+**The shared secret.** Every process gets the same `OPENSRO_RELAY_SECRET` (or `-relay-secret`):
+a stream whose hello does not carry it is refused. The relay listeners carry decoded client
+frames in clear: bind them to a private network (loopback or a host-only bridge), never to the
+LAN or the internet. Across machines, add a tunnel or a firewall rule pair per host; mutual
+TLS on the relay is not built (OPEN).
+
+**PostgreSQL.** Every process shares the one database (characters move between processes
+through it; the registry's `world_*` tables and the bus's `bus_spill` are created at the first
+start). Connections per process:
+
+- a world host: `OPENSRO_PG_MAX_CONNS` (default 40: 32 stores + 8 reference data) + 6 (the
+  cluster pool: registry and bus publishes) + 1 (the bus's dedicated LISTEN connection);
+- a front: 6 + 1 (no stores).
+
+Prod's PostgreSQL has `max_connections` 100. One front, the open world's host and two instance
+hosts at the default budget need 3 x 47 + 7 = 148: either set `OPENSRO_PG_MAX_CONNS=16` on every
+world host (3 x 23 + 7 = 76; the load test ran at 10) or raise `max_connections` (and
+`shared_buffers` with it). The bus's LISTEN connection must reach PostgreSQL directly:
+**a transaction-pooling PgBouncer drops LISTEN** (`-cluster-dsn` may name a direct DSN while
+`-postgres-dsn` goes through a pooler).
+
+**The same data on every world host.** A character's world can be on any host, so every world
+host must be started with the same game data and switches: `-navmesh-dir`, `-nest-db-dir`,
+`-gameworld-dir`, `-monsters-csv`, `-npcs-csv`, `-npcpos-csv`, `-teleport-dir`, `-cos-csv`,
+`-leveldata-csv`, `-skills-csv`/`-items-csv` (or the imported tables), `-mall-csv`,
+`-gacha-csv`, `-quests-dir`, `-chargen-csv` (logins happen on the open world's host; harmless
+elsewhere), `-gm-accounts`, `-persist-position`, `-world-clock-start` (the game clock of every
+host follows the open world's host's start; the offset must match), the `OPENSRO_MONSTER_*`
+switches and `-arrival-guard`. On the Mac mini these are the exports in `~/opensro/run.sh`:
+one run script per process, each with its own `-host-id`, `-relay-listen`, `-metrics-addr` and
+`-log-file`. A front needs none of the game data.
+
+**Services.** On the Mac mini: one launch agent per process (copy `com.opensro.server` to
+`com.opensro.front`, `com.opensro.world-open`, `com.opensro.world-1`, ... each starting its own
+run script); the front's agent is the one bound to 15779. With compose: one service per process
+from the same image, the world services on an internal network, only the front publishing
+15779; for example (an untracked override, not tested on prod):
+
+```
+services:
+  server:        # becomes the front
+    command: ["-role=front", "-addr=:15779", "-host-id=front",
+              "-postgres-dsn=postgres://postgres:postgres@postgres:5432/opensro?sslmode=disable"]
+    environment: {OPENSRO_RELAY_SECRET: "<secret>"}
+  world-open:
+    build: {context: ./server}
+    command: ["-role=world", "-world-layers=open", "-host-id=world-open", "-relay-listen=:15790",
+              "-relay-advertise=world-open:15790", "-metrics-addr=:9470", "...the game data flags..."]
+    environment: {OPENSRO_RELAY_SECRET: "<secret>", OPENSRO_PG_MAX_CONNS: "16"}
+  world-1:
+    build: {context: ./server}
+    command: ["-role=world", "-world-layers=instances", "-host-id=world-1", "-relay-listen=:15790",
+              "-relay-advertise=world-1:15790", "-metrics-addr=:9471", "...the same data flags..."]
+    environment: {OPENSRO_RELAY_SECRET: "<secret>", OPENSRO_PG_MAX_CONNS: "16"}
+```
+
+**Metrics.** One `-metrics-addr` per process (9469 the front or the single process, 9470 the
+open world's host, 9471.. the instance hosts) and one scrape target each in
+`deploy/observability/alloy/config.alloy` (with a `process` label). New series:
+`opensro_world_tick_seconds{world}` (each instance's tick cost) and
+`opensro_handoff_seconds{dir="in"}` (a move's entry time); every world host also logs a
+`world load` line every 10 s (`-load-report`): its instances, players, tick percentiles, CPU,
+bus messages and hand-offs. The registry is readable as it runs:
+
+```
+psql opensro -c "SELECT id, state, open_world, instances, players, live, round(load::numeric,2), now()-heartbeat AS age FROM world_hosts ORDER BY id"
+psql opensro -c "SELECT host, count(*) FROM world_instances WHERE state='open' GROUP BY host"
+```
+
+**Failures.** A world host that stops beating for `-host-lease` (10 s) is declared dead by
+whichever process reaps first: its layers are marked `lost`, its presence rows cleared, and a
+later beat from it is refused (it exits with status 3 rather than keep players who were sent
+elsewhere). Its players do not wait for that: the front sees the stream break and asks the open
+world's host to put each one back at its return point (the ordinary loading screen). The open
+world's host is still a single point: if it dies, everyone in the open world is disconnected,
+as a single process's restart does today; a front that dies drops its own clients (they log in
+again).
+
+**A rolling update.** Instance hosts first: start the new version's instance hosts (placement
+prefers hosts of the opener's version), then `kill -TERM` each old one -- a drain: it takes no
+new layer, tells its players the layer closes at `-drain-deadline` (default 2 minutes; the
+0x0C1A close warning), closes what is left at the deadline (its players go to their return
+points), and exits. Then the open world's host and the front restart as today (a short outage
+for everyone in the open world). The relay checks a protocol version (`relay.Version`): a
+release that changes it needs every process restarted together. `deploy/update.sh` restarts the
+whole stack and does none of this yet: it would need a drain step per instance service (OPEN).
+
+**Trying it.** `server/cmd/server/cluster_test.go` runs four processes on loopback
+(`OPENSRO_TEST_CLUSTER_DSN` = a throwaway database), and `server/cmd/loadworld/run.sh` is the
+load test (a synthetic game from `cmd/loadworld`, never the game's data).

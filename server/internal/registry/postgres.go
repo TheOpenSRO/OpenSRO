@@ -399,14 +399,15 @@ func (p *Postgres) Beat(ctx context.Context, h Host) error {
 		st = HostActive
 	}
 	err := p.db.QueryRowContext(ctx, `INSERT INTO world_hosts (id, addr, version, state, open_world, instances, heartbeat, started, players, live, load)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), now(), $7, $8, $9)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), COALESCE($11, now()), $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE SET addr = EXCLUDED.addr, version = EXCLUDED.version,
+			started = COALESCE($11, world_hosts.started),
 			state = CASE WHEN world_hosts.state = 'dead' THEN 'dead' WHEN $10 THEN EXCLUDED.state ELSE world_hosts.state END,
 			open_world = EXCLUDED.open_world, instances = EXCLUDED.instances,
 			heartbeat = CASE WHEN world_hosts.state = 'dead' THEN world_hosts.heartbeat ELSE now() END,
 			players = EXCLUDED.players, live = EXCLUDED.live, load = EXCLUDED.load
 		RETURNING state`, h.ID, h.Addr, h.Version, string(st), h.OpenWorld, h.Instances, h.Players, h.Live, h.Load,
-		h.State != "").Scan(&state)
+		h.State != "", startedArg(h.Started)).Scan(&state)
 	if err != nil {
 		return err
 	}
@@ -415,6 +416,13 @@ func (p *Postgres) Beat(ctx context.Context, h Host) error {
 		return ErrHostDead
 	}
 	return nil
+}
+
+func startedArg(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 const hostCols = `id, addr, version, state, open_world, instances, heartbeat, started, players, live, load`

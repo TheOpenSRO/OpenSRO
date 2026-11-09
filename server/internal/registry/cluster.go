@@ -39,7 +39,9 @@ type Host struct {
 	// social services). Instances: it takes instance layers.
 	OpenWorld bool
 	Instances bool
-	// Heartbeat is its last beat, Started its first.
+	// Heartbeat is its last beat. Started is when the process started (a
+	// beat carries it; zero: its first beat): the game clock's epoch of the
+	// open world's host, which every other process keeps to (OURS).
 	Heartbeat time.Time
 	Started   time.Time
 	// Players, Live (instances) and Load (a CPU score, cores busy) are what
@@ -159,7 +161,9 @@ func (m *Memory) Beat(_ context.Context, h Host) error {
 		return ErrHostDead
 	}
 	if !ok {
-		h.Started = now
+		if h.Started.IsZero() {
+			h.Started = now
+		}
 		if h.State == "" {
 			h.State = HostActive
 		}
@@ -169,6 +173,9 @@ func (m *Memory) Beat(_ context.Context, h Host) error {
 		st, started := cur.State, cur.Started
 		if h.State != "" && h.State != st {
 			st = h.State
+		}
+		if !h.Started.IsZero() {
+			started = h.Started
 		}
 		*cur = h
 		cur.State, cur.Started = st, started

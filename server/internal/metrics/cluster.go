@@ -21,10 +21,12 @@ var (
 )
 
 // tickTally is every tick's duration since the last Drain (the load test's
-// percentiles), bounded.
+// percentiles), bounded; kept only once DrainTicks has been called (a world
+// host's "world load" line), so one process keeps nothing.
 var tickTally = struct {
 	sync.Mutex
-	d []time.Duration
+	on bool
+	d  []time.Duration
 }{}
 
 const tickTallyMax = 1 << 20
@@ -33,7 +35,7 @@ const tickTallyMax = 1 << 20
 func WorldTick(code string, d time.Duration) {
 	worldTickSeconds.WithLabelValues(code).Observe(d.Seconds())
 	tickTally.Lock()
-	if len(tickTally.d) < tickTallyMax {
+	if tickTally.on && len(tickTally.d) < tickTallyMax {
 		tickTally.d = append(tickTally.d, d)
 	}
 	tickTally.Unlock()
@@ -43,6 +45,7 @@ func WorldTick(code string, d time.Duration) {
 func DrainTicks() []time.Duration {
 	tickTally.Lock()
 	defer tickTally.Unlock()
+	tickTally.on = true
 	out := tickTally.d
 	tickTally.d = nil
 	return out

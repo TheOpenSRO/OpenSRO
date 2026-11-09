@@ -17,6 +17,7 @@ import (
 	"math/rand"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -172,6 +173,16 @@ func (lb *loadBot) fight(st *loadStats, rng *rand.Rand) {
 	}
 }
 
+// worldOf is party idx's world: -world is one id, or a range "63-72" the
+// parties take in turn (a world has 50 layers).
+func worldOf(spec string, idx int) string {
+	var lo, hi int
+	if n, _ := fmt.Sscanf(spec, "%d-%d", &lo, &hi); n == 2 && hi >= lo {
+		return strconv.Itoa(lo + idx%(hi-lo+1))
+	}
+	return spec
+}
+
 func percentile(ds []time.Duration, p float64) time.Duration {
 	if len(ds) == 0 {
 		return 0
@@ -216,9 +227,9 @@ func instLoadRun(addr, prefix string, level, parties, size int, world string, du
 	fmt.Printf("LOGGED IN %d bots in %v (%d failed)\n", parties*size-int(loginErr.Load()), time.Since(t0).Round(time.Millisecond), loginErr.Load())
 	// Each party: formed, then into its layer.
 	t1 := time.Now()
-	for _, pb := range all {
+	for idx, pb := range all {
 		wg.Add(1)
-		go func(pb *partyBots) {
+		go func(idx int, pb *partyBots) {
 			defer wg.Done()
 			bots := pb.bots
 			for _, lb := range bots {
@@ -253,7 +264,7 @@ func instLoadRun(addr, prefix string, level, parties, size int, world string, du
 					}
 				}(lb.b)
 			}
-			text, d, err := bots[0].gmLine("/instance "+world, true)
+			text, d, err := bots[0].gmLine("/instance "+worldOf(world, idx), true)
 			if err != nil {
 				st.mu.Lock()
 				st.refused++
@@ -281,7 +292,7 @@ func instLoadRun(addr, prefix string, level, parties, size int, world string, du
 			st.mu.Lock()
 			st.layers[layer]++
 			st.mu.Unlock()
-		}(pb)
+		}(idx, pb)
 	}
 	wg.Wait()
 	fmt.Printf("ENTERED %d layers, %d entries in %v\n", len(st.layers), len(st.entries), time.Since(t1).Round(time.Millisecond))

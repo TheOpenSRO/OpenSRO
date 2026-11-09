@@ -106,6 +106,9 @@ func New(cfg Config) *Node {
 	if cfg.Self.State == "" {
 		cfg.Self.State = registry.HostActive
 	}
+	if cfg.Self.Started.IsZero() {
+		cfg.Self.Started = time.Now()
+	}
 	return &Node{cfg: cfg, self: cfg.Self, handlers: map[string]Handler{}, calls: map[uint64]chan Msg{},
 		hosts: map[string]registry.Host{}, byChar: map[int64]registry.Character{}, byName: map[string]int64{}}
 }

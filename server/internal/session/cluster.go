@@ -88,6 +88,8 @@ func SetCluster(n *cluster.Node, home bool) {
 	n.Handle(kindBroadcast, cs.onEveryone)
 	n.Handle(kindCrest, onCrest)
 	n.Handle(kindFriendAnswer, onFriendAnswer)
+	n.Handle(kindRestrictions, onRestrictions)
+	n.Handle(kindGuildPlate, onGuildPlate)
 	go func() {
 		for f := range cs.presence {
 			f()

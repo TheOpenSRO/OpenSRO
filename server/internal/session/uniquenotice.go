@@ -233,12 +233,18 @@ func broadcastUniqueNotice(hub *world.Hub, n *UniqueNotice) int {
 	}
 	p := &proto.Packet{Opcode: OpUniqueNotice, Data: n.Encode()}
 	queued := 0
-	for _, e := range hub.AllEntities() {
+	// Round 869 lane W2: every world of this process (an instance's players
+	// too: the notice is relayed to every world, READ above), then every
+	// other process in one message.
+	for _, e := range allEntitiesAnywhere(hub) {
 		if e.Session == nil {
 			continue
 		}
 		_ = e.Session.Send(p)
 		queued++
+	}
+	if clusterOn() {
+		sendEverywhere(0, p)
 	}
 	return queued
 }

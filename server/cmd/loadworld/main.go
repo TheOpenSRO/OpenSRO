@@ -7,15 +7,16 @@
 //
 // DIR gets:
 //
-//	gw/            the game-world tables: the open world and world 63, an
-//	               instanced world of 50 layers of 4 players, 2 h, a 10 min
-//	               empty close, one start point (the spec's numbers,
-//	               game_worlds.md 1);
-//	nest/          tab_refhive, tab_refnest, Tab_RefTactics: one hive of
-//	               world 63 with -nests nests of -per-nest monsters each
-//	               around the start (58 x 2 = 116 slots: the nest count of
-//	               world 63 MEASURED in round 869 lane W1's export, so an
-//	               instance holds about as many monsters as the real one);
+//	gw/            the game-world tables: the open world and -worlds
+//	               instanced worlds 63.. (each 50 layers of 4 players, 2 h, a
+//	               10 min empty close, one start point: the spec's numbers
+//	               for a GOD world, game_worlds.md 1 -- the real data has 22
+//	               of them);
+//	nest/          tab_refhive, tab_refnest, Tab_RefTactics: one hive per
+//	               world with -nests nests of -per-nest monsters each around
+//	               the start (58 x 2 = 116 slots: the nest count of world 63
+//	               MEASURED in round 869 lane W1's export, so an instance
+//	               holds about as many monsters as the real one);
 //	monsters.csv   the synthetic species (level 40, 40 HP -- the bots' bare
 //	               swings kill it -- walk 16 / run 50) the nests hatch, each
 //	               nest again 10..20 s after a kill;
@@ -62,30 +63,33 @@ func main() {
 	out := flag.String("out", "", "the directory to write")
 	nests := flag.Int("nests", 58, "nests in world 63's hive")
 	perNest := flag.Int("per-nest", 2, "monsters per nest")
+	worlds := flag.Int("worlds", 10, "instanced worlds 63.. (50 layers each)")
 	flag.Parse()
 	if *out == "" {
 		fail(fmt.Errorf("-out is required"))
 	}
 	gw := filepath.Join(*out, "gw")
-	write(filepath.Join(gw, "_RefGame_World.csv"), [][]string{
+	ws := [][]string{
 		{"ID", "WorldCodeName128", "Type", "WorldMaxCount", "WorldMaxUserCount", "WorldEntryType", "WorldEntranceType",
 			"WorldLeaveType", "WorldDurationTime", "WorldEmptyRemainTime", "ConfigGroupCodeName128"},
 		{"1", "INS_DEFAULT", "0", "1", "0", "0", "0", "0", "0", "0", "xxx"},
-		{"63", "INS_LOAD_63", "1", "50", "4", "0", "0", "0", "7200000", "600000", "G63"},
-	})
-	write(filepath.Join(gw, "_RefInstance_World_Region.csv"), [][]string{
-		{"WorldID", "RegionID"}, {"63", itoa(0x7EE4)}, {"63", itoa(0x7EE3)},
-	})
-	write(filepath.Join(gw, "_RefInstance_World_Start_Pos.csv"), [][]string{
-		{"WorldID", "RegionID", "PosX", "PosY", "PosZ", "Param"}, {"63", itoa(0x7EE4), "1063", "693", "1125", "0"},
-	})
-
+	}
+	regions := [][]string{{"WorldID", "RegionID"}}
+	starts := [][]string{{"WorldID", "RegionID", "PosX", "PosY", "PosZ", "Param"}}
+	hives := [][]string{{"dwHiveID", "btKeepMonsterCountType", "dwOverwriteMaxTotalCount", "fMonsterCountPerPC",
+		"dwSpawnSpeedIncreaseRate", "dwMaxIncreaseRate", "btFlag", "GameWorldID", "HatchObjType"}}
 	const species, tactics, hive = 990001, 990001, 990001
-	write(filepath.Join(*out, "nest", "tab_refhive.csv"), [][]string{
-		{"dwHiveID", "btKeepMonsterCountType", "dwOverwriteMaxTotalCount", "fMonsterCountPerPC", "dwSpawnSpeedIncreaseRate",
-			"dwMaxIncreaseRate", "btFlag", "GameWorldID", "HatchObjType"},
-		{itoa(hive), "0", "0", "0", "0", "0", "0", "63", "1"},
-	})
+	for k := 0; k < *worlds; k++ {
+		id := itoa(63 + k)
+		ws = append(ws, []string{id, "INS_LOAD_" + id, "1", "50", "4", "0", "0", "0", "7200000", "600000", "G" + id})
+		regions = append(regions, []string{id, itoa(0x7EE4)}, []string{id, itoa(0x7EE3)})
+		starts = append(starts, []string{id, itoa(0x7EE4), "1063", "693", "1125", "0"})
+		hives = append(hives, []string{itoa(hive + k), "0", "0", "0", "0", "0", "0", id, "1"})
+	}
+	write(filepath.Join(gw, "_RefGame_World.csv"), ws)
+	write(filepath.Join(gw, "_RefInstance_World_Region.csv"), regions)
+	write(filepath.Join(gw, "_RefInstance_World_Start_Pos.csv"), starts)
+	write(filepath.Join(*out, "nest", "tab_refhive.csv"), hives)
 	write(filepath.Join(*out, "nest", "Tab_RefTactics.csv"), [][]string{
 		{"dwTacticsID", "dwObjID", "nSightRange", "btAggressType", "AggressData", "btChangeTarget", "btTraceBoundary",
 			"TraceData", "btHomingType", "HomingData", "btAggressTypeOnHoming", "btFleeType", "dwChampionTacticsID",
@@ -95,13 +99,15 @@ func main() {
 	nestRows := [][]string{{"dwNestID", "dwHiveID", "dwTacticsID", "nRegionDBID", "fLocalPosX", "fLocalPosY", "fLocalPosZ",
 		"wInitialDir", "nRadius", "nGenerateRadius", "nChampionGenPercentage", "dwDelayTimeMin", "dwDelayTimeMax",
 		"dwMaxTotalCount", "btFlag", "btRespawn", "btType"}}
-	for i := 0; i < *nests; i++ {
-		// A grid of nests around the start (1063, 1125), 40 units apart.
-		x := 900 + float64(i%10)*40
-		z := 950 + float64(i/10)*40
-		nestRows = append(nestRows, []string{itoa(990001 + i), itoa(hive), itoa(tactics), itoa(0x7EE4),
-			fmt.Sprintf("%.0f", x), "693", fmt.Sprintf("%.0f", z), "0", "60", "30", "0", "10", "20",
-			itoa(*perNest), "0", "1", "0"})
+	for k := 0; k < *worlds; k++ {
+		for i := 0; i < *nests; i++ {
+			// A grid of nests around the start (1063, 1125), 40 units apart.
+			x := 900 + float64(i%10)*40
+			z := 950 + float64(i/10)*40
+			nestRows = append(nestRows, []string{itoa(990001 + k*1000 + i), itoa(hive + k), itoa(tactics), itoa(0x7EE4),
+				fmt.Sprintf("%.0f", x), "693", fmt.Sprintf("%.0f", z), "0", "60", "30", "0", "10", "20",
+				itoa(*perNest), "0", "1", "0"})
+		}
 	}
 	write(filepath.Join(*out, "nest", "tab_refnest.csv"), nestRows)
 
@@ -130,5 +136,5 @@ func main() {
 		lv = append(lv, []string{itoa(i), itoa(1000 * i)})
 	}
 	write(filepath.Join(*out, "leveldata.csv"), lv)
-	fmt.Printf("loadworld: wrote %s (%d nests x %d monsters)\n", *out, *nests, *perNest)
+	fmt.Printf("loadworld: wrote %s (%d worlds, %d nests x %d monsters each)\n", *out, *worlds, *nests, *perNest)
 }

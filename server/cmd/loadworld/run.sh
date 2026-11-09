@@ -49,7 +49,7 @@ cpu() { # pid -> utime+stime ticks
   awk '{print $14+$15}' /proc/$1/stat
 }
 procs="home front $(for i in $(seq 1 $N); do printf 'w%d ' $i; done)"
-"$DIR/bin/partybot" -mode instload -addr 127.0.0.1:17721 -prefix $PREFIX -level 40 -parties $P -duration $FIGHT \
+"$DIR/bin/partybot" -mode instload -addr 127.0.0.1:17721 -prefix $PREFIX -level 40 -parties $P -duration $FIGHT -world 63-72 \
   > "$RUN/bots.log" 2>&1 &
 BOTS=$!
 # The fight's CPU window: from FIGHT START to FIGHT END.

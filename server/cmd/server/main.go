@@ -3098,6 +3098,7 @@ func main() {
 	serveClients := true
 	if wc != nil {
 		wc.start(ctx)
+		wc.syncClock(ctx, clockHour, clockMinute)
 		rs := wc.relayServer(srv.Handle, srv.OnDisconnect)
 		go func() {
 			if err := rs.ListenAndServe(ctx); err != nil {

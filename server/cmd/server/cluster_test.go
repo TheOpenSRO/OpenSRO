@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -233,6 +234,27 @@ func (c *tclient) login(user string) {
 	c.send(session.OpReadyToPlay, nil)
 }
 
+// pings is n echo round trips of c (OpPing, OURS), sorted.
+func (c *tclient) pings(n int) []time.Duration {
+	c.t.Helper()
+	var out []time.Duration
+	for i := 0; i < n; i++ {
+		tok := []byte{byte(i), byte(i >> 8), 0x86, 0x9}
+		start := time.Now()
+		c.send(session.OpPing, tok)
+		c.wait("a ping echo", 5*time.Second, func(p *proto.Packet) bool {
+			return p.Opcode == session.OpPingEcho && string(p.Data) == string(tok)
+		})
+		out = append(out, time.Since(start))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func p50p99(ds []time.Duration) string {
+	return fmt.Sprintf("p50 %v p99 %v", ds[len(ds)/2].Round(time.Microsecond), ds[len(ds)*99/100].Round(time.Microsecond))
+}
+
 // hostOf is where the registry has a character.
 func hostOf(t *testing.T, db *sql.DB, char int64) string {
 	t.Helper()
@@ -364,6 +386,12 @@ func TestClusterFourProcesses(t *testing.T) {
 		cl.gm("/level 40")
 	}
 
+	// The relay's added latency: echoes through the front against echoes
+	// straight from the open world's host's own listener.
+	direct := dialClient(t, homeAddr, "direct")
+	viaFront, straight := a.pings(200), direct.pings(200)
+	t.Logf("ping through the front %s; straight to the host %s", p50p99(viaFront), p50p99(straight))
+
 	// A party of Aria and Bram, formed in the open world.
 	a.send(party.OpCreate, party.EncodeCreate(party.JIDOf(b.char), party.FlagItemShare))
 	b.wait("the party invitation", 10*time.Second, b.op(party.OpInvitation))
@@ -382,6 +410,8 @@ func TestClusterFourProcesses(t *testing.T) {
 		t.Fatalf("the instance's zone change %+v", inA)
 	}
 	other := map[string]string{"w1": "w2", "w2": "w1"}[hostA]
+
+	t.Logf("ping through the front to the instance host: %s", p50p99(a.pings(200)))
 
 	// 2. Across processes: a whisper each way, a party line each way.
 	b.chat(session.ChatWhisper, a.name, "to the instance")

@@ -8,9 +8,12 @@ package session
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/TheOpenSRO/OpenSRO/server/internal/guild"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
 )
 
 const kindCrest = "guild.crest"
@@ -100,5 +103,94 @@ func onFriendAnswer(ctx context.Context, m clusterMsg) (any, error) {
 	if rt := friendRT.Load(); rt != nil {
 		rt.answerJob(ctx, b.ID, b.Asker, b.Target, b.Answer)
 	}
+	return nil, nil
+}
+
+// A GM's ban or unban (round 840's chat and trade restrictions) is cached
+// per account on every process: each one forgets its copy.
+const kindRestrictions = "account.restrictions"
+
+// restrictionsEverywhere tells the other processes accountID's
+// restrictions changed.
+func restrictionsEverywhere(accountID int64) {
+	cs := clusterRT.Load()
+	if cs == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cs.node.Broadcast(ctx, kindRestrictions, accountBody{Account: accountID})
+}
+
+func onRestrictions(_ context.Context, m clusterMsg) (any, error) {
+	var b accountBody
+	if err := m.Decode(&b); err != nil {
+		return nil, err
+	}
+	ForgetRestrictions(b.Account)
+	return nil, nil
+}
+
+// A guild line's change (refreshGuildPlate) for a character on another
+// process is redone there: that process re-reads the guild and tells the
+// players who see the character.
+const kindGuildPlate = "guild.plate"
+
+type plateBody struct {
+	Char int64 `json:"c"`
+}
+
+func guildPlateEverywhere(characterID int64) {
+	cs := clusterRT.Load()
+	if cs == nil {
+		return
+	}
+	c, ok := cs.node.Lookup(characterID)
+	if !ok || c.Host == cs.node.ID() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cs.node.Send(ctx, c.Host, kindGuildPlate, plateBody{Char: characterID})
+}
+
+func onGuildPlate(_ context.Context, m clusterMsg) (any, error) {
+	var b plateBody
+	if err := m.Decode(&b); err != nil {
+		return nil, err
+	}
+	// The guild is read off the bus's goroutine (a one-way message's
+	// handler must not block the deliveries behind it).
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		refreshPlateFor(ctx, b)
+	}()
+	return nil, nil
+}
+
+func refreshPlateFor(ctx context.Context, b plateBody) (any, error) {
+	hub, ok := world.Locate(b.Char)
+	if !ok {
+		return nil, nil
+	}
+	box := guildPlateStore.Load()
+	if box == nil {
+		return nil, nil
+	}
+	g, err := box.s.GetByCharacter(ctx, b.Char)
+	if err != nil && !errors.Is(err, guild.ErrNotInGuild) {
+		return nil, err
+	}
+	if errors.Is(err, guild.ErrNotInGuild) {
+		g = nil
+	}
+	p := plateOf(g, b.Char)
+	p.UnionID, p.UnionCrestRev = unionFieldsOf(ctx, g)
+	if v, ok := guildPlates.Load(b.Char); ok && v.(guildPlate) == p {
+		return nil, nil
+	}
+	guildPlates.Delete(b.Char)
+	refreshGuildPlateHere(hub, b.Char, g)
 	return nil, nil
 }
