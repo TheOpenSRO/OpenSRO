@@ -177,8 +177,20 @@ func TestStructureRecordBytes(t *testing.T) {
 	if tail := party[len(party)-8:]; fmt.Sprintf("% x", tail) != "dd cc bb aa 2b 8c 00 00" {
 		t.Errorf("type-7 tail % x", tail)
 	}
-	door := StructureRecord{RefObjID: 36345, UID: 2, Door: &DoorTail{ZoneKey: 238}}.Encode(false)
-	if tail := door[len(door)-5:]; fmt.Sprintf("% x", tail) != "ee 00 00 00 00" {
+	// Round 870: any access type but 6 carries the u32 (+0x258), not a name
+	// (READ c:0x56dfa0).
+	other := StructureRecord{RefObjID: 19556, UID: 1, Gate: &GateTail{Restricted: 1, Access: 5, OwnerName: "Aria", PartyID: 9, HoleRefID: 35883}}.Encode(false)
+	if tail := other[24:]; fmt.Sprintf("% x", tail) != "00 00 01 05 09 00 00 00 2b 8c 00 00" {
+		t.Errorf("type-5 tail % x", tail)
+	}
+	// Round 870: a door's record is the whole runtime-structure record
+	// (u8 +0x254, u8 +0x255, u32 +0x258, u32 +0x25c) before the zone and its
+	// u8 (READ c:0x535980 -> c:0x56dfa0).
+	door := StructureRecord{RefObjID: DoorRefObjID, UID: 2, B260: 1, Door: &DoorTail{ZoneKey: 238}}.Encode(true)
+	if len(door) != 24+2+2+4+4+4+1+1 {
+		t.Fatalf("door record is %d bytes: % x", len(door), door)
+	}
+	if tail := door[24:]; fmt.Sprintf("% x", tail) != "01 00 00 00 00 00 00 00 00 00 00 00 ee 00 00 00 00 01" {
 		t.Errorf("door tail % x", tail)
 	}
 	if got := fmt.Sprintf("% x", EncodeEventZoneState(0x7d000001, 1)); got != "01 00 00 7d 10 01" {

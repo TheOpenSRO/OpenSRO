@@ -311,7 +311,8 @@ func gateInView(g *fgwGate, e world.Entity) bool {
 // and forgets the sessions no longer there. It rides the open world's area
 // of interest tick (aoi.go) and runs at once when a gate stands or goes.
 func reconcileGates(hub *world.Hub, ents []world.Entity) {
-	if gates.count.Load() == 0 && !gatesOwed() {
+	doors := placedDoors(hub)
+	if gates.count.Load() == 0 && len(doors) == 0 && !gatesOwed() {
 		return
 	}
 	type send struct {
@@ -351,8 +352,27 @@ func reconcileGates(hub *world.Hub, ents []world.Entity) {
 				pkts = append(pkts, &proto.Packet{Opcode: npcspawn.OpSingleDespawn, Data: npcspawn.SingleDespawn(uid)})
 			}
 		}
+		// Round 870: the layer's trigger doors, the same window (doors.go).
+		for _, d := range doors {
+			in := e.Zone == d.zone && combat.CellOf(e.Zone, e.Pos.X, e.Pos.Z).Near(combat.CellOf(d.zone, d.pos.X, d.pos.Z), AOIRadius)
+			switch {
+			case in && !have[d.uid]:
+				if have == nil {
+					have = map[uint32]bool{}
+					gates.sent[id] = have
+				}
+				have[d.uid] = true
+				pkts = append(pkts, &proto.Packet{Opcode: npcspawn.OpSingleSpawn, Data: d.record.Encode(true)})
+			case !in && have[d.uid]:
+				delete(have, d.uid)
+				pkts = append(pkts, &proto.Packet{Opcode: npcspawn.OpSingleDespawn, Data: npcspawn.SingleDespawn(d.uid)})
+			}
+		}
 		// A gate removed (its layer closed) since this client got it.
 		for uid := range have {
+			if isDoorUID(uid) {
+				continue
+			}
 			if _, standing := gates.byUID[uid]; !standing {
 				delete(have, uid)
 				pkts = append(pkts, &proto.Packet{Opcode: npcspawn.OpSingleDespawn, Data: npcspawn.SingleDespawn(uid)})
@@ -374,6 +394,9 @@ func gatesOwed() bool {
 	defer gates.mu.Unlock()
 	for _, have := range gates.sent {
 		for uid := range have {
+			if isDoorUID(uid) {
+				continue
+			}
 			if _, ok := gates.byUID[uid]; !ok {
 				return true
 			}

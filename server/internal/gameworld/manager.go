@@ -28,8 +28,9 @@ type Manager struct {
 	hooks  Hooks
 	host   string
 	logger *slog.Logger
-	// zonePlaces is where each event zone's structure stands (OPEN data;
-	// SetZonePlaces).
+	// zonePlaces is where each event zone's structure stands: the
+	// reference data's ZonePlaces (objectstring.ifo, round 870) and
+	// SetZonePlaces.
 	zonePlaces map[string]ZonePlace
 
 	mu   sync.Mutex
@@ -58,8 +59,14 @@ func NewManager(c ManagerConfig) *Manager {
 	if c.Ref == nil {
 		c.Ref = &Ref{Worlds: map[uint16]*WorldRef{}, Groups: map[int]*Group{}, EventZones: map[string]*EventZone{}}
 	}
-	return &Manager{ref: c.Ref, reg: c.Registry, clock: c.Clock, hooks: c.Hooks, host: c.Host, logger: c.Logger,
+	m := &Manager{ref: c.Ref, reg: c.Registry, clock: c.Clock, hooks: c.Hooks, host: c.Host, logger: c.Logger,
 		live: map[registry.InstanceID]*World{}, zonePlaces: map[string]ZonePlace{}}
+	// Round 870: the doors' places come with the reference data
+	// (objectstring.ifo's named positions, zoneplace.go).
+	for k, v := range c.Ref.ZonePlaces {
+		m.zonePlaces[k] = v
+	}
+	return m
 }
 
 // Ref is the reference data.

@@ -60,7 +60,7 @@ const (
 // TableNames is every table LoadDir reads (the trigger tables included).
 func TableNames() []string {
 	return append([]string{TableWorld, TableWorldConfig, TableGroup, TableGroupConfig, TableGroupBind,
-		TableRegion, TableStartPos, TableEventZone, TableAssignedDrop}, trigger.TableNames...)
+		TableRegion, TableStartPos, TableEventZone, TableAssignedDrop, TableObjectString}, trigger.TableNames...)
 }
 
 // StartPos is one _RefInstance_World_Start_Pos row: an arrival point.
@@ -152,6 +152,9 @@ type Ref struct {
 	// AssignedDrops are _RefMonster_AssignedItemDrop's rows by monster
 	// (round 869 lane W3: the ENVY_DROP pillars' holes; fgw.go).
 	AssignedDrops map[int64][]AssignedDrop
+	// ZonePlaces is where each OBJECT event zone's structure stands, from
+	// the named positions of objectstring.ifo (round 870, zoneplace.go).
+	ZonePlaces map[string]ZonePlace
 }
 
 // World is world id's row, nil for none.
@@ -329,6 +332,7 @@ func Build(tables trigger.Tables) (*Ref, error) {
 			ref.EventZones[z.Zone] = z
 		}
 	}
+	buildZonePlaces(ref, tables(TableObjectString))
 	ref.AssignedDrops = map[int64][]AssignedDrop{}
 	if t := tables(TableAssignedDrop); t != nil {
 		for _, r := range t.Rows {

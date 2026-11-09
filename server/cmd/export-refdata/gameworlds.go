@@ -19,6 +19,10 @@ package main
 //     RefParse_gameworlddata c:0x753400: u16, str, u8, u16, u16, str), so a
 //     world table from the client alone has no lifecycle timers.
 //
+//   - (round 870) the client's navmesh\objectstring.ifo (Data.pk2): its named
+//     positions, written as objectstring.csv -- where the trigger doors
+//     (the OBJECT event zones) stand (internal/gameworld zoneplace.go).
+//
 // Nothing else is read; the region, start-position, group and trigger tables
 // exist only in the server's database.
 
@@ -26,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gameworld"
@@ -60,6 +65,18 @@ func exportGameWorlds(out string, paths []string) error {
 	client := map[string]*reftable.Table{}
 	for _, p := range paths {
 		base := filepath.Base(p)
+		if strings.EqualFold(base, "objectstring.ifo") {
+			pts, err := readObjectStrings(p)
+			if err != nil {
+				return err
+			}
+			t := reftable.New(gameworld.ObjectStringColumns...)
+			for _, o := range pts {
+				t.Append(strconv.Itoa(o.region), fmtFloat(o.x), fmtFloat(o.y), fmtFloat(o.z), fmtFloat(o.yaw), o.name)
+			}
+			dumps[gameworld.TableObjectString] = t
+			continue
+		}
 		if spec, ok := clientGameWorldFiles[strings.ToLower(base)]; ok {
 			rows, err := readTable(p)
 			if err != nil {
@@ -126,7 +143,10 @@ func exportGameWorlds(out string, paths []string) error {
 	if ref.Triggers != nil {
 		triggers = len(ref.Triggers.Triggers)
 	}
-	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d tables to %s: %d worlds (%d instanced), %d groups, %d event zones, %d triggers\n",
-		len(dumps), out, len(ref.Worlds), instanced, len(ref.Groups), len(ref.EventZones), triggers)
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d tables to %s: %d worlds (%d instanced), %d groups, %d event zones (%d placed), %d triggers\n",
+		len(dumps), out, len(ref.Worlds), instanced, len(ref.Groups), len(ref.EventZones), len(ref.ZonePlaces), triggers)
 	return nil
 }
+
+// fmtFloat writes a float32's value exactly enough to read it back.
+func fmtFloat(f float64) string { return strconv.FormatFloat(f, 'g', -1, 32) }

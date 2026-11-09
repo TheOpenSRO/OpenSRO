@@ -174,6 +174,13 @@ func segmentDisc(ax, az, bx, bz, cx, cz, r float64) bool {
 // StructureRecord is a structure's spawn record in the single (0x3015) and
 // group (0x3019) spawns (forgotten_world.md 4, READ order c:0x8a6bd0 ->
 // c:0x9c3a70 -> CIRuntimeStruct::vslot_025 c:0x56dfa0).
+//
+// READ (round 870, c:0x56dfa0): after the CIGIDObject head every runtime
+// structure carries u8 +0x260, u8 +0x261 (the state), u8 +0x254, u8 +0x255
+// (the access type), then a u16-length ANSI name when +0x255 is 6 and a u32
+// (+0x258) for any other value, then u32 +0x25c. A CIEventRuntimeObj (a
+// trigger door, c:0x535980) reads that whole record first and only then u32
+// +0x280 (the event zone) and u8 +0x284.
 type StructureRecord struct {
 	RefObjID uint32
 	UID      uint32
@@ -190,8 +197,8 @@ type StructureRecord struct {
 
 // GateTail is the Dimension-hole gate's tail (MEASURED bytes): +0x254 1
 // (INFERRED owner-restricted), +0x255 the access type (6 a named owner, 7 a
-// party), the owner's name (type 6) or the party id (type 7), and +0x25c the
-// hole's RefObjID.
+// party), the owner's name (type 6) or the party id (any other type: the
+// u32 +0x258), and +0x25c the hole's RefObjID.
 type GateTail struct {
 	Restricted uint8
 	Access     uint8
@@ -200,13 +207,30 @@ type GateTail struct {
 	HoleRefID  uint32
 }
 
-// DoorTail is a CIEventRuntimeObj's tail (READ c:0x535980: u32 event-zone
-// key at +0x280 and u8 at +0x284; INFERRED that it follows the structure
-// fields as the gate's tail does; which type id selects the door class is
-// OPEN).
+// DoorTail is a CIEventRuntimeObj's part of the record: the runtime
+// structure's fields (+0x254, +0x255, the name or u32 +0x258, u32 +0x25c;
+// INFERRED all zero for a door: no owner rule), then u32 +0x280, the event
+// zone's key (the _RefEventZone ID, eventzonedata.txt column 1), and u8
+// +0x284 (READ c:0x535980; its meaning OPEN, sent 0).
 type DoorTail struct {
-	ZoneKey uint32
-	B284    uint8
+	B254, Access uint8
+	Name         string
+	U258, U25C   uint32
+	ZoneKey      uint32
+	B284         uint8
+}
+
+// appendRuntime is CIRuntimeStruct::vslot_025's part after +0x261 (READ
+// c:0x56dfa0): the name only for access type 6, the u32 for any other.
+func appendRuntime(b []byte, b254, access uint8, name string, u258, u25c uint32) []byte {
+	b = append(b, b254, access)
+	if access == AccessOwner {
+		b = binary.LittleEndian.AppendUint16(b, uint16(len(name)))
+		b = append(b, name...)
+	} else {
+		b = binary.LittleEndian.AppendUint32(b, u258)
+	}
+	return binary.LittleEndian.AppendUint32(b, u25c)
 }
 
 // Encode is the record's bytes; single adds the 0x3015 trailer (u8 1).
@@ -220,19 +244,17 @@ func (r StructureRecord) Encode(single bool) []byte {
 	b = binary.LittleEndian.AppendUint32(b, math.Float32bits(r.Z))
 	b = binary.LittleEndian.AppendUint16(b, r.Angle)
 	b = append(b, r.B260, r.State)
-	if g := r.Gate; g != nil {
-		b = append(b, g.Restricted, g.Access)
-		if g.Access == 7 {
-			b = binary.LittleEndian.AppendUint32(b, g.PartyID)
-		} else {
-			b = binary.LittleEndian.AppendUint16(b, uint16(len(g.OwnerName)))
-			b = append(b, g.OwnerName...)
-		}
-		b = binary.LittleEndian.AppendUint32(b, g.HoleRefID)
-	}
-	if d := r.Door; d != nil {
+	switch {
+	case r.Gate != nil:
+		g := r.Gate
+		b = appendRuntime(b, g.Restricted, g.Access, g.OwnerName, g.PartyID, g.HoleRefID)
+	case r.Door != nil:
+		d := r.Door
+		b = appendRuntime(b, d.B254, d.Access, d.Name, d.U258, d.U25C)
 		b = binary.LittleEndian.AppendUint32(b, d.ZoneKey)
 		b = append(b, d.B284)
+	default:
+		b = appendRuntime(b, 0, 0, "", 0, 0)
 	}
 	if single {
 		b = append(b, 1)

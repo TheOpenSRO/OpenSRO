@@ -96,6 +96,29 @@ func navGround(zone string, from world.Position, x, z float64) (float64, bool) {
 	return 0, false
 }
 
+// navArrivalHeight is the height an arrival at pos in zone stands at: the
+// surface nearest pos.Y under the point (SurfaceAt's rule). READ (round 870,
+// CGObj::EnterWorld s:0x485360): an object entering a world with no cell yet
+// is resolved through the region manager's ResolveCellAndHeight (its log
+// line names it) before it is placed, so an arrival point above a floor
+// stands on that floor rather than falling to it. ok is false with no mesh
+// there (a dungeon: the server walks no dungeon yet).
+func navArrivalHeight(zone string, pos world.Position) (float64, bool) {
+	w := navWorld.Load()
+	if w == nil {
+		return 0, false
+	}
+	ox, oy, ok := entityFrame(zone)
+	if !ok {
+		return 0, false
+	}
+	y := w.Height(ox, oy, pos.X, pos.Z, pos.Y)
+	if math.IsNaN(y) {
+		return 0, false
+	}
+	return y, true
+}
+
 // navWalk walks from (x, y, z) toward (tx, tz) in zone's frame with no
 // slide (the walk every mover uses, READ round 653). ok is false without a
 // navigation mesh or a frame for the zone (a dungeon: OURS, the server walks
