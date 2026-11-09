@@ -276,9 +276,13 @@ func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) 
 	newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, exp)
 	out.expAdded = expAdded(levelTable, char.Level, char.Exp, newLevel, newExp)
 	out.startLevel = char.Level
-	newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
-	newStr := char.Str + gained*character.StatGrowthPerLevel
-	newInt := char.Int + gained*character.StatGrowthPerLevel
+	// Round 874: a level's points, Str and Int are paid above the max level
+	// only (GObjPC_SetLevel s:0x4e4d90), so a level a death took pays nothing
+	// when it comes back.
+	paid := character.LevelsRewarded(char.Level, newLevel, char.HighestLevel())
+	newStatPoints := char.StatPoints + paid*leveldata.StatPointsPerLevel
+	newStr := char.Str + paid*character.StatGrowthPerLevel
+	newInt := char.Int + paid*character.StatGrowthPerLevel
 	if err := d.chars.SetLeveling(ctx, a.characterID, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
 		return out, fmt.Errorf("combat: applying experience: %w", err)
 	}

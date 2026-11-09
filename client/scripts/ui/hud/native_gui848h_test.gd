@@ -114,7 +114,11 @@ func _revive(builder: UiBuilder) -> void:
 	var hi := ReviveBox.new()
 	hi.build_revive(builder, 11)
 	var help := hi.root.find_child("ReviveHelp", true, false) as BaseButton
-	_check(help != null and help.disabled and _text(help) == "<UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON>", "level 11: the help button, disabled")
+	_check(help != null and not help.disabled and _text(help) == "<UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON>", "level 11: the help button, enabled (round 874)")
+	var hopts: Array = []
+	hi.chosen.connect(func(o: int) -> void: hopts.append(o))
+	help.pressed.emit()
+	_check(hopts == [0], "round 874: the help button chooses 0, nothing to send (got %s)" % [hopts])
 	hi.place_on(Vector2(1024, 768))
 	_check(hi.position == Vector2(512 - 0x9a, 384 - 0x4a), "placed by 0x6ec5d0 at its opening size")
 	hi.free()

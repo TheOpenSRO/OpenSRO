@@ -563,6 +563,15 @@ signal exchange_request_result(ok: bool, value: int)
 signal exchange_started(asker_id: int)
 ## 0x308C: ExchangeNet.decode_offer's dictionary.
 signal exchange_offer(offer: Dictionary)
+
+## 0x3080 kind 4 or 8 (round 874): a player's resurrection skill offers this
+## dead player a revive; `caster` is its unique id.
+signal resurrect_offered(kind: int, caster: int)
+
+## The resurrection offer's answer (round 874, READ c:0x798101): 0x3080
+## {01, 1 yes / 0 no}.
+func resurrect_answer(accept: bool) -> void:
+	_send(PartyNet.OP_REQUEST, PackedByteArray([1, 1 if accept else 0]))
 ## 0x3089 kind 2: the partner's gold at their confirm.
 signal exchange_partner_gold(gold: int)
 ## 0x3086: the partner confirmed.
@@ -3419,6 +3428,11 @@ func _dispatch(p: Packet) -> void:
 				var info := GuildWarNet.decode_proclamation(p.data)
 				if not info.is_empty():
 					guild_war_proclaimed.emit(info)
+				return
+			# Round 874: kinds 4 and 8 are another player's resurrection
+			# offer, {kind, u32 caster} (c:0x88af3a / c:0x88b11c).
+			if p.opcode == PartyNet.OP_REQUEST and p.data.size() >= 5 and (p.data[0] == 4 or p.data[0] == 8):
+				resurrect_offered.emit(int(p.data[0]), p.data.decode_u32(1))
 				return
 			# Round 865: kind 9 is the academy's invitation (c:0x88aba8).
 			if p.opcode == PartyNet.OP_REQUEST and academy.handle(p.opcode, p.data):

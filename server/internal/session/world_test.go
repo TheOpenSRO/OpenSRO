@@ -1167,13 +1167,11 @@ func TestGuildWorkIsRefusedWhileDead(t *testing.T) {
 		t.Fatalf("a dead character's level-up answered %+v (err %v), want the refusal with code 0x4c07 ahead of the no-guild 0x4c0d", lr, err)
 	}
 
+	// Round 874: the empty request's choice follows the max level, and
+	// qualifyFounder's level 20 (the row's; the entity still says 1) makes it
+	// the return point: the zone change, the revive, the stats.
 	f.send(t, f.connA, OpRevive, nil)
-	if rr, err := DecodeReviveResult(f.read(t, f.connA, f.rA).Data); err != nil || rr.Error != "" {
-		t.Fatalf("OpRevive answered %+v (err %v), want a success", rr, err)
-	}
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
-		t.Fatalf("after the revive result Aria received %#04x, want the stats push", p.Opcode)
-	}
+	f.drainOptionOne(t)
 	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "SilkLegion"}).Encode())
 	if gr, err := DecodeGuildResult(f.read(t, f.connA, f.rA).Data); err != nil || gr.Error != "" || gr.GuildID == 0 {
 		t.Fatalf("the revived founder's create answered %+v (err %v), want a guild", gr, err)

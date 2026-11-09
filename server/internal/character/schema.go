@@ -59,10 +59,11 @@ var Mapping = []FieldMapping{
 			"sex follow from RefObjID, the reference object it is built from. " +
 			"OpenSRO keeps the string, derived from RefObjID since round 682, because " +
 			"the world wire still carries it for older clients (round 689 draws bodies from RefObjID)"},
-	{Field: "Level", Column: "CurLevel",
-		Note: "the engine also keeps MaxLevel, a separate high-water mark OpenSRO " +
-			"has no equivalent for. _TRAININGCAMPMEMBER carries CharMaxLevel too, " +
-			"so it is really tracked and not a duplicate of CurLevel"},
+	{Field: "Level", Column: "CurLevel"},
+	{Field: "MaxLevel", Column: "MaxLevel",
+		Note: "the high-water mark beside CurLevel (charData +0x66), kept since round " +
+			"874 when a death began to take levels away; 0 on an older row, read " +
+			"through HighestLevel"},
 	{Field: "Exp", Column: "ExpOffset",
 		Note: "the engine also keeps SExpOffset (skill experience) and " +
 			"GatheredExpPoint; OpenSRO has neither"},
@@ -120,7 +121,6 @@ var Mapping = []FieldMapping{
 // half of a schema comparison.
 var EngineOnlyColumns = map[string]string{
 	"NickName16":        "a second name, separate from CharName16",
-	"MaxLevel":          "a high-water mark beside CurLevel",
 	"SExpOffset":        "skill experience, beside ExpOffset",
 	"RemainSkillPoint":  "OpenSRO keeps SP in internal/skill's own store, not on the character",
 	"GatheredExpPoint":  "a lifetime total beside the per-level ExpOffset",

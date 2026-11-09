@@ -73,11 +73,11 @@ type Entity struct {
 	// its tick and on its strike workers (round 555; until then
 	// session/monsterai.go's linkAggro made one character.Store.GetByID per
 	// link event under the tick's lock, and runStrike one per swing). Set from
-	// the row at Enter and moved by SetLevel where a level changes: the
-	// level-up in session.performAttack and gm's /level. Nothing else moves a
-	// level -- a death penalty takes experience only (GObjPC_OnDeath touches
-	// no CurLevel; session/monsterstrike.go) and a stat-point spend keeps it
-	// (session/stats.go) -- so the two writers are the whole set.
+	// the row at Enter and moved by SetLevel where a level changes: every
+	// level-up path, gm's /level and, since round 874, a death penalty that
+	// takes a level away (session/levelloss.go; GObjPC_GainExpAndLevel's
+	// negative branch drops one level, READ s:0x4e569c). A stat-point spend
+	// keeps it (session/stats.go).
 	Level int
 	// Arrival numbers the entity's arrivals in the world: a fresh value from
 	// the hub on every Enter and ChangeZone (a teleport included, whatever

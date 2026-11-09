@@ -1890,7 +1890,7 @@ func TestTwoKillsChargeOneDeathPenalty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
-	loss, ok := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster)
+	loss, ok := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster, false)
 	if !ok || loss <= 0 {
 		t.Fatalf("setup: no death penalty at level 11 (%d, %v)", loss, ok)
 	}
@@ -2027,7 +2027,7 @@ func penaltyTableForTest(t *testing.T) (*leveldata.Table, int64) {
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
-	loss, ok := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster)
+	loss, ok := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster, false)
 	if !ok || loss <= 0 {
 		t.Fatalf("setup: no death penalty at level 11 (%d, %v)", loss, ok)
 	}

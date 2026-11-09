@@ -189,9 +189,9 @@ import (
 //     character's entry point (spawnZone's arrival), and it still is for a
 //     China character on a server with no -teleport-dir (OURS; recall.go's
 //     header has the other fallbacks).
-//   - The level test reads Level for GetMaxLevel (+0x128). They are equal
-//     here: a death never costs a level (GObjPC_OnDeath leaves CurLevel
-//     alone) and OpenSRO has no other way down.
+//   - The level test reads the row's max level (character.HighestLevel)
+//     for GetMaxLevel (+0x128). Until round 874 it read Level, equal then;
+//     since a death can take a level away (levelloss.go) the two differ.
 //   - The revived MP. Retail ADDS trunc(0.4 x MaxMP) to the MP the character
 //     died with (ApplyHPMPDelta above); OpenSRO SETS the tracker to
 //     character.RespawnMP, a stand-in. (Corrected round 607: this used to
@@ -583,7 +583,13 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 			mpNow int
 			err   error
 		)
-		switch ReviveOption(p.Data, e.Level) {
+		// IGObj::GetMaxLevel (+0x128), the max level -- not the current one,
+		// which a death can lower since round 874 (character.HighestLevel).
+		maxLevel := e.Level
+		if row, rerr := chars.GetByID(ctx, e.CharacterID); rerr == nil && row != nil {
+			maxLevel = max(maxLevel, row.HighestLevel())
+		}
+		switch ReviveOption(p.Data, maxLevel) {
 		case ReviveOptionReturnPoint:
 			// werr, not err: an inner `err :=` here shadowed the switch's err,
 			// so a failed revive below reached sendRevived with a nil
@@ -604,7 +610,7 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 			hub = hub.For(sess)
 			c, mpNow, err = reviveWith(ctx, chars, deps.Mana, hub, e.CharacterID, true)
 		case ReviveOptionPresentPoint:
-			if e.Level > PresentPointMaxLevel {
+			if maxLevel > PresentPointMaxLevel {
 				return refuse(reviveRefusedLevel)
 			}
 			c, mpNow, err = revivePlayer(ctx, chars, deps.Mana, hub, e.CharacterID)

@@ -16,6 +16,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/mana"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/metrics"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
@@ -580,6 +581,9 @@ type deathCause struct {
 	job         bool
 	killerLevel int
 	byPlayer    bool
+	// thief is a thief NPC's kill outside a job (round 874): the monster
+	// branch's product is halved (leveldata.DeathPenaltyThiefFactor).
+	thief bool
 	// war is cause 5 (round 844, lane V; s:0x4e6590): killed by a member of
 	// a guild at war with the victim's.
 	war bool
@@ -601,10 +605,12 @@ func takeDeathCause(victim int64) (deathCause, bool) {
 
 // jobDeathPenalty is the cause-1 handler (s:0x4e6820): the job exp falls by
 // 3 x Unit(victim level) (0x30E6), the character exp by 6 x the exp unit at
-// min(victim, killer) level -- OURS: never below the level's 0, OpenSRO has
-// no level-down -- and the normal death penalty is not taken. It returns
-// the character exp lost.
-func jobDeathPenalty(ctx context.Context, chars character.Store, victim *character.Character, killerLevel int) int64 {
+// min(victim, killer) level -- through GainExpAndLevel (slot 0x170) with the
+// negative amount, so since round 874 it can take a level away as the
+// ordinary penalty does (loseExp; until then OURS: never below the level's
+// 0) -- and the normal death penalty is not taken. It returns the character
+// exp lost. The caller holds the leveling lock.
+func jobDeathPenalty(ctx context.Context, chars character.Store, hub *world.Hub, mp *mana.Tracker, victim *character.Character, killerLevel int) int64 {
 	if levelTable == nil {
 		return 0
 	}
@@ -618,12 +624,11 @@ func jobDeathPenalty(ctx context.Context, chars character.Store, victim *charact
 		return 0
 	}
 	loss := jobs.JobDeathExpLoss(unit, 0)
-	exp := victim.Exp - loss
-	if exp < 0 {
-		loss, exp = victim.Exp, 0
+	if loss <= 0 {
+		return 0
 	}
-	if loss > 0 {
-		_ = chars.SetLeveling(ctx, victim.ID, victim.Level, exp, victim.StatPoints, victim.Str, victim.Int)
+	if _, err := loseExp(ctx, chars, hub, mp, victim, loss); err != nil {
+		return 0
 	}
 	return loss
 }
@@ -699,9 +704,13 @@ func giveCharacterExp(ctx context.Context, d combatDeps, e world.Entity, exp int
 		return
 	}
 	newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, exp)
-	newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
-	newStr := char.Str + gained*character.StatGrowthPerLevel
-	newInt := char.Int + gained*character.StatGrowthPerLevel
+	// Round 874: a level's points, Str and Int are paid above the max level
+	// only (GObjPC_SetLevel s:0x4e4d90), so a level a death took pays nothing
+	// when it comes back.
+	paid := character.LevelsRewarded(char.Level, newLevel, char.HighestLevel())
+	newStatPoints := char.StatPoints + paid*leveldata.StatPointsPerLevel
+	newStr := char.Str + paid*character.StatGrowthPerLevel
+	newInt := char.Int + paid*character.StatGrowthPerLevel
 	if err := d.chars.SetLeveling(ctx, e.CharacterID, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
 		unlock()
 		return

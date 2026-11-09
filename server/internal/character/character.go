@@ -283,6 +283,24 @@ func derivedStat(stat, perPoint, level int) int {
 	return int(math.Round(float64(stat) * float64(perPoint) * math.Pow(StatGrowth, float64(level-1))))
 }
 
+// HighestLevel is the character's max level, _CHAR.MaxLevel (round 874):
+// MaxLevel, or Level for a row from before it was kept.
+func (c *Character) HighestLevel() int {
+	return max(c.MaxLevel, c.Level)
+}
+
+// LevelsRewarded is how many levels of a rise from `from` to `to` pay their
+// stat points, Str and Int: those above the max level `maxLevel` only (round
+// 874). READ, GObjPC_SetLevel s:0x4e4d90: the grant runs inside `if
+// (charData+0x66 < newLevel)` -- MaxLevel below the new level -- with
+// levels = newLevel - MaxLevel, and MaxLevel takes the new level there
+// (s:0x4e4e9e..0x4e4f20: +0x84 += levels x 5, SpendStatPoints(levels) =
+// Str += levels, Int += levels). MEASURED: a character at level 19 with max
+// level 70 keeps Str 89, Int 89 and its 207 points through its level changes.
+func LevelsRewarded(from, to, maxLevel int) int {
+	return max(to-max(from, maxLevel), 0)
+}
+
 // StartingLevel is the level a newly-created character is. There is no
 // way to gain a level yet -- experience is not tracked -- so every
 // character stays at it; what the level is *for* today is the item table's
@@ -430,6 +448,14 @@ type Character struct {
 	HP        int
 	Gender    string
 	Level     int
+	// MaxLevel is the highest level the character has reached, the engine's
+	// _CHAR.MaxLevel (charData +0x66, docs/protocol/db_bind_offsets.tsv;
+	// round 874). A death can take a level away (leveldata.LoseExp) and
+	// MaxLevel stays: GObjPC_SetLevel (s:0x4e4d90) grants a level's stat
+	// points, Str and Int only for levels above it, so a level lost and
+	// regained pays nothing twice. 0 on a row written before round 874 -- read
+	// it through HighestLevel, never directly.
+	MaxLevel int
 	// Exp is progress accumulated at the current level (it resets on a
 	// level-up), against leveldata's exp-to-next for Level. StatPoints is the
 	// unspent points earned by leveling (leveldata.StatPointsPerLevel each).
@@ -761,6 +787,9 @@ type Store interface {
 	// SpendStatPoints(levels, levels), which does `Str += levels` and
 	// `Int += levels` (asm: `movzx ecx,[eax+0x74]; add cx,si; call SetStr`).
 	// One level-up is one transaction in the engine, so it is one call here.
+	//
+	// Round 874: MaxLevel follows -- it becomes the larger of itself, the
+	// level the row had and the level written, so a store never lowers it.
 	SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints, str, intel int) error
 
 	// GetByID returns the character with the given ID, regardless of which

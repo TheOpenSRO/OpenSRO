@@ -2274,10 +2274,11 @@ var _recall_box: MsgBoxInif
 # Round 848: the box is the original's (ReviveBox: kind 3's art, rects and
 # lines, read at 0x645092..0x6456d3), not the talk prompts' dark panel, and
 # this client's own death line is no longer shown in it (the line still goes
-# to the chat). OURS, kept: the help button is shown disabled and the box
-# stays up, where retail's click closes the box (INFERRED, the result goes
-# through FUN_00777dd0) -- no one can resurrect another player in OpenSRO
-# yet, so the return point must stay one click away.
+# to the chat). Round 874: the help button closes the box and sends nothing,
+# as the original's (MEASURED; ReviveBox has the READ), and Enter and Escape
+# press it. The box comes back when the dead player selects itself
+# (World3D._select_self: FUN_00780ee0, READ; MEASURED with a press on the
+# player block).
 
 ## The prompt's node name under this HUD; at most one is up at a time.
 const REVIVE_PROMPT := "RevivePrompt"
@@ -2330,10 +2331,14 @@ func show_revive_prompt(line: String, level: int = 0) -> void:
 		box.free()
 		return
 	# Round 873, MEASURED: the box closes at the click and the one request
-	# goes out (0x3053 {01}, sent once); it is never shown again.
+	# goes out (0x3053 {01}, sent once); it is never shown again. Round 874:
+	# option 0, waiting for help, closes it and sends nothing (MEASURED).
 	box.chosen.connect(func(option: int) -> void:
 		hide_revive_prompt()
-		revive_requested.emit(option))
+		if option > 0:
+			revive_requested.emit(option)
+		else:
+			print("HudPanels: waiting for other player's help -- the box closed, nothing sent"))
 	add_child(box)
 	# Outside the scene tree (the headless suite drives this on a bare HUD)
 	# there is no viewport to read.
@@ -2341,6 +2346,40 @@ func show_revive_prompt(line: String, level: int = 0) -> void:
 		return
 	box.place_on(get_viewport_rect().size)
 	_qa_print_buttons(box, "REVIVE")
+
+## The resurrection offer's node name (round 874).
+const RESURRECT_OFFER := "ResurrectOffer"
+
+## The resurrection offer was answered: true accepts (0x3080 {01, 01}).
+signal resurrect_answered(accept: bool)
+
+## Round 874: another player's resurrection skill offers a revive (0x3080
+## kind 4, or 8 with 'rmut'; ReviveBox.build_offer has the READ). The dead
+## window closes (0x88af3a: boxes 3 and 4 close) and the offer's box opens.
+func show_resurrect_offer(kind: int) -> void:
+	hide_revive_prompt()
+	var old := get_node_or_null(RESURRECT_OFFER)
+	if old != null:
+		remove_child(old)
+		old.queue_free()
+	if _builder == null:
+		print("HudPanels: no layouts -- the resurrection offer is not built")
+		return
+	var box := ReviveBox.new()
+	if not box.build_offer(_builder, kind):
+		box.free()
+		return
+	box.chosen.connect(func(answer: int) -> void:
+		var b := get_node_or_null(RESURRECT_OFFER)
+		if b != null:
+			remove_child(b)
+			b.queue_free()
+		resurrect_answered.emit(answer == 1))
+	add_child(box)
+	if not box.is_inside_tree():
+		return
+	box.place_on(get_viewport_rect().size)
+	_qa_print_buttons(box, "RESURRECT")
 
 ## Takes the Revive prompt down (the revive came through, or a new prompt
 ## replaces it). Removed from the tree at once, so a prompt shown in the

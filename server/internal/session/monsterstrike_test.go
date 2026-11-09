@@ -396,9 +396,10 @@ func TestMonsterStrikePushCarriesTheFlags(t *testing.T) {
 	k := z.monsters.SpawnSpecies("jangan", killer, z.aria.x, 0, z.aria.z, 100000, 0, 100000, 0)
 
 	res, ariaAfter := z.aria.attack(t, k.ID)
-	// exp_unit(11) * 100, as TestDeathPenaltyAppliedInCombat pins it.
-	if !res.PlayerDied || !res.MonsterCritical || res.DeathExpLost != 259*leveldata.DeathPenaltyKilledByMonster {
-		t.Fatalf("precondition: a killing critical costing 259 * 100 experience; got %+v", res)
+	// exp_unit(11) * 100 under the level's cap (round 874), as
+	// TestDeathPenaltyAppliedInCombat pins it.
+	if !res.PlayerDied || !res.MonsterCritical || res.DeathExpLost != 697 {
+		t.Fatalf("precondition: a killing critical costing 697 experience (259 * 100, capped); got %+v", res)
 	}
 	bramStrikes := strikes(t, z.bram.barrier(t))
 	if len(bramStrikes) != 1 {

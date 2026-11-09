@@ -925,7 +925,8 @@ func TestDeathPenaltyAppliedInCombat(t *testing.T) {
 	if !ar.PlayerDied {
 		t.Fatalf("the counterattack should have killed the character, got %+v", ar)
 	}
-	const wantLoss = int64(259 * leveldata.DeathPenaltyKilledByMonster)
+	// Round 874: 259 x 100 capped at trunc(34,898 x float32 0.02) = 697.
+	const wantLoss = int64(697)
 	if ar.DeathExpLost != wantLoss {
 		t.Errorf("reported exp loss = %d, want %d", ar.DeathExpLost, wantLoss)
 	}
@@ -937,7 +938,7 @@ func TestDeathPenaltyAppliedInCombat(t *testing.T) {
 		t.Errorf("exp after death = %d, want %d", after.Exp, startExp-wantLoss)
 	}
 	if after.Level != 11 {
-		t.Errorf("level after death = %d, want 11 -- a death never costs a level", after.Level)
+		t.Errorf("level after death = %d, want 11 -- the EXP covers the loss (a death can take a level since round 874, but not here)", after.Level)
 	}
 }
 

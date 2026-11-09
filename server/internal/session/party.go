@@ -352,7 +352,7 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 		if unionRequestAnswer(ctx, sess, me, data) {
 			return
 		}
-		takeResurrection(ctx, sess, me.CharacterID, accept)
+		takeResurrection(ctx, sess, me.CharacterID, resurrectAnswerAccepts(data, accept))
 		return
 	}
 	inv.Target.Session = sess

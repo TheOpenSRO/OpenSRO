@@ -65,6 +65,12 @@ class Stats:
 	var hit_rate: int = 0
 	var parry_rate: int = 0
 	var has_rates: bool = false
+	## The highest level reached, _CHAR.MaxLevel (round 874; the seventh
+	## tail). The dead window's second button follows it (c:0x645688), and a
+	## death can now leave it above `level`. has_max_level is false from a
+	## server too old to send it.
+	var max_level: int = 0
+	var has_max_level: bool = false
 
 	## The EXP gauge fill, 0..100, or 0 when exp-to-next is unknown.
 	func exp_percent() -> float:
@@ -129,6 +135,10 @@ static func decode_result(data: PackedByteArray) -> Stats:
 		stats.hit_rate = data.decode_s32(offset + 88)
 		stats.parry_rate = data.decode_s32(offset + 92)
 		stats.has_rates = true
+	# The max level follows; a 96-byte result omits it.
+	if offset + 100 <= data.size():
+		stats.max_level = data.decode_s32(offset + 96)
+		stats.has_max_level = true
 	return stats
 
 ## Encodes an OpSpendStatPoints request: the name, then how many points go
