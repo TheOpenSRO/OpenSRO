@@ -7483,6 +7483,99 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-sixth round, the guardian's crash: an academy flow left over from an earlier world entry called the freed HUD
+
+The user, on the v0.1.638 Linux release (an AMD Steam Machine, RADV NAVI33, native readers on):
+"my game just crashed lol". The guardian (level 110, Jangan) had registered on Guardian
+Matching; a level-1 Chinese character made by `partybot -mode academyfill` applied
+(`747E {entry 2}`); the server sent the guardian its 0x747E question and 3.15 s later the
+guardian's connection reset. Round 866's own QA had shown the box working from the source tree.
+Labels: MEASURED, INFERRED, OURS, OPEN. Base `48773ac2`. UI and client lifetime only: no perf
+gate (no world drawing changed).
+
+### The cause
+
+`AcademyFlow` (round 865) is a RefCounted that World3D makes; it connects to `NetClient.academy`
+(the autoload's store, which lives for the process) with method callables and with lambdas
+that use `self` (`func() -> void: hud.open("academy")` and four more). A lambda that uses
+`self` holds a strong reference to its RefCounted, so the flow was never freed: when the world
+left the tree (back to the character select and in again), the old flow stayed connected with
+its `hud` and `world` freed, beside the new world's flow. Round 866 connected one more signal,
+`join_asked`, to `_on_join_asked`, whose `hud.open_academy_join_ask(ask)` is a call on the freed
+HUD: the old flow, connected first, runs first and the process ends.
+
+- **MEASURED in the user's log** (`opensro.log`, 19,830 lines): three world entries in the
+  session; after the first, one "ACADEMY result 0xB47D" per reply (line 1209), after each later
+  entry every academy reply printed twice (`0xB47D` at 18359/18360 and 19652/19653, `0xB47A` at
+  18396/18397 and 19708/19709) -- two flows on the store. The log ends mid-play with no error and
+  no "ACADEMY join asked" line. OPEN: two copies, not three, after the third entry.
+- **MEASURED, the release's silence:** the v0.1.638 export sent SIGSEGV prints nothing from the
+  engine's crash handler to stdout or to its log file, and both end mid-line (stdout and the log
+  are buffered; only an error line flushes the file). So the question's own print was lost with
+  the process. INFERRED: the 3.15 s to the reset is the dying process (a core dump), not the
+  client's work.
+- **Reproduced on the lane server (port 17691), the guardian a real client, one re-entry
+  (`OPENSRO_QA_RECONNECT=200`, through Login and the character select), then found, register,
+  the bot applies:**
+  - the v0.1.638 build (exported from `48773ac2` with the release preset, the release's native
+    library), 2560 x 1600 at UI scale 200 %, under gdb: every academy line and result printed
+    twice after the re-entry, then on the question `Thread 1 "OpenSRO.x86_64" received signal
+    SIGSEGV` (main thread; the guardian's session dropped on the server 0.27 s after "academy
+    match join asked");
+  - the source tree (the editor binary): `SCRIPT ERROR: Cannot call method 'call' on a
+    previously freed instance` at `AcademyFlow._text` <- `_on_line` <- `AcademyState.handle` (the
+    old flow on the founding's line), every reply twice, then "ACADEMY join asked by AcadBot01"
+    and `handle_crash: Program crashed with signal 11` (INFERRED: at `hud.open_academy_join_ask`,
+    the old flow's next call after that print) -- not caught in a debug build either. Round 866's QA entered the world once, so it had one flow.
+  - without a re-entry the same builds showed the box, answered by its timer or by Yes (x4, x7,
+    x8): the box itself, its RefObjID race, its timer and Yes / No were not the cause, nor the
+    export (every script is in the pack) nor the threaded renderer.
+- **The same leak, older:** `UnionWorld` (round 844: `NetClient.union_ops.notice` -> the freed
+  world's `_on_guild_ops_notice`) and `SpecialtyFlow` (round 801: `trade_scale_changed` /
+  `trade_prices` -> the freed HUD's transport window) connect to NetClient with `self` lambdas
+  too. PartyMatchWindow and AcademyMatchWindow were already disposed by HudPanels' `_exit_tree`.
+
+### The fix
+
+- `SignalLinks` (`client/scripts/world/signal_links.gd`, OURS): `link(signal, callable)` connects
+  and remembers; `cut()` disconnects what is still connected. AcademyFlow, UnionWorld and
+  SpecialtyFlow make every connection to NetClient's stores through it and have `detach()`;
+  World3D's `_exit_tree` detaches all three first and drops them. A detached flow is freed with
+  its world.
+- Guards: `client/scripts/world/flow_detach866_test.gd` builds each flow on the NetClient
+  autoload, checks it connected, that `detach()` takes every connection back and that the flow is
+  freed with its world (a weakref clears), that World3D's `_exit_tree` detaches the three, and
+  lints every RefCounted script: a lambda on a NetClient or `state` signal outside SignalLinks
+  fails unless its line says why (`# links: ...`; PartyMatchWindow's two, which its `dispose()`
+  cuts). NEGATIVE: with `_links.link(state.window_wanted, ...)` put back to
+  `state.window_wanted.connect(...)` the test fails 3 checks (1 connection left of 12, the flow
+  alive, the lint).
+- After the fix, the same runs: the export (2560 x 1600, 200 %, one re-entry) printed each academy
+  line once, showed the question, Yes went out 62 ms after it (`0x347F {01 00 00 00 02 00 00 00
+  01}`), the server `academy joined ... by=matching`, the guardian's `UIIT_MSG_TC_MACHING_JOINING_MEMBER`
+  line and `UIIT_STT_TC_MACHING_COMPLETE` banner, and ran to its last frame; the source tree the
+  same, with no "previously freed".
+
+### Also in this lane
+
+- **`get_meta(key, null)`** treats the null as no default: a missing key logs "The object does
+  not have any 'meta' values with the key ..." on every call. MEASURED: 7,397 such lines in the
+  user's log (`opensro_fidget`, `opensro_body_clip`). The 16 reads go through `has_meta` now;
+  `client/scripts/meta_default_lint_test.gd` fails on any `get_meta(.., null)` in a script.
+- **QA input (OURS):** `_qa_push_click` takes UI units by default (every caller but the raw
+  `click:x,y` passes a control's rect or an unprojected point); at a UI scale other than 1 a
+  window-pixel push landed elsewhere (MEASURED: npcclick at (494, 311) clicked (330, 208) at 150 %).
+- **QA of an export** (box scripts under `/var/tmp/r866x`): a release template refuses a scene on
+  the command line ("compiled without support for path overrides"), so an exported client takes
+  the QA route through Login and the character select (`OPENSRO_QA_RECONNECT_VIA_LOGIN=1`,
+  the character made first with `partybot -mode bot`); its own HOME keeps a saved UI scale out.
+- **OPEN:** every run on the box ends badly at quit (`--quit-after`), after "This function
+  (finalize) can only be called from the render thread": the exports with a segfault (rc 139),
+  the source tree with an abort (rc 134) -- the v0.1.638 build and the fixed one alike, and round
+  866's own runs before this lane; not what the user hit (their log ends mid-play).
+
+Gates: `check` ALL LOAD (1162), `tests` 444 suites, 0 failing; no server change.
+
 ## Eight-hundred-and-sixty-sixth round: the academy's matching join, both sides -- the guardian's question box and its answer, the joiner's own joining window, every academy request logged
 
 The user, on v0.1.637: "I tried joining the academy and I didn't see a popup on the academy

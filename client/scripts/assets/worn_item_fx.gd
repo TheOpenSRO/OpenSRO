@@ -218,10 +218,10 @@ static func body_action(item_skel: Node) -> Variant:
 		at = at.get_parent()
 	if at == null:
 		return null
-	var anim = at.get_meta(BODY_CLIP_META, null)
+	var anim = (at.get_meta(BODY_CLIP_META) if at.has_meta(BODY_CLIP_META) else null)
 	if anim == null or not is_instance_valid(anim):
 		return null
-	var tag = (anim as Object).get_meta(BsrReader.CLIP_META, null)
+	var tag = ((anim as Object).get_meta(BsrReader.CLIP_META) if (anim as Object).has_meta(BsrReader.CLIP_META) else null)
 	if tag == null or not CLIP_TYPES.has(int(tag[0])):
 		return null
 	return int(tag[0])

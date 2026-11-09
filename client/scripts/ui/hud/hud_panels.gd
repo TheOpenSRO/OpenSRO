@@ -4715,7 +4715,7 @@ func _install_exchange_extras(window: HudWindow) -> void:
 		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var r := Rect2(Vector2(holder.position) + Vector2(EXCHANGE_PORTRAIT_INSET.position),
 			holder.size - Vector2(EXCHANGE_PORTRAIT_INSET.size))
-		var authored = holder.get_meta(UiBuilder.AUTHORED_RECT_META, null)
+		var authored = (holder.get_meta(UiBuilder.AUTHORED_RECT_META) if holder.has_meta(UiBuilder.AUTHORED_RECT_META) else null)
 		if authored is Rect2:
 			r = Rect2((authored as Rect2).position + Vector2(EXCHANGE_PORTRAIT_INSET.position),
 				(authored as Rect2).size - Vector2(EXCHANGE_PORTRAIT_INSET.size))

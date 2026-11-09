@@ -135,8 +135,8 @@ func _init(builder: UiBuilder, match_state: PartyMatchState, party_state: PartyS
 	host = box_host
 	state.changed.connect(refresh)
 	state.paged.connect(on_page)
-	state.notice.connect(func(k: String, c: int, t: int) -> void: notice.emit(k, c, t))
-	state.banner.connect(func(k: String) -> void: banner.emit(k))
+	state.notice.connect(func(k: String, c: int, t: int) -> void: notice.emit(k, c, t))  # links: dispose() cuts every state connection (HudPanels._exit_tree)
+	state.banner.connect(func(k: String) -> void: banner.emit(k))  # links: dispose() cuts every state connection (HudPanels._exit_tree)
 	state.register_done.connect(refresh)
 	state.join_request.connect(show_join_request)
 	state.join_finished.connect(_on_join_finished)

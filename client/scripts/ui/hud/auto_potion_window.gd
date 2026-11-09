@@ -198,7 +198,7 @@ func _make_check(host: Control) -> Control:
 		var mb := e as InputEventMouseButton
 		if mb != null and mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
 			AutoPotionWindow.set_checked(host, not AutoPotionWindow.is_checked(host))
-			var cb = host.get_meta("on_toggle", null)
+			var cb = (host.get_meta("on_toggle") if host.has_meta("on_toggle") else null)
 			if cb is Callable and (cb as Callable).is_valid():
 				(cb as Callable).call(AutoPotionWindow.is_checked(host)))
 	return host

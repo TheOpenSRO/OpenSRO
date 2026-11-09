@@ -224,7 +224,7 @@ static func _set_contents(w: HudWindow, markup: String) -> void:
 	if body == null:
 		return
 	body.set_markup(markup)
-	var scroll := body.get_meta("scroll_bar", null) as HudChat.ChatScroll
+	var scroll := (body.get_meta("scroll_bar") if body.has_meta("scroll_bar") else null) as HudChat.ChatScroll
 	if scroll != null:
 		scroll.set_range(body.max_scroll(), body.scroll)
 

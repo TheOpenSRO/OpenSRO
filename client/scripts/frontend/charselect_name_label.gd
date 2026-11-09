@@ -63,7 +63,7 @@ static func place(l: Label, at: Vector2) -> void:
 	var godot_ascent := font.get_ascent(px) if font != null else 0.0
 	l.position = Vector2(item.x, item.y + ascent - godot_ascent)
 	l.size = Vector2(w, 0)
-	var box := l.get_meta(NAME_BOX_META, null) as ColorRect
+	var box := (l.get_meta(NAME_BOX_META) if l.has_meta(NAME_BOX_META) else null) as ColorRect
 	if box != null:
 		var top := item.y - NamePlates.BOX_OVER_CELL_PX
 		box.position = Vector2(-NamePlates.BOX_PAD_PX, top - l.position.y)
@@ -72,6 +72,6 @@ static func place(l: Label, at: Vector2) -> void:
 ## The name's fade (its glyphs' alpha byte); the box shows while it is not 0.
 static func set_alpha(l: Label, a: float) -> void:
 	l.self_modulate.a = a
-	var box := l.get_meta(NAME_BOX_META, null) as ColorRect
+	var box := (l.get_meta(NAME_BOX_META) if l.has_meta(NAME_BOX_META) else null) as ColorRect
 	if box != null:
 		box.visible = a > 0.0
