@@ -566,6 +566,27 @@ was not used because the Entrance Dungeon is currently off-limits.") but **neith
 them** and the server's item-use switch has no case for TypeID4 23 (READ s:0x49c2b0). INFERRED: the
 ticket clears the group cool time (`GROUP_INS_GOD`) and belongs to a later client than ours. Choice 3.
 
+**Round 872 (OURS, the user: "add an item to the test item npc to reset dimensional gate time and
+stuff"):** built as a tester's aid, not as a served item. MEASURED (the rows): CanUse 255, no COOLTIME
+descriptor, the mall row tradeable and the premium (`ITEM_PRE_`) row not; the 3/3/13/22 rows are the
+Egypt tickets. This project's client archive has **no item row** for either ticket (MEASURED: the
+English texts only, textuisystem and textdata_object), so the reset lives on the Test Items NPC as an
+action line, "Reset Forgotten World Timers" (`test_items_npc.md`, round 872), behind a box with
+`UIIT_STT_DUNGEON_FREE_TICKET_ENTER_FORGOTTEN`. It clears the holes' cool time (the category-6 job of
+group 0x71 and the server's in-memory timer), the re-entry limit (the category-12 job of
+`GROUP_INS_GOD`) and the `INS_GOD_*` instance rows, and nothing else; the client drops the hole cool
+time and the `0x320C` icon at once through OURS `0x00BF` (the original has no clearing message: READ
+c:0x88dad0 ignores a remaining <= 0; the 0x3077 restore at c:0x88e090 only inserts). Where an item table
+has the ticket's row, the ticket does the same reset when used (spent; refused and kept with
+`UIIT_MSG_DUNGEON_FREE_TICKET_ENTERD_NOT_USED` when nothing runs -- INFERRED from its Korean wording,
+"the entry limit is lifted, so the ticket is not used") and is listed on the NPC's Dimension Holes line
+as a fourth tab, "Ticket". `server/internal/session/fgwreset.go`.
+
+Also round 872: a hole's kept cool time is re-armed at a login **from the rows alone** -- the in-memory
+timer of group 0x71 is cleared first. Before, the process-wide timer outlived a logout, so rows taken
+away while the character was out (by hand, on a live server) still refused the next hole with "Still
+have time to reuse the item." (MEASURED there).
+
 ## 10. What other players see
 
 - The gate: its spawn reaches those around (MEASURED, a party member); a type-6 gate is drawn only for

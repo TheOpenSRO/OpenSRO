@@ -19,6 +19,10 @@ type itemCooldownTracker struct {
 	// keyed by character and item ref id: where a COOLTIME whose key is 0
 	// lives. See ReadyItem.
 	perItem map[int64]map[int64]time.Time
+	// perItemKey is the COOLTIME key each perItem entry was armed with
+	// (round 872, OURS bookkeeping: ClearGroup takes a group's items with
+	// it).
+	perItemKey map[int64]map[int64]uint32
 }
 
 var itemCooldowns = newItemCooldownTracker()
@@ -43,7 +47,8 @@ var itemCooldowns = newItemCooldownTracker()
 var skillGroupCooldowns = itemCooldowns
 
 func newItemCooldownTracker() *itemCooldownTracker {
-	return &itemCooldownTracker{until: map[int64]map[uint32]time.Time{}, perItem: map[int64]map[int64]time.Time{}}
+	return &itemCooldownTracker{until: map[int64]map[uint32]time.Time{}, perItem: map[int64]map[int64]time.Time{},
+		perItemKey: map[int64]map[int64]uint32{}}
 }
 
 // ReadyItem is ItemCooldowns::IsReady (0x64c040) for an item whose row
@@ -92,6 +97,12 @@ func (t *itemCooldownTracker) ArmItem(characterID, itemID int64, key uint32, d t
 		t.perItem[characterID] = pi
 	}
 	pi[itemID] = now.Add(d)
+	pk := t.perItemKey[characterID]
+	if pk == nil {
+		pk = map[int64]uint32{}
+		t.perItemKey[characterID] = pk
+	}
+	pk[itemID] = key
 	for shift := 0; shift < 32; shift += 8 {
 		b := (key >> shift) & 0xff
 		if b == 0 {
@@ -130,4 +141,29 @@ func (t *itemCooldownTracker) Arm(characterID int64, group uint32, d time.Durati
 		t.until[characterID] = m
 	}
 	m[group] = now.Add(d)
+}
+
+// ClearGroup forgets characterID's timer of the one-byte group and every
+// per-item entry armed with a key holding that byte (round 872, OURS: the
+// Forgotten World timer reset; the original has no such clear -- READ
+// c:0x88e090, the 0x3077 restore, only inserts). It answers whether the
+// group's timer was still running at now.
+func (t *itemCooldownTracker) ClearGroup(characterID int64, group uint32, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	running := false
+	if until, ok := t.until[characterID][group]; ok {
+		running = now.Before(until)
+		delete(t.until[characterID], group)
+	}
+	for id, key := range t.perItemKey[characterID] {
+		for shift := 0; shift < 32; shift += 8 {
+			if (key>>shift)&0xff == group && group != 0 {
+				delete(t.perItem[characterID], id)
+				delete(t.perItemKey[characterID], id)
+				break
+			}
+		}
+	}
+	return running
 }
