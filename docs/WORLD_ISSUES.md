@@ -7483,7 +7483,7 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
-## Eight-hundred-and-sixty-ninth round, lane FX: why every Forgotten World entry was refused -- the four GOD areas are bound to no game server
+## Eight-hundred-and-sixty-ninth round, lane FX: why every Forgotten World entry was refused (the four GOD areas were bound to no game server), and the inside measured once they were
 
 Stage 1 measured every entry refused: `B05A {02, 0x0001}`, then `B05A {02, 0x0003}`, with no text.
 Lane FX looked for the cause and, if entry could be made to work, was to measure the inside. Labels:
@@ -7534,33 +7534,59 @@ READ (`s:` SR_GameServer.exe, `m:` SR_ShardManager.exe), MEASURED, INFERRED, OUR
   to 0. Not re-tried for the other bands: the five-hour hole cool time is shared, and the data
   settles it.
 
-### What it would take to measure the inside (not done)
+### Measured inside, after the binding was set (the user's choice)
 
-- A data change: bind the four `GOD_*` areas to the game server's index (1 for a single game server).
-- Then restart the shard manager and the game server, because the binding is read at start.
-- Nothing else is missing.
-- Until then sections 6-8 of `forgotten_world.md` stay READ, and stage 3's measurement waits on that
-  change.
+The four `GOD_*` areas were bound to the game server and the server restarted. Then world 67 (Togui
+61-70, grade 1) was entered: first alone (level 70), then with a second player (level 65) brought
+in by the recall pillar. All MEASURED, written into `forgotten_world.md` 5 and `game_worlds.md` 4/5:
+
+- **The job suit** refuses entry with `B05A {02, 0x1c2b}`, and the line "Cannot enter while in
+  Free PvP mode or wearing Job outfit."
+- **Entry**: `B05A {02, 1}`, `B05A {01}`, then the ordinary teleport sequence (`34B5`, `34A5`,
+  `3013`, `34A6`).
+  - The entry notice `300C {0x0C1C, 1|2, "..._COMMON_MONSTER_KILL"}` comes **at the arrival**
+    (right after the client's `3012`), not 20 s later, on every entry.
+  - `320C {0C, 1, 18000}` is the re-entry icon.
+  - The loading screen is the ordinary one. The minimap draws Togui with open-world X/Y; the area
+    map is "Regional map - Togui village"; the world map has no page for it.
+- **The NPCs** spawn with the layer: "Dungeon Exit" (interaction 0x29) and "Pillar of Party Member
+  Recall" (0x27).
+- **The exit**: `751D` -> `B51D {01}`, back at the gate's spot in town.
+- **Re-entry** goes into the same layer, and `320C` carries the remaining seconds.
+- **A logout inside** comes back at the return point. `_CharInstanceWorldData` stays empty, and
+  `_TimedJob` category 12 holds the re-entry limit.
+- **The recall**: `7519` -> `B519` at once, with a per-member {id, state, **level**, minutes}; the
+  window has four columns.
+  - `751A {member}` -> the member gets `751A {.., u32 5, name}` and a Yes/No box.
+  - `751C` -> `B51C {01}`, then the member is warped into the layer 5.4 s later. The master gets no
+    `B51A`.
+- **Dismissing the party inside** moves nobody.
+- **The 60-minute warning**: `300C {0x0C1A, 60}` to both players, 3,609.9 s after the layer was
+  created.
+- **No monster spawned** in the layer: not one of world 67's 116 monster nests, over 35 minutes
+  and three spots. So the triggers, the doors, the boss, the rewards and death inside are still
+  unmeasured. The cause is OPEN.
 
 ### Docs
 
-- `forgotten_world.md` 5: the cause (READ chain, MEASURED data and reproduction); the OPEN "why
-  code 3" is closed; choice 4 updated.
+- `forgotten_world.md` 5: the cause (READ chain, MEASURED data and reproduction), and everything
+  measured inside. Sections 6 and 8 and the OPEN list are updated.
 - `game_worlds.md` 1.1: regions are loaded by area binding.
+- `game_worlds.md` 4: the warning bytes.
 - `game_worlds.md` 5 item 7: the region table's rule. READ: it is the original's static sharding of
   areas over game servers (OpenSRO's OURS placement, section 12, places whole instances instead).
-- `game_worlds.md` choice 4 updated.
+- `game_worlds.md` 5, leaving: logout, re-entry and party loss.
+- Choice 4 is updated in both pages.
 
 ### OPEN
 
-Everything inside a Forgotten World stays unmeasured:
-- trigger notices, doors (0x351E), kill-all progression, the boss and the rewards;
-- the recall and exit NPCs, the re-entry icon (0x320C), the close warnings (0x300C 0x0C1A);
-- death, logout and party loss inside;
-- the loading screen and the minimap inside.
-
-Also OPEN: the type-6 gate's client test; the gate record's +0x260; the category-0xd texts of 0x1c28,
-0x1c2a..0x1c2c and 0x1c2f; the hole's "24 hours"; the talisman drops and the treasure boxes.
+- Why no monster spawned, and with it the trigger chain, the doors (0x351E), the Envy, the boss,
+  the treasure boxes and the talisman/reward drops.
+- Death inside, and a disconnect inside.
+- The 10/5-minute warnings and the close (pending at the time of writing).
+- The type-6 gate's client test.
+- The category-0xd texts of 0x1c28, 0x1c2a, 0x1c2c and 0x1c2f.
+- The hole's "24 hours".
 
 ## Eight-hundred-and-sixty-eighth round, stage 1 (spec): the Forgotten World
 

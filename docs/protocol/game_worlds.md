@@ -182,6 +182,8 @@ item use).
   `UIIT_MSG_EGYPT_DUNGEON_DESTROY_ALARM` ("After %d minute, instance dungeon will vanish. When it
   vanish, user will move to saved return place.") and shows it as the blue notice banner (c:0x77b580)
   and as a system line (c:0x7781b0). The game server never reads the key; only the shard manager.
+  MEASURED (round 869): `300C {1A 0C 3C}` to every player in the layer 3,609.9 s after its creation
+  (the 60-minute threshold of a 2-hour world, plus the tick).
 
 **Close** (READ s:0x5f80b0): every player still inside is warped to the return point on the
 character (`_Char` LatestRegion/Pos/WorldID, which the warp in did not overwrite: s:0x4df666..0x4df68f
@@ -256,10 +258,14 @@ close (the decompiler drops them).
   dead 0x1c36, trade transport 0x1c10, busy 2. Otherwise the warp to the return point; reply
   **0xB51D {u8 1}**, or {u8 != 1, u16 code} in error category 1 (c:0x89a760).
 - **The layer closes** (section 4): everyone to the return point.
-- OPEN (not read, not measured): where a player revives after dying inside; what a logout or a
-  disconnect inside keeps (INFERRED from the table: `_CharInstanceWorldData` keeps the region and
-  position, so a re-login while the layer is open may return inside); a member leaving the party
-  inside.
+- MEASURED (round 869, `forgotten_world.md` 5): the exit NPC's `751D` -> `B51D {01}` puts the player
+  at the return point (where the gate was used). A **logout inside** writes nothing to
+  `_CharInstanceWorldData` and leaves `_Char`'s region and world at the return point, so the next
+  login is at the return point; while the layer lives, its gate takes the player back into **the
+  same layer**, and `320C` then carries the remaining time. A member dismissed from the party inside
+  stays in the layer. The arrival in a layer sends the same `34B5`/`34A5`/`3013`/`34A6` sequence
+  as any teleport; `34B5`'s u16 was 0x61A8 (the return-point region) on the way in and on the way
+  out. OPEN: where a player revives after dying inside; a disconnect inside.
 
 ## 6. Persistence
 
@@ -531,10 +537,10 @@ players back in the open world in under 15 s) and a drain under load.
    process until the user says otherwise.
 
 OPEN (not read, not measured): the close messages' kind bytes; where a player revives after dying
-inside; re-login into a still-open instance; a member leaving the party inside; the trigger chain
+inside (re-login and a member leaving the party inside: MEASURED, section 5); the trigger chain
 rule (OnTrue/OnFalse), Delay and IsRepeat in the binary; `NUM_INPUT_1` of LOAD_MONSTER; the door's
 server-side block; which type id makes a door object; the loading backdrop and world map inside
-Togui / Wreck; whether neighbouring unlisted regions are drawn; `MAX_SQUAD_MEMBER_COUNT` and
+Wreck (Togui: the ordinary loading screen, no world-map page -- MEASURED, `forgotten_world.md` 5); whether neighbouring unlisted regions are drawn; `MAX_SQUAD_MEMBER_COUNT` and
 `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG`'s consumers; a full 0x3013 audit for a world field.
 
 Choices:
