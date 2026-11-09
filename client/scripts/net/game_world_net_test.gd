@@ -12,6 +12,7 @@ extends SceneTree
 ##   godot4 --headless --path client --script res://scripts/net/game_world_net_test.gd
 
 const MEDIA := "/opt/sro-files/client/Media.pk2"
+const DATA := "/opt/sro-files/client/Data.pk2"
 
 var _failures := 0
 
@@ -226,3 +227,16 @@ func _archive() -> void:
 	var tip := GameWorldNet.group_tooltip(cfg[1], 3600000, t)
 	_check(tip[0] == "Forgotten World - Re-entry Time Limit" and tip[1].begins_with("Once the instance dungeon re-entry time limit expires"), "the icon's subject and explanation")
 	pk.close()
+	# Round 869: the Wrecked Ship's compounds walk (READ MapLoader::FUN_0042bc00:
+	# the .bsr the .cpd's header word 0x0C names; NavObjectSource).
+	var data := Pk2Reader.open(DATA)
+	if data == null:
+		print("SKIP the compound navigation mesh: no Data.pk2")
+		return
+	var cpd := "Compound\\Struct\\dun\\property\\wreck\\wreck_sship_in_01.cpd"
+	var e := ObjectLoader.find_file(data, cpd)
+	_check(e != null and NavObjectSource.navmesh_bsr_of_cpd(data.read_file(e)).to_lower() == "res\\dun\\property\\wreck\\ship\\wreck_sship_in_01.bsr",
+		"MEASURED: wreck_sship_in_01.cpd's word 0x0C names its .bsr")
+	var col := NavObjectSource.load_collision(data, cpd)
+	_check(col != null and not col.cells.is_empty(), "the compound has a navigation mesh (%d cells)" % (col.cells.size() if col != null else 0))
+	data.close()

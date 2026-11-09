@@ -166,18 +166,45 @@ when nobody enters (MEASURED 601.0 s and 604.9 s to its 0x3016), otherwise until
 
 **Who sees it** (MEASURED): the creator sees the crystal and can click it; another member of the
 same party received the gate's spawn record but the gate was **not drawn** for it (four camera
-directions, 5 units away). READ (c:0x9e9eb0): for type 7 the client compares +0x258 with its own
-party id and, on a mismatch, returns before building the pick box, the plate lines and the model; on a
-match it adds the plate lines `UIIT_STT_GOD_PARTY_MASTER` ("Party master : %s", the leader's name),
-`UIIT_STT_GOD_LV_EXTENT` ("Level : %d - %d" from Param3/4) and `UIIT_STT_GOD_CLASS` (★..★★★★ from
-Param1). The type-6 branch's exact test is OPEN (it compares +0x264 with a name).
+directions, 5 units away). READ (`CITeleportGate::vslot_025` c:0x9e9eb0), with +0x254 = 1: for type 7
+the client compares +0x258 with its own party id (c:0x9e9f1a..0x9e9f2d, `FUN_00986f50()+0x5c`); for
+type 6 it compares the name at +0x264 with its own character's name (c:0x9e9fbb..0x9e9ff1:
+`FUN_009d6580`, the own name, through `CIFDropDownButton::FUN_00657290`, which returns "not equal").
+On a mismatch it returns before the model, the pick box and the talk lines -- so a type-6 gate is
+drawn and picked only by the character named in it (round 869, lane C1). On a match it keeps the
+**talk window's lines** on the gate (not plate lines: the asm stores them at +0x2e4, +0x31c and
++0x338, c:0x9e9faa, 0x9ea0be, 0x9ea1e8, and `FUN_009ea880` reads them back when the window opens):
+`UIIT_STT_GOD_PARTY_MASTER` ("Party master : %s", the party leader's name; type 7 only),
+`UIIT_STT_GOD_LV_EXTENT` ("Level : %s" with "%d - %d" from the hole's +0x2bc / +0x2c0, Param3 /
+Param4) and `UIIT_STT_GOD_CLASS` ("Grade : %s" with `UIIT_STT_GOD_CLASS_1..4` by the hole's +0x2b4,
+Param1). Its pick box is min (-r, -h, -r) max (r, h, r) with r = the row's +0x118 and h = +0x114.
+
+**Its model** (MEASURED, our archive): `teleportbuilding.txt` row 19556 `INS_QUEST_TELEPORT` (TypeID
+4/1/2) names `Bldg\North Africa\Alexandria\alex_raid_portal.bsr` (column 52), bounding height 16 and
+radius 10 (columns 49 / 50); the server's database row names `quest\ins_quest_teleport.bsr`. The client
+draws its own archive's model. Its name `SN_INS_QUEST_TELEPORT` is "Gap of Dimensions"
+(textdata_object) and its greeting is npcchat's `SN_INS_QUEST_TELEPORT_BS` (textquest_speechname).
+
+**Which class** (READ, round 869): `IGIDObject::FUN_009c1fa0` (c:0x9c1fa0) creates a not-bionic
+TypeID 4/1 object as a `CITeleportGate` (c:0x9c1ca0) and a not-bionic TypeID 4/2 object as a
+`CIEventRuntimeObj` (c:0x9c1cc0); the only 4/2 row in teleportbuilding is 36513
+`STORE_EVENTZONE_DEFAULT` (MEASURED), so the trigger doors travel as that object (section 6).
 
 **Selecting it** (MEASURED): `0x7045 {u32 gate}` -> `0xB045 {01, u32 gate, 01, 1c, 01, 02, u16 0x7EE4,
 i32 1063, i32 693, i32 1125}`: interaction 0x1c (a teleport), one destination of kind 2 = {region,
-position} -- the world's start position. READ (c:0x88ba60 -> c:0x6fac20, c:0x9ea880): the talk
-window, titled "Gap of Dimensions" (MEASURED), shows the generic teleport line, then
-`UIIT_STT_GOD_TELTOPRT_GATE_1` and `_2`, the item's level and grade, and one numbered line per
-destination:
+position} -- the world's start position. READ (round 869): `NetProcessInInterface::FUN_0088b200`'s
+branch for class 0xef1dac reads the reply as {u8 1, u32 gate, u8 n, n ids, [u16 when 0x1f is among
+them]} (it has no NPC flag byte; three service-country reads c:0x88b4e1..0x88b5ec and a u16 gated by
+the ref's +0x120 at c:0x88b716 were absent from the measured bytes), then opens the window:
+`FUN_006fb530` puts the greeting and a "  " line, and with 0x1c among the ids `FUN_006fac20` reads
+the destinations -- u8 count, each a u8 kind: 0 nothing more (`SN_TALK_COMMON_INS_WADDUNGOT`), 1 a
+u16-length text key, 2 a u16 region and three i32 -- after the gate's own lines (`FUN_009ea880`:
+`UIIT_STT_GOD_TELTOPRT_GATE_1`, a blank, the three kept lines above when not empty, a blank, `_2`; all
+white style 1 but `_2`, 0xffd6ff7e style 2) and a "  " line; each destination is "%d. " +
+`UIIT_CTL_TELEPORT_FREE_RESULT` with the place (kind 2: the text keyed by the region id in decimal,
+textzonename), line kind 0x2a in 0xffefdaa4 / 0xffff8a00; `FUN_007001a0` adds the numbered end line.
+Clicking a kind-0x2a line (c:0x7035d2..0x7036c4) sends the end 0x704B (c:0x78fc20) and then 0x705A
+{u32 gate, u8 3, u8 the line's +0xc}. The window, titled "Gap of Dimensions" (MEASURED):
 
 > You can use the Dimensional Rift to return to your original location or to another location
 > connected to here.
@@ -298,7 +325,15 @@ the middle of the dungeon." (`..._WRECK_OUT_BOSS`); the `UNDINE_A3` kill gives t
 
 The doors are event zones (`game_worlds.md` 8): `STRUCTURE_GOD_*` (TypeID 1/2/1/4; 3 big and 12
 small Togui doors, 3 big and 16 small Flame blocks, Wreck doors) drawn while closed, removed on 0x351E
-state 1 (INFERRED: "ON" opens).
+state 1 (INFERRED: "ON" opens). READ (round 869): those characterdata rows are the doors' **models**,
+not the object on the wire -- the object is a not-bionic TypeID 4/2 structure (`CIEventRuntimeObj`,
+MEASURED: teleportbuilding's only 4/2 row is 36513 `STORE_EVENTZONE_DEFAULT`) whose record names the
+event zone (+0x280); `CIEventRuntimeObj::FUN_00535750` (c:0x535750) at state 0 builds the zone's
+object's .bsr (eventzonedata column 9 -> characterdata, e.g. zone 251 -> `STRUCTURE_GOD_BIG_GATE_FLAME_1`
+-> `Dun\Property\flame\Com\flame_lroom_door.bsr`), at state 1 removes it (`FUN_009c4160(2)`), and
+leaves it as it is for any other value. Note for the server: SWITCH_EVENTZONE's zone states are 2
+(ON) and 1 (OFF) (`game_worlds.md` 8); what value goes into 0x351E's state byte for each is OPEN
+(the client opens on 1 and closes on 0).
 
 ## 7. Notices (MEASURED texts)
 
@@ -418,7 +453,7 @@ ticket clears the group cool time (`GROUP_INS_GOD`) and belongs to a later clien
 2. **Item tooltip** -- "Level : a - b", "Grade : ★..", "Number of Players Allowed: 1-n", the reuse
    time (`UIIT_STT_GOD_LV_EXTENT` / `_CLASS`, c:0x66f400). Test.
 3. **The gate** -- a `CITeleportGate`-like structure (model of 19556 with its ambient effects), the
-   type-6 / type-7 visibility rule, the plate lines for type 7, its pick box; select -> the talk window
+   type-6 / type-7 visibility rule, the talk lines it keeps (section 4), its pick box; select -> the talk window
    "Gap of Dimensions" with the texts of section 4; line 1 sends 0x704B + 0x705A {gate, 3, index}. Test:
    the window text from the measured 0xB045; a non-owner draws nothing.
 4. **Entry replies** -- 0xB05A {2, 1} then {1}: the teleport; {2, code}: the category-0xd texts of
@@ -458,7 +493,7 @@ start in parallel with the world unit because it only needs the interfaces):
 5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
    process until the user says otherwise.
 
-OPEN: why the measured warp was refused (code 3); the type-6 gate's client test; the gate
+OPEN: why the measured warp was refused (code 3); the gate
 record's +0x260; the hole's "24
 hours" expiry; how the talismans (`ITEM_TALISMAN_TOGUI_*`, `_FLAME_*`, `_WRECK_A_*` / `_B_*`) and
 other rewards drop (no assigned drops on any FGW monster but the ENVY_DROP pillars; the drop groups

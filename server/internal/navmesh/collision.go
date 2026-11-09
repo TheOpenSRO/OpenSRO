@@ -192,13 +192,43 @@ func NavmeshPathOfBSR(data []byte) string {
 	return string(data[at+4 : at+4+n])
 }
 
+// NavmeshBSROfCPD is NavObjectSource.navmesh_bsr_of_cpd (READ, round 869:
+// MapLoader::FUN_0042bc00 reads the compound's header word 0x0C, seeks there
+// and reads one length-prefixed path, the .bsr whose navigation mesh the
+// compound uses): "" when there is none.
+func NavmeshBSROfCPD(data []byte) string {
+	if len(data) < 0x10 || string(data[:7]) != "JMXVCPD" {
+		return ""
+	}
+	le := binary.LittleEndian
+	at := int(le.Uint32(data[0x0C:]))
+	if at == 0 || at+4 > len(data) {
+		return ""
+	}
+	n := int(le.Uint32(data[at:]))
+	if n == 0 || n > 512 || at+4+n > len(data) {
+		return ""
+	}
+	p := string(data[at+4 : at+4+n])
+	if !strings.HasSuffix(strings.ToLower(p), ".bsr") {
+		return ""
+	}
+	return p
+}
+
 // CollisionPath is which mesh an object index path's navigation mesh comes
 // from (NavObjectSource.load_collision, READ round 644, FUN_0042ce60): a
 // .bms itself; a .bsr's header-named mesh (bsr is that file's bytes); a .cpd
-// none (OPEN, as in the client).
+// the mesh of the .bsr its header names (round 869, FUN_0042bc00).
 func CollisionPath(path string, bsr func(string) []byte) string {
 	l := strings.ToLower(path)
 	switch {
+	case strings.HasSuffix(l, "d"):
+		if data := bsr(path); data != nil {
+			if b := NavmeshBSROfCPD(data); b != "" {
+				return CollisionPath(b, bsr)
+			}
+		}
 	case strings.HasSuffix(l, "s"):
 		return path
 	case strings.HasSuffix(l, "r"):

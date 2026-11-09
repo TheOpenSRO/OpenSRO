@@ -19877,6 +19877,24 @@ func _qa_input_step() -> void:
 				else:
 					_qa_input_report = "%s at %s (%s)" % [action, nat, where]
 					_qa_push_click(nat, MOUSE_BUTTON_LEFT)
+		"gateclick":
+			# Round 869: left click the middle of the server's gate structure
+			# (StructureWorld) as drawn -- the talk ray, the approach and the
+			# select 0x7045 decide what it does, as a player's click.
+			var gh: Node3D = null
+			for guid in _structure_world().holders:
+				if _structure_world().is_gate(int(guid)):
+					gh = _structure_world().gate_holder(int(guid))
+			if gh == null or camera_3d == null or camera_3d.is_position_behind(gh.global_position):
+				_qa_input_report = action + " (no gate drawn)"
+			else:
+				var gat := camera_3d.unproject_position(gh.global_position + Vector3(0, 8.0, 0))
+				_qa_input_report = "%s at %s (gate at %s, player at %s)" % [action, gat, str(gh.global_position.round()), str(player.global_position.round())]
+				if get_viewport().get_visible_rect().has_point(gat):
+					_qa_push_click(gat, MOUSE_BUTTON_LEFT)
+		"gwreport":
+			# Round 869: the game worlds' state, for the QA log.
+			_qa_input_report = "%s %s" % [action, _qa_game_world_report()]
 		"talkline":
 			# Round 841: left click the talk box's numbered menu line n where
 			# it is drawn (the label's own link hit test takes it). Round 865
@@ -28519,6 +28537,34 @@ func _on_timed_job(d: Dictionary) -> void:
 				func(k: String) -> String: return _game_world_text(k))
 	var g := GameWorldNet.group_gauge(int(rec["cool_s"]), remaining_s)
 	_hud_buff_board.add_world_group(int(d["group"]), String(rec["icon"]), int(g["total_ms"]), int(g["remaining_ms"]))
+
+## Round 869 (QA): the structures in view and drawn, the doors' models, the
+## talk window's lines and the re-entry icon, as JSON.
+func _qa_game_world_report() -> String:
+	var sw := _structure_world()
+	var out := {"records": [], "talk": [], "group_icons": []}
+	for uid in sw.records:
+		var rec: StructureSpawnNet.Record = sw.records[uid]
+		var h = sw.holders.get(uid)
+		var drawn: bool = h != null and is_instance_valid(h) and (h as Node3D).is_visible_in_tree() and not (h as Node).is_queued_for_deletion()
+		var model := (h as Node3D).get_node_or_null("Model") if drawn else null
+		var meshes := model.find_children("*", "MeshInstance3D", true, false).size() if model != null else 0
+		(out["records"] as Array).append({"uid": int(uid), "ref": rec.ref_id, "kind": rec.kind, "state": rec.state, "drawn": drawn,
+			"meshes": meshes, "at": str((h as Node3D).global_position.round()) if drawn else "", "pick": drawn and (h as Node).get_node_or_null("PickBox") != null})
+	if _hud_panels != null and _hud_panels.is_open("npctalk"):
+		var w: HudWindow = _hud_panels._windows.get("npctalk")
+		var body := NpcTalkView.body_of(w)
+		if body != null:
+			var bar := w.get_node_or_null("TitleBar") as Label
+			out["talk_title"] = bar.text if bar != null else ""
+			out["talk"] = Array(body.get_meta(NpcTalkView.META_LINES, PackedStringArray()))
+	if _hud_buff_board != null:
+		for g in [1, 2, 3]:
+			var e = _hud_buff_board.world_group_entry(g)
+			if e != null:
+				(out["group_icons"] as Array).append({"group": g, "icon": String(e.info.get("icon", "")), "gauge": e.gauge_value(),
+					"left_ms": e.remaining_ms(), "tooltip": _hud_buff_board.tooltip_for(_hud_buff_board.WORLD_GROUP_TOKEN_BASE + g)})
+	return JSON.stringify(out)
 
 ## OpNpcShopDef (round 783): kept by uid for the select reply that follows.
 func _on_npc_shop_def(data: PackedByteArray) -> void:

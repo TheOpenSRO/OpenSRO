@@ -159,8 +159,13 @@ func on_event_state(uid: int, state: int) -> void:
 		return
 	rec.state = state
 	print("StructureWorld: 0x351E uid=%d state %d" % [uid, state])
-	remove_holder(uid)
-	place(rec)
+	# READ CIEventRuntimeObj::FUN_00535750: 0 builds the model, 1 removes it
+	# (FUN_009c4160(2)), any other value leaves the object as it is.
+	if state == StructureSpawnNet.STATE_DRAWN:
+		if not _standing(uid):
+			place(rec)
+	elif state == StructureSpawnNet.STATE_REMOVED:
+		remove_holder(uid)
 
 ## Every record of region (rx, ry), once its group stands (World3D calls it
 ## where it places the region's NPCs).
@@ -230,7 +235,10 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 	if model != "":
 		if w._object_templates == null:
 			w._object_templates = ObjectTemplateCache.new(w._load_object_template)
-		var body: Node3D = (w._object_templates as ObjectTemplateCache).instance(model, "structure")
+		# The tables name models below res\ (as the ground items' and the
+		# stall booths' .bsr: "res\\" + path).
+		var full := model if model.to_lower().begins_with("res\\") else "res\\" + model
+		var body: Node3D = (w._object_templates as ObjectTemplateCache).instance(full, "structure")
 		if body != null:
 			body.name = "Model"
 			holder.add_child(body)
