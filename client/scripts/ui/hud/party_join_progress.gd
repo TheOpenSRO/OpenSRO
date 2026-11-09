@@ -18,11 +18,20 @@ class_name PartyJoinProgress
 const SIZE := Vector2(365, 149)
 const LAYOUT := "resinfo\\ifpartyjoinprogress.txt"
 const DURATION_MS := 10000.0
+## Round 866: the academy's mode (0x732000 kind 2, opened by the matching
+## window's Join through 0x770050(1, "", "")): the text is
+## UIIT_MSG_TC_JOIN_ERROR_DUPLE, "Registration is in process." (READ
+## c:0x73201c..0x732064, string c:0xdb3674; MEASURED), not the party's line,
+## and the gauge runs 0x3a98 ms (15 s, READ c:0x7323fa..0x732422) before the
+## window closes through the matching window (c:0x732496 -> 0x7996c0).
+const ACADEMY_DURATION_MS := 15000.0
 const TICK_MS := 200
 
 signal finished
 
 var elapsed_ms := 0
+## The mode's gauge length (party 10 s, academy 15 s).
+var duration_ms := DURATION_MS
 var _tick_acc := 0
 var _gauge: TextureProgressBar
 var _done := false
@@ -38,6 +47,18 @@ func build(builder: UiBuilder, own_name: String, party_name: String) -> bool:
 	_set_gauge(0.0)
 	return true
 
+## Round 866: the academy's joining window (kind 2): the caption as the
+## party's, the text UIIT_MSG_TC_JOIN_ERROR_DUPLE, 15 s.
+func build_academy(builder: UiBuilder) -> bool:
+	name = "AcademyJoinProgress"
+	if not build_shell(builder, SIZE, "UIIT_PAG_PARTYMATCH_JOINPROGRESS", "Joining", LAYOUT):
+		return false
+	fill_pml("GDR_PARTY_JOIN_PROGRESS_DESC_PML", text("UIIT_MSG_TC_JOIN_ERROR_DUPLE", "UIIT_MSG_TC_JOIN_ERROR_DUPLE"))
+	_gauge = node("GDR_PARTY_JOIN_PROGRESS_BAR") as TextureProgressBar
+	duration_ms = ACADEMY_DURATION_MS
+	_set_gauge(0.0)
+	return true
+
 static func _fill_two(bb: String, a: String, b: String) -> String:
 	var i := bb.find("\u0003")
 	if i >= 0:
@@ -48,7 +69,7 @@ static func _fill_two(bb: String, a: String, b: String) -> String:
 	return bb
 
 func ratio() -> float:
-	return clampf(float(elapsed_ms) / DURATION_MS, 0.0, 1.0)
+	return clampf(float(elapsed_ms) / duration_ms, 0.0, 1.0)
 
 func _set_gauge(r: float) -> void:
 	if _gauge != null:
@@ -69,7 +90,7 @@ func advance(ms: int) -> void:
 		_tick_acc -= TICK_MS
 		elapsed_ms += TICK_MS
 		_set_gauge(ratio())
-		if float(elapsed_ms) >= DURATION_MS:
+		if float(elapsed_ms) >= duration_ms:
 			finish()
 
 func finish() -> void:

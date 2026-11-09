@@ -354,18 +354,23 @@ func _test_board(builder: UiBuilder) -> void:
 	w.press_join()
 	_check(sent[-1][0] == AcademyNet.OP_MATCH_JOIN and sent[-1][1] == AcademyNet.encode_entry(13), "Join sends 747E {13}")
 	_check(w.progress_box != null, "the joining window opens")
+	# Round 866: in the academy's mode (kind 2): 15 s, not the party's 10 s.
+	_check(w.progress_box != null and w.progress_box.duration_ms == PartyJoinProgress.ACADEMY_DURATION_MS
+		and w.progress_box.name == "AcademyJoinProgress", "the joining window is the academy's (15 s)")
 	w.press_whisper()
 	_check((m["whispers"] as Array) == ["Mentor3"], "Whisper names the selected guardian")
 	w.select_slot(13)
 	_check(w.selected_row() == null, "a click on an empty row selects nothing")
-	# B47E: the outcomes.
+	# B47E: the outcomes. Round 866: the window only closes its joining
+	# window; the texts are AcademyFlow's (c:0x892c50 needs no window).
+	var banners_before := (m["banners"] as Array).size()
+	var notices_before := (m["notices"] as Array).size()
 	st.handle(AcademyNet.OP_MATCH_JOIN_RESULT, PackedByteArray([1, 1]))
-	_check((m["banners"] as Array)[-1] == "UIIT_STT_TC_MACHING_COMPLETE" and w.progress_box == null,
-		"B47E 01 01: banner UIIT_STT_TC_MACHING_COMPLETE, the joining window closed")
+	_check(w.progress_box == null, "B47E 01 01: the joining window closed")
 	st.handle(AcademyNet.OP_MATCH_JOIN_RESULT, PackedByteArray([1, 0]))
-	_check((m["notices"] as Array)[-1] == ["UIIT_MSG_TC_JOIN_CANCEL", 4], "B47E 01 00: UIIT_MSG_TC_JOIN_CANCEL (type 4)")
 	st.handle(AcademyNet.OP_MATCH_JOIN_RESULT, PackedByteArray([1, 2]))
-	_check((m["notices"] as Array)[-1] == ["UIIT_MSG_TC_JOIN_NOREPLY", 4], "B47E 01 02: UIIT_MSG_TC_JOIN_NOREPLY (type 4)")
+	_check((m["banners"] as Array).size() == banners_before and (m["notices"] as Array).size() == notices_before,
+		"B47E's texts are not the window's (no second copy)")
 	var refused := []
 	st.refused.connect(func(c: int) -> void: refused.append(c))
 	st.handle(AcademyNet.OP_MATCH_JOIN_RESULT, PackedByteArray([2, 0x2a, 0x68]))

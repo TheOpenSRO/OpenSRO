@@ -55,6 +55,8 @@ func _init(w: Node, h: HudPanels) -> void:
 	state.invitation.connect(_on_invitation)
 	state.invitation_closed.connect(_close_invitation)
 	state.honor_rows.connect(func(rows: Array) -> void: hud.open_academy_honor(rows))
+	state.join_asked.connect(_on_join_asked)
+	state.match_reply.connect(_on_match_reply)
 	state.result.connect(func(op: int, ok: bool, code: int) -> void:
 		print("ACADEMY result 0x%04X ok=%s code=0x%x" % [op, ok, code]))
 	# The character window's Honor Point follows the store.
@@ -238,6 +240,46 @@ func _on_invitation(_uid: int, inviter: String) -> void:
 	_invite_box.expired.connect(func() -> void:
 		_invite_box = null
 		state.forget_invitation())
+
+# --- The matching board's join (round 866) -------------------------------------------
+
+## 0x747E down: the guardian's question box (kind 0xe); Yes / No / its 15 s
+## timer answer 0x347F {job, requester, 1 / 0}.
+func _on_join_asked(ask: Dictionary) -> void:
+	print("ACADEMY join asked by %s (job %d, entry %d)" % [ask.get("name", ""), int(ask.get("job_id", 0)), int(ask.get("entry_id", 0))])
+	var box := hud.open_academy_join_ask(ask)
+	if box == null:
+		return
+	var job := int(ask.get("job_id", 0))
+	var requester := int(ask.get("requester", 0))
+	box.answered.connect(func(accept: bool) -> void:
+		NetClient.academy_send(AcademyNet.OP_MATCH_JOIN_ANSWER, AcademyNet.encode_join_answer(job, requester, accept)))
+
+## 0xB47E (UI_TC::FUN_00892c50, READ; it needs no window): 1 the banner
+## UIIT_STT_TC_MACHING_COMPLETE (MEASURED on the requester and on the
+## guardian), 0 UIIT_MSG_TC_JOIN_CANCEL and 2 UIIT_MSG_TC_JOIN_NOREPLY in the
+## system window, type 4 (0x7781b0(4, ..)). A refusal goes through
+## category 0x1d (AcademyState.refused).
+func _on_match_reply(op: int, ok: bool, body: Dictionary) -> void:
+	if op != AcademyNet.OP_MATCH_JOIN_RESULT or not ok:
+		return
+	match int(body.get("state", -1)):
+		1:
+			_on_banner("UIIT_STT_TC_MACHING_COMPLETE", [])
+		0:
+			_line4("UIIT_MSG_TC_JOIN_CANCEL")
+		2:
+			_line4("UIIT_MSG_TC_JOIN_NOREPLY")
+
+func _line4(key: String) -> void:
+	var t := _text(key, "")
+	print("ACADEMY line %s (type 4)" % key)
+	if t != "" and t != key:
+		world.call("_log_system", t, 4)
+
+func join_ask_box() -> AcademyJoinAskBox:
+	var b := hud.academy_join_ask
+	return b if b != null and is_instance_valid(b) and not b.is_queued_for_deletion() else null
 
 func _close_invitation() -> void:
 	if _invite_box != null and is_instance_valid(_invite_box):

@@ -33,6 +33,8 @@ const OP_MATCH_MODIFY := 0x747B
 const OP_MATCH_DELETE := 0x747C
 const OP_MATCH_PAGE := 0x747D
 const OP_MATCH_JOIN := 0x747E
+## Round 866: the guardian's answer to a board join request (c:0x81d530).
+const OP_MATCH_JOIN_ANSWER := 0x347F
 const OP_BUFF_TRANSFER := 0x7483
 ## 0x3080 is the request-box channel both ways (kind 9 down, the answer up).
 const OP_REQUEST := 0x3080
@@ -59,9 +61,10 @@ const OP_OWN_BUFF_MINUTES := 0x3C86
 const OP_RESERVE_BUFF_MINUTES := 0x3C87
 
 ## Every message the client reads (NetClient registers each to AcademyState).
-## 0x747E down (the guardian's question, c:0x890fa0) is OPEN (academy.md
-## section 17, item 3): not registered, so it is dropped.
-const SERVER_OPCODES := [OP_OPEN_RESULT, OP_DISBAND_RESULT, OP_INVITE_RESULT,
+## Round 866: 0x747E down, the question a board join request puts to the
+## guardian (c:0x890fa0, registered in c:0x8980e0's list beside 0xB47E), is
+## read too.
+const SERVER_OPCODES := [OP_MATCH_JOIN, OP_OPEN_RESULT, OP_DISBAND_RESULT, OP_INVITE_RESULT,
 	OP_BAN_RESULT, OP_LEAVE_RESULT, OP_GRADUATE_RESULT, OP_GRADUATE_MEMBER_RESULT,
 	OP_NOTICE_RESULT, OP_HONOR_RANK_RESULT, OP_MATCH_REGISTER_RESULT,
 	OP_MATCH_MODIFY_RESULT, OP_MATCH_DELETE_RESULT, OP_MATCH_PAGE_RESULT,
@@ -484,7 +487,7 @@ class MatchRow:
 	var unknown_b := 0         ## not stored (OPEN)
 	var flags := 0             ## +0x21: bit 0 apprentices, bit 1 assistants
 	var title := ""            ## +0x40
-	var unknown_d := 0         ## +0x04 (OPEN)
+	var unknown_d := 0         ## +0x04: the entry's registration time, Unix seconds (MEASURED round 866; not shown)
 	var level := 0             ## +0x08
 	var max_level := 0         ## +0x09
 	var ref_obj_id := 0        ## +0x0c, the race from it
@@ -521,6 +524,18 @@ static func decode_match_page(data: PackedByteArray) -> Dictionary:
 			return {}
 		rows.append(m)
 	return {} if r.bad else {"a": a, "b": b, "rows": rows}
+
+## Round 866: 0x747E down, a board join request put to the guardian
+## (c:0x890fa0): u32 job id, u32 requester -- the record's +0x2c / +0x30,
+## read first (c:0x890fed / c:0x890ffb) -- then the record c:0x88f4d0 reads:
+## u32 entry, u32 requester again, u8 level, u8 max level, u32 RefObjID (the
+## race), str name. MEASURED for a level-30 requester: the two requester
+## u32s equal. {} when short.
+static func decode_join_ask(data: PackedByteArray) -> Dictionary:
+	var r := Reader.new(data)
+	var d := {"job_id": r.u32(), "requester": r.u32(), "entry_id": r.u32(), "requester2": r.u32(),
+		"level": r.u8(), "max_level": r.u8(), "ref_obj_id": r.u32(), "name": r.text()}
+	return {} if r.bad else d
 
 ## 0xB47A / 0xB47B's success body (c:0x8907f0 / c:0x890960): u32, u32, u8,
 ## str, and on 0xB47A a last u32. {} when short.
@@ -611,6 +626,15 @@ static func encode_match(first: int, second: int, flags: int, title: String) -> 
 ## 0x747C / 0x747E: u32 entry id.
 static func encode_entry(entry_id: int) -> PackedByteArray:
 	return _u32(entry_id)
+
+## 0x347F (c:0x81d530): the question's two leading u32s echoed (the box keeps
+## them at +0xad4 / +0xad8), then the answer: 1 for Yes, 0 for No and for the
+## box's own timeout (c:0x798081..0x7980c2; MEASURED both).
+static func encode_join_answer(job_id: int, requester: int, accept: bool) -> PackedByteArray:
+	var b := _u32(job_id)
+	b.append_array(_u32(requester))
+	b.append(1 if accept else 0)
+	return b
 
 ## 0x747D: u8 page.
 static func encode_page(page: int) -> PackedByteArray:
