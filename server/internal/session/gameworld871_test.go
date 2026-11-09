@@ -98,6 +98,25 @@ func TestUnstuckInsideALayerIsItsStart(t *testing.T) {
 		if !ok || zone != "126/228" || at.X != 103 || at.Y != 693 || at.Z != -165 {
 			t.Errorf("single %v: unstuck target %q %+v %v, want the start 126/228 (103, 693, -165)", single, zone, at, ok)
 		}
+		// The warp itself stays in the layer (warpTarget reads the region in
+		// the warp's bucket): under -single-frame the label's bucket is the
+		// open world's frame, and the region read there (by Jangan) took the
+		// character out of its layer -- the exit NPC then answered code 3.
+		if got := warpTarget(w.Hub, e.Zone, at); got != w.Hub {
+			t.Errorf("single %v: the warp to the start leaves the layer", single)
+		}
+		d := gameWorldDeps()
+		p, _ := placeOf(aria.sess)
+		if _, err := warpVia(context.Background(), aria.sess, d.Equipment, d.Chars, rig.hub, nil, zone, e.Zone, at, p.frame, "/unstuck"); err != nil {
+			t.Fatal(err)
+		}
+		rig.until("Aria", OpChangeZoneResult)
+		if _, in := w.Hub.EntityByCharacterID(aria.charID); !in {
+			t.Errorf("single %v: after the /unstuck warp the character is not in its layer", single)
+		}
+		if _, out := rig.hub.EntityByCharacterID(aria.charID); out {
+			t.Errorf("single %v: after the /unstuck warp the character is in the open world", single)
+		}
 	}
 	SetSingleFrame(false)
 }

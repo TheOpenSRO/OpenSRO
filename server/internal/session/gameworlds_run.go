@@ -160,13 +160,17 @@ func instanceRegion(worldID, region int) bool {
 // an instance a place of one of its regions stays inside, any other place is
 // the open world's (OURS rule: every table point OpenSRO warps to -- a
 // return point, a scroll's town, a gate's destination -- is the open
-// world's).
-func warpTarget(from *world.Hub, zone string, pos world.Position) *world.Hub {
+// world's). The region is read in the frame of the warp's own bucket (round
+// 871): a layer keeps its own frame under -single-frame (placeRegion), where
+// the zone label's bucket (ZoneBucket) is the open world's one frame -- read
+// there, a /unstuck or a GM /tp inside the Wrecked Ship named a region by
+// Jangan and moved the character out of its layer.
+func warpTarget(from *world.Hub, bucket string, pos world.Position) *world.Hub {
 	w := instanceOf(from)
 	if w == nil {
 		return from
 	}
-	region, _, _ := regionLocalOf(ZoneBucket(zone), pos)
+	region, _, _ := regionLocalOf(bucket, pos)
 	if region != 0 && w.Ref.HasRegion(region) {
 		return from
 	}

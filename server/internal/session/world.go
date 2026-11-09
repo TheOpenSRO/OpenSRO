@@ -1947,7 +1947,7 @@ func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, cha
 	// Round 869: from the session's own world; a place outside an instance's
 	// regions is the open world's (warpTarget).
 	from := hub.For(sess)
-	return warpAcross(ctx, sess, eq, chars, from, warpTarget(from, zone, pos), zerk, zone, bucket, pos, frame, via)
+	return warpAcross(ctx, sess, eq, chars, from, warpTarget(from, bucket, pos), zerk, zone, bucket, pos, frame, via)
 }
 
 // warpAcross is warpVia between two world units (round 869,

@@ -299,8 +299,8 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 ## `quest\ins_quest_teleport.bsr` (forgotten_world.md 4) -- in this archive a
 ## static crystal (`prim\mesh\quest\ins_quest_teleport.bms`) with the ambient
 ## effects `dun\bigsujung_light_blue.efp` and `dun\bigsujung_potal_glow.efp`
-## (MEASURED). This archive's teleportbuilding row (and the item database
-## that ships with it) names `Bldg\North Africa\Alexandria\alex_raid_portal.bsr`
+## (MEASURED). This archive's teleportbuilding row (and the `_RefObjCommon`
+## row of the server data exported with it) names `Bldg\North Africa\Alexandria\alex_raid_portal.bsr`
 ## instead, the Egypt temple portal's model (rows 27759 / 27760). The same
 ## holds for the layer's exit NPC, NPC_INS_EXIT_TELEPORT (MEASURED: "a blue
 ## crystal with lightning" in the original; characterdata 36032 names
