@@ -188,6 +188,8 @@ impl SrNativeTables {
                 d.set("ranges", &ints(o.ranges));
                 d.set("param1s", &ints(o.param1s));
                 d.set("param5s", &ints(o.param5s));
+                d.set("param3s", &ints(o.param3s));
+                d.set("param6s", &ints(o.param6s));
                 d.set("desc1s", &strings(&o.desc1s));
                 d.set("desc4s", &strings(&o.desc4s));
                 d.set("type_ids", &ints(o.type_ids));
