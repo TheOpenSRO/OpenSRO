@@ -7483,6 +7483,243 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixty-ninth round, lane C1: the client of the game worlds and the Forgotten World -- structure spawns (the gate, the doors), the gate's window, the instance regions (the Wrecked Ship's decks now walk), notices, the re-entry icon, the hole, the exit and the party recall
+
+The user: "let's start forgotten world work", with the standing "Make sure you're comparing against
+the original game and make no mistakes". Stage 2's client half, from `docs/protocol/game_worlds.md`
+14 CLIENT and `forgotten_world.md` 11 CLIENT (both on base `3df5a0fe`, section 13's decided choices
+applied); the server is lane W1's (no server to drive yet), so the messages were fed through the
+client's own decode path (`NetClient.qa_receive`, `OPENSRO_QA_INPUT` `fgwhex:`) with the spec's
+measured bytes and synthetic ids, and every click went through the client's input path. Labels:
+READ (`c:` sro_client.exe), MEASURED, INFERRED, OURS, OPEN.
+
+### What was built (game_worlds.md 14 CLIENT / forgotten_world.md 11 CLIENT)
+
+1. **Structure spawns** -- `net/structure_spawn.gd` (StructureSpawnNet): the class by the type word
+   (READ `IGIDObject::FUN_009c1fa0` c:0x9c1fa0: not bionic 4/1 `CITeleportGate` c:0x9c1ca0, 4/2
+   `CIEventRuntimeObj` c:0x9c1cc0), the record (`CIRuntimeStruct::vslot_025` c:0x56dfa0 after the head
+   `FUN_009c3a70`; the door's +0x280/+0x284, c:0x535980; the 0x3015 trailer, slot 26 c:0x9c2180), in
+   single spawns and in groups (`UserSpawnNet.read_group`, `NetClient._group_step`), despawns, the
+   roster. `world/structure_world.gd` (StructureWorld) builds them under the region's terrain group:
+   the gate's model from its teleportbuilding row (column 52, `res\` prefixed as the ground items'),
+   its ambient effects, its pick box (r = +0x118, h = +0x114), the type-6 / type-7 rule (READ
+   c:0x9e9eb0: a gate that is not this player's builds nothing); the door's model from its event zone
+   (READ `CIEventRuntimeObj::FUN_00535750` c:0x535750: eventzonedata's object -> characterdata's .bsr).
+2. **Instance regions** -- the four start positions load through the ordinary paths (frames and
+   columns below). **Fixed on the way: a compound object's navigation mesh** (READ
+   `MapLoader::FUN_0042bc00`, the object index's 'd' case: the `.bsr` named at the `.cpd`'s header word
+   0x0C, then the `.bsr` branch). Every compound gave no walkable surface in both the client
+   (`NavObjectSource`) and the server (`navmesh.CollisionPath`) until now. The Wreck-inside start
+   stood on the -1800 terrain under the sea (MEASURED before: "1/5 real objects placed", the four
+   ships unresolved); after: 5/5, a deck at -779.1. MEASURED over Data.pk2's `navmesh\object.ifo`
+   (`tools/navmesh_source_census.gd --compounds=1`): 105 compounds, 67 now with a mesh (the Wreck's 27
+   ships, Baghdad's houses, palace and gates, the Mongol fort's walls, `arena_battle_ship`, the demon
+   walls), 38 naming none. A server navmesh directory exported before this round lacks them
+   (re-export with `cmd/export-navmesh`).
+3. **0x351E** (READ c:0x89a7b0 -> c:0x5359c0): field 0x10 only; state 0 builds the door, 1 removes it,
+   any other value leaves it (c:0x535750).
+4. **0x300C 0x0C1A / 0x0C1C** -- `net/game_world_net.gd` (GameWorldNet): 0x0C1A {u8 minutes}: the alarm
+   formatted, banner and type-0 system line (c:0x8764da..0x876578); 0x0C1C {u8 kind, u16-length key}:
+   kind 1 the banner only, kind 2 the system line only (c:0x87657d..0x876670). Taken on retail 0x300C
+   and on OpenSRO's OpUniqueNotice 0x0110 carrier.
+5. **0x320C kind 0x0C** (READ c:0x88dad0 -> c:0x778f90 -> FUN_00777f20(0xe) -> c:0x805a40 case 0xe):
+   the buff board's kind-0xE entry with groupworld_config_forclient's icon, total = the record's cool
+   time x 1000 (our archive: 480 minutes, MEASURED), elapsed = total - remaining x 1000; its tooltip
+   (c:0x800a10's kind-0xe arm): subject, explanation, "%s: %d%s %d%s %d%s" (hours, minutes,
+   seconds left). With the server's 300-minute limit the bar starts at 62.5 % (choice 2 as decided).
+6. **The exit talk line, the recall and the summon window** (merged from the lane's helper branch):
+   `net/instance_talk_net.gd`, `world/recall_flow.gd`, `ui/hud/summon_party_window.gd` built from the
+   archive's `res_ui\nifsummonpartyuserwnd.2dt` (the spec's OPEN "resource file": MEASURED in
+   Media.pk2, READ loaded at c:0x787119). 0x29 "Exit Dungeon" -> 0x751D (c:0x703b47); 0xB51D in
+   category 1 (READ c:0x7b8c82: the exit's 0x1c36 / 0x1c10 / 2 show nothing there). 0x27 "Summon Party
+   member" -> 0x7519; 0xB519 rows {id, state, level, minutes} (state 1 0xff80da11, 2 0xff02da11, 3
+   0xffd40000 with its tooltip); a row's Summon -> 0x751A, a 20,000 ms wait (timer 100, c:0x607c20);
+   0xB51A in category 0x23 (READ table c:0x7bb28d); the member's push 0x751A -> the 360 x 151 question
+   (UIIT_STT_GNGWC_PARTY_MEMBER_CALL) closed silently by its 20,000 ms timer (id 10), 0x751C {requester,
+   own party JID, 1|0}.
+7. **The Dimension hole** (merged from the helper branch): type word 0x3E6C opens box 0x2e at once
+   (c:0x677039; 500 x 144, c:0x6478c7; Yes / No placed as the original's frame measures); Yes runs the
+   client's cool-time check (it sits in the send path, c:0x7972aa..0x7972f5: category 1 0x185b "Still
+   have time to reuse the item.", nothing sent) and then the item use (OpenSRO's 0x008a; retail's 0x704C
+   {slot, 0x3E6C} written beside it); `prim\snd\ui\gacha_change_2.wav` on the accept (c:0x87b478); the
+   tooltip (c:0x66f400): "Level : P3 - P4", "Grade : " + the grade text by Param1, "Number of Players
+   Allowed: 1-P5" (key UIIT_STT_PARTY_SUMMON), "Reuse time %dSecond" with the time left.
+8. **The gate's window** -- 0xB045 for a gate (READ c:0x88b200's class-0xef1dac branch: no NPC flag
+   byte; the ids, a u16 when 0x1f is among them; with 0x1c, c:0x6fac20's destinations: u8 count, each
+   u8 kind 0 / 1 key / 2 region + 3 x i32) decoded by `NpcTalkNet` when the entity is a gate; the
+   window as the original fills it: the name ("Gap of Dimensions", SN_INS_QUEST_TELEPORT), the
+   greeting (npcchat's SN_INS_QUEST_TELEPORT_BS), a blank, GATE_1, a blank, the party master's line
+   (type 7), "Level : a - b", "Grade : ...", a blank, GATE_2 in 0xffd6ff7e bold, a blank, "1. Teleport
+   to [Togui Village]area." (the region's own textzonename name), "2. End conversation.". The line
+   (kind 0x2a, c:0x7035d2..0x7036c4) sends 0x704B then 0x705A {gate, 3, 0}. 0xB05A {2, code}: category
+   0xd's texts (READ, the table at 0x7bbaac), nothing for 1, 2, 3 (the default 0x7b913a) -- the
+   accept {2, 1} included.
+
+9. **0xB034 type 0x0F** (the server lane's hole reply sends `{01, 0x0F, slot + 13, 02}` after
+   0x305C): READ the parser `NetProcessInInner::FUN_0087eb50` case 0x0f (u8 +3 the slot, u8 +8 on a
+   plain reply) and the apply `FUN_0087ba20` case 0x0f (the slot's item taken out). Decoded as
+   `ItemOpNet.TYPE_ITEM_TAKEN`; it answers no request, so it no longer pops a pending item
+   operation's kind (as the buy back's 0x22); the bag is listed again.
+
+### QA (fixtures through `NetClient.qa_receive`, clicks through the input path; box `/var/tmp/r869c`)
+
+- **The four start positions** (offline, `qa_shot.sh --region ... --at ...`; `OPENSRO_QA_COLUMNS` the
+  walkable graph under each, MEASURED): Togui 126/228 (1063, 1125): terrain and landing 692.5 against
+  the start's y 693, the zone label "Togui Village", minimap tile drawn; Wreck inside 114/243 (264,
+  1745): before the compound fix only the -1800 terrain (the player drawn on the sea's surface),
+  after it 5/5 objects placed and a deck at -779.1 (start y -770), "Inside of the Shipwreck"; Wreck
+  outside 111/228 (1257, 1771): object `wreck_bisl` at -257.6 (start y -247), 3/3 placed, the BGM
+  `Forgotten_Ghost.ogg`; Flame, dungeon 0x8012 by the QA zone change: `flame.dof` 45 rooms, 385
+  objects, 0 missing, 1,663 ambient effects, placed at (10897, 162.1, -6110) in room 34 (start y 165),
+  the minimap's `flame_dungeon` tile and "Inside of the Flame Mountain".
+- **The door** (offline at the Wreck-outside start; a 36513 record with event zone 272,
+  `STRUCTURE_GOD_BIG_GATE_WRECK_1F_BLUE_1`): built at state 0 (`wreck_event_door.bsr`, 3 meshes, 6
+  ambient effects, stood on the deck at -257.0); 0x351E `{uid, 0x10, 1}` removed it (holder gone,
+  `drawn false`); `{.., 0}` built it again; `{.., 2}` left it drawn (state 2 recorded).
+- **The gate** (a lane server on port 17869, character Gater869; the gate records fed as 0x3015):
+  the creator's gate (access 6, owner Gater869) built as `alex_raid_portal.bsr` (skinned: the static
+  scenery path drew nothing for it -- an animated model, MEASURED `.bsk` and `.ban` beside it; now
+  assembled as the NPC bodies are), its pick box present; the same record with owner Other869 built
+  nothing ("access 6 is not this player's"). A real left click on the drawn gate went through the talk
+  ray and sent 0x7045 (the lane server, which knows no such uid, refused it: code 3); the measured
+  0xB045 (synthetic uid) then opened the window, logged line for line: "Gap of Dimensions"; "You can use
+  the Dimensional Rift to return to your original location or to another location connected to
+  here."; ""; "The currently generated dimension is the Forgotten World."; ""; "Level : 35 - 50";
+  "Grade : 1 Star"; ""; the yellow-green bold note; ""; "1. Teleport to [Togui Village]area."; "2. End
+  conversation." -- the measured window's text but the grade word (this archive's own row, see
+  Spec changes). A real click on line 1 sent 0x704B and then 0x705A `0169c8000300` ({gate, 3, 0}); the lane server answered the end 0xB04B {2, 0x1c0d} -- the reply stage 1 measured -- and the window closed.
+- **Refusals**: 0xB05A `{2, 1}` showed nothing; `{2, 0x1c32}` the system line "Unable to enter instance
+  dungeon, because re-entering time limit is not over.".
+- **Notices**: 0x300C `{0x0C1A, 10}` -> the banner and the system line "After 10 minute, instance
+  dungeon will vanish. When it vanish, user will move to saved return place."; `{0x0C1C, 1,
+  ..._COMMON_BOSS}` -> the banner "The boss monster has appeared." only; `{0x0C1C, 2, ..}` -> the system
+  line only.
+- **The re-entry icon**: 0x320C `{0x0C, 1, 17000}` -> the board's entry with `icon\item\etc\
+  teleprot_hole.ddj`, gauge 0.590 (17,000 of 28,800 s), tooltip "Forgotten World - Re-entry Time
+  Limit" / "Once the instance dungeon re-entry time limit expires, players can re-enter the instance
+  dungeon again." (this archive's text) / "Remaining time: 4Hour 43Minute 19Second".
+- **The recall** (helper branch's hooks): 0xB519 with two rows -> the window "Summon Party member"
+  with "Possible" 45 "90 Minutes" and "Impossible" 52 "30 Minutes" (no party in this run, so no
+  names); a real click on row 0, then on Summon -> 0x751A `44000000` and the button disabled; the push
+  0x751A -> the question "Leader1 is summoning you. Do you wish to accept the summon?"; a real click on
+  Yes -> 0x751C `210000000100000001`.
+- The gate's despawn 0x3016 removed its holder.
+
+### Frames (box `/var/tmp/r869c`)
+
+`frames/` (copies of the runs' frames): `togui_start.png`, `wreck_in_start_before_compound_fix.png`
+(on the sea's surface), `wreck_in_start_after_compound_fix.png` (on the deck), `wreck_out_start.png`,
+`flame_start.png`, `door_state0_drawn.png` / `door_state1_removed.png` / `door_state0_again.png`,
+`gate_drawn_creator.png`, `gate_talk_window.png`, `gate_after_line_refusal_line.png`,
+`alarm_banner_and_line.png`, `trigger_notice_banner.png`, `reentry_icon.png`, `summon_window.png`,
+`summon_question.png`. The runs: `s_*` / `c_*` (offline starts and columns), `qa_b` (the door),
+`qa_g` (the gate drawn), `qa_a` (notices, icon, recall), `qa_a2` (the gate's click and window).
+Compared with the measured stage-1 frames by eye only: the window's lines and their order match;
+it sits centred here at 1280 x 720 (the NPC window's existing placement), and the box has no Tahoma
+(the UI face falls back to Arial, as every window on the box).
+
+### Spec changes (on this branch)
+
+- `forgotten_world.md` 4: the gate keeps **talk-window lines**, not plate lines (+0x2e4 / +0x31c /
+  +0x338, read back by c:0x9ea880); the type-6 test READ (the own name, c:0x9e9fbb..0x9e9ff1); the gate
+  select reply's gate form and the window's composition READ; the model in our archive
+  (`alex_raid_portal.bsr`, MEASURED) against the database's `quest\ins_quest_teleport.bsr`; the class
+  rule (4/1 gate, 4/2 event object; the only 4/2 row 36513 `STORE_EVENTZONE_DEFAULT`).
+- `forgotten_world.md` 6: the `STRUCTURE_GOD_*` rows are the doors' models, not the wire object; state
+  values (the server's zone states 2 / 1 against the client's 0 / 1 -- OPEN which goes on the wire).
+  MEASURED: our archive's eventzonedata has **no Togui zone** (its 37 `POS_STRUCTURE_GOD_*` rows are
+  Flame's 19 and the Wreck's 18), so a Togui door draws nothing in this client (READ: the lookup
+  fails, no model).
+- `forgotten_world.md` 5: category 0xd's texts for 0x1c28, 0x1c2a..0x1c2c, 0x1c2f READ; 8: the summon
+  window's file, 0xB519's third byte (the level, INFERRED from the .2dt's PARAM_LV column), 0x751C's own
+  id, the category-0x23 texts; 3 / 11: the hole's box layout, the cool-time check after Yes, the
+  players line's Param5 (not Param7).
+- `game_worlds.md` 7: the structure record and the class rule READ; 0x0C1C "only"; 11.7: the
+  compounds' navigation meshes (above); 5: 0xB51D's category-1 behaviour; 13: "which type id makes a
+  door object" closed.
+- MEASURED: the grade text is this archive's first `UIIT_STT_GOD_CLASS_1` row ("1 Star"; the measured
+  window drew "★" from another archive's table).
+
+### Perf gate
+
+The world-loading change (the compound navigation meshes, the structures) ran the gate, base `3df5a0fe`,
+Forward+ on the RX 7600, with two new sites in `perf_gate.sh`: `togui` (126/228 at the Togui start)
+and `flame` (Jangan, then the QA zone change into dungeon 0x8012 at the Flame start). The box was
+loaded by other lanes (load average about 35 on 28 threads), so the jangan base was re-measured in full.
+
+```
+perf gate: base 3df5a0fe (forward_plus) vs head working tree (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 4.73  head 4.85  (+0.1)  SAME
+jangan  entry ms   base 15070  head 14129  (-941.0)  SAME
+jangan  freeze ms  base 4725  head 4337  (-388.0)  SAME
+jangan  hitches    base 6  head 6  (+0.0)  SAME
+togui   frame ms   base 3.25  head 3.27  (+0.0)  SAME
+togui   entry ms   base 9199.50  head 10353  (+1153.5)  SAME
+togui   freeze ms  base 1934.50  head 1940  (+5.5)  SAME
+togui   hitches    base 5.00  head 4  (-1.0)  SAME
+perf gate: (--sites flame --frames 3000 --runs 2, median of 2 run(s))
+flame   frame ms   base 84.92  head 88.23  (+3.3)  SAME
+flame   entry ms   base 25039.00  head 25193.00  (+154.0)  SAME
+flame   freeze ms  base 11777.00  head 11752.00  (-25.0)  SAME
+flame   hitches    base 7.00  head 5.50  (-1.5)  SAME
+```
+
+MEASURED on the way, not this round's: the Flame dungeon draws at 77-100 ms a frame on both sides
+(its 1,663 ambient effects; the cap of 400 nearest runs), which a player in the Forgotten World's
+Flame worlds would feel -- a dungeon-drawing round's question, recorded here.
+
+### OPEN
+
+- What the server puts in 0x351E's state byte for SWITCH_EVENTZONE ON / OFF (server zone states 2 / 1,
+  client draws on 0, removes on 1, ignores 2): the server lane's choice (INFERRED: 1 removes, 0
+  builds) agrees with what this client does.
+- **Against the server lane's door record**: its door tail follows +0x261 directly ({zone, u8}), but
+  the client reads the whole runtime-structure record first (READ `CIEventRuntimeObj::vslot_025`
+  c:0x535980 -> `CIRuntimeStruct::vslot_025` c:0x56dfa0): u8 +0x254, u8 +0x255, u32 +0x258 (or the
+  type-6 name), u32 +0x25c, then the zone and the u8 -- 10 bytes the server's record lacks; and the
+  server writes the name for any access but 7, the client reads it only for 6. `game_worlds.md` 7 has
+  the corrected record. No door is spawned by the server yet. The server's notices on OpUniqueNotice
+  0x0110 are taken (as on 0x300C).
+- Togui's door zones: absent from our archive's eventzonedata (above).
+- The exit / recall NPCs' select reply: the server sends `{01, npc, 00, 01, 29, 00}` (flag, one id,
+  the NPC byte), which is the order this client reads (READ c:0x88b200's CICharactor branch: u8 flag,
+  u32 when its bit 0 is set, u8 n, n ids, u16 when 0x1f is among them, the CICNPC's u8, u16 when 0x21
+  is, u16 when the ref's +0x120 is set); a measured `{01, npc, 00 00 00 01 29 00}` does not fit that
+  order (it would read no id) -- not resolved here; the server keeps the shared encoder meanwhile.
+- The Wreck starts stand ~10 units above the decks the client lands on (inside -770 against -779.1,
+  outside -247 against -257.6; Togui 693 against 692.5): whether the original drops the arrival onto
+  the deck or the decks are drawn lower is not measured (nobody entered, stage 1).
+- A destination in the player's own dungeon names its floor in the original (c:0x6fac20's
+  0x8000 branch); here UIIT_CTL_GUILD_DONOTKNOW stands in (no FGW gate lists one).
+- The 0xB045 gate form's service-country reads and the ref +0x120 u16 (absent from the measured reply).
+- The loading backdrop and the world map inside Togui / Wreck (as stage 1); the X / Y the minimap
+  prints inside (world coordinates of those regions).
+- From the helper branches: the push 0x751A's second and third u32; which control carries the
+  state-3 tooltip; category 0x23's default; "Quantity 1" on the hole's tooltip (not built for any etc
+  item); a running tooltip's per-second refresh.
+
+### Differs on purpose / unsure
+
+- OURS: the summon window is built on the first 0xB519 (the original loads it at game start); the
+  hole's success sound plays 2-D (the original passes the player's position); the re-entry icon's
+  token space (`WORLD_GROUP_TOKEN_BASE`) and right-click doing nothing on it (vslot_033's kind-0xe arm
+  not read).
+
+### Gates
+
+`remote_godot.sh check`: ALL LOAD (1,172 scripts). `remote_godot.sh tests`: "ran 447 suite(s), 2 failing"
+-- `world/buff_persist_test.gd` ("a body built after its owner's buff arrived takes the aura at
+once (got 0)") and `world/crowd_main_thread_test.gd` (the plate batch), both timing checks run while
+the box's load average stood at about 35: alone, crowd_main_thread passes; buff_persist passed 3 of
+6 single runs on this tree and 5 of 5 on a tree without this lane's own world changes, so it is not
+cleared as noise -- OPEN, to be looked at on a quiet box. The first full run also caught two lint
+failures, both fixed: a `get_meta(key, null)` (StructureWorld) and the summon window's state tooltip
+on Godot's popup (`tooltip_text`), now the original's help bubble (`HelpTips.set_tip`). New suites:
+`net/game_world_net_test.gd` (ALL PASS, with the archive part), `world/recall_flow_test.gd`,
+`ui/hud/fgw_hole_test.gd`. `cd server && go build ./... && go test ./...`: pass (the server's
+`navmesh.CollisionPath` compound case, `internal/navmesh/compound869_test.go`). Native:
+`cargo test --lib tables` passes (Param3 / Param6 columns).
+
 ## Eight-hundred-and-sixty-ninth round, lane W3: the Forgotten World on the server -- the Dimension hole and its gate, the entry with its notices, every band's script, the party recall, the pillars and their holes, the hole's kept cool time
 
 The user: "let's start forgotten world work", and for big systems "Make sure you're comparing

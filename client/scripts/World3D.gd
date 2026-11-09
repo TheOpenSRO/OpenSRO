@@ -2128,7 +2128,7 @@ func _ready() -> void:
 	_cos_bind_table(CharTables.boot(_media_pk2) if _media_pk2 != null else null)
 	# The other players' spawn records are read by the item table (round
 	# 737, UserSpawnNet): the spawns that came before it are read now.
-	NetClient.set_spawn_item_rows(_item_rows, _cos_kind_of)
+	NetClient.set_spawn_item_rows(_item_rows, _cos_kind_of, _structure_world().structure_kinds())
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
 	# The readers' own time so far, by function (round 667, ParseProfile;
 	# OPENSRO_PARSE_PROFILE=1): boot and these tables, then a fresh window
@@ -2196,6 +2196,8 @@ func _ready() -> void:
 	if npc_roster != null:
 		for uid in npc_roster.npcs:
 			_on_npc_spawned(npc_roster.npcs[uid])
+	# Round 869: the game worlds (StructureWorld, GameWorldNet).
+	_connect_game_world()
 	NetClient.attack_result.connect(_on_attack_result)
 	# Round 802: job PvP's blows and the safe trade (JobPvpNet).
 	NetClient.player_struck.connect(_on_player_struck)
@@ -2703,6 +2705,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.connect_net()
 	_job_setup()
 	_academy_setup()
+	# Round 869 (lane C1): the instance NPCs' exit and recall lines.
+	_recall_flow = RecallFlow.new(self, _hud_panels)
 	# A body dressed before the panels existed gets its paper doll now, as
 	# the portrait does above (round 695: a QA run's loadout dresses before
 	# the HUD is built, and _refresh_paper_doll returns without panels).
@@ -2788,6 +2792,8 @@ func _try_initialize_pk2_ui() -> void:
 		_hud_panels.click_pass_through.append(_hud_ext_slots.button_at)
 		_hud_ext_slots.slots_created.connect(_on_ext_slots_created)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
+	# Round 869: the Dimension hole's gate's destination line.
+	_hud_panels.portal_requested.connect(_on_portal_requested)
 	_hud_panels.npc_window_hidden.connect(_on_npc_window_hidden)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	# Round 814: the guild window's grant name (0x7256, own name only).
@@ -2839,6 +2845,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.revive_requested.connect(_on_revive_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to the system window (round 639).
 	_hud_panels.system_notice.connect(_log_system)
+	# Round 869: the Dimension hole's re-use check asks this player's timers.
+	_hud_panels.item_reuse_left = func(key: String) -> int: return _item_cooldowns.left_ms(key)
 	# Round 837 (OURS): the server's big notice, across the screen.
 	var big := HudBigNotice.new()
 	big.setup(_ui_builder)
@@ -8052,6 +8060,9 @@ func _exit_tree() -> void:
 	_academy_flow = null
 	_union_world = null
 	_specialty_flow = null
+	if _recall_flow != null:
+		_recall_flow.detach()
+	_recall_flow = null
 	# Round 786: the display pass goes with the world.
 	if RenderingServer.frame_pre_draw.is_connected(_submit_efp_pass):
 		RenderingServer.frame_pre_draw.disconnect(_submit_efp_pass)
@@ -11169,6 +11180,8 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	if group == null:
 		return
 	_grid.mark_npcs_done(region_x, region_y)
+	# Round 869: the structures the server spawned there (StructureWorld).
+	_structure_world().place_region(region_x, region_y)
 	# The region's teleport gates, under the same mark (round 577): both
 	# callers have committed the region's objects just before this, so the
 	# placed portal is in the tree, and a region streamed out and back in is
@@ -19389,6 +19402,8 @@ func _qa_input_step() -> void:
 				_hud_worldmap.quest_report() if _hud_worldmap != null else "(no world map)"]
 		"acapkt", "acahex", "acarow", "acabox", "acajudge", "acareport", "acaask", "acanotice":
 			_qa_input_report = "%s -> %s" % [action, _qa_academy_step(kind, arg)]
+		"fgwhex", "fgwrow", "fgwsummon", "fgwbox", "fgwline", "fgwreport":
+			_qa_input_report = "%s -> %s" % [action, _qa_recall_step(kind, arg)]
 		"guildreport":
 			# Round 844: the guild window's state, for the QA log.
 			_qa_input_report = "%s %s" % [action, _hud_panels.qa_guild_report() if _hud_panels != null else "{}"]
@@ -19862,6 +19877,30 @@ func _qa_input_step() -> void:
 				else:
 					_qa_input_report = "%s at %s (%s)" % [action, nat, where]
 					_qa_push_click(nat, MOUSE_BUTTON_LEFT)
+		"gateclick":
+			# Round 869: left click the middle of the server's gate structure
+			# (StructureWorld) as drawn -- the talk ray, the approach and the
+			# select 0x7045 decide what it does, as a player's click.
+			var gh: Node3D = null
+			for guid in _structure_world().holders:
+				if _structure_world().is_gate(int(guid)):
+					gh = _structure_world().gate_holder(int(guid))
+			if gh == null or camera_3d == null:
+				_qa_input_report = action + " (no gate drawn)"
+			else:
+				# The camera turned toward the gate first, as a player drags it
+				# round (the arm looks along its -Z), the click a few frames on.
+				var to_gate := gh.global_position - player.global_position
+				camera_arm.global_rotation = Vector3(camera_arm.global_rotation.x, atan2(-to_gate.x, -to_gate.z), 0.0)
+				_qa_input_report = "%s (gate at %s, player at %s; camera turned)" % [action, str(gh.global_position.round()), str(player.global_position.round())]
+				get_tree().create_timer(0.2).timeout.connect(func() -> void:
+					var gat := camera_3d.unproject_position(gh.global_position + Vector3(0, 8.0, 0))
+					print("QA GATECLICK at %s" % str(gat))
+					if not camera_3d.is_position_behind(gh.global_position) and get_viewport().get_visible_rect().has_point(gat):
+						_qa_push_click(gat, MOUSE_BUTTON_LEFT))
+		"gwreport":
+			# Round 869: the game worlds' state, for the QA log.
+			_qa_input_report = "%s %s" % [action, _qa_game_world_report()]
 		"talkline":
 			# Round 841: left click the talk box's numbered menu line n where
 			# it is drawn (the label's own link hit test takes it). Round 865
@@ -28305,7 +28344,7 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 ## The selection a talk click makes (round 701's review): an NPC replaces a
 ## selected monster or player (FUN_00778650); a gate does not.
 func _select_for_talk(node: Node) -> void:
-	if node.has_meta("gate_point_id"):
+	if node.has_meta("gate_point_id") or node.has_meta(StructureWorld.META_GATE):
 		return
 	_last_attack_target = -1
 	_selected_character = -1
@@ -28343,6 +28382,9 @@ func _npc_talk_net() -> NpcTalkNet:
 	# Round 786: and then the instances its goods are listed as.
 	NetClient.register_handler(NpcShopDefNet.OP_SHOP_GOODS, _on_npc_shop_goods)
 	_npc_talk.selected.connect(_on_npc_selected)
+	# Round 869: a CITeleportGate's reply (the Dimension hole's gate).
+	_npc_talk.is_gate = func(uid: int) -> bool: return _structure_world().is_gate(uid)
+	_npc_talk.gate_selected.connect(_on_gate_selected)
 	_npc_talk.opened.connect(_on_npc_opened)
 	# The refusals: the client shows nothing for a refused select (round
 	# 701's reading of 0x88b200); the open's and end's codes are logged.
@@ -28372,6 +28414,173 @@ func _on_npc_selected(entity: int, ids: PackedByteArray) -> void:
 	print("NPC select: uid %d '%s' ids %s" % [entity, str(node.get_meta("npc_code", "")), Array(ids)])
 	_talk_server = true
 	_show_talk(node, ids)
+
+# --- The game worlds (round 869, lane C1) ------------------------------------
+# docs/protocol/game_worlds.md 14 CLIENT and forgotten_world.md 11 CLIENT:
+# the runtime structures (StructureWorld: the Dimension hole's gate, the
+# trigger doors), the gate's talk window and its 0x705A, the 0x300C notices,
+# the 0x320C re-entry icon and 0xB05A's refusals (GameWorldNet).
+
+var _structures: StructureWorld = null
+
+func _structure_world() -> StructureWorld:
+	if _structures == null:
+		_structures = StructureWorld.new(self)
+	return _structures
+
+func _connect_game_world() -> void:
+	var sw := _structure_world()
+	NetClient.structure_spawned.connect(_on_structure_spawned)
+	NetClient.structure_despawned.connect(sw.on_despawned)
+	NetClient.event_zone_state.connect(sw.on_event_state)
+	NetClient.world_notice.connect(_on_world_notice)
+	NetClient.timed_job.connect(_on_timed_job)
+	NetClient.teleport_use_ack.connect(_on_teleport_use_ack)
+	var roster: StructureSpawnNet.Roster = NetClient.structure_roster
+	for uid in roster.structures:
+		_on_structure_spawned(roster.structures[uid])
+
+func _on_structure_spawned(rec: StructureSpawnNet.Record) -> void:
+	_load_npc_tables()
+	_structure_world().on_spawned(rec)
+
+## A key's text in the client's own tables (the UI table first), the key
+## itself when none has it; a decimal region id names its zone
+## (textzonename, as c:0x6fac20's FUN_008c9c30("%d")).
+func _game_world_text(key: String) -> String:
+	if key == "":
+		return ""
+	var t := _resolve_any_text(key, "")
+	if t == "" and key.is_valid_int():
+		var region := int(key)
+		t = _zone_name_for_region((region >> 8) & 0xff, region & 0xff)
+	return t if t != "" else key
+
+## 0xB045 for a gate (GameWorldNet.decode_gate_select): the talk window as
+## c:0x88b200's CITeleportGate branch fills it -- the gate's name, its
+## greeting (npcchat: SN_INS_QUEST_TELEPORT_BS), its own lines (c:0x9ea880),
+## the destinations (c:0x6fac20) and the end line.
+func _on_gate_selected(entity: int, reply: Dictionary) -> void:
+	_talk_select_node = null
+	var node := _structure_world().gate_holder(entity)
+	if node == null:
+		print("GATE select: uid %d has no holder here" % entity)
+		return
+	_talk_server = true
+	_talk_node = node
+	_talk_ids = reply["ids"]
+	var code := str(node.get_meta("npc_code", ""))
+	_talk_npc_code = code
+	_talk_npc_name = str(node.get_meta("npc_name", ""))
+	var text := func(k: String) -> String: return _game_world_text(k)
+	var dests := PackedStringArray()
+	var n := 1
+	for d in reply["dests"]:
+		dests.append(GameWorldNet.dest_line(n, GameWorldNet.dest_place(d, text, _own_region_id()), text))
+		n += 1
+	var lines: Array = _structure_world().gate_lines(entity, text) if (reply["ids"] as PackedByteArray).has(GameWorldNet.ID_TELEPORT) else []
+	print("GATE select: uid %d '%s' ids %s, %d destination(s)" % [entity, code, Array(reply["ids"]), dests.size()])
+	if _hud_panels != null:
+		_hud_panels.open_gate_talk(_talk_npc_name if _talk_npc_name != "" else "...", _npc_greeting_text(code), lines, dests)
+
+## The player's region id (high byte the region's y), -1 off the grid.
+func _own_region_id() -> int:
+	if not _grid_has_origin:
+		return -1
+	if _dungeon != null:
+		return _dungeon.rid
+	return -1
+
+## A destination line (kind 0x2a, READ c:0x7035d2..0x7036c4): the end 0x704B
+## (c:0x78fc20), then 0x705A {gate, 3, the line's index}. The window closes
+## on the end's reply (0xB04B), as every NPC window does.
+func _on_portal_requested(index: int) -> void:
+	var gate := _npc_talk.entity if _npc_talk != null else 0
+	if gate == 0 or not _structure_world().is_gate(gate):
+		print("GATE portal: no gate selected")
+		return
+	_npc_talk.end()
+	var payload := GameWorldNet.encode_portal_use(gate, index)
+	if NetClient.is_connected_to_server():
+		NetClient._send(GameWorldNet.OP_TELEPORT_USE, payload)
+	print("GATE portal: 0x704B + 0x705A %s" % payload.hex_encode())
+
+## 0xB05A (c:0x8809d0): {1} nothing (the warp follows); {2, code} the code's
+## category-0xd text as a system line, nothing for a code with no row (the
+## accept {2, 1} included).
+func _on_teleport_use_ack(d: Dictionary) -> void:
+	print("TELEPORT USE ack %s" % str(d))
+	if int(d["result"]) != 2:
+		return
+	var key := GameWorldNet.refusal_key(int(d["code"]))
+	if key == "":
+		return
+	_log_system(_game_world_text(key))
+
+## 0x300C 0x0C1A / 0x0C1C (c:0x8764da, c:0x87657d): the banner (GDR_WARNING_WND)
+## and / or the type-0 system line.
+func _on_world_notice(n: Dictionary) -> void:
+	var t := GameWorldNet.notice_texts(n, func(k: String) -> String: return _game_world_text(k))
+	print("WORLD NOTICE %s -> banner '%s' line '%s'" % [str(n), t["banner"], t["line"]])
+	if String(t["banner"]) != "":
+		_show_banner("system", String(t["banner"]))
+	if String(t["line"]) != "":
+		_log_system(String(t["line"]), HudSystemMessage.TYPE_ALWAYS)
+
+## 0x320C kind 0x0C (c:0x88dad0 -> c:0x778f90): with remaining > 0 and a
+## group record, the buff board's kind-0xE entry.
+func _on_timed_job(d: Dictionary) -> void:
+	if int(d.get("kind", -1)) != GameWorldNet.TIMED_JOB_WORLD_GROUP:
+		return
+	var remaining_s := int(d["remaining_s"])
+	var rec := _structure_world().group_config(int(d["group"]))
+	print("TIMED JOB group %d remaining %d s, record %s" % [int(d["group"]), remaining_s, str(rec)])
+	if remaining_s <= 0 or rec.is_empty() or _hud_buff_board == null:
+		return
+	if not _hud_buff_board.world_group_tooltip.is_valid():
+		_hud_buff_board.world_group_tooltip = func(group: int, left_ms: int) -> PackedStringArray:
+			return GameWorldNet.group_tooltip(_structure_world().group_config(group), left_ms,
+				func(k: String) -> String: return _game_world_text(k))
+	var g := GameWorldNet.group_gauge(int(rec["cool_s"]), remaining_s)
+	_hud_buff_board.add_world_group(int(d["group"]), String(rec["icon"]), int(g["total_ms"]), int(g["remaining_ms"]))
+
+## Round 869 (QA): the structures in view and drawn, the doors' models, the
+## talk window's lines and the re-entry icon, as JSON.
+func _qa_game_world_report() -> String:
+	var sw := _structure_world()
+	var out := {"records": [], "talk": [], "group_icons": []}
+	for uid in sw.records:
+		var rec: StructureSpawnNet.Record = sw.records[uid]
+		var h = sw.holders.get(uid)
+		var drawn: bool = h != null and is_instance_valid(h) and (h as Node3D).is_visible_in_tree() and not (h as Node).is_queued_for_deletion()
+		var model := (h as Node3D).get_node_or_null("Model") if drawn else null
+		var mesh_nodes: Array = model.find_children("*", "MeshInstance3D", true, false) if model != null else []
+		var meshes := mesh_nodes.size()
+		# The model's drawn extent (the meshes' AABBs in the holder's frame).
+		var box := AABB()
+		for mi_v in mesh_nodes:
+			var mi := mi_v as MeshInstance3D
+			if mi.mesh == null:
+				continue
+			var b := ((h as Node3D).global_transform.affine_inverse() * mi.global_transform) * mi.mesh.get_aabb()
+			box = b if box.size == Vector3.ZERO else box.merge(b)
+		(out["records"] as Array).append({"uid": int(uid), "ref": rec.ref_id, "kind": rec.kind, "state": rec.state, "drawn": drawn,
+			"meshes": meshes, "extent": str(box.position.round()) + " size " + str(box.size.round()),
+			"at": str((h as Node3D).global_position.round()) if drawn else "", "pick": drawn and (h as Node).get_node_or_null("PickBox") != null})
+	if _hud_panels != null and _hud_panels.is_open("npctalk"):
+		var w: HudWindow = _hud_panels._windows.get("npctalk")
+		var body := NpcTalkView.body_of(w)
+		if body != null:
+			var bar := w.get_node_or_null("TitleBar") as Label
+			out["talk_title"] = bar.text if bar != null else ""
+			out["talk"] = Array(body.get_meta(NpcTalkView.META_LINES, PackedStringArray()))
+	if _hud_buff_board != null:
+		for g in [1, 2, 3]:
+			var e = _hud_buff_board.world_group_entry(g)
+			if e != null:
+				(out["group_icons"] as Array).append({"group": g, "icon": String(e.info.get("icon", "")), "gauge": e.gauge_value(),
+					"left_ms": e.remaining_ms(), "tooltip": _hud_buff_board.tooltip_for(_hud_buff_board.WORLD_GROUP_TOKEN_BASE + g)})
+	return JSON.stringify(out)
 
 ## OpNpcShopDef (round 783): kept by uid for the select reply that follows.
 func _on_npc_shop_def(data: PackedByteArray) -> void:
@@ -28717,7 +28926,7 @@ func _show_talk(node: Node, ids: PackedByteArray) -> void:
 	_talk_shop_def = _npc_shop_defs.get(int(node.get_meta("npc_uid", 0)), {}) if _talk_server else {}
 	# The ring under an NPC (round 698; the 0xB045 reply selects a CICharactor,
 	# texture 1); a teleport gate is not one and gets none.
-	if not node.has_meta("gate_point_id") and node is Node3D:
+	if not node.has_meta("gate_point_id") and not node.has_meta(StructureWorld.META_GATE) and node is Node3D:
 		_markers().attach("npc:%d" % node.get_instance_id(), GroundMarkers.Kind.NPC)
 	if not _talk_shop_def.is_empty():
 		# OURS (round 783): its own greeting; no fortress tax line.
@@ -28806,7 +29015,7 @@ static func talk_approach_point(target: Vector3, from: Vector3, d: float) -> Vec
 func _start_talk_approach(node: Node3D) -> bool:
 	if player == null:
 		return false
-	var structure := node.has_meta("gate_point_id")
+	var structure := node.has_meta("gate_point_id") or node.has_meta(StructureWorld.META_GATE)
 	var target := node.global_position
 	var distance := player.global_position.distance_to(target)
 	if not talk_needs_approach(distance, structure):
@@ -28879,7 +29088,7 @@ func _step_talk_approach(locked: bool = false) -> void:
 	if not bool(_talk_approach["started"]):
 		return
 	_talk_approach = {}
-	var structure := node.has_meta("gate_point_id")
+	var structure := node.has_meta("gate_point_id") or node.has_meta(StructureWorld.META_GATE)
 	if talk_out_of_range(player.global_position, node.global_position, structure):
 		print("CLICK: arrived %.1f from '%s' -- beyond the server's %.0f, no talk (retail's select reply refuses it silently)" % [
 			player.global_position.distance_to(node.global_position), str(node.get_meta("npc_name", node.name)),
@@ -29219,6 +29428,9 @@ func _on_npc_service_selected(key: String) -> void:
 	# Round 865: the storage keeper's academy lines (AcademyFlow: the fee
 	# box then 0x7470, or 0x7478 at once).
 	if _academy_flow != null and _academy_flow.handle_service(key):
+		return
+	# Round 869 (lane C1): the instance NPCs' lines 0x3d / 0x3e (RecallFlow).
+	if _recall_flow != null and _recall_flow.handle_service(key):
 		return
 	# A server NPC's store, storage and talk lines (round 727): the open
 	# request 0x7046 with the line's id (CIF_NPCTalk::FUN_007020c0: kind 1 ->
@@ -41107,6 +41319,53 @@ func _select_cos(uid: int) -> void:
 # --- The academy (round 865, AcademyFlow) -----------------------------------------
 
 var _academy_flow: AcademyFlow = null
+## Round 869 (lane C1): the instance NPCs' exit and recall lines.
+var _recall_flow: RecallFlow = null
+
+## OPENSRO_QA_INPUT's instance-NPC actions (round 869, lane C1):
+##   fgwhex:<op>:<hex>  a message through NetClient's decode path (qa_receive)
+##   fgwline:party_summon|dungeon_exit  the talk line's action, as its click
+##   fgwrow:<i>         a real click on the summon window's row i
+##   fgwsummon          a real click on its Summon button (7)
+##   fgwbox:yes|no      a real click on the member's question's button
+##   fgwreport          the window, the question and the lines shown
+func _qa_recall_step(kind: String, arg: String) -> String:
+	if _recall_flow == null:
+		return "no recall flow"
+	match kind:
+		"fgwhex":
+			var op := ("0x" + arg.get_slice(":", 0)).hex_to_int()
+			var data := arg.get_slice(":", 1).hex_decode()
+			NetClient.qa_receive(op, data)
+			return "fed 0x%04X %s" % [op, data.hex_encode()]
+		"fgwline":
+			return "line %s handled=%s" % [arg, _recall_flow.handle_service(arg)]
+		"fgwrow":
+			var w := _recall_flow.window
+			if w == null or not w.visible or int(arg) >= w.rows.size():
+				return "no summon window row %s" % arg
+			var at := w.rows[int(arg)].get_global_rect().get_center()
+			_qa_push_click(at, MOUSE_BUTTON_LEFT)
+			return "clicked row %s at %s" % [arg, at]
+		"fgwsummon":
+			var w2 := _recall_flow.window
+			var b := w2.summon_button() if w2 != null else null
+			if b == null or not b.is_visible_in_tree():
+				return "no Summon button"
+			_qa_push_click(b.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			return "clicked Summon at %s (disabled=%s)" % [b.get_global_rect().get_center(), b.disabled]
+		"fgwbox":
+			var q := _recall_flow.box
+			if q == null or not is_instance_valid(q) or not q.visible:
+				return "no question box"
+			var qb := q._find_button(arg == "yes")
+			if qb == null:
+				return "no button"
+			_qa_push_click(qb.get_global_rect().get_center(), MOUSE_BUTTON_LEFT)
+			return "clicked %s on the question at %s" % [arg, q.position]
+		"fgwreport":
+			return _recall_flow.report()
+	return "unknown %s" % kind
 
 func _academy_setup() -> void:
 	_academy_flow = AcademyFlow.new(self, _hud_panels)

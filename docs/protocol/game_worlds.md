@@ -254,7 +254,9 @@ close (the decompiler drops them).
 **Leaving** (READ):
 - **The exit NPC**: **0x751D {u32 npc}** (s:0x51c050; the NPC offers interaction 0x29). Refusals:
   dead 0x1c36, trade transport 0x1c10, busy 2. Otherwise the warp to the return point; reply
-  **0xB51D {u8 1}**, or {u8 != 1, u16 code} in error category 1 (c:0x89a760).
+  **0xB51D {u8 1}**, or {u8 != 1, u16 code} in error category 1 (c:0x89a760) -- whose switch has no text
+  for 0x1c36, 0x1c10 or 2, so a refused exit shows nothing (READ round 869: 0x7b8c82 sends every code
+  outside 3, 0x1807 and 0x180b..0x18ff to the default 0x7b913a).
 - **The layer closes** (section 4): everyone to the return point.
 - OPEN (not read, not measured): where a player revives after dying inside; what a logout or a
   disconnect inside keeps (INFERRED from the table: `_CharInstanceWorldData` keeps the region and
@@ -286,14 +288,31 @@ close (the decompiler drops them).
 - **Structures and event objects**: the gate is a `CITeleportGate` (any TypeID 4/1/x structure;
   vtable c:0xde46b4, factory c:0x9ea810) and a trigger door a `CIEventRuntimeObj` (c:0x535750). Both
   arrive in the spawn records' structure form (`forgotten_world.md` 4 has the gate's bytes; a door's
-  record is the structure record plus u32 event-zone key (+0x280) and u8 (+0x284), c:0x535980; which
-  type id selects the door class is OPEN).
+  record is the structure record plus u32 event-zone key (+0x280) and u8 (+0x284), c:0x535980).
+  READ (round 869): the class is the object's type word's -- not bionic, TypeID 4/1 a
+  `CITeleportGate` (c:0x9c1ca0), 4/2 a `CIEventRuntimeObj` (c:0x9c1cc0), both chosen by
+  `IGIDObject::FUN_009c1fa0`; the structure record (`CIRuntimeStruct::vslot_025` c:0x56dfa0) is the
+  CIGIDObject head (`FUN_009c3a70`: u32 uid, u16 region, f32 x, y, z, u16 angle), u8 +0x260, u8 +0x261
+  (the state), u8 +0x254, u8 +0x255 (the access type), type 6 a u16-length ANSI name else u32 +0x258,
+  then u32 +0x25c; a 0x3015 ends with one more u8 (slot 26, c:0x9c2180). A door's object is 36513
+  `STORE_EVENTZONE_DEFAULT` (MEASURED: the only 4/2 row); its model is its event zone's object's
+  (`forgotten_world.md` 6). Not drawn: a 0x351E state other than 0 or 1 leaves the object as it is
+  (c:0x535750). **So a door's record carries the whole structure record too** -- `CIEventRuntimeObj::
+  vslot_025` (c:0x535980) calls `CIRuntimeStruct::vslot_025` first, which reads +0x254, +0x255, the
+  name or u32 +0x258 and u32 +0x25c for every runtime structure -- and only then u32 +0x280 (the
+  event zone, eventzonedata.txt column 1) and u8 +0x284: {head, u8 +0x260, u8 state, u8 0, u8 0,
+  u32 0, u32 0, u32 zone, u8 0} for a door with no owner rule (round 869, lane C1). And the name
+  follows +0x255 only for type 6; any other type has the u32 (c:0x56dfa0).
+- **Instance regions in the client** (MEASURED, round 869): the four start positions load as any
+  field region or dungeon does -- Togui 126/228, Wreck inside 114/243 and outside 111/228 (terrain,
+  objects, navmesh and minimap tiles from the archives), Flame as dungeon 0x8012 -- see the round's
+  WORLD_ISSUES entry for the frames and the floor checks.
 - **Event-zone switch**: **0x351E {u32 object id, u8 0x10, u8 state}** (READ c:0x89a7b0 ->
   c:0x5359c0; server s:0x52f120): sets +0x261 and redraws: state 0 builds the model (the bsr of the
   event-zone row's object), state 1 removes it. INFERRED: a door is drawn while closed and removed
   when its zone is switched ON.
 - **Trigger notices**: **0x300C {u16 0x0C1C, u8 kind, str textKey}** (READ c:0x87657d..0x876670):
-  kind 1 the blue banner (c:0x77b580, `notice_banner.md`), kind 2 a type-0 system line in colour
+  kind 1 the blue banner only (c:0x77b580, `notice_banner.md`), kind 2 a type-0 system line only, in colour
   0xffdbc99b (c:0x7781b0); the key is looked up in the text table (c:0x8c9bb0).
 - **The loading screen**: the ordinary teleport loading (`arrival_guard.md`); which backdrop the
   client shows for an instance region is OPEN.
@@ -410,6 +429,14 @@ MEASURED in the code (base `60b40fca`):
 7. **The server navmesh** for instance regions: `export-navmesh` already copies every `nv_*.nvm`
    (MEASURED: the 48 Togui and 448 Wreck files are in Data.pk2), so `-navmesh-dir` covers Togui and
    Wreck; Flame (a dungeon) has no server navmesh, as no dungeon does today (`dungeon.md` 5).
+   **The Wrecked Ship's decks are compounds** (MEASURED, round 869: `wreck_bship_in_01`,
+   `wreck_sship_in_01/02/09`, `wreck_sship_out_07` ... are `.cpd` objects in the regions' `.nvm` object
+   lists; until round 869 neither reader gave a compound a navigation mesh, so the Wreck-inside start
+   (114/243 at 264, 1745) had no walkable surface above the -1800 terrain). READ (round 869,
+   `MapLoader::FUN_0042bc00`, the object index's 'd' case): a compound's navigation mesh is the one of
+   the `.bsr` named by a length-prefixed string at the file offset in its header word 0x0C
+   (`wreck_sship_in_01.cpd`: offset 73, `res\dun\property\wreck\ship\wreck_sship_in_01.bsr`); the
+   client's `NavObjectSource` and the server's `navmesh.CollisionPath` now both read it.
 
 ## 12. OURS: instances that scale horizontally
 
@@ -533,7 +560,7 @@ players back in the open world in under 15 s) and a drain under load.
 OPEN (not read, not measured): the close messages' kind bytes; where a player revives after dying
 inside; re-login into a still-open instance; a member leaving the party inside; the trigger chain
 rule (OnTrue/OnFalse), Delay and IsRepeat in the binary; `NUM_INPUT_1` of LOAD_MONSTER; the door's
-server-side block; which type id makes a door object; the loading backdrop and world map inside
+server-side block; the loading backdrop and world map inside
 Togui / Wreck; whether neighbouring unlisted regions are drawn; `MAX_SQUAD_MEMBER_COUNT` and
 `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG`'s consumers; a full 0x3013 audit for a world field.
 

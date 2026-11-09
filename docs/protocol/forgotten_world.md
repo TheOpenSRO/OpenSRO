@@ -66,9 +66,9 @@ Params:
 | Param1 | 1..4 | the grade (stars); the client's tooltip and gate window read it (c:0x9e9eb0 via +0x2b4, INFERRED offset) |
 | Desc2 | `INS_GOD_...` | the world codename |
 | Param3 / Param4 | band min / max | level check at use (0x1851, READ) and the "Level : 35 - 50" lines |
-| Param5 | 4 or 8 | INFERRED the max players ("Number of Players Allowed: 1-4", MEASURED tooltip) |
+| Param5 | 4 or 8 | the max players: READ c:0x66f400 prints UIIT_STT_PARTY_SUMMON "Number of Players Allowed: 1-%d" with ref +0x2c4 (Param5; round 869) |
 | Param6 | 6 | the gate's access condition type (READ s:0x4865a0: 6 = only the creator's character, 7 = the creator's party); with 7 the user must also be the party master (READ s:0x4a0979, 0x184f). **Every row of the measured data is 6** (choice 1) |
-| Param7 | 1 | INFERRED the min players |
+| Param7 | 1 | INFERRED the min players (the tooltip's "1-" is the text's own, not Param7: READ c:0x66f400) |
 | Desc8 | `INS_QUEST_TELEPORT` | the gate structure (RefObjID 19556, TypeID 4/1/2, `quest\ins_quest_teleport.bsr`) |
 | Desc9 | `UIIT_STT_GOD_TOGUI` / `_FLAME` / `_WRECK` | the theme's name |
 | Param10 / Desc10 | 18,000,000 / `COOLTIME:0x00000071` | the reuse cool time: 5 h, group 0x71 shared by every hole |
@@ -103,6 +103,20 @@ Forgotten World?" (`UIIT_MSG_USE_MAGIC_HOLE_CREATE_GATE`, c:0x6479b9). OK sends 
 **0x704C {u8 slot, u16 0x3E6C}** (c:0x79865d -> c:0x797660). Success plays
 `prim\snd\ui\gacha_change_2.wav` (c:0x87b47c). A hole whose cool time is running is refused by the
 client itself with the system line "Still have time to reuse the item." and **no packet** (MEASURED).
+
+READ in round 869 (stage 2): box 0x2e is CMessageBoxManager's (UI_SILKMALL 0x644c90, case at c:0x6478c2):
+title UIIT_STT_CONFIRM_BOX, the box resized to 0x1f4 x 0x90, the line at (0x14, 0x37) 0x1cc x 0xf, OK moved
+right by 0x50 and Cancel by 0x64 from the MsgBoxINIF layout's 72 / 152 (MEASURED: Yes from x 640, No from x
+739, the box from x 487 at 1280 x 1024). The client's re-use refusal is not in the bag use but in the send
+path SendItem_HandleUseItem (c:0x7972aa..0x7972f5), so it comes **after** the box's Yes: the item's
+COOLTIME group's time left (ref +0x53c != 0, 0x9ba5c0) or else its own id's (0x9ba6e0) ->
+FUN_00778190(1, 0x185b, ...), UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY, nothing sent. The success sound is
+played by path (0xdda9d8) through the sound manager at the player's +0x90 (c:0x87b485..0x87b4bf) after
+Item_OnUseItemResult's success for type word 0x3E6C. The tooltip (c:0x66f400, from the generic builder
+0x6860a0 at c:0x686aa3): "Level : %s" with "%d - %d" of Param3 / Param4, "Grade : %s" by Param1 (a
+Param1 outside 1..4 prints the level's text again: the switch's default leaves the buffer), "Number of
+Players Allowed: 1-%d" with Param5, "%s %d%s" UIIT_STT_ITEM_FORMAT_COOLTIME with the re-use time left / 1000
+or the item's own cool time / 1000, all white, after the description's blank.
 
 **Server checks, in order** (READ, item use for TypeID 3/3/12/7 -> `GObjPC::FUN_004a08e0`):
 1. outside a safe zone (town) -> **0x184b**; the client has no text case for it (READ: default);
@@ -152,18 +166,45 @@ when nobody enters (MEASURED 601.0 s and 604.9 s to its 0x3016), otherwise until
 
 **Who sees it** (MEASURED): the creator sees the crystal and can click it; another member of the
 same party received the gate's spawn record but the gate was **not drawn** for it (four camera
-directions, 5 units away). READ (c:0x9e9eb0): for type 7 the client compares +0x258 with its own
-party id and, on a mismatch, returns before building the pick box, the plate lines and the model; on a
-match it adds the plate lines `UIIT_STT_GOD_PARTY_MASTER` ("Party master : %s", the leader's name),
-`UIIT_STT_GOD_LV_EXTENT` ("Level : %d - %d" from Param3/4) and `UIIT_STT_GOD_CLASS` (★..★★★★ from
-Param1). The type-6 branch's exact test is OPEN (it compares +0x264 with a name).
+directions, 5 units away). READ (`CITeleportGate::vslot_025` c:0x9e9eb0), with +0x254 = 1: for type 7
+the client compares +0x258 with its own party id (c:0x9e9f1a..0x9e9f2d, `FUN_00986f50()+0x5c`); for
+type 6 it compares the name at +0x264 with its own character's name (c:0x9e9fbb..0x9e9ff1:
+`FUN_009d6580`, the own name, through `CIFDropDownButton::FUN_00657290`, which returns "not equal").
+On a mismatch it returns before the model, the pick box and the talk lines -- so a type-6 gate is
+drawn and picked only by the character named in it (round 869, lane C1). On a match it keeps the
+**talk window's lines** on the gate (not plate lines: the asm stores them at +0x2e4, +0x31c and
++0x338, c:0x9e9faa, 0x9ea0be, 0x9ea1e8, and `FUN_009ea880` reads them back when the window opens):
+`UIIT_STT_GOD_PARTY_MASTER` ("Party master : %s", the party leader's name; type 7 only),
+`UIIT_STT_GOD_LV_EXTENT` ("Level : %s" with "%d - %d" from the hole's +0x2bc / +0x2c0, Param3 /
+Param4) and `UIIT_STT_GOD_CLASS` ("Grade : %s" with `UIIT_STT_GOD_CLASS_1..4` by the hole's +0x2b4,
+Param1). Its pick box is min (-r, -h, -r) max (r, h, r) with r = the row's +0x118 and h = +0x114.
+
+**Its model** (MEASURED, our archive): `teleportbuilding.txt` row 19556 `INS_QUEST_TELEPORT` (TypeID
+4/1/2) names `Bldg\North Africa\Alexandria\alex_raid_portal.bsr` (column 52), bounding height 16 and
+radius 10 (columns 49 / 50); the server's database row names `quest\ins_quest_teleport.bsr`. The client
+draws its own archive's model. Its name `SN_INS_QUEST_TELEPORT` is "Gap of Dimensions"
+(textdata_object) and its greeting is npcchat's `SN_INS_QUEST_TELEPORT_BS` (textquest_speechname).
+
+**Which class** (READ, round 869): `IGIDObject::FUN_009c1fa0` (c:0x9c1fa0) creates a not-bionic
+TypeID 4/1 object as a `CITeleportGate` (c:0x9c1ca0) and a not-bionic TypeID 4/2 object as a
+`CIEventRuntimeObj` (c:0x9c1cc0); the only 4/2 row in teleportbuilding is 36513
+`STORE_EVENTZONE_DEFAULT` (MEASURED), so the trigger doors travel as that object (section 6).
 
 **Selecting it** (MEASURED): `0x7045 {u32 gate}` -> `0xB045 {01, u32 gate, 01, 1c, 01, 02, u16 0x7EE4,
 i32 1063, i32 693, i32 1125}`: interaction 0x1c (a teleport), one destination of kind 2 = {region,
-position} -- the world's start position. READ (c:0x88ba60 -> c:0x6fac20, c:0x9ea880): the talk
-window, titled "Gap of Dimensions" (MEASURED), shows the generic teleport line, then
-`UIIT_STT_GOD_TELTOPRT_GATE_1` and `_2`, the item's level and grade, and one numbered line per
-destination:
+position} -- the world's start position. READ (round 869): `NetProcessInInterface::FUN_0088b200`'s
+branch for class 0xef1dac reads the reply as {u8 1, u32 gate, u8 n, n ids, [u16 when 0x1f is among
+them]} (it has no NPC flag byte; three service-country reads c:0x88b4e1..0x88b5ec and a u16 gated by
+the ref's +0x120 at c:0x88b716 were absent from the measured bytes), then opens the window:
+`FUN_006fb530` puts the greeting and a "  " line, and with 0x1c among the ids `FUN_006fac20` reads
+the destinations -- u8 count, each a u8 kind: 0 nothing more (`SN_TALK_COMMON_INS_WADDUNGOT`), 1 a
+u16-length text key, 2 a u16 region and three i32 -- after the gate's own lines (`FUN_009ea880`:
+`UIIT_STT_GOD_TELTOPRT_GATE_1`, a blank, the three kept lines above when not empty, a blank, `_2`; all
+white style 1 but `_2`, 0xffd6ff7e style 2) and a "  " line; each destination is "%d. " +
+`UIIT_CTL_TELEPORT_FREE_RESULT` with the place (kind 2: the text keyed by the region id in decimal,
+textzonename), line kind 0x2a in 0xffefdaa4 / 0xffff8a00; `FUN_007001a0` adds the numbered end line.
+Clicking a kind-0x2a line (c:0x7035d2..0x7036c4) sends the end 0x704B (c:0x78fc20) and then 0x705A
+{u32 gate, u8 3, u8 the line's +0xc}. The window, titled "Gap of Dimensions" (MEASURED):
 
 > You can use the Dimensional Rift to return to your original location or to another location
 > connected to here.
@@ -195,10 +236,12 @@ teleport sequence into the layer's random start position; or `{02, code}`:
 | 0x1c0b | `INTERACTION_FAIL_IM_BUSY` |
 | 0x1c10 | `CANT_USE_TELEPORT_WITH_TRADECART` |
 | 0x1c25 | `OUT_OF_REQUIRED_NUMBER_FOR_TELEPORT` ("Max number is reached") |
-| 0x1c28 | (party rule: not the master's layer) -- no text case read (OPEN) |
+| 0x1c28 | (party rule: not the master's layer) -- `EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_02` ("Party master has not move or difficulty does not match party masters choice. Therefore unable to move."; READ round 869, table 0x7bbaac) |
 | 0x1c29 | `INSTANCEDUNGEON_ERROR_MSG_01` ("Unable to create instance dungeon now") |
-| 0x1c2a..0x1c2c | party condition / job suit or voucher / level -- texts OPEN in category 0xd |
-| 0x1c2f | portal access refused -- text OPEN |
+| 0x1c2a | party condition -- `EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_05` ("Party over 2 members are able to enter.") |
+| 0x1c2b | job suit or voucher -- `FLAGWAR_GAME_JOB_NOT_ENTER` ("Cannot enter while in Free PvP mode or wearing Job outfit.") |
+| 0x1c2c | level -- `EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_01` ("Unable to move. Level requirement does not match.") |
+| 0x1c2f | portal access refused -- `EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_02` ("Has no right to move on.") |
 | 0x1c30 | `CANT_USE_TELEPORT_WITH_RIDE` |
 | 0x1c31 | `INSTANCEDUNGEON_ERROR_MSG_02` ("already inside of instance dungeon") |
 | 0x1c32 | `UIIT_MGS_ERR_GOD_LIMIT_TIME` ("Unable to enter instance dungeon, because re-entering time limit is not over.") |
@@ -329,7 +372,15 @@ the middle of the dungeon." (`..._WRECK_OUT_BOSS`); the `UNDINE_A3` kill gives t
 
 The doors are event zones (`game_worlds.md` 8): `STRUCTURE_GOD_*` (TypeID 1/2/1/4; 3 big and 12
 small Togui doors, 3 big and 16 small Flame blocks, Wreck doors) drawn while closed, removed on 0x351E
-state 1 (INFERRED: "ON" opens).
+state 1 (INFERRED: "ON" opens). READ (round 869): those characterdata rows are the doors' **models**,
+not the object on the wire -- the object is a not-bionic TypeID 4/2 structure (`CIEventRuntimeObj`,
+MEASURED: teleportbuilding's only 4/2 row is 36513 `STORE_EVENTZONE_DEFAULT`) whose record names the
+event zone (+0x280); `CIEventRuntimeObj::FUN_00535750` (c:0x535750) at state 0 builds the zone's
+object's .bsr (eventzonedata column 9 -> characterdata, e.g. zone 251 -> `STRUCTURE_GOD_BIG_GATE_FLAME_1`
+-> `Dun\Property\flame\Com\flame_lroom_door.bsr`), at state 1 removes it (`FUN_009c4160(2)`), and
+leaves it as it is for any other value. Note for the server: SWITCH_EVENTZONE's zone states are 2
+(ON) and 1 (OFF) (`game_worlds.md` 8); what value goes into 0x351E's state byte for each is OPEN
+(the client opens on 1 and closes on 0).
 
 ## 7. Notices (MEASURED texts)
 
@@ -352,27 +403,44 @@ All on **0x300C {u16 0x0C1C, u8 1 | 2, str key}** (1 = banner, 2 = system line),
 ## 8. Leaving, and the party recall
 
 - **The exit NPC** (`NPC_INS_EXIT_TELEPORT`, `quest\ins_quest_teleport.bsr`, interaction 0x29): the
-  talk line "Exit Dungeon" (`UIIT_STT_DUNGEON_EXIT`, c:0x7014bb) sends **0x751D {u32 npc}**; the
-  player goes back to the return point (where they used the gate). `game_worlds.md` 5.
+  talk line "Exit Dungeon" (`UIIT_STT_DUNGEON_EXIT`, c:0x7014bb: id 0x29 -> line type 0x3e) sends
+  **0x751D {u32 npc}** (CIF_NPCTalk::FUN_008234f0, case 0x3e; the talk window stays); the player goes back
+  to the return point (where they used the gate). `game_worlds.md` 5. 0xB51D's refusals go to category 1,
+  whose switch (0x7b8c82) has a text only for 3, 0x1807 and 0x180b..0x18ff: the exit's own refusals
+  (0x1c36, 0x1c10, 2) show **nothing** (READ round 869).
 - **The recall NPC** (`NPC_FWORLD_RECALL_PARTY`, `Dun\Property\com\property_recall.bsr`, interaction
   0x27; one beside the start, others along the way), READ both sides:
-  1. The talk line "Summon Party member" (`UIIT_PAG_PARTY_SUMMON`, c:0x70144a) sends **0x7519 {u32
-     npc}** (c:0x823290). Server (s:0x51bb70): not in a party 0x1c33, not the master 0x1c34, fewer
+  1. The talk line "Summon Party member" (`UIIT_PAG_PARTY_SUMMON`, c:0x70144a: id 0x27 -> line type
+     0x3d) sends **0x7519 {u32 npc}** (c:0x823290; CIF_NPCTalk::FUN_007020c0 case 0x3d, which leaves the
+     talk window open). Server (s:0x51bb70): not in a party 0x1c33, not the master 0x1c34, fewer
      than 2 members 2; otherwise a 15.0 s job (0x7d1b, s:0xb45f08).
-  2. **0xB519** (c:0x89a590): {u8 1, u8 n, n x {u32 char id, u8 state, u8 count, u16 minutes}} or
-     {u8 2, u16 code} (category 0xd). It fills the summon window `CNIFSummonPartyUserWnd` (window 0xd6):
+  2. **0xB519** (c:0x89a590): {u8 1, u8 n, n x {u32 char id, u8 state, u8 level, u16 minutes}} or
+     {u8 != 1, u16 code} (category 0xd); the window's list is cleared before the result is tested. The u8
+     printed "%d" sits under the `PARAM_LV` header (MEASURED in the .2dt; INFERRED the member's level).
+     It fills the summon window `CNIFSummonPartyUserWnd` (window 0xd6, built from
+     **`res_ui\nifsummonpartyuserwnd.2dt`** -- MEASURED in Media.pk2, 51 records; READ c:0x787119..0x787154
+     loads it at game start, string 0xdb90bc -- 496 x 320, caption `UIIT_PAG_PARTY_SUMMON`, eight
+     `CNIFSummonPartyUserSlot` rows (ids 13..48, statics 14 name / 15 state / 16 level / 17 minutes), the
+     Summon button 7; a row is selected with the left button (c:0x609a80) and the button is enabled only
+     for a selected row in state 2 that is not waiting (c:0x6096e0, c:0x607730)):
      each member's name, state (1 "Completed" `UIIT_STT_FORT_SMITH_COMPLETE`, 2
      `UIIT_CTL_PARTY_SUMMON_POSSILBE`, 3 `..._IMPOSSILBE` with its tooltip), "%d" and "%d Minutes".
-  3. A slot's Summon sends **0x751A {u32 char id}** (c:0x823350; server s:0x51bd60, master only
-     0x1c34); the slot then waits 20,000 ms. A refusal comes on 0xB51A in **category 0x23**:
-     0x1c0b busy, 0x1c25 number full, 0x1c2b job outfit, 0x1c2c level, 0x1c30 transport, 0x1c36
-     dead, 0x1c37 outside town, 0x1c39 guild war, 0x1c3a wait (`UIIT_STT_PARTY_SUMMON_IMPOSSILBE_n`,
-     `PARTY_SUMMON_WAIT_ERR`).
+  3. The window's Summon (button 7, c:0x607c80) sends **0x751A {u32 char id}** of the selected row
+     (c:0x823350; server s:0x51bd60, master only 0x1c34); that row then waits 20,000 ms (timer 100,
+     c:0x607c20; its end re-enables the button for the selected row, c:0x607c50). A refusal comes on
+     0xB51A {u8 != 1, u16 code} in **category 0x23** (READ round 869, index bytes 0x7bc118, targets
+     0x7bc0f0): 0x1c0b `INTERACTION_FAIL_IM_BUSY`, 0x1c25 `_IMPOSSILBE_2`, 0x1c2b `_4`, 0x1c2c `_3`,
+     0x1c30 `_6`, 0x1c36 `_8`, 0x1c37 `_1`, 0x1c39 `_7` (`UIIT_STT_PARTY_SUMMON_IMPOSSILBE_n`), 0x1c3a
+     `UIIT_STT_PARTY_SUMMON_WAIT_ERR`; any other code no text.
   4. The member gets the push **0x751A {u32 requester, u32, u32, str name}** (c:0x89f010 ->
      c:0x608a60) and a confirm box "%s is summoning you. Do you wish to accept the summon?"
      (`UIIT_STT_GNGWC_PARTY_MEMBER_CALL`) with a 20,000 ms timer; the timer closes it silently.
-  5. The answer **0x751C {u32 requester, u32 own id, u8 1 | 0}** (c:0x823410; server s:0x51bf10);
-     reply 0xB51C {u8 1} or {u8 2, u16 code} (category 0xd); the master gets 0xB51A.
+  5. The answer **0x751C {u32 requester, u32 own id, u8 1 | 0}** (c:0x823410; server s:0x51bf10): the
+     requester is the push's first u32 (+0x7c8), the own id the party's own JID (the party object's +0x18,
+     which 0xB060 writes, c:0x880059; READ c:0x6076d3..0x607702); the push's second u32 (+0x7cc) is
+     never sent. The box is a MsgBoxSimple (GInterface::FUN_007884e0, 360 x 151, style 1 Yes / No,
+     `UIIT_STT_CONFIRM_BOX`); a push while one is up keeps its text and restarts the timer.
+     Reply 0xB51C {u8 1} or {u8 2, u16 code} (category 0xd); the master gets 0xB51A.
   INFERRED: an accepted member is warped from the town into the master's layer (the member's
   CanEnter applies). Not measured (nobody entered, section 5).
 - **Time-out**: the warnings, then everyone to their return point (`game_worlds.md` 4).
@@ -488,7 +556,7 @@ ticket clears the group cool time (`GROUP_INS_GOD`) and belongs to a later clien
 2. **Item tooltip** -- "Level : a - b", "Grade : ★..", "Number of Players Allowed: 1-n", the reuse
    time (`UIIT_STT_GOD_LV_EXTENT` / `_CLASS`, c:0x66f400). Test.
 3. **The gate** -- a `CITeleportGate`-like structure (model of 19556 with its ambient effects), the
-   type-6 / type-7 visibility rule, the plate lines for type 7, its pick box; select -> the talk window
+   type-6 / type-7 visibility rule, the talk lines it keeps (section 4), its pick box; select -> the talk window
    "Gap of Dimensions" with the texts of section 4; line 1 sends 0x704B + 0x705A {gate, 3, index}. Test:
    the window text from the measured 0xB045; a non-owner draws nothing.
 4. **Entry replies** -- 0xB05A {2, 1} then {1}: the teleport; {2, code}: the category-0xd texts of
@@ -496,7 +564,7 @@ ticket clears the group cool time (`GROUP_INS_GOD`) and belongs to a later clien
 5. **Inside** -- the 0x300C notices (both kinds), the doors (0x351E), the destroy alarm. Test with
    recorded bytes.
 6. **Exit and recall talk lines** -- interaction 0x29 / 0x27 lines; the summon window
-   (`CNIFSummonPartyUserWnd`, its resource file OPEN), the 20 s per-slot wait, the member's confirm box
+   (`CNIFSummonPartyUserWnd`, `res_ui\nifsummonpartyuserwnd.2dt`), the 20 s per-slot wait, the member's confirm box
    with its 20 s timer, 0x751C. Test: window rows from a recorded 0xB519.
 7. **Re-entry icon** -- the buff-bar icon (foundation client 5) with this group's texts. Test.
 8. **QA** -- real clicks against the lane server: make a gate, enter, kill a hive, see the door open,
@@ -528,11 +596,11 @@ start in parallel with the world unit because it only needs the interfaces):
 5. Instances on several processes: built and load-tested now, single process stays the default; prod runs one
    process until the user says otherwise.
 
-OPEN: the type-6 gate's client test; the gate
-record's +0x260; codes 0x1c28, 0x1c2a..0x1c2c and 0x1c2f's texts in category 0xd; the hole's "24
+OPEN (the refusal's cause, the type-6 gate's client test and the category-0xd texts are settled in
+round 869, sections 4-5 and 8): the gate record's +0x260; the hole's "24
 hours" expiry; how the talismans (`ITEM_TALISMAN_TOGUI_*`, `_FLAME_*`, `_WRECK_A_*` / `_B_*`) and
 other rewards drop (no assigned drops on any FGW monster but the ENVY_DROP pillars; the drop groups
-were not read); the treasure boxes' contents; the summon window's resource file; everything in
+were not read); the treasure boxes' contents; what the 0x751A push's second and third u32 mean; everything in
 `game_worlds.md` 13.
 
 **Choices:**

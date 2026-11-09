@@ -750,6 +750,10 @@ const ITEM_COL_PARAM1: usize = 118;
 const ITEM_COL_DESC1: usize = 119;
 const ITEM_COL_DESC4: usize = 125;
 const ITEM_COL_PARAM5: usize = 126;
+// Round 869: Param3 and Param6 (a Dimension hole's band minimum and its gate's
+// access type, forgotten_world.md 2).
+const ITEM_COL_PARAM3: usize = 122;
+const ITEM_COL_PARAM6: usize = 128;
 const ITEM_REQ_LEVEL_PAIRS: usize = 4;
 /// The weapon int pairs, in the order `items` stores them: phys atk, mag atk, phys reinforce,
 /// mag reinforce, each (min, max).
@@ -821,6 +825,8 @@ pub struct Items {
     pub param1s: Vec<i64>,
     /// Round 768: Param5, Desc128_1 and Desc128_4 ("" for a short row).
     pub param5s: Vec<i64>,
+    pub param3s: Vec<i64>,
+    pub param6s: Vec<i64>,
     pub desc1s: Vec<String>,
     pub desc4s: Vec<String>,
     /// 4 a row: TypeID1..4.
@@ -966,6 +972,8 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.ranges.push(int_at(cols, ITEM_COL_RANGE));
         o.param1s.push(int_at(cols, ITEM_COL_PARAM1));
         o.param5s.push(int_at(cols, ITEM_COL_PARAM5));
+        o.param3s.push(int_at(cols, ITEM_COL_PARAM3));
+        o.param6s.push(int_at(cols, ITEM_COL_PARAM6));
         o.desc1s.push(cols.get(ITEM_COL_DESC1).map_or("", |c| strip(c)).to_owned());
         o.desc4s.push(cols.get(ITEM_COL_DESC4).map_or("", |c| strip(c)).to_owned());
         o.defences.extend_from_slice(&defences);

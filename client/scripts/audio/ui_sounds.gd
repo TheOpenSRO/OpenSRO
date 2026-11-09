@@ -282,6 +282,19 @@ static func is_potion_class(type_ids: PackedInt32Array) -> bool:
 static func item_used(type_ids: PackedInt32Array, what: String) -> void:
 	if is_potion_class(type_ids):
 		play(KEY_POTION, what)
+	# Round 869: a Dimension hole's success plays gacha_change_2.wav by path
+	# (READ c:0x87b478..0x87b4bf; DimensionHole has the reading).
+	elif DimensionHole.is_hole(type_ids):
+		play_path(DimensionHole.SUCCESS_SOUND, DimensionHole.SUCCESS_SOUND_TAG, what)
+
+## A sound the client plays by file path, not by key (SoundTable.play_file at
+## row volume 1.0, 2-D); `tag` goes into `fired`.
+static func play_path(path: String, tag: String, why: String) -> void:
+	fired.append(tag)
+	if fired.size() > FIRED_CAP:
+		fired.pop_front()
+	print("AUDIO ui %s -- %s" % [path, why])
+	SoundTable.play_file(path)
 
 ## The durability reply 0x3052 (FUN_0x8adf50), per slot (read): a durability
 ## that rose plays snd_revive if it was 0 (a broken item made whole) and

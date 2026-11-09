@@ -306,6 +306,8 @@ const COL_PARAM7 := 130
 const COL_CHILD_ITEM_COUNT := 159
 ## Round 826: Param4, and the twenty Param / Desc128 pairs from Param1 (118).
 const COL_PARAM4 := 124
+const COL_PARAM3 := 122
+const COL_PARAM6 := 128
 ## Round 829 (the repair, RepairQuote): CanRepair (ref +0xaa), CostRepair
 ## (+0xc0) and CostRevive (+0xc4) -- itemdata columns 22, 27 and 28 (READ,
 ## GlobalDataManager::FUN_00972910's reads, counted).
@@ -520,6 +522,10 @@ class Item:
 	## Round 826 (item re-use, ItemCooldowns): Param4 (COL_PARAM4, a potion's
 	## MP %), and the COOLTIME pair (cooltime_of): its group and its ms.
 	var param4: int = 0
+	## Round 869: Param3 and Param6 (a Dimension hole's band minimum and its
+	## gate's access type; forgotten_world.md 2).
+	var param3: int = 0
+	var param6: int = 0
 	var cool_group: int = 0
 	var cool_ms: int = 0
 	## Round 829: COL_CAN_REPAIR, COL_COST_REPAIR, COL_COST_REVIVE.
@@ -715,6 +721,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.param7 = _int_at(cols, COL_PARAM7)
 		item.child_item_count = _int_at(cols, COL_CHILD_ITEM_COUNT)
 		item.param4 = _int_at(cols, COL_PARAM4)
+		item.param3 = _int_at(cols, COL_PARAM3)
+		item.param6 = _int_at(cols, COL_PARAM6)
 		var cool := cooltime_of(cols)
 		item.cool_group = int(cool[0])
 		item.cool_ms = int(cool[1])
@@ -782,6 +790,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	# Round 768: a library from before these columns has none (no elixir or
 	# stone passes the window's checks; the server still decides).
 	var param5s: PackedInt64Array = rows.get("param5s", PackedInt64Array())
+	# Round 869: a library from before these has none (a hole's gate line reads 0).
+	var param3s: PackedInt64Array = rows.get("param3s", PackedInt64Array())
+	var param6s: PackedInt64Array = rows.get("param6s", PackedInt64Array())
 	var desc1s: PackedStringArray = rows.get("desc1s", PackedStringArray())
 	var desc4s: PackedStringArray = rows.get("desc4s", PackedStringArray())
 	var type_ids: PackedInt64Array = rows["type_ids"]
@@ -851,6 +862,10 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.param1 = param1s[i]
 		if i < param5s.size():
 			item.param5 = param5s[i]
+		if i < param3s.size():
+			item.param3 = param3s[i]
+		if i < param6s.size():
+			item.param6 = param6s[i]
 		if i < desc1s.size():
 			item.desc1 = desc1s[i]
 		if i < desc4s.size():

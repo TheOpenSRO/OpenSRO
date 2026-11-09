@@ -56,9 +56,10 @@ static func navmesh_path_of_bsr(data: PackedByteArray) -> String:
 
 ## The navigation mesh the client loads for one object index path, or null
 ## for none: the `.bsr` branch above, and a path that is itself a `.bms`
-## (`FUN_0042ce60`'s 's' case) read directly. A `.cpd` compound
-## (`MapLoader::FUN_0042bc00`, the 'd' case) is not read here and gives null,
-## as it always has in this project -- OPEN.
+## (`FUN_0042ce60`'s 's' case) read directly, and (round 869) a `.cpd` compound
+## (`MapLoader::FUN_0042bc00`, the 'd' case): the .bsr its header word 0x0C
+## names, through the .bsr branch (navmesh_bsr_of_cpd). Until round 869 a
+## compound gave null, and the Wrecked Ship's decks had no walkable surface.
 ##
 ## MEASURED (round 644, `tools/navmesh_source_census.gd` over Data.pk2's
 ## `navmesh\object.ifo`, 3,268 entries): for 2,039 objects this is the same
@@ -72,11 +73,42 @@ static func navmesh_path_of_bsr(data: PackedByteArray) -> String:
 ## `alex_minga07_01.bms`, `alex_fstair02_02.bms`); this gives none. MEASURED
 ## too: no `.nvm` file places any of the three, in its own list or as a
 ## cross-reference, so neither choice reaches a walk.
+## The .bsr a compound's header word 0x0C names (READ, MapLoader::FUN_0042bc00),
+## or "" when the word is 0, out of range, or the string there is empty.
+static func navmesh_bsr_of_cpd(data: PackedByteArray) -> String:
+	if data.size() < 0x10 or data.slice(0, 7).get_string_from_ascii() != "JMXVCPD":
+		return ""
+	var at := data.decode_u32(0x0C)
+	if at == 0 or at + 4 > data.size():
+		return ""
+	var n := data.decode_u32(at)
+	if n == 0 or at + 4 + n > data.size() or n > 512:
+		return ""
+	var p := data.slice(at + 4, at + 4 + n).get_string_from_ascii()
+	return p if p.to_lower().ends_with(".bsr") else ""
+
 static func load_collision(archive: Pk2Reader, path: String) -> BmsReader.CollisionMesh:
 	if archive == null or path == "":
 		return null
 	var lower := path.to_lower()
 	var mesh_path := ""
+	if lower.ends_with("d"):
+		# Round 869 (READ MapLoader::FUN_0042bc00, the 'd' case): the compound's
+		# header word at 0x0C (c:0x42bdcb..0x42bdd9: FUN_0043c470 reads the
+		# 12-byte magic and nine words; the first, at file offset 0x0C, is
+		# tested) is a file offset; a non-zero one is sought (vtable +0x98),
+		# one length-prefixed string read there (FUN_0043c250: u32 length,
+		# bytes), and a non-empty one handed to the .bsr branch
+		# (FUN_0042c4a0). MEASURED: the Wrecked Ship's
+		# wreck_sship_in_01.cpd names res\dun\property\wreck\ship\
+		# wreck_sship_in_01.bsr there (offset 73).
+		var cpd_entry := ObjectLoader.find_file(archive, path)
+		if cpd_entry == null:
+			return null
+		var bsr_path := navmesh_bsr_of_cpd(archive.read_file(cpd_entry))
+		if bsr_path == "":
+			return null
+		return load_collision(archive, bsr_path)
 	if lower.ends_with("s"):
 		mesh_path = path
 	elif lower.ends_with("r"):

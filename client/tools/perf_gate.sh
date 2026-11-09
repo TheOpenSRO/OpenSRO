@@ -150,7 +150,7 @@ while [ $# -gt 0 ]; do
     --cold) cold=1; shift ;;
     --renderer) renderer="$2"; shift 2 ;;
     --ab-renderer) ab_renderer="$2"; shift 2 ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd,alex] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--env 'VAR=value ...'] [--base-env 'VAR=value ...'] [--size WxH] [--cold] [--renderer forward_plus|gl_compatibility] [--ab-renderer forward_plus|gl_compatibility]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd,alex,togui,flame] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--env 'VAR=value ...'] [--base-env 'VAR=value ...'] [--size WxH] [--cold] [--renderer forward_plus|gl_compatibility] [--ab-renderer forward_plus|gl_compatibility]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
@@ -202,6 +202,8 @@ view() {
     mobs)   echo '97\168.m|1002,1020|0||3000|OPENSRO_QA_MOBS=500' ;;   # the spawn with 500 monsters (round 655)
     crowd)  echo '97\168.m|1002,1020|0||3000|OPENSRO_QA_MOBS=2500 OPENSRO_QA_MOBS_SPREAD=1920' ;;   # 2,500 monsters within 1,920 (round 664)
     alex)   echo '91\49.m|105,330|180|' ;;   # Alexandria's library square, facing the fountain alex_library_01 76 units off: its five ambient sprays and its MULTITEX spouts in view (round 786)
+    togui)  echo '126\228.m|1063,1125|0|' ;;   # round 869: the Forgotten World's Togui start (region 0x7EE4, an instance region)
+    flame)  echo '97\168.m|1002,1020|0||3000|OPENSRO_QA_ZONE=dungeon/32786@10897,-6110' ;;   # round 869: the Forgotten World's Flame start (dungeon 0x8012), reached by the QA zone change after Jangan
     *) echo "unknown site $1" >&2; exit 2 ;;
   esac
 }

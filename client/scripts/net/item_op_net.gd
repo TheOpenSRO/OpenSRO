@@ -24,6 +24,13 @@ const TYPE_BAG_TO_BAG := 0
 const TYPE_DEPOSIT := 2
 const TYPE_SELL := 9
 const TYPE_BUYBACK := 0x22
+## Round 869: an item the server took from the bag (the Dimension hole spent
+## by its use: 0xB034 {01, 0x0F, slot + 13, 02}, MEASURED). READ: the parser
+## NetProcessInInner::FUN_0087eb50's case 0x0f (with 0x16) reads u8 +3 (the
+## slot) and, for a plain reply, u8 +8 (2 here); the apply FUN_0087ba20's
+## case 0x0f takes the item out of that slot. Not an answer to a request of
+## this client's: no pending item operation is taken by it.
+const TYPE_ITEM_TAKEN := 0x0F
 const BAG_OFFSET := 13
 ## The sell result's book byte when the sale was not booked.
 const NOT_BOOKED := 0xFF
@@ -88,6 +95,11 @@ static func decode_result(data: PackedByteArray) -> Dictionary:
 			r["count"] = data.decode_u16(3)
 			r["npc"] = data.decode_u32(5)
 			r["book"] = data[9]
+		TYPE_ITEM_TAKEN:
+			if data.size() < 4:
+				return {}
+			r["src"] = data[2] - BAG_OFFSET
+			r["reason"] = data[3]
 		TYPE_DEPOSIT:
 			if data.size() < 4:
 				return {}
