@@ -276,9 +276,8 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 	group.add_child(holder)
 	if skinned != null:
 		w._light_character(holder)
-		var idle = skinned.get_meta(META_IDLE, null)
-		if idle != null:
-			w._animate_skeleton(skinned, idle)
+		if skinned.has_meta(META_IDLE) and skinned.get_meta(META_IDLE) != null:
+			w._animate_skeleton(skinned, skinned.get_meta(META_IDLE))
 	holders[rec.uid] = holder
 	_attach_effects(holder)
 	print("StructureWorld: %s uid=%d built '%s' (%s, %s) in %d/%d at %.1f,%.1f,%.1f" % [

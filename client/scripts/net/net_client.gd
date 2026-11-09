@@ -3072,7 +3072,9 @@ func _dispatch(p: Packet) -> void:
 			# while an avatar move is the oldest one out) is AvatarNet's.
 			# A buy back's success comes here too (type 0x22) but was sent as
 			# 0x7168: it takes no entry.
-			var buyback := p.data.size() >= 2 and p.data[0] == 1 and p.data[1] == ItemOpNet.TYPE_BUYBACK
+			# Round 869: 0x0F (an item the server took, the hole's use) answers
+			# no request either.
+			var buyback := p.data.size() >= 2 and p.data[0] == 1 and p.data[1] in [ItemOpNet.TYPE_BUYBACK, ItemOpNet.TYPE_ITEM_TAKEN]
 			var kind: String = _item_op_kinds.pop_front() if not buyback and not _item_op_kinds.is_empty() else ""
 			if AvatarNet.is_move_ack(p.data) or (kind == "avatar" and p.data.size() >= 1 and p.data[0] == 2):
 				_on_avatar_move_ack(p.data)

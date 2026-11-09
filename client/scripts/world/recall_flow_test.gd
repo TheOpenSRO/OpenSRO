@@ -146,7 +146,7 @@ func _test_window() -> void:
 	_check(rep[2][1] == _text("UIIT_STT_FORT_SMITH_COMPLETE"), "row 2: %s" % [rep[2]])
 	_check(rep[3] == ["", "", "", ""], "row 3 empty")
 	var st1 := w.row_text(1, SummonPartyWindow.ID_STATE)
-	_check(st1.tooltip_text == _text("UIIT_STT_PARTY_SUMMON_IMPOSSILBE"), "state 3's tooltip")
+	_check(HelpTips.tip_text(st1) == _text("UIIT_STT_PARTY_SUMMON_IMPOSSILBE"), "state 3's tooltip, in the help bubble (HelpTips)")
 	var lbl := st1.get_node_or_null("Text") as Label
 	_check(lbl != null and lbl.get_theme_color("font_color") == TwoDtBuilder.argb(0xffd40000), "state 3 in 0xffd40000")
 	var lbl0 := w.row_text(0, SummonPartyWindow.ID_STATE).get_node_or_null("Text") as Label

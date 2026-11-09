@@ -3516,6 +3516,11 @@ func _on_item_op_result(r: Dictionary) -> void:
 				NetClient.character_stats(who)
 				NetClient.list_inventory(who)
 			_fill_buyback_row()
+		ItemOpNet.TYPE_ITEM_TAKEN:
+			# Round 869 (READ c:0x87ba20 case 0x0f): the slot's item is gone.
+			print("HudPanels: bag slot %d's item taken (0xB034 type 0x0F, byte %d)" % [int(r.src), int(r.reason)])
+			if who != "":
+				NetClient.list_inventory(who)
 		ItemOpNet.TYPE_DEPOSIT:
 			print("HudPanels: deposit accepted (bag slot %d -> warehouse slot %d)" % [int(r.src), int(r.dst)])
 			_refresh_storage_and_bag()

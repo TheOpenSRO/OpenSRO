@@ -184,7 +184,7 @@ func _fill_row(i: int, e) -> void:
 	var level_c := row_text(i, ID_LEVEL)
 	var min_c := row_text(i, ID_MINUTES)
 	if state_c != null:
-		state_c.tooltip_text = ""
+		HelpTips.set_tip(state_c, "")
 	if e == null:
 		for c in [name_c, state_c, level_c, min_c]:
 			if c != null:
@@ -201,8 +201,8 @@ func _fill_row(i: int, e) -> void:
 		if lbl != null:
 			lbl.add_theme_color_override("font_color", TwoDtBuilder.argb(int(spec[1])))
 		if entry.state == InstanceTalkNet.STATE_IMPOSSIBLE:
-			state_c.tooltip_text = _builder.resolve_text(IMPOSSIBLE_TIP)
-			state_c.mouse_filter = Control.MOUSE_FILTER_PASS
+			# The original's help bubble (HelpTips), not Godot's popup.
+			HelpTips.set_tip(state_c, _builder.resolve_text(IMPOSSIBLE_TIP))
 	if level_c != null:
 		_twodt.set_text(level_c, "%d" % entry.level)
 	if min_c != null:

@@ -178,7 +178,13 @@ func _teleport() -> void:
 	_check(GameWorldNet.refusal_key(0x1c32) == "UIIT_MGS_ERR_GOD_LIMIT_TIME" and GameWorldNet.refusal_key(0x1c25) == "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_NUMBER_FOR_TELEPORT" \
 		and GameWorldNet.refusal_key(0x1c2c) == "UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_01", "the table at 0x7bbaac")
 
+func _item_taken() -> void:
+	# MEASURED: the hole's use answers 0xB034 {01, 0x0F, slot + 13, 02}.
+	var r := ItemOpNet.decode_result(PackedByteArray([1, 0x0F, 13 + 5, 2]))
+	_check(r.get("type") == ItemOpNet.TYPE_ITEM_TAKEN and r.get("src") == 5 and r.get("reason") == 2, "0xB034 type 0x0F: bag slot 5 taken")
+
 func _notices() -> void:
+	_item_taken()
 	var t := func(k: String) -> String: return _text(k)
 	var c := GameWorldNet.encode_notice_closes(10)
 	_check(c.hex_encode() == "1a0c0a", "0x300C {0x0C1A, 10}")
