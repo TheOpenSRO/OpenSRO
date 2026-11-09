@@ -223,3 +223,12 @@ row, Thiara's included). Needed: the NPC rows (`-npcpos-csv` and `-npcs-csv`, as
 item import with code names (round 497 or later), and the switch. The boot log names the result:
 `Test Items NPC resolved ... goods=189 tabs="1/1:Elixir=26 ..."` and `Test Items NPC spawned ...
 uid=... ref=26823`. deploy/README.md, "The Test Items NPC (round 783)".
+
+**Round 870: the Dimension Holes line (OURS).** The user (2026-11-09): "add them to the test item npc
+please" (the Forgotten World's Dimension Holes). Line 18, **Purchase Dimension Holes (Forgotten World)**,
+three tabs by theme: Togui (`ITEM_ETC_TELEPORT_HOLE_TOGUI_*`, 6 holes: 35-50, 51-60, 61-70 x grades 1-2),
+Flame (`_FLAME_*`, 8: 71-80, 81-90 x grades 1-4) and Wreck (`_WRECK_*`, 8: 91-100, 100-110 x grades 1-4),
+each rule the prefix and TypeID 3/3/12/7 (`docs/protocol/forgotten_world.md` 3). The band-less
+`ITEM_ETC_TELEPORT_HOLE`, `_ARABIAN_GARDEN` and `_DUNGEON` rows are not Forgotten World holes and stay out.
+Free, as every good here; the hole keeps its own rules when used (a town, its level band, the shared
+5-hour cool time).

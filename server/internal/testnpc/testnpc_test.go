@@ -34,8 +34,8 @@ func TestBuiltinDefinition(t *testing.T) {
 	if d.Region != 25000 {
 		t.Fatalf("region %d, want Jangan's 97/168 (25000)", d.Region)
 	}
-	if len(d.Lines) != 17 {
-		t.Fatalf("%d lines, want 17 (8, round 789's three avatar lines, round 790's two set lines, round 795's three pet and ride lines, round 800's job suits)", len(d.Lines))
+	if len(d.Lines) != 18 {
+		t.Fatalf("%d lines, want 18 (8, round 789's three avatar lines, round 790's two set lines, round 795's three pet and ride lines, round 800's job suits, round 870's Dimension Holes)", len(d.Lines))
 	}
 	for i, l := range d.Lines {
 		if len(l.Tabs) > MaxTabs {
