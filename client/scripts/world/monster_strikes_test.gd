@@ -476,8 +476,14 @@ func _test_hud_revive_prompt() -> void:
 		"level 10: the present-point button, UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON (got %s)" % _caption(here))
 	if point != null:
 		point.pressed.emit()
+	# Round 873, MEASURED: the box closes at the click.
+	_check(panels.get_node_or_null("RevivePrompt") == null, "a click on the return point closes the box")
+	panels.call("show_revive_prompt", "You were killed.", 10)
+	prompt = panels.get_node_or_null("RevivePrompt")
+	here = prompt.find_child("ReviveHere", true, false) as BaseButton if prompt != null else null
 	if here != null:
 		here.pressed.emit()
+	_check(panels.get_node_or_null("RevivePrompt") == null, "a click on the present point closes the box")
 	_check(options == [1, 2], "the buttons send option 1 and option 2 (got %s)" % str(options))
 	options.clear()
 	panels.call("show_revive_prompt", "You were killed.", 11)

@@ -2329,7 +2329,11 @@ func show_revive_prompt(line: String, level: int = 0) -> void:
 	if not box.build_revive(_builder, level):
 		box.free()
 		return
-	box.chosen.connect(func(option: int) -> void: revive_requested.emit(option))
+	# Round 873, MEASURED: the box closes at the click and the one request
+	# goes out (0x3053 {01}, sent once); it is never shown again.
+	box.chosen.connect(func(option: int) -> void:
+		hide_revive_prompt()
+		revive_requested.emit(option))
 	add_child(box)
 	# Outside the scene tree (the headless suite drives this on a bare HUD)
 	# there is no viewport to read.
@@ -5957,6 +5961,11 @@ signal use_on_requested(src: int, target: int)
 ## The item's bag slot while the mode is up, else -1.
 var _use_on_slot := -1
 
+## Whether TypeIDs are a resurrection scroll's, 3/3/13/6 (round 873): the
+## item a dead player uses.
+static func is_resurrection_scroll(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 6
+
 ## Whether TypeIDs enter the use-on mode (above).
 static func is_use_on_item(types: PackedInt32Array) -> bool:
 	return UseItemNet.is_use_on_item(types)
@@ -7318,7 +7327,10 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	# 0x685ee0) uses (READ) -- the same as the quick slots.
 	if mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed \
 			and (not icon.is_inside_tree() or icon.get_global_rect().has_point(mb.global_position)):
-		if player_dead:
+		# Round 873: a resurrection scroll is the one item used while dead
+		# (MEASURED: its right click revives in place; the server's life-state
+		# test exempts its class).
+		if player_dead and not is_resurrection_scroll(item_types(item_id)):
 			system_notice.emit(DEAD_INPUT_LINE)
 			return
 		if is_global_chat_item(item_types(item_id)):
