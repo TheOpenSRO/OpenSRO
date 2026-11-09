@@ -151,7 +151,7 @@ c:0x56dfa0), single (0x3015) and in group spawns (0x3019):
 |---|---|---|
 | u32 RefObjID | 19556 | `INS_QUEST_TELEPORT` |
 | u32 unique id | | |
-| u16 region, f32 x, y, z | the creator's town region | INFERRED at the creator's position |
+| u16 region, f32 x, y, z | the creator's town region | READ (round 871): 50 units before the creator (below) |
 | u16 angle | varies | READ s:0x5f8aa0: a random yaw, rand()/32767 x 360 deg |
 | u8 (+0x260) | 1 | OPEN |
 | u8 (+0x261) | 0 | a state byte |
@@ -179,10 +179,25 @@ drawn and picked only by the character named in it (round 869, lane C1). On a ma
 Param4) and `UIIT_STT_GOD_CLASS` ("Grade : %s" with `UIIT_STT_GOD_CLASS_1..4` by the hole's +0x2b4,
 Param1). Its pick box is min (-r, -h, -r) max (r, h, r) with r = the row's +0x118 and h = +0x114.
 
+**Where it stands** (READ, round 871): `CWicket::vslot_010` (s:0x601eb0, the hole's world job) takes
+the creator's position plus its direction vector (+0x24..+0x2c) times the double at s:0xb46288,
+**50.0**, puts that point through the world's line test from the creator (`DAT_00cc387c` slot 0x30,
+the call every straight-line check makes, e.g. s:0x49dc80), keeps the creator's own position on any
+answer but 0, and makes the gate there (s:0x5f8aa0). INFERRED: the vector is the facing. MEASURED: the
+crystal stands beside its maker. OpenSRO: the heading times 50 through the navigation mesh's straight
+walk; a wall, or no mesh, keeps the creator's spot.
+
 **Its model** (MEASURED, our archive): `teleportbuilding.txt` row 19556 `INS_QUEST_TELEPORT` (TypeID
 4/1/2) names `Bldg\North Africa\Alexandria\alex_raid_portal.bsr` (column 52), bounding height 16 and
 radius 10 (columns 49 / 50); the server's database row names `quest\ins_quest_teleport.bsr`. The client
-draws its own archive's model. Its name `SN_INS_QUEST_TELEPORT` is "Gap of Dimensions"
+draws its own archive's model. MEASURED (round 871): the original's gate is a big blue crystal with a
+glow and sparkles, and so is the layer's exit NPC (section 5); `quest\ins_quest_teleport.bsr` in our
+archive is that crystal -- a static mesh (no skeleton) with the ambient effects
+`dun\bigsujung_light_blue.efp` and `dun\bigsujung_potal_glow.efp`, 28 units tall as drawn -- while our
+archive's rows (teleportbuilding 19556 and characterdata 36032 `NPC_INS_EXIT_TELEPORT`, and the
+`_RefObjCommon` rows of the server data exported with it) name `alex_raid_portal.bsr`, the Egypt temple portal's model (rows 27759 /
+27760). **OURS** (round 871): OpenSRO draws the crystal for both when the archive has the file
+(`StructureWorld.CRYSTAL_MODELS`), the row's model otherwise. Its name `SN_INS_QUEST_TELEPORT` is "Gap of Dimensions"
 (textdata_object) and its greeting is npcchat's `SN_INS_QUEST_TELEPORT_BS` (textquest_speechname).
 
 **Which class** (READ, round 869): `IGIDObject::FUN_009c1fa0` (c:0x9c1fa0) creates a not-bionic
@@ -698,6 +713,25 @@ is the round's WORLD_ISSUES entry):**
   each 9.9 s past them in the original (3,609.9 s, 6,609.9 s, 6,909.9 s, 7,209.9 s after the hole),
   and the empty closes 601.0 s and 604.9 s: INFERRED the shard manager's tick phase, not a rule;
   not copied.
+
+**Round 871 notes (two bugs the user hit on prod, v0.1.642):**
+- **A Wreck entry landed in a void.** Prod runs `-full-map`, so `-single-frame`: the layer's start was
+  named in the open world's one frame (97/168, the zone change's FrameRegion; prod's log: `zone=world
+  x=143304 z=-33425`), and the deck (local -779.12) reached the client at scene height -776.63 (Jangan's
+  anchor -2.49), under the client's void line `WORLD_FLOOR_Y` (-500). The deck is an object, so the
+  ground ray found the sea floor's terrain ~1,020 below -- not grounded -- and the void recovery put the
+  player back on its last ground, the spot it had left in Jangan, on every step: the ship's regions left
+  the window and were unloaded. Round 870's lane server ran without `-full-map` (each zone its own
+  frame: the Wreck's anchor -1800, the deck at scene 1020.88), so its runs did not see it. Fixed on the
+  server (a layer keeps its own zone, frame and bucket under `-single-frame`; a warp inside reads its
+  region in its own bucket) and in the client (the void recovery fires only where no terrain lies
+  below at all; its last ground is the arrival after a zone change). The server fix alone lets a
+  v0.1.642 client in (MEASURED, the release export).
+- **`/unstuck` inside a layer** (OURS, as `/unstuck` is) goes to the layer's start, placed as the entry
+  places it (on the walkable surface: the deck), not to the zone's landing -- the middle of its centre
+  region, open sea over the sea floor.
+- **The gate** stands 50 units before its maker (READ, section 4) and draws the crystal (OURS over this
+  archive's row, section 4); so does the exit NPC.
 
 ## 12. Stage 2: size (estimate)
 

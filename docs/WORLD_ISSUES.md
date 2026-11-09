@@ -7483,6 +7483,148 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-first round: the Forgotten World on prod -- a Wreck entry put back in Jangan by the void line (the layer named in the one frame), /unstuck to the sea floor, the gate drawn as the original's crystal fifty units ahead
+
+The user on prod (v0.1.642): "it's supposed to drop a crystal teleporter. Next I teleported to the
+middle of nowhere and not the shipwreck", then "I just ran /unstuck and it took me to the bottom of the
+ocean in wreck". Their frame: an empty olive plane, the minimap on Jangan's tiles, the entry notice in
+the chat. Lane GX, base `30feb334`. Labels: READ (`s:` the game server), MEASURED, INFERRED, OURS, OPEN.
+
+### The void (MEASURED, then fixed)
+
+Reproduced with real input -- the Test Items NPC's line 18, the Wreck tab, the buy box's Buy, the
+hole's right click and Yes, a click on the gate and its line 1 -- on a lane server with prod's
+`-full-map` (round 870's lane server had none), with the source tree and with the v0.1.642 Linux
+release export:
+
+1. Prod runs `-full-map`, which turns on `-single-frame`. The entry named the layer's start in the open
+   world's one frame: FrameRegion 97/168, (143304, -776.63, -33425) -- the numbers in prod's log.
+   `placeRegion` took the instance's frame from `arrival(zone)`, which under `-single-frame` is Jangan's.
+2. The client built 114/243 in that frame (cell 17/75) and stood the player on the deck at scene
+   -776.63 (local -779.12 less Jangan's anchor -2.49) -- under `WORLD_FLOOR_Y` (-500). The deck is an
+   object, so the ground ray (`TERRAIN_ONLY`) found the sea floor ~1,020 below: not grounded. Below the
+   line and not grounded, the void recovery put the player back on `_last_grounded_position` -- the spot
+   it had left in Jangan ((215, -31.9, -265) in the user's log; in the lane runs the entry spot (0,
+   22.49, -1380), the plaza deck being an object too) -- on every physics step. The ship's regions left
+   the window ("114/243 unloaded ... forgotten"), Jangan reloaded around the player, and the server's
+   `MOVE correction` lines could not win. The `/unstuck` contrast in the user's log: it landed on the sea
+   floor's terrain, grounded, so the recovery never fired there.
+3. Not a move order: the zone change ends it (`_end_move_order_for_arrival`) and the runs show
+   `walking=false`; the reset point was the last ground, not the gate.
+
+| run | client | server | Wreck inside (35901) |
+|---|---|---|---|
+| w4 | source tree at `30feb334` | `30feb334`, `-full-map` | void: back at (0, 22.49, -1380), 114/243 unloaded, MOVE corrections |
+| w7 | v0.1.642 release export | `30feb334`, `-full-map` | the same void (prod's sequence line for line) |
+| w8 | v0.1.642 release export | this round | on the deck, frame 114/243, scene 1020.88 = local -779.12, stays |
+| w5, w6 | this round | this round | on the deck; the entry notice; four `where`s on it |
+
+So the user's client needs no update for the entry: the server alone fixes it (w8). The client's own
+fix is the defence for any frame.
+
+**Fixed (server):** a layer's points keep their zone's own frame and bucket under `-single-frame`
+(`placeRegion`'s instance branch); a warp inside a layer reads its region in the warp's own bucket
+(`warpTarget`). The second was found by this round's QA: with the first alone, a `/unstuck` (or a GM
+`/tp`) inside the Wreck read its region by Jangan's frame and moved the character out of its layer, and
+the exit NPC then answered code 3 (w9; w10 after: the select answers after the `/unstuck`).
+
+**Fixed (client):** the void recovery fires only where no terrain lies under the player at all
+(`void_has_terrain_below`, the stand-in floors excluded -- `VoidCatchFloor` answers every gap); its
+last ground is the arrival after a zone change and the point a landing stands on the walkable graph.
+`void_line_step` is split out of `_physics_process` for its suite.
+
+### /unstuck inside a layer (OURS)
+
+`unstuckTarget` used the zone's landing: the middle of the centre region, local (960, 960) of 114/243,
+open sea over the sea floor. Inside a layer it is now the layer's start, placed as the entry places it
+(`instanceArrival`: a start, the layer's frame, `navArrivalHeight` onto the walkable surface). Retail
+has no `/unstuck` (OURS). Every placement inside a layer that names a point now goes through the
+walkable surface: the entry, the party recall (the entry's path), `/unstuck`; a GM `/tp` keeps the
+client's landing (the highest walkable surface there, the deck where there is one). Death inside keeps
+W3's town resurrection point (OURS). MEASURED after (w10): `/unstuck` -> (-696, 1020.88, -785) on the
+deck, the exit NPC selects, its line 1 takes the player back to the gate's spot.
+
+### The gate's look and place
+
+- **The original** (MEASURED, frames): a big blue crystal with a glow and sparkles, standing beside its
+  maker. `quest\ins_quest_teleport.bsr` (the server database row's model, section 4 of
+  `forgotten_world.md`) is in our archive: a static crystal with `dun\bigsujung_light_blue.efp` and
+  `dun\bigsujung_potal_glow.efp`. Our archive's rows name `alex_raid_portal.bsr` for the gate (19556)
+  and for the layer's exit NPC (36032), the Egypt temple portal.
+- **OURS:** both draw the crystal when the archive has the file (`StructureWorld.CRYSTAL_MODELS`,
+  `crystal_model`), the row's model otherwise. MEASURED after: "built 'Gap of Dimensions'
+  (quest\ins_quest_teleport.bsr, static)", 4 ambient effects, box 11 x 28 x 10; the exit NPC "static
+  model quest\ins_quest_teleport.bsr, 4 ambient effect(s)".
+- **READ, the place:** `CWicket::vslot_010` (s:0x601eb0) makes the gate (s:0x5f8aa0) at the maker's
+  position plus its direction vector (+0x24..+0x2c) x the double at s:0xb46288 (**50.0**), after the
+  world's line test from the maker (`DAT_00cc387c` slot 0x30); any non-zero answer keeps the maker's
+  spot. INFERRED: the vector is the facing. OpenSRO (`gatePlace`): the heading x 50 through the
+  navigation mesh's straight walk; a wall, or no mesh, keeps the maker's spot. MEASURED after: a maker at
+  local (1120, 919) facing east made its gate at (1170.0, 918.2) (b1..b3); in w6 the maker, put there by
+  a GM `/tp` beside the fountain's basin, kept its own spot (what the walk met there was not logged).
+- The gate goes with its layer: after the layer's close (`/fgwtime 2h1m`, "instance closing ... reason=end")
+  the client logged "uid=2101346305 despawned" and its holder is gone (w10).
+- The recall pillar's static model now goes to the static path first: no "is not a character .bsr"
+  error on its first spawn.
+
+### Every band, the hole's path end to end (fixed client and server, real clicks)
+
+| band | hole | level | gate | arrival |
+|---|---|---|---|---|
+| Togui 35-50 | 35883 | 40 | crystal, 50 ahead | 126/228 local (1063, 1125), height 692.5 (scene -141.05 in its own frame) |
+| Flame 71-80 | 35889 | 75 | crystal, 50 ahead | dungeon 0x8012, (10897, 162.07, -6110), 45 rooms |
+| Wreck inside 101-110 | 35901 | 110 | crystal | 114/243 (264, 1745), deck -779.12 |
+| Wreck outside 101-110 grade 3 | 35903 | 110 | crystal, 50 ahead | 111/228 (1257, 1771), deck -257.59 (scene 1542.41) |
+
+### Tests
+
+- `server/internal/session/gameworld871_test.go`: `TestInstanceKeepsItsOwnFrameUnderSingleFrame` (the
+  entry's zone, FrameRegion and point with the flag off and on; fails on `30feb334`),
+  `TestUnstuckInsideALayerIsItsStart` (the start, and the warp stays in the layer under the flag; fails
+  without the `warpTarget` change), `TestGateStandsFiftyAhead` (+z, -z, a wall 30 ahead, no mesh).
+- `client/scripts/world/void_line_test.gd`: a player at -776.63 over no terrain is put back; over the
+  sea floor's slab it stays, five steps on (NEGATIVE before).
+- `client/scripts/world/gate_model_test.gd`: the gate's and the exit NPC's model, the pillar's kept,
+  the crystal's file static with its two effects.
+
+### Gates
+
+The world's drawing changed (the NPC model path, the gate's model, the void step), so the gate ran
+(`--base 30feb334 --sites jangan --frames 40000`, Forward+ on the RX 7600; the default 3,000 frames gave
+no frame samples):
+
+```
+perf gate: base 30feb334 (forward_plus) vs head working tree (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.92  head 0.92  (+0.0)  SAME
+jangan  entry ms   base 8912  head 8875  (-37.0)  SAME
+jangan  freeze ms  base 2882  head 2879  (-3.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+`cd server && go build ./... && go vet ./... && go test ./...`: pass. `remote_godot.sh check`: ALL LOAD (1,174 scripts, 9 scenes).
+`remote_godot.sh tests`: "ran 449 suite(s), 0 failing".
+
+### OPEN
+
+- What the original's line test (`DAT_00cc387c` slot 0x30) answers non-zero for exactly (bits 0 and
+  0x10000000 are tested elsewhere, s:0x49dc80); OpenSRO keeps the maker's spot on a wall only.
+- The crystal's scale against the original's frames is by eye (28 units tall as drawn).
+- The original's place for `/unstuck` does not exist (no such command); death inside is still OURS.
+
+### Changelog lines (draft)
+
+- Entering the Wrecked Ship through a Dimension Hole gate no longer drops you in an empty void back in Jangan.
+- /unstuck inside the Forgotten World now takes you to the dungeon's start on the ship's deck, not the sea floor.
+- The Forgotten World gate is the blue crystal with its glow, and it appears beside you, not on top of you.
+- The Forgotten World's Dungeon Exit is the same blue crystal.
+
+Frames (box `/var/tmp/r871g/frames`): `gate_before_portal_on_player.png`,
+`gate_after_crystal_50_ahead.png`, `wreck_in_before_void_source.png`,
+`wreck_in_before_void_release642.png`, `wreck_in_after_release642_fixed_server.png`,
+`wreck_in_after_fixed_both.png`, `wreck_in_unstuck_after.png`, `exit_after_unstuck.png`,
+`gate_gone_after_close.png`, `togui_after.png`, `flame_after.png`, `wreck_out_after.png`. Runs:
+`w4`..`w10`, `b1`..`b3` (`*.log`, `*server*.log`).
+
 ## Eight-hundred-and-seventieth round: the Forgotten World's halves together -- whole runs with two real clients against the server, the door's record and its place, region-local heights on the movement wire, the recall pillar drawn, the re-entry icon at a login, a gate kept across a zone change
 
 Stage 3 of the Forgotten World (lane FQ). The user, for big systems: "Make sure you're comparing

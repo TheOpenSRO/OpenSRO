@@ -7761,6 +7761,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# Round 870: its heights are the wire's (region-local), in the new frame.
 	_scene_heights_of_result(result.zone, result.frame, result)
 	player.position = Vector3(result.x, result.y, result.z)
+	# Round 871: the void recovery's "last ground" is the arrival from here
+	# on, never the spot this player left in the old zone (prod: a warp into
+	# the Wrecked Ship was put back at the gate in Jangan by it).
+	_last_grounded_position = player.position
 	_last_sent_pos = player.position
 	_walked_since_send = 0.0
 	# Round 749: the server has the character here, with no leg; the old
@@ -11334,6 +11338,9 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	var archive := _open_pk2_if_set()
 	if archive == null:
 		return {}
+	# Round 871: the Forgotten World's exit NPC is the original's crystal
+	# (StructureWorld.CRYSTAL_MODELS; OURS over this archive's row).
+	model = StructureWorld.crystal_model(code, model, archive)
 	# Assemble a model once into a detached template, then duplicate it for
 	# each NPC that uses it -- the repeat spawns skip the expensive .bsr
 	# assembly and just copy a node (sharing its mesh/texture resources).
@@ -11341,6 +11348,15 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 		return _place_static_npc(rec, group, model, code)
 	var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
 	if template == null:
+		# Round 871: a resource with no skeleton is not tried as a body first
+		# (the assembler's "is not a character .bsr" error on every first
+		# recall pillar); it goes straight to the static path below.
+		var head := BsrReader.parse(SkinnedBsrAssembler._read(archive, model))
+		if head != null and not head.is_character and head.skeleton_path == "":
+			var placed_static := _place_static_npc(rec, group, model, code)
+			if placed_static.is_empty():
+				print("World3D: NPC ref=%d uid=%d not placed: %s did not assemble" % [rec.ref_id, rec.uid, model])
+			return placed_static
 		# Round 838: a skinned object resource is an NPC body too (the Magic
 		# POP machine's type-3 .bsr; SkinnedBsrAssembler's skinned_object).
 		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true, false, 0, true)
@@ -23626,32 +23642,7 @@ func _physics_step(delta: float) -> void:
 		FrameSplit.add("pp_move", pq - pp)
 		pp = pq
 
-	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
-	# false indefinitely for a character resting motionless since spawn, a
-	# separate quirk not chased this round) -- a direct raycast is used
-	# instead to tell "resting on real ground" from "still falling" for
-	# _last_grounded_position's purposes.
-	# Off the heightfield's grid lines (TerrainCollision.vertical_ray, round
-	# 572).
-	var ground_hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state,
-		player.position.x, player.position.z, player.position.y + 10.0, player.position.y - 3000.0,
-		TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
-	if not ground_hit.is_empty() and player.position.y - ground_hit.position.y < 20.0:
-		_last_grounded_position = player.position
-	elif player.position.y < WORLD_FLOOR_Y and _dungeon == null:
-		# (Not in a dungeon, round 773: no terrain there at all, and a
-		# floor of Qin-Shi's B1 lies at -1,032.)
-		# Fell into a real gap in the streamed region grid (see
-		# WORLD_FLOOR_Y's doc comment) -- no terrain exists here at all, so
-		# rather than let the player fall through an unbounded void, return
-		# them to the last real ground they stood on.
-		player.position = _last_grounded_position
-		player.velocity = Vector3.ZERO
-		_has_move_target = false
-		_pending_attack = {}
-		# Put back, not walked back (round 637's review follow-up): others
-		# place the body there without turning it.
-		_relocated_pending = true
+	void_line_step()
 
 	_recover_if_below_terrain()
 	if FrameSplit.on:
@@ -26878,6 +26869,9 @@ func _land_teleport_arrival(x: float, z: float) -> bool:
 	# ignores it (landing_height_at).
 	player.global_position = group.to_global(Vector3(local.x, graph.landing_height_at(local.x, local.z, local.y), local.z))
 	player.velocity = Vector3.ZERO
+	# Round 871: stood on the walkable graph -- the void recovery's last
+	# ground (a deck far over its terrain included).
+	_last_grounded_position = player.position
 	# Round 749's verification (c): the server has the point at a height it
 	# only guesses (a teleport's 0, a landing's), so the arrival goes out as
 	# a placement with the ground's -- once, at the point the server named,
@@ -30667,6 +30661,58 @@ const TERRAIN_COLUMN := 8000.0
 ## 1), its ground check keeps _last_grounded_position there (the void-fall
 ## return), and the snap runs after the centre's commit has switched the
 ## placeholder off; VoidCatchFloor is the void catch.
+## The ground check and the void recovery of a physics step (split out of
+## _physics_process in round 871, so a suite can run it). Returns whether the
+## player was put back.
+func void_line_step() -> bool:
+	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
+	# false indefinitely for a character resting motionless since spawn, a
+	# separate quirk not chased this round) -- a direct raycast is used
+	# instead to tell "resting on real ground" from "still falling" for
+	# _last_grounded_position's purposes.
+	# Off the heightfield's grid lines (TerrainCollision.vertical_ray, round
+	# 572).
+	var ground_hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state,
+		player.position.x, player.position.z, player.position.y + 10.0, player.position.y - 3000.0,
+		TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
+	if not ground_hit.is_empty() and player.position.y - ground_hit.position.y < 20.0:
+		_last_grounded_position = player.position
+		return false
+	if player.position.y >= WORLD_FLOOR_Y or _dungeon != null or void_has_terrain_below(player.position):
+		return false
+	# (Not in a dungeon, round 773: no terrain there at all, and a floor of
+	# Qin-Shi's B1 lies at -1,032.)
+	# Fell into a real gap in the streamed region grid (see WORLD_FLOOR_Y's
+	# doc comment) -- no terrain exists here at all, so rather than let the
+	# player fall through an unbounded void, return them to the last real
+	# ground they stood on.
+	# Round 871: only where no terrain lies below at all. A deck far above its
+	# terrain is not a gap: the Wrecked Ship's (local -779.12, the sea floor
+	# ~1,020 below it) drew at scene -776.63 in Jangan's frame under the
+	# server's -single-frame, and this put the player back at the gate in
+	# Jangan on every step -- the ship unloaded, a void (prod, v0.1.642).
+	print("World3D: void below %.1f with no terrain under (%.1f, %.1f) -- put back at %s" % [
+		WORLD_FLOOR_Y, player.position.x, player.position.z, _last_grounded_position])
+	player.position = _last_grounded_position
+	player.velocity = Vector3.ZERO
+	_has_move_target = false
+	_pending_attack = {}
+	# Put back, not walked back (round 637's review follow-up): others place
+	# the body there without turning it.
+	_relocated_pending = true
+	return true
+
+## Round 871: whether real terrain lies anywhere under `at` (a TERRAIN_COLUMN
+## deep ray, the stand-in floors excluded: VoidCatchFloor would answer every
+## gap) -- the void recovery's test, so a body standing on an object's
+## walkable surface high over its terrain (a deck, a bridge) is not taken for
+## one falling through a gap in the grid.
+func void_has_terrain_below(at: Vector3) -> bool:
+	var exclude: Array = [player.get_rid()] if player != null else []
+	exclude.append_array(_stand_in_floor_rids())
+	return not TerrainCollision.vertical_ray(get_world_3d().direct_space_state, at.x, at.z, at.y + 10.0,
+		at.y - TERRAIN_COLUMN, TERRAIN_ONLY_COLLISION_MASK, exclude).is_empty()
+
 func _stand_in_floor_rids() -> Array:
 	if _stand_in_rids.is_empty():
 		for path in ["Ground", "VoidCatchFloor"]:

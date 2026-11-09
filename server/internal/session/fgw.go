@@ -269,12 +269,37 @@ func gateYaw() uint16 {
 	return uint16(float64(r) / 32767.0 * 65535.0)
 }
 
-// makeGate stands a gate for layer w at e, files its portal and spawns it to
-// the players in view.
+// gateAhead is how far before its maker a gate stands: READ the double at
+// s:0xb46288, 50.0.
+const gateAhead = 50.0
+
+// gatePlace is where the gate of a maker standing as e stands (round 871).
+// READ CWicket::vslot_010 (s:0x601eb0, the hole's world job; the gate is made
+// by s:0x5f8aa0 at the point it passes): the maker's position plus its
+// direction vector (+0x24..+0x2c) x 50.0 (s:0xb46288), put through the
+// world's line test from the maker (DAT_00cc387c slot 0x30, the call every
+// straight-line check makes, e.g. s:0x49dc80); any answer but 0 keeps the
+// maker's own position. INFERRED: the vector is the facing (a unit vector).
+// MEASURED: the crystal stands beside its maker, not on it. OpenSRO: the
+// heading's (sin h, cos h) x 50, the navigation mesh's straight walk; a wall
+// on the way, or no mesh to test, keeps the maker's spot (OURS for the
+// no-mesh case).
+func gatePlace(e world.Entity) world.Position {
+	tx, tz := e.Pos.X+math.Sin(e.Heading)*gateAhead, e.Pos.Z+math.Cos(e.Heading)*gateAhead
+	r, ok := navWalk(e.Zone, e.Pos.X, e.Pos.Y, e.Pos.Z, tx, tz)
+	if !ok || !r.Checked || r.Blocked || math.IsNaN(r.Y) {
+		return e.Pos
+	}
+	return world.Position{X: tx, Y: r.Y, Z: tz}
+}
+
+// makeGate stands a gate for layer w before e (gatePlace), files its portal
+// and spawns it to the players in view.
 func makeGate(hub *world.Hub, e world.Entity, w *gameworld.World, hole gameworld.Hole, party uint32) *fgwGate {
-	region, lx, lz := regionLocalOf(e.Zone, e.Pos)
+	pos := gatePlace(e)
+	region, lx, lz := regionLocalOf(e.Zone, pos)
 	g := &fgwGate{UID: gateUIDBase + gateUIDSeq.Add(1)&0x003fffff, World: w, Hole: hole, Owner: e.CharacterID, Name: e.Name,
-		Party: party, Access: hole.Access, hub: hub, zone: e.Zone, pos: e.Pos, region: region, lx: lx, lz: lz, angle: gateYaw()}
+		Party: party, Access: hole.Access, hub: hub, zone: e.Zone, pos: pos, region: region, lx: lx, lz: lz, angle: gateYaw()}
 	RegisterPortal(&Portal{UID: g.UID, World: w, Access: g.Access, Owner: g.Owner, Party: int64(g.Party), Destinations: 1})
 	gates.mu.Lock()
 	gates.byUID[g.UID] = g

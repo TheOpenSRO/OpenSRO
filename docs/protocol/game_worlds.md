@@ -395,7 +395,12 @@ MEASURED in the code (base `60b40fca`):
 - **Visibility is per zone label**: `combat.Cell{Zone, x, z}` (320-unit blocks) and `InView` requires
   the same zone, so a different bucket string already isolates who sees whom. Hazard: under
   `-single-frame`, `ZoneBucket` (`session/world.go`) merges every `"x/y"` label into `"world"` -- an
-  instance region label such as `126/228` would join the open world.
+  instance region label such as `126/228` would join the open world. Round 871: a layer's points
+  keep their zone's own frame and bucket under `-single-frame` too (`placeRegion`'s instance branch,
+  `session/scroll.go`), and `warpTarget` reads a warp's region in the warp's own bucket. Named in
+  Jangan's frame (prod runs `-full-map`, so `-single-frame`), the Wrecked Ship's deck reached the
+  client at scene height -776.63, under its void line (-500), which put the player back in Jangan;
+  and a `/unstuck` or GM `/tp` inside, its region read by Jangan's frame, left the layer.
 - **Other worlds are refused**: `inOpenWorld` (`session/teleport.go`, OURS round 642,
   `teleport.MainWorld = 1`) and `placeArrival` (`session/scroll.go`) refuse every world but 1; the nest
   join drops every hive whose `GameWorldID` is not `nest.FieldWorldID = 1` (`internal/nest/join.go`).

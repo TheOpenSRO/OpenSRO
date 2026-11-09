@@ -160,13 +160,17 @@ func instanceRegion(worldID, region int) bool {
 // an instance a place of one of its regions stays inside, any other place is
 // the open world's (OURS rule: every table point OpenSRO warps to -- a
 // return point, a scroll's town, a gate's destination -- is the open
-// world's).
-func warpTarget(from *world.Hub, zone string, pos world.Position) *world.Hub {
+// world's). The region is read in the frame of the warp's own bucket (round
+// 871): a layer keeps its own frame under -single-frame (placeRegion), where
+// the zone label's bucket (ZoneBucket) is the open world's one frame -- read
+// there, a /unstuck or a GM /tp inside the Wrecked Ship named a region by
+// Jangan and moved the character out of its layer.
+func warpTarget(from *world.Hub, bucket string, pos world.Position) *world.Hub {
 	w := instanceOf(from)
 	if w == nil {
 		return from
 	}
-	region, _, _ := regionLocalOf(ZoneBucket(zone), pos)
+	region, _, _ := regionLocalOf(bucket, pos)
 	if region != 0 && w.Ref.HasRegion(region) {
 		return from
 	}
@@ -369,6 +373,35 @@ func returnPlaceOf(ctx context.Context, chars character.Store, characterID int64
 	return returnPoint{zone, bucket, frame, pos}, true
 }
 
+// instanceArrival is where a character is put in layer w: one of its start
+// positions (rng picks it, READ s:0x6029e0), named in the layer's zone and
+// frame (the first start's, InstanceFrame), standing on the walkable surface
+// nearest the start's height. Round 870: READ CGObj::EnterWorld s:0x485360
+// (ResolveCellAndHeight) -- the Wrecked Ship's starts are ~10 above their
+// decks (MEASURED -770 over -779.1, -247 over -257.6), and the deck, a
+// compound object's navigation mesh, is the surface, not the sea floor's
+// terrain under it. The entry and /unstuck inside a layer (round 871) both
+// place through it.
+func instanceArrival(w *gameworld.World, rng *rand.Rand) (start gameworld.StartPos, zone, bucket string, pos world.Position, frame string, err error) {
+	start, ok := gameworld.StartPosOf(w.Ref, rng)
+	if !ok {
+		return start, "", "", world.Position{}, "", fmt.Errorf("world %d has no start position", w.ID.World)
+	}
+	first := w.Ref.Starts[0]
+	zone, _, _, frame, ok = placeRegion(int(first.Region), first.X, first.Y, first.Z, true)
+	if !ok {
+		return start, "", "", world.Position{}, "", fmt.Errorf("start region %#04x cannot be placed", first.Region)
+	}
+	bucket, pos, ok = InstancePlace(w, start.Region, start.X, start.Y, start.Z)
+	if !ok {
+		return start, "", "", world.Position{}, "", fmt.Errorf("start region %#04x cannot be placed", start.Region)
+	}
+	if y, ok := navArrivalHeight(bucket, pos); ok {
+		pos.Y = y
+	}
+	return start, zone, bucket, pos, frame, nil
+}
+
 // EnterInstance warps sess's character into w at a random start position
 // (READ s:0x6029e0), keeping its return point, recording its
 // _CharInstanceWorldData row and starting (or keeping) its group cool time
@@ -387,27 +420,9 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 	if !ok {
 		return fmt.Errorf("not in the world")
 	}
-	start, ok := gameworld.StartPosOf(w.Ref, rand.New(rand.NewSource(time.Now().UnixNano())))
-	if !ok {
-		return fmt.Errorf("world %d has no start position", w.ID.World)
-	}
-	// The zone label and frame are the world's first start's (InstanceFrame),
-	// the point named in that frame.
-	first := w.Ref.Starts[0]
-	zone, _, _, frame, ok := placeRegion(int(first.Region), first.X, first.Y, first.Z, true)
-	if !ok {
-		return fmt.Errorf("start region %#04x cannot be placed", first.Region)
-	}
-	bucket, pos, ok := InstancePlace(w, start.Region, start.X, start.Y, start.Z)
-	if !ok {
-		return fmt.Errorf("start region %#04x cannot be placed", start.Region)
-	}
-	// Round 870: the arrival stands on the surface nearest the start's height
-	// (READ CGObj::EnterWorld s:0x485360, ResolveCellAndHeight): the Wrecked
-	// Ship's starts are ~10 above their decks (MEASURED -770 over -779.1,
-	// -247 over -257.6).
-	if y, ok := navArrivalHeight(bucket, pos); ok {
-		pos.Y = y
+	start, zone, bucket, pos, frame, err := instanceArrival(w, rand.New(rand.NewSource(time.Now().UnixNano())))
+	if err != nil {
+		return err
 	}
 	// The return point: where the character stood, saved now (the move in
 	// saves nothing: savePosition skips an instance).
