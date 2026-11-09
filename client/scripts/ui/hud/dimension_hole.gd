@@ -47,6 +47,13 @@ const REUSE_FALLBACK := "Still have time to reuse the item."
 static func is_hole(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 12 and types[3] == 7
 
+## Round 872 (OURS): the Forgotten World entrance ticket, TypeID 3/3/13/23
+## (MEASURED: its two rows, 36781 and 38295, are the only items of that type;
+## this project's client archive has neither). Its use asks the timer
+## reset's box (HudPanels.open_fgw_reset_box), then the plain use.
+static func is_ticket(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 23
+
 ## The type word of TypeIDs (cash 0, bionic 0): TypeID1 << 2 | TypeID2 << 5 |
 ## TypeID3 << 7 | TypeID4 << 11 -- 0x3E6C for a hole.
 static func type_word(types: PackedInt32Array) -> int:

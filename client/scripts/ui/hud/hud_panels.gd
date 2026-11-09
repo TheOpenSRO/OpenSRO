@@ -10412,11 +10412,9 @@ func use_magic_hole(slot: int) -> String:
 ## The reset's confirm box up (QA), or null.
 var fgw_reset_box: MsgBoxInif = null
 
-## The Forgotten World entrance ticket: TypeID 3/3/13/23 (MEASURED: its two
-## rows, 36781 and 38295, are the only items of that type; this project's
-## client archive has neither).
+## The Forgotten World entrance ticket (DimensionHole.is_ticket).
 static func is_fgw_ticket(types: PackedInt32Array) -> bool:
-	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 13 and types[3] == 23
+	return DimensionHole.is_ticket(types)
 
 ## The ticket box's Yes: the plain item use (the server does the reset).
 func use_fgw_ticket(slot: int) -> void:

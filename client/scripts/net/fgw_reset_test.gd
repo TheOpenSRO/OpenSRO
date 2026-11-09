@@ -120,5 +120,6 @@ func _box() -> void:
 	_check(MsgBoxInif.split_sentence("One line") == ["One line"], "one sentence stays one line")
 
 func _ticket() -> void:
-	_check(HudPanels.is_fgw_ticket(PackedInt32Array([3, 3, 13, 23])), "3/3/13/23 is the Forgotten World ticket")
-	_check(not HudPanels.is_fgw_ticket(PackedInt32Array([3, 3, 13, 22])), "the Egypt ticket 3/3/13/22 is not")
+	_check(DimensionHole.is_ticket(PackedInt32Array([3, 3, 13, 23])), "3/3/13/23 is the Forgotten World ticket")
+	_check(not DimensionHole.is_ticket(PackedInt32Array([3, 3, 13, 22])), "the Egypt ticket 3/3/13/22 is not")
+	_check(not DimensionHole.is_ticket(PackedInt32Array([3, 3, 12, 7])), "a hole is not")
