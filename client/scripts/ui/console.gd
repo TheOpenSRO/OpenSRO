@@ -25,7 +25,7 @@ const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wi
 ## Round 865 stage 3: /academytime (OURS, QA: moves the academy's clock) is
 ## run by session/gm.go ahead of the dispatcher, and forwarded like the other
 ## QA commands (/hour, /jobweek, /guildabsent).
-const GM_COMMANDS := ["tp", "goto", "give", "item", "avatar", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "hwan", "notice", "invsize", "speed", "hurt", "afflict", "hour", "ban", "block", "unblock", "blockinfo", "chatban", "unchatban", "tradeban", "untradeban", "questblock", "jobexp", "jobweek", "guildlevel", "guildperm", "guildabsent", "guildgp", "union", "guildwar", "silk", "lottery", "academytime",
+const GM_COMMANDS := ["tp", "goto", "give", "item", "avatar", "gold", "level", "heal", "spawn", "spawnunique", "kill", "damage", "durability", "sp", "mastery", "hwan", "notice", "invsize", "speed", "hurt", "afflict", "hour", "ban", "block", "unblock", "blockinfo", "chatban", "unchatban", "tradeban", "untradeban", "questblock", "jobexp", "jobweek", "guildlevel", "guildperm", "guildabsent", "guildgp", "union", "guildwar", "silk", "lottery", "academytime",
 	# Round 870: the instanced worlds' GM aids (OURS, the server's
 	# gameworlds_gm.go and fgw_gm.go), until now reachable only from a bot.
 	"instance", "fgw", "fgwtime", "fgwkill", "fgwpillar"]

@@ -233,7 +233,7 @@ func DecodeSpendStatPointsRequest(data []byte) (*SpendStatPointsRequest, error) 
 // weapon (or one nobody has stats for) the physical pair is the unarmed
 // damage and the magical pair is zero -- exactly what a swing would do.
 func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equipment.Store, items combat.ItemLookup) (pMin, pMax, mMin, mMax int, err error) {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("reading equipment: %w", err)
 	}
@@ -293,7 +293,7 @@ func defenderMagicArmor(ctx context.Context, characterID int64, intel int, eq eq
 // increment (columns 115 and 70) and its 'hr' / 'er' option do count since
 // round 769 (combat.WeaponAttackRate, armourParry).
 func characterRates(ctx context.Context, level int, characterID int64, eq equipment.Store, items combat.ItemLookup) (hit, parry int, err error) {
-	equipped, err := eq.Get(ctx, characterID)
+	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("reading equipment: %w", err)
 	}

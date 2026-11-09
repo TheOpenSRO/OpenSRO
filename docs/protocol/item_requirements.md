@@ -98,10 +98,32 @@ carries them as of 2026-09-16 — only the first was carried before, which is
 right for 11,636 rows and silently drops every requirement in the rest.
 
 The mastery and tier categories take a lookup function, and **a nil lookup
-means the category is carried but not enforced**. OpenSRO tracks neither value
-yet; refusing every mastery-gated item because nothing records a mastery level
-would be further from the engine's answer, not closer. When mastery tracking
-lands, passing a real lookup is the whole change.
+means the category is carried but not enforced**. From round 877 the equip
+refusal and the worn items' params pass a real mastery lookup:
+
+- **Which mastery** (READ, s:0x491b25..0x491b40): the requirement's own type is
+  the mastery id handed to `Mastery_GetLevel` (s:0x59e750), which answers 0 for
+  a mastery the character does not hold. Any one of the item's masteries meets
+  the category: a European robe (514/516/517/518 at the item's degree level)
+  takes a Wizard, Warlock, Bard or Cleric; light armour (513/515/518) a
+  Warrior, Rogue or Cleric; heavy armour (513) a Warrior. Chinese items and
+  every weapon and accessory ask for the character's level only (MEASURED on
+  prod's item table: no Chinese row carries a mastery requirement).
+- **At equip**: `CanBeEquipedAt` refuses with 0x186c, which the client words
+  `UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM` in the warning banner
+  and the system line alike for a level and a mastery (MEASURED: "The selected
+  item is unusable because your character's level is too low.").
+- **In the stats**: `GObjPC::PublishEquipItemParams` (s:0x4e3760) tests
+  `CheckEquipRequirements` before an item's params count. It runs at a login,
+  on every level change (up or down) and for the one item an equip attaches;
+  a mastery raise publishes nothing again. A worn item that fails stays worn
+  and counts for nothing, its blues included (MEASURED; see
+  `server/internal/session/gearcount.go`).
+- The tier (0x301) is still passed no lookup: no equippable row carries it.
+
+`AttachEquipItem` adds one more test after `CanBeEquipedAt`: a body piece of
+cloth (garment, robe) may not join armour, nor armour cloth (0x1832,
+`equipment.ArmourMixRefusal`); heavy and light armour mix.
 
 Str/Int requirements are a separate mechanism: `CanBeEquipedAt` reads them from
 `_RefObjCommon+0x1a0` and `+0x1a4` and compares against `GetParam(1)` and

@@ -461,11 +461,34 @@ func TestSP(t *testing.T) {
 	}
 }
 
+// Round 877: /mastery writes a mastery's level outright, down as well as up
+// (OURS, a test tool).
+func TestMastery(t *testing.T) {
+	f := newFixture(t)
+	for _, step := range []struct {
+		line string
+		want int
+	}{{"/mastery 518 101", 101}, {"/mastery 518 100", 100}} {
+		if res := f.run(t, step.line); res.Refused || !res.RefreshStats {
+			t.Fatalf("%s: %+v", step.line, res)
+		}
+		levels, _ := f.skills.MasteryLevels(f.ctx, f.actor.CharacterID)
+		if levels[518] != step.want {
+			t.Errorf("%s: Cleric %d, want %d", step.line, levels[518], step.want)
+		}
+	}
+	for _, bad := range []string{"/mastery", "/mastery 518", "/mastery x 1", "/mastery 518 -1", "/mastery 518 256"} {
+		if res := f.run(t, bad); !res.Refused {
+			t.Errorf("%q should be refused: %+v", bad, res)
+		}
+	}
+}
+
 // A dependency that is missing refuses with a reply, never a panic.
 func TestMissingDependenciesRefuse(t *testing.T) {
 	f := newFixture(t)
 	empty := &Deps{}
-	for _, line := range []string{"/give 3", "/gold 5", "/level 2", "/heal", "/spawn mangyang", "/durability 6 1", "/sp 1"} {
+	for _, line := range []string{"/give 3", "/gold 5", "/level 2", "/heal", "/spawn mangyang", "/durability 6 1", "/sp 1", "/mastery 518 1"} {
 		res := empty.Run(f.ctx, f.actor, line)
 		if !res.Refused || res.Text == "" {
 			t.Errorf("%q against empty deps: %+v", line, res)

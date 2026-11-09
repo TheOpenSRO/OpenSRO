@@ -122,7 +122,7 @@ func equipBonus(ctx context.Context, characterID int64, eq equipment.Store) (cha
 	if eq == nil || magicOptions.Load() == nil {
 		return b, true
 	}
-	worn, err := eq.Get(ctx, characterID)
+	worn, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return b, false
 	}
@@ -164,7 +164,7 @@ func wornOptionSum(ctx context.Context, characterID int64, eq equipment.Store, t
 	if eq == nil || magicOptions.Load() == nil {
 		return 0
 	}
-	worn, err := eq.Get(ctx, characterID)
+	worn, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0
 	}
@@ -224,7 +224,7 @@ func accessoryAbsorb(ctx context.Context, characterID int64, eq equipment.Store,
 	if eq == nil || items == nil {
 		return 0
 	}
-	worn, err := eq.Get(ctx, characterID)
+	worn, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0
 	}

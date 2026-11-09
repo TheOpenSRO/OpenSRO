@@ -486,6 +486,7 @@ func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int
 		return ErrNotFound
 	}
 	noteBaseStats(characterID, str, intel)
+	noteLevel(characterID, level)
 	return nil
 }
 
