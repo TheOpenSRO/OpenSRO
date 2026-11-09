@@ -9,8 +9,9 @@ class_name StructureWorld
 ##
 ## THE GATE (CITeleportGate::vslot_025, c:0x9e9eb0): its model is its
 ## teleportbuilding row's .bsr (column 52; MEASURED for 19556 INS_QUEST_TELEPORT
-## in our archive: Bldg\North Africa\Alexandria\alex_raid_portal.bsr) with the
-## model's ambient effects (as the town gates', AmbientParticles); its pick box
+## in our archive: Bldg\North Africa\Alexandria\alex_raid_portal.bsr) -- from
+## round 871 the original's crystal when the archive has it (CRYSTAL_MODELS) --
+## with the model's ambient effects (as the town gates', AmbientParticles); its pick box
 ## is the row's bounding box, min (-r, -h, -r) max (r, h, r) with r = ref
 ## +0x118 and h = +0x114 (TB_BC_RADIUS / TB_BC_HEIGHT, as _gate_pick_node);
 ## and a gate this player may not use builds nothing (gate_visible). The
@@ -212,7 +213,7 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 		if not gate_visible(rec):
 			print("StructureWorld: gate uid=%d not built: access %d is not this player's (READ c:0x9e9eb0)" % [rec.uid, rec.access])
 			return null
-		model = String(b.get("model", ""))
+		model = gate_model(String(b.get("code", "")), String(b.get("model", "")))
 		var names: UiTextTable = w._object_names()
 		var strid := String(b.get("name_strid", ""))
 		name_text = names.get_text(strid).strip_edges() if names != null and strid != "" else ""
@@ -239,9 +240,9 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 	holder.rotation.y = NpcSpawnNet.holder_yaw(NpcSpawnNet.heading_of(rec.angle))
 	holder.set_meta(META_STRUCTURE, rec.uid)
 	# A skinned model (MEASURED: our archive's alex_raid_portal.bsr has a .bsk
-	# and a .ban -- the same model NPC_INS_EXIT_TELEPORT wears) is assembled as
-	# the NPCs' bodies are (SkinnedBsrAssembler, its idle playing); a static one
-	# through the scenery templates below.
+	# and a .ban) is assembled as the NPCs' bodies are (SkinnedBsrAssembler,
+	# its idle playing); a static one -- the crystal, round 871 -- through the
+	# scenery templates below, with its ambient effects.
 	var model_path := model
 	var skinned := _skinned_body(model) if model != "" else null
 	if skinned != null:
@@ -291,6 +292,38 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 		"skinned" if skinned != null else "static", rec.region_x, rec.region_y,
 		holder.position.x, holder.position.y, holder.position.z])
 	return holder
+
+## Round 871: the Forgotten World gate's model. MEASURED: the original draws
+## the gate as a big blue crystal with a glow and sparkles beside its maker,
+## and the server's database row the spec quotes names
+## `quest\ins_quest_teleport.bsr` (forgotten_world.md 4) -- in this archive a
+## static crystal (`prim\mesh\quest\ins_quest_teleport.bms`) with the ambient
+## effects `dun\bigsujung_light_blue.efp` and `dun\bigsujung_potal_glow.efp`
+## (MEASURED). This archive's teleportbuilding row (and the item database
+## that ships with it) names `Bldg\North Africa\Alexandria\alex_raid_portal.bsr`
+## instead, the Egypt temple portal's model (rows 27759 / 27760). The same
+## holds for the layer's exit NPC, NPC_INS_EXIT_TELEPORT (MEASURED: "a blue
+## crystal with lightning" in the original; characterdata 36032 names
+## alex_raid_portal.bsr here). So the crystal is drawn when the archive has
+## it, the row's model otherwise. OURS: the original client draws its
+## archive's row (teleportbuilding column 52, characterdata's resource); this
+## follows the measured look over this archive's row.
+const CRYSTAL_MODELS := {"INS_QUEST_TELEPORT": "quest\\ins_quest_teleport.bsr",
+	"NPC_INS_EXIT_TELEPORT": "quest\\ins_quest_teleport.bsr"}
+
+## The model the object of code `code` (a teleportbuilding or characterdata
+## code name) is drawn with: CRYSTAL_MODELS' when `archive` has it, else the
+## row's own (`row_model`).
+static func crystal_model(code: String, row_model: String, archive: Pk2Reader) -> String:
+	var want := String(CRYSTAL_MODELS.get(code.to_upper(), ""))
+	if want == "" or archive == null or SkinnedBsrAssembler._read(archive, want).is_empty():
+		return row_model
+	return want
+
+## The model a gate of teleportbuilding code `code` is drawn with
+## (crystal_model over World3D's Data archive).
+func gate_model(code: String, row_model: String) -> String:
+	return crystal_model(code, row_model, w._open_pk2_if_set() if w != null else null)
 
 const META_IDLE := "structure_idle"
 ## Assembled skinned templates by model path (as World3D's NPC model cache).

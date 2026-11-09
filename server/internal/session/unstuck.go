@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"math/rand"
 	"sync"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/berserk"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/gameworld"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/proto"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/world"
@@ -73,6 +75,18 @@ func unstuckTarget(sess *gateway.Session, e world.Entity) (zone string, pos worl
 	if !known {
 		return "", world.Position{}, false
 	}
+	// Round 871 (OURS, as /unstuck is): inside an instanced world the layer's
+	// start, placed as the entry places it (instanceArrival: on the walkable
+	// surface, the Wrecked Ship's deck). The open world's landing -- the middle
+	// of the zone's centre region -- is open sea over the Wreck's floor: prod's
+	// /unstuck put a player on the sea floor (local ~-1800) under the ship.
+	if w := instanceOf(sessionHub(sess)); w != nil {
+		zone, bucket, at, _, err := instanceStartFor(w)
+		if err != nil || bucket != e.Zone {
+			return "", world.Position{}, false
+		}
+		return zone, at, true
+	}
 	bucket, at, _, _ := arrival(p.zone)
 	if bucket != e.Zone {
 		return "", world.Position{}, false
@@ -127,4 +141,11 @@ func handleUnstuck(ctx context.Context, sess *gateway.Session, hub *world.Hub, c
 	// correction path, FUN_008a4f80's snap), standing on its own ground.
 	stopRelay(sess, r, true)
 	return answer(UnstuckResult{OK: true, Wait: uint16(unstuckCooldown / time.Second)})
+}
+
+// instanceStartFor is /unstuck's point inside layer w: a start
+// (instanceArrival), picked at random as an entry's.
+func instanceStartFor(w *gameworld.World) (zone, bucket string, pos world.Position, frame string, err error) {
+	_, zone, bucket, pos, frame, err = instanceArrival(w, rand.New(rand.NewSource(time.Now().UnixNano())))
+	return zone, bucket, pos, frame, err
 }

@@ -458,11 +458,19 @@ func placeArrival(region int, x, y, z float64, worldID int) (zone, bucket string
 }
 
 // placeRegion is placeArrival's placing: a dungeon region at its own height,
-// a field region in teleportZoneFor's zone at its frame. anyDungeon places a
-// dungeon OpenSRO does not serve in the open world (an instance's: round 869).
-func placeRegion(region int, x, y, z float64, anyDungeon bool) (zone, bucket string, pos world.Position, frame string, ok bool) {
+// a field region in teleportZoneFor's zone at its frame. instance marks a
+// point of an instanced world: a dungeon OpenSRO does not serve in the open
+// world still places (round 869), and a field region keeps its zone's own
+// frame and bucket under -single-frame too (round 871). The one frame is the
+// open world's, so that a walk between towns keeps everyone's coordinates; a
+// layer is entered only by a warp and has a hub of its own. Named in
+// Jangan's frame, the Wrecked Ship's deck (local -779.12) reached the client
+// at scene height -776.63, under its void line (World3D.WORLD_FLOOR_Y,
+// -500), which put the player back at the gate in Jangan and unloaded the
+// ship (prod, v0.1.642).
+func placeRegion(region int, x, y, z float64, instance bool) (zone, bucket string, pos world.Position, frame string, ok bool) {
 	if worldmap.IsDungeonRegion(region) {
-		if !anyDungeon && !ServedDungeon(region) {
+		if !instance && !ServedDungeon(region) {
 			return "", "", world.Position{}, "", false
 		}
 		zone = worldmap.DungeonZone(region)
@@ -471,7 +479,11 @@ func placeRegion(region int, x, y, z float64, anyDungeon bool) (zone, bucket str
 	}
 	rx, ry := worldmap.RegionXY(region)
 	zone = teleportZoneFor(rx, ry)
-	bucket, _, frame, _ = arrival(zone)
+	if instance {
+		bucket, frame = zone, frameFor(zone)
+	} else {
+		bucket, _, frame, _ = arrival(zone)
+	}
 	fx, fy, okFrame := worldmap.ParseRegionLabel(frame)
 	if !okFrame {
 		return "", "", world.Position{}, "", false
