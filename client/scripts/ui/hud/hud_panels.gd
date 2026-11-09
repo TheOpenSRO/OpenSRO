@@ -2470,7 +2470,8 @@ func qa_talk_line_point(n: int) -> Vector2:
 			seen += 1
 			# The line's own words as drawn (its tags dropped), found in the
 			# label's text after the lines before it.
-			var plain := tags.sub(lines[i], "", true)
+			# Round 869: an escaped bracket ([lb], "[Togui Village]") is text.
+			var plain := tags.sub(lines[i].replace("[lb]", "\u0001"), "", true).replace("\u0001", "[")
 			var char_at := parsed.find(plain, from) if plain != "" else -1
 			if char_at < 0:
 				continue

@@ -19885,13 +19885,19 @@ func _qa_input_step() -> void:
 			for guid in _structure_world().holders:
 				if _structure_world().is_gate(int(guid)):
 					gh = _structure_world().gate_holder(int(guid))
-			if gh == null or camera_3d == null or camera_3d.is_position_behind(gh.global_position):
+			if gh == null or camera_3d == null:
 				_qa_input_report = action + " (no gate drawn)"
 			else:
-				var gat := camera_3d.unproject_position(gh.global_position + Vector3(0, 8.0, 0))
-				_qa_input_report = "%s at %s (gate at %s, player at %s)" % [action, gat, str(gh.global_position.round()), str(player.global_position.round())]
-				if get_viewport().get_visible_rect().has_point(gat):
-					_qa_push_click(gat, MOUSE_BUTTON_LEFT)
+				# The camera turned toward the gate first, as a player drags it
+				# round (the arm looks along its -Z), the click a few frames on.
+				var to_gate := gh.global_position - player.global_position
+				camera_arm.global_rotation = Vector3(camera_arm.global_rotation.x, atan2(-to_gate.x, -to_gate.z), 0.0)
+				_qa_input_report = "%s (gate at %s, player at %s; camera turned)" % [action, str(gh.global_position.round()), str(player.global_position.round())]
+				get_tree().create_timer(0.2).timeout.connect(func() -> void:
+					var gat := camera_3d.unproject_position(gh.global_position + Vector3(0, 8.0, 0))
+					print("QA GATECLICK at %s" % str(gat))
+					if not camera_3d.is_position_behind(gh.global_position) and get_viewport().get_visible_rect().has_point(gat):
+						_qa_push_click(gat, MOUSE_BUTTON_LEFT))
 		"gwreport":
 			# Round 869: the game worlds' state, for the QA log.
 			_qa_input_report = "%s %s" % [action, _qa_game_world_report()]
@@ -28548,9 +28554,19 @@ func _qa_game_world_report() -> String:
 		var h = sw.holders.get(uid)
 		var drawn: bool = h != null and is_instance_valid(h) and (h as Node3D).is_visible_in_tree() and not (h as Node).is_queued_for_deletion()
 		var model := (h as Node3D).get_node_or_null("Model") if drawn else null
-		var meshes := model.find_children("*", "MeshInstance3D", true, false).size() if model != null else 0
+		var mesh_nodes: Array = model.find_children("*", "MeshInstance3D", true, false) if model != null else []
+		var meshes := mesh_nodes.size()
+		# The model's drawn extent (the meshes' AABBs in the holder's frame).
+		var box := AABB()
+		for mi_v in mesh_nodes:
+			var mi := mi_v as MeshInstance3D
+			if mi.mesh == null:
+				continue
+			var b := ((h as Node3D).global_transform.affine_inverse() * mi.global_transform) * mi.mesh.get_aabb()
+			box = b if box.size == Vector3.ZERO else box.merge(b)
 		(out["records"] as Array).append({"uid": int(uid), "ref": rec.ref_id, "kind": rec.kind, "state": rec.state, "drawn": drawn,
-			"meshes": meshes, "at": str((h as Node3D).global_position.round()) if drawn else "", "pick": drawn and (h as Node).get_node_or_null("PickBox") != null})
+			"meshes": meshes, "extent": str(box.position.round()) + " size " + str(box.size.round()),
+			"at": str((h as Node3D).global_position.round()) if drawn else "", "pick": drawn and (h as Node).get_node_or_null("PickBox") != null})
 	if _hud_panels != null and _hud_panels.is_open("npctalk"):
 		var w: HudWindow = _hud_panels._windows.get("npctalk")
 		var body := NpcTalkView.body_of(w)

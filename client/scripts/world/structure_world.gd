@@ -232,6 +232,16 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 	# holder set by FUN_009c4260), the NPCs' formula.
 	holder.rotation.y = NpcSpawnNet.holder_yaw(NpcSpawnNet.heading_of(rec.angle))
 	holder.set_meta(META_STRUCTURE, rec.uid)
+	# A skinned model (MEASURED: our archive's alex_raid_portal.bsr has a .bsk
+	# and a .ban -- the same model NPC_INS_EXIT_TELEPORT wears) is assembled as
+	# the NPCs' bodies are (SkinnedBsrAssembler, its idle playing); a static one
+	# through the scenery templates below.
+	var model_path := model
+	var skinned := _skinned_body(model) if model != "" else null
+	if skinned != null:
+		skinned.name = "Model"
+		holder.add_child(skinned)
+		model = ""
 	if model != "":
 		if w._object_templates == null:
 			w._object_templates = ObjectTemplateCache.new(w._load_object_template)
@@ -264,12 +274,44 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 			pick.add_child(shape)
 			holder.add_child(pick)
 	group.add_child(holder)
+	if skinned != null:
+		w._light_character(holder)
+		var idle = skinned.get_meta(META_IDLE, null)
+		if idle != null:
+			w._animate_skeleton(skinned, idle)
 	holders[rec.uid] = holder
 	_attach_effects(holder)
-	print("StructureWorld: %s uid=%d built '%s' (%s) in %d/%d at %.1f,%.1f,%.1f" % [
-		"gate" if rec.kind == StructureSpawnNet.KIND_GATE else "door", rec.uid, name_text, model, rec.region_x, rec.region_y,
+	print("StructureWorld: %s uid=%d built '%s' (%s, %s) in %d/%d at %.1f,%.1f,%.1f" % [
+		"gate" if rec.kind == StructureSpawnNet.KIND_GATE else "door", rec.uid, name_text, model_path,
+		"skinned" if skinned != null else "static", rec.region_x, rec.region_y,
 		holder.position.x, holder.position.y, holder.position.z])
 	return holder
+
+const META_IDLE := "structure_idle"
+## Assembled skinned templates by model path (as World3D's NPC model cache).
+var _skinned_templates: Dictionary = {}
+
+## A skinned model's skeleton (its idle clip in META_IDLE), or null when the
+## model has no skeleton to assemble (a static .bsr).
+func _skinned_body(model: String) -> Skeleton3D:
+	var archive: Pk2Reader = w._open_pk2_if_set()
+	if archive == null:
+		return null
+	var template = _skinned_templates.get(model)
+	if template == null and not _skinned_templates.has(model):
+		_skinned_templates[model] = null
+		var parsed := BsrReader.parse(SkinnedBsrAssembler._read(archive, model))
+		if parsed != null and parsed.skeleton_path != "":
+			template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true, false, 0, true)
+			_skinned_templates[model] = template
+	if template == null:
+		return null
+	var skeleton := (template as SkinnedBsrAssembler.AssembledCharacter).skeleton.duplicate() as Skeleton3D
+	if skeleton == null:
+		return null
+	BodyMirror.apply(skeleton)
+	skeleton.set_meta(META_IDLE, (template as SkinnedBsrAssembler.AssembledCharacter).idle_animation)
+	return skeleton
 
 ## The model's ambient particle sets (AmbientParticles, as a town gate's).
 func _attach_effects(holder: Node3D) -> void:
