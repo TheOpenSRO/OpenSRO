@@ -52,7 +52,7 @@ func sendExpGainTo(s *gateway.Session, g charmsg.ExpGain) {
 // 0, 0x17, 1, 1)), unshown for a solo pick-up (FUN_004eaca0 -> OffsetGold(
 // amount, 0, 0x19, 1, 0)).
 func tellGold(ctx context.Context, chars character.Store, hub *world.Hub, characterID int64, show bool) {
-	e, ok := entityOf(hub, characterID)
+	e, ok := reachOf(hub, characterID)
 	if !ok || e.Session == nil || chars == nil {
 		return
 	}
@@ -72,7 +72,7 @@ func tellGold(ctx context.Context, chars character.Store, hub *world.Hub, charac
 // AddHwanCount (s:0x4e4d00 -> GObjPC::FUN_004e3fb0, READ), the player alone.
 func HwanCountNotifier(hub *world.Hub) func(characterID int64, count int, source uint32) {
 	return func(characterID int64, count int, source uint32) {
-		e, ok := entityOf(hub, characterID)
+		e, ok := reachOf(hub, characterID)
 		if !ok || e.Session == nil {
 			return
 		}

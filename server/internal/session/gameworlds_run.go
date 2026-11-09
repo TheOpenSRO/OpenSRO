@@ -406,24 +406,36 @@ func EnterInstance(ctx context.Context, sess *gateway.Session, w *gameworld.Worl
 	// saves nothing: savePosition skips an instance).
 	if instanceOf(from) == nil {
 		p, _ := placeOf(sess)
-		instanceReturns.Store(e.CharacterID, returnPoint{zone: p.zone, bucket: e.Zone, frame: p.frame, pos: e.Pos})
+		rp := returnPoint{zone: p.zone, bucket: e.Zone, frame: p.frame, pos: e.Pos}
+		instanceReturns.Store(e.CharacterID, rp)
 		savePosition(d.Chars, sess, e)
+		// Round 869 lane W2: the registry keeps it too, for a recovery
+		// when the instance's host dies (handoff.go).
+		clusterSetReturn(ctx, e.CharacterID, rp)
 	}
 	// Round 869 lane W3: the re-entry limit's 0x320C is queued for the
 	// arrival before the warp (MEASURED: it comes after the arrival state,
-	// behind the entry notices), so it cannot overtake them.
+	// behind the entry notices), so it cannot overtake them. A layer on
+	// another process (lane W2) sends its own at the hand-off's arrival.
 	now := w.Clock().Now()
 	coolPkt := startGroupCoolTime(ctx, e.CharacterID, w, now)
 	guarded := arrivalGuardOn.Load()
-	if coolPkt != nil && guarded {
+	remote := w.Remote()
+	if coolPkt != nil && guarded && !remote {
 		queueForArrival(e.CharacterID, coolPkt, true)
 		queueForArrival(e.CharacterID, coolPkt, true)
 	}
-	if _, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, w.Hub, d.Zerk, zone, bucket, pos, frame, via); err != nil {
+	if remote {
+		// Round 869 lane W2: a layer another process runs: the hand-off
+		// there (handoff.go), the same zone change for the client.
+		if err := handOffToInstance(sess, w, zone, bucket, pos, frame, via); err != nil {
+			return err
+		}
+	} else if _, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, w.Hub, d.Zerk, zone, bucket, pos, frame, via); err != nil {
 		dropArrivalSends(e.CharacterID)
 		return err
 	}
-	if coolPkt != nil && !guarded {
+	if coolPkt != nil && !guarded && !remote {
 		_ = sess.Send(coolPkt)
 		_ = sess.Send(coolPkt)
 	}
@@ -530,6 +542,7 @@ func returnFromInstance(ctx context.Context, sess *gateway.Session, from *world.
 	}
 	_, err := warpAcross(ctx, sess, d.Equipment, d.Chars, from, to, d.Zerk, rp.zone, rp.bucket, rp.pos, rp.frame, via)
 	instanceReturns.Delete(e.CharacterID)
+	clusterClearReturn(ctx, e.CharacterID)
 	return err
 }
 

@@ -58,7 +58,9 @@ func instanceRun(addr, name string, level int, world string) error {
 			}
 		}
 	}
-	go b.run()
+	// Round 869 lane W2: connect already runs the reader (b.run); a second
+	// one on the same connection split the frames between them, which lost
+	// whatever the other goroutine took (the run's checks failed by turns).
 	gm := func(line string, wait time.Duration) {
 		b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: line}).Encode())
 		fmt.Printf("[%s] GM %s\n", name, line)

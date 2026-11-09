@@ -55,6 +55,16 @@ func instanceCommand(ctx context.Context, sess *gateway.Session, line string) (g
 			fmt.Fprintf(&b, "%s %s key %d members %d left %s; ", w.ID, w.Ref.Code, w.Key, len(w.Members()),
 				w.Expires.Sub(w.Clock().Now()).Round(time.Second))
 		}
+		// Round 869 lane W2: and the layers the other processes run.
+		if clusterOn() {
+			if all, err := m.Registry().List(ctx); err == nil {
+				for _, in := range all {
+					if in.Host != "" && in.Host != m.Host() && in.ID.World != gameworld.OpenWorldID {
+						fmt.Fprintf(&b, "%s on %s key %d members %d; ", in.ID, in.Host, in.Key, len(in.Members))
+					}
+				}
+			}
+		}
 		if b.Len() == 0 {
 			return gm.Result{Text: "no open instance"}, true
 		}
@@ -106,7 +116,8 @@ func instanceCommand(ctx context.Context, sess *gateway.Session, line string) (g
 		if err1 != nil || err2 != nil {
 			return gm.Result{Refused: true, Text: instanceUsage}, true
 		}
-		w := m.Get(registry.InstanceID{World: uint16(wid), Layer: uint16(lid)})
+		// Round 869 lane W2: a layer another process runs too (Find).
+		w := m.Find(ctx, registry.InstanceID{World: uint16(wid), Layer: uint16(lid)})
 		if w == nil || w.Open() {
 			return gm.Result{Refused: true, Text: "no such open instance"}, true
 		}

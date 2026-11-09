@@ -35,6 +35,8 @@ type Manager struct {
 	mu   sync.Mutex
 	live map[registry.InstanceID]*World
 	open *World
+	// placer places new instances by load on other hosts (remote.go).
+	placer Placer
 }
 
 // ManagerConfig is what a Manager is made with.
@@ -130,7 +132,9 @@ const (
 
 // Open opens a new layer of world id for owner (and its party): the world
 // job's open (READ game_worlds.md 4: GS->SM 0x7C14 kind 1, the first free
-// slot, SM->GS 0x3C15). registry.ErrNoSlot when every layer is in use.
+// slot, SM->GS 0x3C15). registry.ErrNoSlot when every layer is in use. With
+// a Placer (lane W2) the layer may open on another host: the World answered
+// is then its proxy (Remote).
 func (m *Manager) Open(ctx context.Context, id uint16, owner, party int64) (*World, error) {
 	ref := m.ref.World(id)
 	if ref == nil {
@@ -139,28 +143,18 @@ func (m *Manager) Open(ctx context.Context, id uint16, owner, party int64) (*Wor
 	if !ref.Instanced() {
 		return nil, fmt.Errorf("%w: %d %s", ErrNotInstanced, id, ref.Code)
 	}
+	m.mu.Lock()
+	p := m.placer
+	m.mu.Unlock()
+	if p != nil {
+		return m.openPlaced(ctx, p, ref, owner, party)
+	}
 	in, err := m.reg.Open(ctx, registry.OpenRequest{World: id, Layers: ref.MaxCount, Owner: owner, Party: party,
 		Lifetime: ref.Duration, Host: m.host})
 	if err != nil {
 		return nil, err
 	}
-	seq := instanceSeq.Add(1)
-	base := int64(monsterIDBase) + int64(seq%monsterIDSlots)*monsterIDSpan
-	m.mu.Lock()
-	hooks := m.hooks
-	m.mu.Unlock()
-	w := &World{Ref: ref, ID: in.ID, Key: in.Key, Owner: owner, Party: party, Created: in.Created, Expires: in.Expires,
-		Hub: world.NewHub(), Monsters: combat.NewHubAt(base), Ground: grounditem.NewHub(), mgr: m, clock: m.clock,
-		hooks: hooks, Logger: m.logger}
-	m.mu.Lock()
-	m.live[w.ID] = w
-	m.mu.Unlock()
-	w.start()
-	if m.logger != nil {
-		m.logger.Info("instance opened", "world", w.ID.String(), "code", ref.Code, "key", w.Key, "owner", owner,
-			"expires", w.Expires, "empty_close", ref.EmptyRemain)
-	}
-	return w, nil
+	return m.build(ref, in), nil
 }
 
 // Get is the live unit of an instance, nil for none.

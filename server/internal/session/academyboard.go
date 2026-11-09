@@ -239,7 +239,7 @@ func (rt *academyRuntime) handleMatchJoin(ctx context.Context, sess *gateway.Ses
 		acFail(sess, op, academy.ErrBoardPending)
 		return
 	}
-	ge, online := entityOf(rt.Hub, g.CharID)
+	ge, online := reachOf(rt.Hub, g.CharID)
 	if !ok || !online {
 		rt.board.Release(id)
 		acFail(sess, op, ErrAcademyInviterGone)
@@ -309,8 +309,8 @@ func (rt *academyRuntime) handleMatchJoinAnswer(ctx context.Context, e world.Ent
 // Any other answer is dropped, as the shard asserts on it.
 func (rt *academyRuntime) resolveMatchJoin(ctx context.Context, j *acJoin, answer byte) {
 	const op = proto.OpAcademyMatchJoinAck
-	req, rok := entityOf(rt.Hub, j.requester)
-	guard, gok := entityOf(rt.Hub, j.guardian)
+	req, rok := reachOf(rt.Hub, j.requester)
+	guard, gok := reachOf(rt.Hub, j.guardian)
 	log := rt.log().With("requester", j.requester, "guardian", j.guardian, "camp_id", j.campID, "job", j.id)
 	switch answer {
 	case academy.MatchJoinRefused, academy.MatchJoinNoReply:
@@ -365,7 +365,7 @@ func (rt *academyRuntime) joinNoReply(requester int64, j *acJoin) {
 	delete(rt.joins, requester)
 	rt.mu.Unlock()
 	rt.board.Release(j.entry)
-	if e, ok := entityOf(rt.Hub, requester); ok {
+	if e, ok := reachOf(rt.Hub, requester); ok {
 		acSend(e.Session, proto.OpAcademyMatchJoinAck, academy.EncodeMatchJoinResult(academy.MatchJoinNoReply))
 	}
 	rt.log().Info("academy match join no reply", "requester", requester, "guardian", j.guardian, "job", j.id)

@@ -69,6 +69,12 @@ type Session struct {
 	conn net.Conn
 	// codec is the wire's framing when it is not OpenSRO's own (nil).
 	codec Codec
+	// sink is a remote session's (remote.go): its Sends go there.
+	sink RemoteSink
+	// addr, when set, is what RemoteAddr reports (SetRemoteAddr).
+	addr atomic.Pointer[addrBox]
+	// endRequested is RequestEnd's flag (remote.go).
+	endRequested atomic.Bool
 
 	mu     sync.RWMutex
 	values map[string]any
@@ -278,6 +284,12 @@ func (s *Session) SetPlace(v any) {
 
 // RemoteAddr returns the client's address, mainly for logging.
 func (s *Session) RemoteAddr() net.Addr {
+	if b := s.addr.Load(); b != nil {
+		return b.a
+	}
+	if s.conn == nil {
+		return RelayAddr{Text: "remote"}
+	}
 	return s.conn.RemoteAddr()
 }
 
@@ -420,6 +432,9 @@ func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 
 // enqueueFrames is enqueue past its size check.
 func (s *Session) enqueueFrames(ps []*proto.Packet, fs []*Frame) error {
+	if s.sink != nil {
+		return s.sendRemote(ps, fs)
+	}
 	if s.stalled.Load() {
 		return ErrSendStalled
 	}
@@ -813,6 +828,9 @@ func (s *Session) closeAfterDrain(timeout time.Duration) {
 // dropped. (The gateway's own end of a session drains first:
 // closeAfterDrain.)
 func (s *Session) Close() error {
+	if s.sink != nil {
+		return s.sink.CloseRemote()
+	}
 	if s.outCond != nil {
 		s.outMu.Lock()
 		s.closing = true
@@ -1055,6 +1073,11 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 			p, err = proto.Read(r, recvRoll, recvSum)
 		}
 		if err != nil {
+			if sess.endRequested.Load() {
+				// RequestEnd's interrupted read (a hand-off, remote.go).
+				reason = metrics.DisconnectEnded
+				return
+			}
 			if errors.Is(err, io.EOF) {
 				reason = metrics.DisconnectClientClosed
 			} else {
@@ -1086,6 +1109,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 				reason = metrics.DisconnectPanic
 			}
 			logger.Warn("handler error, closing session", "addr", sess.RemoteAddr(), "opcode", fmt.Sprintf("0x%04x", p.Opcode), "err", err)
+			return
+		}
+		if sess.endRequested.Load() {
+			reason = metrics.DisconnectEnded
 			return
 		}
 	}

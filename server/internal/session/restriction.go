@@ -294,7 +294,11 @@ func stallTitleRefused(title string) bool {
 // gmRestrictions is gm.RestrictionControl (round 840).
 type gmRestrictions struct{ hub *world.Hub }
 
-func (gmRestrictions) RestrictionsChanged(accountID int64) { ForgetRestrictions(accountID) }
+func (gmRestrictions) RestrictionsChanged(accountID int64) {
+	ForgetRestrictions(accountID)
+	// Round 869 lane W2: and on every other process (clustersocial.go).
+	restrictionsEverywhere(accountID)
+}
 
 func (g gmRestrictions) QuestBlock(name string, mask uint32, clear bool) (uint32, string, bool) {
 	if g.hub == nil {

@@ -511,4 +511,8 @@ var knownOpcodes = map[uint16]string{
 	0xB51A: "world",
 	0xB51C: "world",
 	0xB51D: "world",
+	0xFE00: "other",
+	0xFE01: "other",
+	0xFE02: "other",
+	0xFE03: "other",
 }

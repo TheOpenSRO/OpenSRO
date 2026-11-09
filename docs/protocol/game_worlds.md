@@ -554,6 +554,47 @@ grows linearly with hosts at a fixed per-host tick budget, and no shared part (P
 connections, notify throughput, the front's CPU) saturates. Fault drills: `kill -9` a host (all its
 players back in the open world in under 15 s) and a drain under load.
 
+### 12.8 As built (round 869, lane W2)
+
+What stage 2 built of 12.1-12.7 (all OURS; the measurements are in `docs/WORLD_ISSUES.md`, "Eight-hundred-and-
+sixty-ninth round, lane W2"). Where it differs from the design above, this is what runs:
+
+- **Roles**: `-role all` (the default: one process, exactly as before), `-role front`, and `-role world` with
+  `-world-layers open | instances | both` in place of 12.2's `home` and `instance` (a host running the open world
+  is 12.2's home: logins and the social services' authority). A host without the open world serves no client
+  listener of its own.
+- **The front frames and routes; it does not log in.** Every client stream opens on the open world's host, where
+  the login, the character list and the world entry run as in one process. The front reads OpenSRO's own framing
+  (no security, as every production session) and never forwards the internal control range 0xFE00..0xFE0F
+  (`relay.OpHello` with the shared secret and the player's address; `OpBind`, who is in the world on the
+  stream; `OpReroute`, the move with the hand-off). The retail listeners (round 788) stay on `-role all`.
+- **The move** (`session/handoff.go`): the source asks the session to end (`gateway.Session.RequestEnd`), its
+  disconnect bookkeeping runs in hand-off form (the watchers drop the character as at a warp; no offline line to
+  the guild, the academy or the friends; the party keeps it; the login stays held), its carried runtime is taken
+  first and the re-route sent last; the front opens a stream to the target with the hand-off in the hello and
+  replays the client frames the source had not handled (`Reroute.Consumed`); the target enters the character
+  held, as `warpAcross` does, and sends the ordinary `OpChangeZoneResult`. Carried: the buff book whole (records,
+  tokens, starts, state bits, speed and wall holders, the GM /speed factor; `buff.BookState`), the item and
+  cool-time groups, the live MP, the return point. Not carried (OPEN): the abnormal states (they end, as at a
+  death), a `lnks` link to another character; the COS are put away and called out again as at a login.
+- **Tables** (12.3's names, prefixed): `world_hosts`, `world_instances` (a lost layer keeps its row a day; the
+  slot index covers only open and closing rows), `world_instance_members`, `world_presence`, `world_returns`
+  (the return point the recovery uses), `bus_spill`; `char_instance_world` is lane W1's. The game clock of every
+  host follows the open world's host's start (`world_hosts.started`), so a move shows no jump.
+- **Parties** are not kept on the home role alone: every process keeps every party, each change is broadcast as
+  the party's whole state with a sequence (`party.Snapshot`), a member elsewhere is held with a remote session,
+  and only the member's own process samples its 0x3864 kind 6 updates. Party ids carry the forming host's range.
+- **Delivery**: `session.reachOf` (local hub, any world of this process, then the directory) for the guild,
+  academy and union lines and updates, the friends' pushes, party members; `findByNameCluster` for a whisper, a
+  friend request, a GM kick; a global and a notice go to every other process in one message
+  (`sendEverywhere`); a crest change is replayed on each process (its plate cache too); a friend request's answer
+  goes to the asker's process. Per-host outboxes batch the deliveries (1 ms) and send identical frames once.
+- **Failure**: the front recovers a character whose stream broke at once (MEASURED 10 ms in the four-process
+  test), before the reaper's 10 s lease; a host the reaper declared dead is fenced (its next beat is refused and
+  it exits). **Drain**: SIGTERM; the close warning 0x0C1A with the deadline's minutes (OURS reuse); at the
+  deadline the layers close and their players go home; moving a live layer to another host is not built (OPEN).
+- **NATS** (12.3's third bus) is not built: LISTEN/NOTIFY carried the load test without strain.
+
 ## 13. OPEN, and choices for the user
 
 **Choices, decided (2026-11-09, before stage 2):**
@@ -657,6 +698,12 @@ The wire is the original's (`PROTOCOL_DECISION.md`); OpenSRO's own zone-change m
     LISTEN/NOTIFY), `-role all|front|home|instance`, the front's relay and re-route, heartbeats,
     reaper, drain. Test: two hosts in one test binary on loopback: placement, a re-route mid-session,
     a host killed (players at their return points), a drain.
+    **Built (round 869, lane W2; 12.8):** `-role all|front|world` with `-world-layers`; `internal/registry`
+    (Memory + Postgres, `cluster.go`), `internal/bus` (Memory + Postgres), `internal/cluster` (the node),
+    `internal/relay` (the front, the host codec), `session/handoff.go` and the `cluster*.go` files. Tests: the
+    registry, the bus, the node and the relay with several hosts in one binary (in memory, and on PostgreSQL);
+    `cmd/server/cluster_test.go`, four processes on loopback (placement, the hand-off in and out, a whisper and a
+    party line across processes, a host killed, a drain); the load test `cmd/loadworld/run.sh`.
 
 ### CLIENT
 1. **Structure spawns** -- `client/scripts/net/npc_spawn.gd` (and the group-spawn reader): accept the

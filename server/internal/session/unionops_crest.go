@@ -91,6 +91,8 @@ func unionCrestChanged(ctx context.Context, hub *world.Hub, u *guild.Union, rev 
 			e.Session.Send(msg)
 		}
 	}
+	// Round 869 lane W2: and on every other process (clustersocial.go).
+	crestEverywhere(uint32(u.ID), true, rev, msg.Data)
 }
 
 // unionCrestBytes is union id's crest when rev is its current one (nil else).

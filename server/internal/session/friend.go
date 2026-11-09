@@ -271,7 +271,7 @@ func (rt *friendRuntime) ask(ctx context.Context, sess *gateway.Session, data []
 		fail(FriendCodeFullList)
 		return
 	}
-	target, ok := findByNameAnywhere(rt.hub, name)
+	target, ok := findByNameCluster(rt.hub, name)
 	if !ok {
 		fail(FriendCodeUnknownUser)
 		return
@@ -335,8 +335,19 @@ func (rt *friendRuntime) answer(ctx context.Context, sess *gateway.Session, data
 	asker := binary.LittleEndian.Uint32(data[4:])
 	answer := data[8]
 	rt.mu.Lock()
+	_, here := rt.jobs[id]
+	rt.mu.Unlock()
+	if !here && forwardFriendAnswer(id, asker, me.CharacterID, answer) {
+		return
+	}
+	rt.answerJob(ctx, id, asker, me.CharacterID, answer)
+}
+
+// answerJob is the answer to job id from targetID.
+func (rt *friendRuntime) answerJob(ctx context.Context, id, asker uint32, targetID int64, answer byte) {
+	rt.mu.Lock()
 	job := rt.jobs[id]
-	match := job != nil && uint32(job.askerID) == asker && job.targetID == me.CharacterID
+	match := job != nil && uint32(job.askerID) == asker && job.targetID == targetID
 	rt.mu.Unlock()
 	if !match || rt.take(id) == nil {
 		return
@@ -352,8 +363,8 @@ func (rt *friendRuntime) answer(ctx context.Context, sess *gateway.Session, data
 // the other and both lists must have room; then `_Friend_Add` and the
 // kind-2 push to both. A failed check sends nothing (READ).
 func (rt *friendRuntime) accept(ctx context.Context, job *friendJob) {
-	a, aok := rt.hub.EntityByCharacterID(job.askerID)
-	b, bok := rt.hub.EntityByCharacterID(job.targetID)
+	a, aok := reachOf(rt.hub, job.askerID)
+	b, bok := reachOf(rt.hub, job.targetID)
 	if !aok || !bok {
 		return
 	}
@@ -374,7 +385,7 @@ func (rt *friendRuntime) accept(ctx context.Context, job *friendJob) {
 func (rt *friendRuntime) ended(job *friendJob, reason byte) {
 	msg := EncodeFriendAskFailed(FriendCodeRefused, reason, job.targetName)
 	for _, id := range [2]int64{job.askerID, job.targetID} {
-		if e, ok := rt.hub.EntityByCharacterID(id); ok {
+		if e, ok := reachOf(rt.hub, id); ok {
 			sendTo(e.Session, OpFriendAskFailed, msg)
 		}
 	}
@@ -420,7 +431,7 @@ func (rt *friendRuntime) remove(ctx context.Context, sess *gateway.Session, data
 	}
 	sendTo(sess, OpMessengerPush, EncodeFriendRemoved(id))
 	sendTo(sess, OpFriendDeleteResult, EncodeFriendDeleteResult(id, 0))
-	if other, ok := rt.hub.EntityByCharacterID(int64(id)); ok {
+	if other, ok := reachOf(rt.hub, int64(id)); ok {
 		sendTo(other.Session, OpMessengerPush, EncodeFriendRemoved(uint32(me.CharacterID)))
 	}
 }
@@ -448,7 +459,7 @@ func friendAfterEnter(ctx context.Context, sess *gateway.Session, owned *charact
 	var online []world.Entity
 	for _, f := range list {
 		state := FriendOffline
-		if e, ok := rt.hub.EntityByCharacterID(f.CharacterID); ok {
+		if e, ok := reachOf(rt.hub, f.CharacterID); ok {
 			state = FriendOnline
 			online = append(online, e)
 		}
@@ -480,8 +491,13 @@ func FriendDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 		if err != nil {
 			return
 		}
+		// Round 869 lane W2: a character moving to another process did not
+		// log off.
+		if HandingOff(sess) {
+			return
+		}
 		for _, f := range list {
-			if e, ok := hub.EntityByCharacterID(f.CharacterID); ok && e.Session != sess {
+			if e, ok := reachOf(hub, f.CharacterID); ok && e.Session != sess {
 				sendTo(e.Session, OpMessengerPush, EncodeFriendState(uint32(me.CharacterID), FriendOffline))
 			}
 		}

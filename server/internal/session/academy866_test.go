@@ -89,6 +89,10 @@ func TestAcademy866MatchJoinRefusedAndTimeout(t *testing.T) {
 	}
 	// The entry is free again: a new request is asked, not refused 0x6827.
 	f.askJoin(t, entry)
+	// Round 869 lane W2: that request's backstop answers before the test
+	// ends -- its timer would otherwise answer the next test's Bram, whom
+	// the academy now finds in whichever world he is (reachOf).
+	acWant(t, "the last backstop", nextOp(t, br.conn, br.r, proto.OpAcademyMatchJoinAck).Data, acB(1, 2))
 }
 
 func TestAcademy866MatchJoinAccepted(t *testing.T) {

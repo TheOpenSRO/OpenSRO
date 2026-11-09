@@ -334,7 +334,7 @@ func (rt *academyRuntime) toOnline(campID int64, op uint16, data []byte, except 
 		if id == except {
 			continue
 		}
-		if e, ok := entityOf(rt.Hub, id); ok {
+		if e, ok := reachOf(rt.Hub, id); ok {
 			acSend(e.Session, op, data)
 		}
 	}
@@ -505,7 +505,7 @@ func (rt *academyRuntime) handleDisband(ctx context.Context, sess *gateway.Sessi
 	}
 	acSend(sess, proto.OpAcademyDisbandAck, academy.EncodeOK())
 	for _, id := range online {
-		if o, ok := entityOf(rt.Hub, id); ok {
+		if o, ok := reachOf(rt.Hub, id); ok {
 			acSend(o.Session, proto.OpAcademyUpdate, academy.EncodeDisbanded())
 		}
 	}
@@ -644,10 +644,10 @@ func (rt *academyRuntime) takeInvite(target int64) *acInvite {
 // failInvite tells both sides: 0xB472 {2, code} to the inviter and 0x3C80
 // {0a, 2, code} to the invitee (READ s:0x5e11b0; MEASURED for the timeout).
 func (rt *academyRuntime) failInvite(inv *acInvite, code uint16) {
-	if o, ok := entityOf(rt.Hub, inv.inviter); ok {
+	if o, ok := reachOf(rt.Hub, inv.inviter); ok {
 		acFail(o.Session, proto.OpAcademyInviteAck, code)
 	}
-	if o, ok := entityOf(rt.Hub, inv.target); ok {
+	if o, ok := reachOf(rt.Hub, inv.target); ok {
 		acSend(o.Session, proto.OpAcademyUpdate, academy.EncodeJoinFail(code))
 	}
 }
@@ -687,7 +687,7 @@ func academyInviteAnswer(ctx context.Context, sess *gateway.Session, me world.En
 	if inv == nil {
 		return true
 	}
-	inviter, online := entityOf(rt.Hub, inv.inviter)
+	inviter, online := reachOf(rt.Hub, inv.inviter)
 	if !online {
 		acSend(sess, proto.OpAcademyUpdate, academy.EncodeJoinFail(ErrAcademyInviterGone))
 		return true
@@ -815,7 +815,7 @@ func (rt *academyRuntime) handleLeave(ctx context.Context, sess *gateway.Session
 func (rt *academyRuntime) removed(campID int64, online []int64, charID int64, reason int) {
 	msg := academy.EncodeRemoved(charID, reason)
 	for _, id := range online {
-		if o, ok := entityOf(rt.Hub, id); ok {
+		if o, ok := reachOf(rt.Hub, id); ok {
 			acSend(o.Session, proto.OpAcademyUpdate, msg)
 		}
 	}
@@ -917,7 +917,7 @@ func (rt *academyRuntime) graduate(ctx context.Context, sess *gateway.Session, o
 	}
 	msg := academy.EncodeGraduated(m.CharID, kind)
 	for _, id := range online {
-		if o, ok := entityOf(rt.Hub, id); ok {
+		if o, ok := reachOf(rt.Hub, id); ok {
 			acSend(o.Session, proto.OpAcademyUpdate, msg)
 		}
 	}

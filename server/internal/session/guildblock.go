@@ -57,7 +57,7 @@ func guildBlockPacketsWith(ctx context.Context, g *guild.Guild, override int64, 
 				l.RefObjID, _ = modelOf(c)
 			}
 		}
-		_, l.Online = entityOf(d.hub, characterID)
+		_, l.Online = reachOf(d.hub, characterID)
 		if override != 0 && characterID == override {
 			l.Online = online
 		}
@@ -108,7 +108,7 @@ func broadcastGuildBlock(ctx context.Context, g *guild.Guild) {
 	}
 	pkts := guildBlockPackets(ctx, g)
 	for _, m := range g.Members {
-		e, ok := entityOf(d.hub, m.CharacterID)
+		e, ok := reachOf(d.hub, m.CharacterID)
 		if !ok || e.Session == nil {
 			continue
 		}

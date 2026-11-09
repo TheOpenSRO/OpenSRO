@@ -246,6 +246,14 @@ func plateOf(g *guild.Guild, characterID int64) guildPlate {
 // is never stale), its spawn record re-read (bumpPlayerState via
 // sendAboutOwner).
 func refreshGuildPlate(hub *world.Hub, characterID int64, g *guild.Guild) {
+	// Round 869 lane W2: a character playing on another process has its
+	// line refreshed there too, for the players who see it there.
+	guildPlateEverywhere(characterID)
+	refreshGuildPlateHere(hub, characterID, g)
+}
+
+// refreshGuildPlateHere is refreshGuildPlate on this process only.
+func refreshGuildPlateHere(hub *world.Hub, characterID int64, g *guild.Guild) {
 	p := plateOf(g, characterID)
 	p.UnionID, p.UnionCrestRev = unionFieldsOf(context.Background(), g)
 	if v, ok := guildPlates.Load(characterID); ok && v.(guildPlate) == p {
@@ -277,7 +285,7 @@ func guildNicknameToMembers(hub *world.Hub, g *guild.Guild, name, nickname strin
 		return
 	}
 	for _, m := range g.Members {
-		if e, ok := hub.EntityByCharacterID(m.CharacterID); ok && e.Session != nil {
+		if e, ok := reachOf(hub, m.CharacterID); ok && e.Session != nil {
 			_ = e.Session.SendFrames(f)
 		}
 	}
