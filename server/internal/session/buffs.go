@@ -336,6 +336,8 @@ func buffSpec(ref *refdata.Skill, casterID int64) buff.Spec {
 	// block; an export before the Params column carries none.
 	if ref.HasParams() {
 		s.Stats = buff.StatContributions(ref.Runs(), ref.ActionKind, ref.Activity)
+		// Round 881: the row's state resists ('real').
+		s.Resists = buff.StateResists(ref.Runs())
 	}
 	return s
 }

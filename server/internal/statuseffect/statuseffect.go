@@ -69,6 +69,13 @@ const (
 	// (round 875, READ: the OR sites s:0x592b85 / s:0x592d8e).
 	SlotDecay    = 17
 	SlotWeakness = 18
+	// Round 881 (effects.go): the slots whose appliers were read then.
+	SlotDark         = 13 // 'dn'
+	SlotDisease      = 15 // 'ds'
+	SlotPowerless    = 19 // 'cssr'
+	SlotDissociation = 20 // 'csit'
+	SlotPanic        = 21 // 'cshp'
+	SlotCombustion   = 22 // 'csmp'
 )
 
 // TickIntervalMs is the period the three damaging states check against their

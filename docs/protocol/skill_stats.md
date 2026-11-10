@@ -38,7 +38,8 @@ OpenSRO's stat functions compute the gear's value (its slot-0 entries) and pass 
 | `dru` | p128/129 slot 0 = v0, p130/131 slot 0 = v1 (0x595a97..) | attacker damage %, Formula_Mitigate* 0x40e5a4 |
 | `dru2` | v0 mask -> p128..131 slot 0 = v1 | the same |
 | `odar` | v0 mask -> p174..177 slot 2 = -v1 | the defender's multiplier |
-| `bgra` / `reat` | p27..32 / p145..150 by mask | status resists (status lane) |
+| `bgra` / `reat` | p27..32 / p145..150 slot 0, one param per mask bit 0..5 (round 881) | the elemental states' strength, `status_resist.md` |
+| `real` | not a param: the per-state resist records (round 881) | the non-elemental landing roll, `status_resist.md` |
 | `irgc` | p25 / p26 slot 1 = v0 / v1 | HP / MP regeneration |
 | `ru` | p33 slot 0 = v0 | attack range |
 | `dcri` | p57 slot 0 = v0 | evade-critical |
@@ -72,5 +73,5 @@ periodic effect.
 | 128..131, 178/179 | a skill's hits (`applyBuffDamage`, skillhit.go) |
 | 174..177 | a monster's debuffs (`monsterbuffs.go`); a player's damage taken (`applyPlayerTaken`, round 838) |
 
-OPEN: 25/26 (regeneration), 27..32 and 145..150 (status resists), 170/171 (heal received), 187
+OPEN: 25/26 (regeneration), 170/171 (heal received), 187
 (threat, with the hate list), the `defp` cap.

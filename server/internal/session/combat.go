@@ -1680,7 +1680,7 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 			// The instance's own attack rate (combat.WeaponAttackRate: its
 			// variance group 3, as the engine publishes param 11).
 			// Round 785: the buffs' param-11 entries ('hr', 'thrd').
-			hra := combat.CharacterRate(attackerLevel, buffStat(characterID, buff.ParamHitRate, combat.WeaponAttackRate(item, weaponInstance(e))))
+			hra := combat.CharacterRate(attackerLevel, attackRateStat(characterID, combat.WeaponAttackRate(item, weaponInstance(e))))
 			centre := combat.DamageCentrePercent(hra, defenderParry, attackerLevel, defenderLevel)
 			return rollCentred(min, max, centre), nil
 		}

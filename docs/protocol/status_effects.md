@@ -59,6 +59,10 @@ slot 17 cuts physical defence and bit 17 is "decay"; slot 18 cuts magical defenc
 is "weakness"; slot 13 cuts attack rate and bit 13 is "dark" -- and for those the mask table
 is the identity, so slot and bit coincide.
 
+> **Round 881:** the target's own resistance -- the three terms this page says OpenSRO "holds at
+> zero" -- and the appliers of darkness, disease, powerless, dissociation, panic and combustion
+> are read and built: `status_resist.md`.
+
 ## What OpenSRO does (round 659)
 
 Monsters give and receive states: `internal/statuseffect` lands a skill's status runs

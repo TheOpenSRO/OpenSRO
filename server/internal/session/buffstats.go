@@ -77,6 +77,19 @@ func buffStat(characterID int64, param int, base float64) float64 {
 	return t.Apply(base)
 }
 
+// attackRateStat is a character's attack rate (param 11) over its weapon's:
+// the buffs' entries and, round 881, a darkness's percent entry of
+// -value[3] (AbnormalState_Dark_Apply13 s:0x4a4e20 writes it in the
+// additive-percent slot, so it sums with the buffs' percents).
+func attackRateStat(characterID int64, weaponRate float64) float64 {
+	t, _ := buffTotal(characterID, buff.ParamHitRate)
+	if !t.HasMult {
+		t.Mult = 1
+	}
+	t.Pct += float64(statusFX.hitRatePercent(characterID))
+	return t.Apply(weaponRate)
+}
+
 // buffStatInt is buffStat rounded, for the int stats.
 func buffStatInt(characterID int64, param int, base int) int {
 	t, ok := buffTotal(characterID, param)
@@ -143,6 +156,9 @@ func applyBuffDamageVs(characterID int64, magical, unique bool, dmg int) int {
 		mp++
 	}
 	f *= buffFactor(characterID, mp)
+	// Round 881: a powerless on the attacker is one more multiplier entry
+	// of params 178 / 179 (statuseffect's effects.go).
+	f *= statusFX.dealtFactor(characterID)
 	if f == 1 {
 		return dmg
 	}
@@ -171,6 +187,10 @@ func applyPlayerTaken(characterID int64, magical bool, dmg int) int {
 		p += 2
 	}
 	f := buffFactor(characterID, p)
+	// Round 881: a dissociation on the defender, params 180 / 181, which the
+	// mitigation multiplies in right after the attacker's 178 / 179
+	// (s:0x40e793 / s:0x40eb45; statuseffect's effects.go).
+	f *= statusFX.takenFactor(characterID)
 	if f == 1 {
 		return dmg
 	}
@@ -234,8 +254,18 @@ func buffBonus(characterID int64) character.Bonus {
 	return b
 }
 
+// liveBonus is buffBonus with the states' part (round 881): a panic's and a
+// combustion's scale on the max HP and the max MP.
+func liveBonus(characterID int64) character.Bonus {
+	b := buffBonus(characterID)
+	if hp, mp := statusFX.maxScales(characterID); hp != 100 || mp != 100 {
+		b.HPScale, b.MPScale = float64(hp), float64(mp)
+	}
+	return b
+}
+
 func init() {
-	character.SetLiveBonusSource(buffBonus)
+	character.SetLiveBonusSource(liveBonus)
 }
 
 // buffedBlock is the block chance with the buffs' param 10 and the

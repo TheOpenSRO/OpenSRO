@@ -546,7 +546,7 @@ func MaxHPWith(str, level int, b Bonus) int {
 	if b.StrHPPct != 0 {
 		base = chainPct(str+b.Str, HPPerStr, level, b.StrHPPct)
 	}
-	return scalePct(base+b.HP, b.HPPct)
+	return scaleOf(scalePct(base+b.HP, b.HPPct), b.HPScale)
 }
 
 // MaxMPWith is MaxMP for a base Int, a level and a bonus.
@@ -555,7 +555,22 @@ func MaxMPWith(intel, level int, b Bonus) int {
 	if b.IntMPPct != 0 {
 		base = chainPct(intel+b.Int, MPPerInt, level, b.IntMPPct)
 	}
-	return scalePct(base+b.MP, b.MPPct)
+	return scaleOf(scalePct(base+b.MP, b.MPPct), b.MPScale)
+}
+
+// scaleOf is v x scale/100, truncated and at least 1; v itself for a scale
+// of 0 (none) or 100. Round 881: EvaluateParam's last factor, the slot-3
+// entries compounding from 100, which a panic (max HP) or a combustion (max
+// MP) writes as max(100 - value[3], 1) (statuseffect's effects.go).
+func scaleOf(v int, scale float64) int {
+	if scale == 0 || scale == 100 {
+		return v
+	}
+	out := int(float64(v) * scale / 100)
+	if out < 1 {
+		out = 1
+	}
+	return out
 }
 
 // chainPct is the stat chain with a percent on its middle param (round 838:
@@ -611,6 +626,9 @@ type Bonus struct {
 	// 838: a devil's spirit's 'hpna' / 'mpna'), which scale the Str / Int
 	// chain before the level growth (chainPct).
 	StrHPPct, IntMPPct float64
+	// HPScale and MPScale are params 3 and 4's scale entries in percent
+	// (round 881: a panic's, a combustion's); 0 is none.
+	HPScale, MPScale float64
 }
 
 // add is b with o's entries summed in.
@@ -625,7 +643,20 @@ func (b Bonus) add(o Bonus) Bonus {
 	b.MPPct += o.MPPct
 	b.StrHPPct += o.StrHPPct
 	b.IntMPPct += o.IntMPPct
+	b.HPScale = joinScale(b.HPScale, o.HPScale)
+	b.MPScale = joinScale(b.MPScale, o.MPScale)
 	return b
+}
+
+// joinScale compounds two scale entries (0: none).
+func joinScale(a, b float64) float64 {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	}
+	return a * b / 100
 }
 
 // liveBonus is the part of a character's bonus that changes with no event

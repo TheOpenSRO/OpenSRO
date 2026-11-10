@@ -29,10 +29,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/ai"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/character"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/gateway"
@@ -175,7 +178,9 @@ func statusRoller(casterID int64) statuseffect.Roller {
 	return func(chance, kind int) bool {
 		damageRollMu.Lock()
 		defer damageRollMu.Unlock()
-		return combat.RollChanceTracked(chance, damageRollNG, chanceMemory, casterID, combat.ChanceStatus(kind))
+		// Round 881: the chance may be negative after the target's resist,
+		// and the dice clamp and still roll it (combat.RollChanceClamped).
+		return combat.RollChanceClamped(chance, damageRollNG, chanceMemory, casterID, combat.ChanceStatus(kind))
 	}
 }
 
@@ -309,10 +314,15 @@ func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, mons
 	if err != nil || c == nil || c.HP <= 0 {
 		return
 	}
-	// OPEN: a character's resist params (27-32, 145-150) are not published
-	// by OpenSRO, so every character resists nothing for now.
+	// Round 881: the character's own resists -- its buffs', its passives'
+	// and its worn items' (resist.go).
 	now := time.Now()
-	recs := statuseffect.ResolveAll(runs, statuseffect.Target{Level: c.Level}, s.ms(now), statusRoller(monster.ID))
+	target := statusTargetOf(ctx, characterID, c.Level, d.eq, d.items)
+	recs := statuseffect.ResolveAll(runs, target, s.ms(now), statusRoller(monster.ID))
+	if statusResistTrace {
+		slog.Info("status: roll", "character_id", characterID, "monster", monster.ID, "skill", skill.ID, "runs", skill.Status,
+			"landed", codesOf(recs), "resist", target.Resist, "percent", target.ResistPercent, "flat", target.ResistFlat, "disease", target.Disease)
+	}
 	if len(recs) == 0 {
 		return
 	}
@@ -324,13 +334,34 @@ func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, mons
 		s.pcs[characterID] = h
 	}
 	before := h.Mask()
+	statsChanged := false
+	var drains []int
 	for _, r := range recs {
 		r.SourceID, r.SourceIsMonster = monster.ID, true
 		h.Put(r)
+		switch r.Slot {
+		case statuseffect.SlotPanic, statuseffect.SlotCombustion:
+			drains = append(drains, r.Slot)
+			statsChanged = true
+		case statuseffect.SlotDark:
+			statsChanged = true
+		}
 	}
 	msg := &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: characterID, Mask: h.Mask(), Levels: h.Levels()}
 	stopped := !h.CanMove()
 	s.mu.Unlock()
+	// Round 881: a panic's or a combustion's drain is worked from the max as
+	// the state has just cut it (effects.go), and the stats go out again
+	// (the appliers' vslot 0x538, s:0x4a5483 / s:0x4a5603 / s:0x4a4ea5).
+	for _, slot := range drains {
+		s.fileDrain(c, slot)
+	}
+	if statsChanged {
+		if slices.Contains(drains, statuseffect.SlotPanic) {
+			clampHP(ctx, d.chars, characterID) // OURS: whether the engine lowers a pool above the new max is not read
+		}
+		pushStats(ctx, d, s.statsDeps(), characterID)
+	}
 	// Round 832: freezing, sleep and stun (the appliers AbnormalState_Apply00,
 	// _Apply06 and _Apply14, 0x4a4570 / 0x4a49f0 / 0x4a4ec0, READ) call slot
 	// 348 (0x4aa340), which for a PC also empties the action queue
@@ -453,6 +484,99 @@ func (s *statusRuntime) cursedDefenceExact(characterID int64, def float64, magic
 	return def
 }
 
+// statMovingStates are the states whose landing or end changes a number the
+// character window shows (round 881): darkness (the attack rate), panic and
+// combustion (the max HP and MP).
+const statMovingStates = 1<<statuseffect.SlotDark | 1<<statuseffect.SlotPanic | 1<<statuseffect.SlotCombustion
+
+// statusResistTrace (OPENSRO_STATUS_RESIST_TRACE, QA only) logs every state
+// roll on a character with the resists it was rolled against.
+var statusResistTrace = os.Getenv("OPENSRO_STATUS_RESIST_TRACE") != ""
+
+// statsDeps is the stores a stats push reads.
+func (s *statusRuntime) statsDeps() RegenDeps {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stats
+}
+
+// fileDrain works a just-landed panic's or combustion's amount a tick from
+// c's max HP / MP with the state's cut in it, and files it on the record.
+func (s *statusRuntime) fileDrain(c *character.Character, slot int) {
+	if c == nil {
+		return
+	}
+	max := c.MaxMP()
+	if slot == statuseffect.SlotPanic {
+		max = c.MaxHP()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.pcs[c.ID]
+	if h == nil {
+		return
+	}
+	if v5, on := h.DrainSpec(slot); on {
+		h.SetDrain(slot, statuseffect.DrainOf(max, v5))
+	}
+}
+
+// holderRead runs f on characterID's holder under the lock, when it has one.
+func (s *statusRuntime) holderRead(characterID int64, f func(h *statuseffect.Holder)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h := s.pcs[characterID]; h != nil {
+		f(h)
+	}
+}
+
+// diseaseOf is characterID's param 169 (a disease's value[3]; round 881).
+func (s *statusRuntime) diseaseOf(characterID int64) int {
+	v := 0
+	s.holderRead(characterID, func(h *statuseffect.Holder) { v = h.Disease() })
+	return v
+}
+
+// hitRatePercent is the percent entry a darkness adds to characterID's
+// attack rate (param 11): -value[3].
+func (s *statusRuntime) hitRatePercent(characterID int64) int {
+	v := 0
+	s.holderRead(characterID, func(h *statuseffect.Holder) { v = h.HitRatePercent() })
+	return v
+}
+
+// dealtFactor multiplies characterID's blows (params 178 / 179, powerless).
+func (s *statusRuntime) dealtFactor(characterID int64) float64 {
+	v := 1.0
+	s.holderRead(characterID, func(h *statuseffect.Holder) { v = h.DealtFactor() })
+	return v
+}
+
+// takenFactor multiplies the blows characterID takes (params 180 / 181,
+// dissociation).
+func (s *statusRuntime) takenFactor(characterID int64) float64 {
+	v := 1.0
+	s.holderRead(characterID, func(h *statuseffect.Holder) { v = h.TakenFactor() })
+	return v
+}
+
+// maxScales is the percent a panic leaves of characterID's max HP and a
+// combustion of its max MP (100: none).
+func (s *statusRuntime) maxScales(characterID int64) (hp, mp int) {
+	hp, mp = 100, 100
+	s.holderRead(characterID, func(h *statuseffect.Holder) { hp, mp = h.MaxHPScale(), h.MaxMPScale() })
+	return hp, mp
+}
+
+// recovered is an amount of HP (or, with mp, MP) characterID recovers after
+// a panic's / a combustion's recover cut (params 143 / 144; ApplyHPMPDelta
+// s:0x4a86a0).
+func (s *statusRuntime) recovered(characterID int64, amount int, mp bool) int {
+	cut := 0
+	s.holderRead(characterID, func(h *statuseffect.Holder) { cut = h.RecoverCut(mp) })
+	return statuseffect.Recovered(amount, cut)
+}
+
 // monsterDefenceCut is the flat defence bleeding takes off monsterID.
 func (s *statusRuntime) monsterDefenceCut(id int64) int {
 	s.mu.Lock()
@@ -550,6 +674,9 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 	var pushes []statusPush
 	var mticks []monsterTick
 	var cticks []characterTick
+	// statIDs are the characters a state that moves a stat has just left
+	// (round 881): their stats go out again.
+	var statIDs []int64
 
 	s.mu.Lock()
 	cd, sd, st, mons := s.cdeps, s.sdeps, s.stats, s.mons
@@ -637,9 +764,13 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 			delete(s.pcs, id)
 			continue
 		}
+		before := h.Mask()
 		ticks, changed := h.Step(nowMs, p.hp, caster)
 		for _, t := range ticks {
 			cticks = append(cticks, characterTick{id: id, tick: t})
+		}
+		if (before&^h.Mask())&statMovingStates != 0 {
+			statIDs = append(statIDs, id)
 		}
 		if changed {
 			pushes = append(pushes, statusPush{zone: p.e.Zone, msg: &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}})
@@ -662,6 +793,9 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 			continue
 		}
 		broadcastStatus(hubOfChar(hub, p.msg.OwnerID), p.zone, p.msg)
+	}
+	for _, id := range statIDs {
+		pushStats(ctx, sd, st, id)
 	}
 	dead := map[int64]bool{}
 	for _, mt := range mticks {
@@ -764,7 +898,31 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 	if d.chars == nil || deadCharacter(d.hub, ct.id) {
 		return true
 	}
+	// Round 881: a panic's or a combustion's tick takes MP, never HP
+	// (ConsumeHpMp(0, amount, 2), statuseffect's effects.go).
+	if ct.tick.DrainMP > 0 {
+		if d.mp != nil {
+			if c, err := d.chars.GetByID(ctx, ct.id); err == nil && c != nil {
+				maxMP := c.MaxMP()
+				d.mp.Set(ct.id, max(d.mp.Current(ct.id, maxMP)-ct.tick.DrainMP, 0))
+				s.tracef("status: character %d %s tick drained %d MP", ct.id, ct.tick.Code, ct.tick.DrainMP)
+				pushStats(ctx, d, st, ct.id)
+			}
+		}
+		return false
+	}
 	dmg := ct.tick.Damage
+	// Round 881: a burn's tick is divided by 1 + param 8 / 100, the owner's
+	// magical absorption (AbnormalState_Apply02 s:0x4a4720..0x4a4756, READ;
+	// the accessories' for a character).
+	if ct.tick.BurnTable > 0 {
+		if p8 := playerMitigationPercent(ctx, ct.id, d.eq, d.items, true); p8 > 0 {
+			dmg = int(float64(ct.tick.BurnTable) / (1 + p8/100))
+			if dmg <= 0 {
+				return false
+			}
+		}
+	}
 	if ct.tick.NeverKills {
 		c, err := d.chars.GetByID(ctx, ct.id)
 		if err != nil || c == nil {

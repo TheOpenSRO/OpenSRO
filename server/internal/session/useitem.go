@@ -772,6 +772,9 @@ func (q *PotionQueue) takeLocked(characterID int64) (hp, mp int) {
 // comes first, so an error means nothing landed.
 func applyPotion(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, hp, mpAmount, curHP, curMP, maxHP, maxMP int) (newHP, newMP int, err error) {
 	newHP, newMP = curHP, curMP
+	// Round 881: a panic's / a combustion's recover cut (params 143 / 144,
+	// ApplyHPMPDelta s:0x4a86a0).
+	hp, mpAmount = statusFX.recovered(characterID, hp, false), statusFX.recovered(characterID, mpAmount, true)
 	if hp > 0 {
 		if newHP, err = chars.Heal(ctx, characterID, hp, maxHP); err != nil {
 			return curHP, curMP, err

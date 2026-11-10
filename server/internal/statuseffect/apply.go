@@ -55,14 +55,20 @@ import (
 // a tick, record+0x40 = value[4], the flat defence it takes off, and
 // record+0x10 = the row's 'puls' value[0], else 2000 ms (0x591bd7).
 //
-// OPEN, and not modelled: the extra halving loop the slow, bleeding and stun
-// blocks run on the chance before the roll (`sar eax,1` per step at
-// 0x591bc0), whose count is unread -- so OpenSRO's chance for those three is
-// the base one, which is never lower than retail's; the stun block's own
-// guards (`[esp+0x43]`, and its skip when the call's fifth argument is set);
-// the incubation block ('tb', +0x474), which has neither the 2.5 nor the 0.5
-// -- it is NOT applied; and 'csmp' (bit 22; its applier, Apply22 s:0x4a54a0, is unread)
-// -- NOT applied either.
+// Round 881: the three terms are built -- resist.go (the target's resist
+// record, the halving loop every one of the seventeen blocks carries out of
+// line, e.g. s:0x59133f for sleep) and the disease bonus below.
+//
+// The slow block alone takes its level from the CASTER when the run's
+// value[2] is 0 (s:0x59130b..0x5913a6: vslot 0x654 for a caster vslot 0x3d0
+// answers for, else the caster's level / 10); none of the table's 777 'sl'
+// rows has a 0 there (MEASURED), so it is not modelled.
+//
+// OPEN, and not modelled: the stun block's own guards (`[esp+0x13]`,
+// `[esp+0x43]`, and its skip when the call's fifth argument is set); the
+// incubation block ('tb', +0x474), which has neither the 2.5 nor the 0.5 --
+// it is NOT applied (14 rows carry it, MEASURED: ten ranks of one Warlock
+// skill and four skills of two uniques).
 
 // Run is one status run off a skill's Param block: its code and the values
 // after the code word.
@@ -127,14 +133,14 @@ func IsElemental(code string) bool {
 }
 
 // Applied reports whether OpenSRO applies a code at all: every state the
-// table names except 'tb' (its block's computation is unread) and 'csmp'
-// (bit 22: its applier is unread). See the package notes above.
+// table names except 'tb' (its block's computation is unread). 'csmp' is
+// applied from round 881 (its applier, s:0x4a54a0, is read: effects.go).
 func Applied(code string) bool {
 	s, ok := StateByCode(code)
 	if !ok {
 		return false
 	}
-	return s.Code != "tb" && s.Code != "csmp"
+	return s.Code != "tb"
 }
 
 // Target is what the roll needs to know about whoever the run lands on.
@@ -143,17 +149,27 @@ type Target struct {
 	// (GetLevel, vslot 0x124).
 	Level int
 	// ResistPercent and ResistFlat are the target's params 27..32 and
-	// 145..150 for an elemental state, indexed by its slot (0..5). Zero for
-	// every monster (characterdata cols 61-66 are 0 on every row, MEASURED)
-	// and, today, for every character: OpenSRO publishes no resist params
-	// (OPEN).
+	// 145..150 for an elemental state, indexed by the state's CLIENT BIT
+	// (0 freezing, 1 frostbite, 2 electric shock, 3 burn, 4 poison, 5 zombie:
+	// param 27 + bit, the bit a 'bgra' / 'reat' mask names). Zero for every
+	// monster (characterdata cols 61-66 are 0 on every row, MEASURED).
 	ResistPercent [6]int
 	ResistFlat    [6]int
+	// Resist is the target's record for each non-elemental state
+	// (ResistCategory; resist.go).
+	Resist [ResistCategories]CatResist
+	// Disease is the target's param 169 (a disease on it: its value[3]). It
+	// is added to every state's chance, and while it is not 0 every
+	// non-elemental state counts one level higher for the level overshoot
+	// (s:0x5906e6..0x590717: `[esp+0x38]` the value, `[esp+0x44]` = it != 0).
+	Disease int
 }
 
-// Roller is the chance-memory dice for one target: roll `chance` percent
+// Roller is the chance-memory dice for one CASTER: roll `chance` percent
 // under the state's kind, and say whether it came up. The engine keys the
-// accumulator by `kind << 24` in the TARGET's map (see above).
+// accumulator by `kind << 24` in the caster's map. chance may be 0 (never
+// rolled, never lands) or negative (clamped to 0 and rolled against the
+// accumulator; resist.go, "A chance of zero or less").
 type Roller func(chance, kind int) bool
 
 // Record is one state on an object: OpenSRO's version of the engine's
@@ -190,6 +206,14 @@ type Record struct {
 	// current x 0.3))). MEASURED: `cspd 30000,30,10,2000` on a defender of
 	// phy def 3182 moved a 152 % 6969..8038 blow from 572..688 to 3021..3559.
 	CurseCut int
+	// Value3, Value4 and Value5 are value[3..5] of the states whose appliers
+	// read them (round 881, effects.go): darkness's hit-rate cut (+0x48),
+	// disease's chance bonus (+0x44), powerless's and dissociation's percent
+	// (+0x38), panic's and combustion's three (+0x2c, +0x34, +0x38).
+	Value3, Value4, Value5 int
+	// DrainMP is panic's / combustion's amount a tick (+0x30), worked when
+	// the state lands (Holder.PutDrain).
+	DrainMP int
 	// SourceID is who applied it (record+0x4c): a character id, or a monster
 	// id when SourceIsMonster.
 	SourceID        int64
@@ -211,16 +235,13 @@ func Resolve(run Run, t Target, nowMs uint32, roll Roller) (Record, bool) {
 	slot := SlotForBit(st.Bit)
 	rec := Record{Code: st.Code, Slot: slot, Bit: st.Bit, StartMs: nowMs, LastTickMs: nowMs}
 	if IsElemental(run.Code) {
-		// The disease bonus (param 169) is 0: OpenSRO applies no disease.
-		if roll == nil || !roll(run.Value(1), st.Kind) {
+		// value[1] + the disease bonus (`add eax,edi`), rolled BEFORE the
+		// resist test.
+		if roll == nil || !roll(run.Value(1)+t.Disease, st.Kind) {
 			return Record{}, false
 		}
-		resist := t.ResistPercent[slot]
-		if resist >= 100 {
-			return Record{}, false
-		}
-		strength := int(float64(100-resist)/100.0*float64(run.Value(0))) - t.ResistFlat[slot]
-		if strength <= 0 {
+		strength, lands := ElementalStrength(run.Value(0), t.ResistPercent[st.Bit], t.ResistFlat[st.Bit])
+		if !lands {
 			return Record{}, false
 		}
 		dur, _ := DurationMs(slot, strength)
@@ -236,9 +257,16 @@ func Resolve(run Run, t Target, nowMs uint32, roll Roller) (Record, bool) {
 		}
 		return rec, true
 	}
-	d := LevelOvershoot(t.Level, run.Value(2))
+	reach := run.Value(2)
+	if t.Disease != 0 {
+		reach++
+	}
+	d := LevelOvershoot(t.Level, reach)
 	dur := NonElementalDurationMs(run.Value(0), d)
 	chance := NonElementalChance(run.Value(1), d)
+	if cat, ok := ResistCategory(st.Bit); ok {
+		chance = ResistedChance(chance, run.Value(2), t.Resist[cat], t.Disease)
+	}
 	if roll == nil || !roll(chance, st.Kind) {
 		return Record{}, false
 	}
@@ -249,6 +277,12 @@ func Resolve(run Run, t Target, nowMs uint32, roll Roller) (Record, bool) {
 	rec.Level = run.Value(2) & 0xff
 	if slot == SlotDecay || slot == SlotWeakness {
 		rec.CurseCut = run.Value(3)
+	}
+	switch slot {
+	case SlotDark, SlotDisease, SlotPowerless, SlotDissociation:
+		rec.Value3 = run.Value(3)
+	case SlotPanic, SlotCombustion:
+		rec.Value3, rec.Value4, rec.Value5 = run.Value(3), run.Value(4), run.Value(5)
 	}
 	if slot == SlotBleeding {
 		rec.TickValue = run.Value(3)

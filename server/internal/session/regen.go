@@ -171,6 +171,8 @@ func regenApply(ctx context.Context, hub *world.Hub, e world.Entity, chars chara
 	// avatarstats.go; and any buff's), as the tick reads them (mana.go).
 	hp := mana.RegenPerTick(maxHP, float32(buffStat(c.ID, buff.ParamHPRegen, float64(rate))))
 	mp := mana.RegenPerTick(maxMP, float32(buffStat(c.ID, buff.ParamMPRegen, float64(rate))))
+	// Round 881: a panic's / a combustion's recover cut (ApplyHPMPDelta).
+	hp, mp = statusFX.recovered(c.ID, hp, false), statusFX.recovered(c.ID, mp, true)
 	newHP, newMP := c.HP, curMP
 	changed := false
 	// HP 0 while alive: no HP (see regenOne).

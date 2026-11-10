@@ -1470,12 +1470,12 @@ func useSkillHandler(
 				res.PlayerHP = int32(owned.HP)
 				if castRow != nil && owned.HP > 0 {
 					if castRow.SelfHealHP > 0 {
-						if hp, err := chars.Heal(ctx, characterID, castRow.SelfHealHP, owned.MaxHP()); err == nil {
+						if hp, err := chars.Heal(ctx, characterID, statusFX.recovered(characterID, castRow.SelfHealHP, false), owned.MaxHP()); err == nil {
 							res.PlayerHP = int32(hp)
 						}
 					}
 					if castRow.SelfHealMP > 0 && mp != nil {
-						mp.Restore(characterID, owned.MaxMP(), castRow.SelfHealMP)
+						mp.Restore(characterID, owned.MaxMP(), statusFX.recovered(characterID, castRow.SelfHealMP, true))
 					}
 				}
 			}

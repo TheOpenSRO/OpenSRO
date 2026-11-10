@@ -32,8 +32,11 @@ const passiveTTL = 30 * time.Second
 
 type passiveState struct {
 	totals map[int]buff.Totals
-	vars   map[skillparam.Code]int
-	at     time.Time
+	// resists are the passives' state and elemental resists, each with the
+	// 'reqi' list that gates it (round 881, resist.go).
+	resists []passiveResist
+	vars    map[skillparam.Code]int
+	at      time.Time
 }
 
 var passives = struct {
@@ -96,7 +99,11 @@ func computePassives(ctx context.Context, skills skill.Store, ref SkillRefStore,
 	var stats []buff.Contribution
 	for _, row := range best {
 		r := row.Runs()
-		stats = append(stats, buff.StatContributions(r, row.ActionKind, row.Activity)...)
+		cs, pr := splitPassiveResists(row, buff.StatContributions(r, row.ActionKind, row.Activity), buff.StateResists(r))
+		stats = append(stats, cs...)
+		if pr != nil {
+			st.resists = append(st.resists, *pr)
+		}
 		for _, v := range r.All("setv") {
 			if len(v) >= 2 {
 				st.vars[skillparam.CodeOf(v[0])] += int(v[1])

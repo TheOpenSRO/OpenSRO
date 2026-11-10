@@ -195,3 +195,38 @@ func (m *ChanceMemory) roll(chance int, r *rand.Rand, actorID int64, kind Chance
 	}
 	return RollChanceTracked(chance, r, m.Tracker, actorID, kind)
 }
+
+// RollChanceClamped is RollChanceTracked for a chance that may be NEGATIVE
+// (round 881: a state's chance after the target's resist,
+// statuseffect.ResistedChance). READ, the dice FUN_00599cc0 (s:0x599cc0):
+//
+//	if chance == 0: return 0              ; no roll, the accumulator untouched
+//	if chance < 100 {
+//	    if chance < 0: chance = 0         ; clamped -- and STILL rolled
+//	    ... success = accumulator >= rand() % 101 ; accumulator += chance (- 100)
+//	}
+//
+// So a negative chance comes up whenever the actor's accumulator for the kind
+// is at or above the roll: about once in 101 a roll for an actor whose
+// accumulator is 0 (it starts at the chance, 0, and a failed roll adds 0),
+// and never again once it has come up (the accumulator then stands at -100
+// and nothing is added).
+// A nil tracker or a nil r never lands a negative chance.
+func RollChanceClamped(chance int, r *rand.Rand, t *ChanceTracker, actorID int64, kind ChanceKind) bool {
+	if chance >= 0 {
+		return RollChanceTracked(chance, r, t, actorID, kind)
+	}
+	if t == nil || r == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	key := chanceKey{actor: actorID, kind: kind}
+	acc := t.acc[key] // unseen: the clamped chance, 0
+	success := acc >= r.Intn(ChanceRollSides)
+	if success {
+		acc -= 100
+	}
+	t.acc[key] = acc
+	return success
+}

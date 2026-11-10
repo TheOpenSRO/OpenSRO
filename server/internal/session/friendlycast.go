@@ -385,6 +385,8 @@ func healCharacter(ctx context.Context, hub *world.Hub, chars character.Store, e
 		return -1
 	}
 	newHP := c.HP
+	// Round 881: the target's recover cut (ApplyHPMPDelta s:0x4a86a0).
+	hp, mpAmount = statusFX.recovered(c.ID, hp, false), statusFX.recovered(c.ID, mpAmount, true)
 	if hp > 0 {
 		if h, err := chars.Heal(ctx, c.ID, hp, c.MaxHP()); err == nil {
 			newHP = h

@@ -316,6 +316,10 @@ func characterRates(ctx context.Context, level int, characterID int64, eq equipm
 	}
 	// Truncated, not rounded (round 875, MEASURED: a parry of 617.6 and an
 	// attack rate of 524.8 read 617 and 524 on the character window).
+	// Round 881: the attack rate with a darkness's cut (attackRateStat).
+	if pct := statusFX.hitRatePercent(characterID); pct != 0 {
+		weaponRate *= 1 + float64(pct)/100
+	}
 	return int(combat.CharacterRate(level, weaponRate)), int(combat.CharacterRate(level, era)), nil
 }
 

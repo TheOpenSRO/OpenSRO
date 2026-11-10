@@ -137,6 +137,9 @@ type Spec struct {
 	// Stats are the row's ParamKeeper writes (round 785, stats.go
 	// StatContributions), copied to the record and summed by ParamTotals.
 	Stats []Contribution
+	// Resists are the row's 'real' runs (round 881, stats.go StateResists),
+	// copied to the record.
+	Resists []StateResist
 }
 
 // Record is one active buff.
@@ -160,6 +163,8 @@ type Record struct {
 	Contributions []Contribution
 	// Stats are the record's stat writes (round 785; Spec.Stats).
 	Stats []Contribution
+	// Resists are the record's state resists (round 881; Spec.Resists).
+	Resists []StateResist
 	// The row's recast-rule fields (round 636), copied from its Spec: what
 	// FUN_0059d870 reads off an ACTIVE record's skill, and what
 	// SkillAction_BuffEnd clears from the book's bit set.
@@ -949,6 +954,7 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 		rec.Dura = time.Duration(spec.DuraMs) * time.Millisecond
 	}
 	rec.Stats = append([]Contribution(nil), spec.Stats...)
+	rec.Resists = append([]StateResist(nil), spec.Resists...)
 	// EngageSkill (0x593540, READ): an 'onff' row's drain clock starts at the
 	// engage; a 'pw' row builds the wall object with 'pw' value[1] as its HP
 	// and becomes the owner's wall (`in_EAX[0x303] = record`, overwriting any

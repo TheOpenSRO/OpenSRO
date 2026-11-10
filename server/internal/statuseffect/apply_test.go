@@ -83,10 +83,10 @@ func TestNonElementalStun(t *testing.T) {
 	}
 }
 
-// 'tb' and 'csmp' are not applied (their blocks are unread / have no
-// applier), and a code that is no state is ignored.
+// 'tb' is not applied (its block is unread; 'csmp' is from round 881),
+// and a code that is no state is ignored.
 func TestUnreadStatesAreNotApplied(t *testing.T) {
-	for _, code := range []string{"tb", "csmp", "att", "puls"} {
+	for _, code := range []string{"tb", "att", "puls"} {
 		if _, ok := Resolve(Run{Code: code, Values: []int{10000, 100, 1, 5}}, Target{}, 0, always); ok {
 			t.Errorf("%q landed", code)
 		}

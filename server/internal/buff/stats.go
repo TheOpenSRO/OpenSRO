@@ -231,6 +231,67 @@ func StatContributions(r skillparam.Runs, actionKind, activity int) []Contributi
 		add(ParamHealHP, base, val(v, 0))
 		add(ParamHealMP, base, val(v, 1))
 	}
+	// Round 881: the elemental resists. 'bgra' [mask, percent] writes params
+	// 27..32 and 'reat' [mask, value] 145..150, slot 0, one param per mask
+	// bit 0..5 -- the state's client bit: freezing, frostbite, electric
+	// shock, burn, poison, zombie (ApplySkillParamsToChar s:0x595698..
+	// 0x5957ea for +0x2f8, s:0x595542..0x595689 for +0x2fc; READ).
+	for code, first := range map[skillparam.Code]int{"bgra": ParamResistPercent, "reat": ParamResistFlat} {
+		if v, ok := r.Values(code); ok {
+			mask := int32(val(v, 0))
+			for bit := 0; bit < ElementalStates; bit++ {
+				if mask&(1<<uint(bit)) != 0 {
+					add(first+bit, base, val(v, 1))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// The elemental resist params (round 881): ParamResistPercent + bit is the
+// percent a state's strength is cut by (27..32, capped at 100),
+// ParamResistFlat + bit what comes off after (145..150), bit the state's
+// client bit 0..5.
+const (
+	ParamResistPercent = 27
+	ParamResistFlat    = 145
+	ElementalStates    = 6
+)
+
+// StateResist is a row's 'real' [mask, probability, level] (CRefSkill
+// +0x300; round 881): while the record runs, every non-elemental state the
+// mask names is resisted with that probability at that level
+// (statuseffect's resist.go has the rule).
+type StateResist struct {
+	Mask  uint32
+	Prob  int
+	Level int
+}
+
+// StateResists reads a row's 'real' runs.
+func StateResists(r skillparam.Runs) []StateResist {
+	var out []StateResist
+	for _, v := range r.All("real") {
+		if len(v) >= 3 && v[0] != 0 {
+			out = append(out, StateResist{Mask: uint32(v[0]), Prob: int(v[1]), Level: int(v[2])})
+		}
+	}
+	return out
+}
+
+// StateResistsOf lists the 'real' entries of ownerID's running records.
+func (b *Books) StateResistsOf(ownerID int64) []StateResist {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	bk := b.books[ownerID]
+	if bk == nil {
+		return nil
+	}
+	var out []StateResist
+	for _, r := range bk.records {
+		out = append(out, r.Resists...)
+	}
 	return out
 }
 

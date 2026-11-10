@@ -7483,6 +7483,244 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eighty-first round: resisting curses and abnormal states as the original's -- a buff's level and probability taken off the landing roll, the accessories' percent off a poison's and a burn's time, a negative chance still rolled once, and what darkness, disease, powerless, dissociation, panic and combustion do
+
+Round 880 found that on the Wrecked Ship it is the Weakness curse that kills a robe wearer, and
+left open "the target's own resistance to a curse is still 0 in OpenSRO, as are the item options'
+elemental resists" and "`cssr`, `csit`, `cshp`, `csmp` and darkness's hit-rate cut are still not
+applied". The user: "build that next". This round reads the whole resistance chain, builds it,
+and answers which Cleric skills the user's character (level 110, Warrior 110 + Cleric 110, a +12
+robe set, a two-handed sword, four +12 accessories with five 20 % resists each) should keep up.
+Labels: READ (`s:` SR_GameServer.exe, as assembly), MEASURED, INFERRED, OURS, OPEN. Base
+`2303bf86`. Server only; no client code changed, the perf gate is skipped (no world drawing).
+The chain in full: `docs/protocol/status_resist.md`.
+
+### 1. The chain (READ)
+
+**Non-elemental states** (sleep, root, slow, fear, myopia, bleeding, darkness, stun, disease,
+confusion, decay, weakness, powerless, dissociation, panic, combustion, incubation). A character
+holds 17 resist records at `+0xa30 + 0x14`, 24 bytes each: a map level -> {probability} and a
+list of percents. Each state's block of `Combat_ApplyStatusEffects` (`s:0x590680`) asks for its
+record (`s:0x59de50` -> `s:0x5999e0`; sleep's block is `s:0x590f06..0x59107a`, the other sixteen
+the same code) and rolls
+
+    chance = value[1] scaled by the level overshoot (rounds 277 / 875)
+    B = the highest level filed, A = the highest probability at it, C = the list's sum
+    if B != 0 and value[2] > B: A is halved (value[2] - B) times
+    chance = chance - A + the target's param 169 (a disease's value)
+    if C != 0 and chance > 0: chance = ftol((1 - C/100) x chance)
+
+- The map is filed by a skill row's `real` [mask, probability, level] (`CRefSkill+0x300`,
+  `s:0x595818` -> `s:0x59df20` -> `s:0x599840`), for a running buff and for a passive, and emptied
+  at the buff's end (`s:0x582cbd`). A **passive** counts only while its own `reqi` list holds
+  (`s:0x59f0e0` takes its `real` and its params off while it fails).
+- The list is filed by the worn items' options (`Stat_ApplyTaggedModifier` `s:0x498690` ->
+  `s:0x59de70`): `rsli` sleep, `rfei` fear, `rsti` stun, `rdii` disease, `rcsi` combustion, and a
+  set's `rals` combustion, disease, sleep and fear. No item option resists decay or weakness.
+- **A chance of 0 or less.** The dice (`s:0x599cc0`) return at once for exactly 0; a negative
+  chance is clamped to 0 and still rolled against the caster's accumulator (0 until then, and a
+  failed roll adds 0), so each roll of a fully resisted state lands once in 101 -- until it has
+  landed once: that monster's accumulator then stands at -100 and it never lands it again.
+- A disease on the target (`ds`, param 169 = its value[3], 40 or 20) adds its value to
+  every chance and one level to the reach of every non-elemental state (`s:0x5906e6..0x590717`).
+
+**Elemental states** (freezing, frostbite, electric shock, burn, poison, zombie): the roll first
+(value[1] + param 169), then `strength = ftol((100 - p[27+bit]) / 100 x value[0]) - ftol(p[145+bit])`,
+nothing at 100 % or at a strength of 0 or less, and the duration is the strength times the
+state's unit. Params 27..32: a row's `bgra` [mask, percent] (`s:0x595698..`), an item's `fz`
+(27 **and** 28), `es` 29, `bu` 30, `ps` 31, `zb` 32, `rals` all six (`s:0x49871a..0x49886e`,
+`s:0x498f46`), summed and capped at 100. Params 145..150: a row's `reat` [mask, value]
+(`s:0x595542..`). So an accessory's "20 %" is 20 % off the state's time. A burn's tick is divided
+by `1 + param 8 / 100`, the magical absorption (`s:0x4a4720`).
+
+**The cures** were already built (rounds 785 / 786: `curl` / `curt` / `rcur` skills, the pills,
+the auto potion's abnormal row) and are unchanged.
+
+**What the remaining states do** (each its applier):
+
+| state | row values | effect | applier |
+|---|---|---|---|
+| darkness `dn` | 30 on 188 of 206 rows, 50 on 16 | attack rate -v3 %, as a percent entry of param 11 | `s:0x4a4e20` |
+| disease `ds` | 40 on 189 of 232 rows, 20 on 43 | param 169: +v3 to the chance of every state on the owner, +1 level of reach | `s:0x4a4f20` |
+| powerless `cssr` | 20 on 175 of 212 rows, 35 on 34 | the owner's blows x (1 - v3/100), params 178 / 179 | `s:0x4a5000` |
+| dissociation `csit` | 30 on 51 of 85 rows, 35 on 32 | the blows the owner takes x (1 + v3/100), params 180 / 181 | `s:0x4a50b0` |
+| panic `cshp` | `0,50,0` on 161 of 178 rows; else 30..40, 50..70, 0..5 | max HP x max(100 - v3, 1) %; HP recovered x (1 - v4/100) (`ApplyHPMPDelta` `s:0x4a86a0`); every > 2000 ms the low word of ftol(max HP x v5/100) comes off the **MP** (`ConsumeHpMp(0, n, 2)`) | `s:0x4a5320` |
+| combustion `csmp` | `30,50,5` on 30 of 50 rows, `50,50,5` on 17 | the same on the max MP, the MP recovered and the MP | `s:0x4a54a0` |
+
+Panic's drain is worked from the max HP and taken from the MP: the original's own code, built as
+it is. On most monsters a panic is only "half the HP you recover" (`0,50,0`: no cut, no drain).
+
+### 2. The skills that resist (MEASURED: the skill table, the client's text)
+
+| skill | what | `real` | elemental | needs |
+|---|---|---|---|---|
+| **Holy Word** (Cleric, 10 ranks) | buff on one character, 300 s, cool-down 60 s | 50 % at level rank + 1 (2..11), every state with a record but stun | flat 48..228, all six | a cleric rod to cast; no `reqi`, so the buff outlives the swap to another weapon (READ `s:0x59f0e0`: a record whose skill has no list is skipped) |
+| **Holy Spell** (Cleric, 4 ranks) | the same on the party within 30 m | 50 % at level 8..11 | flat 172..232 | a cleric rod to cast |
+| Charity (Cleric passive, 17 ranks) | bleeding, darkness, decay, weakness, powerless, dissociation | 50 % at level 1..11 | flat 20..116 (shock, burn, poison) | a whole light-armour set **and** a cleric rod |
+| Faith (Cleric passive, 17 ranks) | fear, myopia, disease, confusion, panic, combustion, incubation | 50 % at level 1..11 | flat 20..116 (zombie) | a whole robe set **and** a cleric rod |
+| Protection (Warrior passive, 9 ranks) | as Holy Word | 50 % at level 3..11 | flat 40..120 | a dual axe |
+
+Only the highest level filed counts, so two of them do not add up.
+
+### 3. MEASURED on the original
+
+A level-109 character (robe set, +12, the round-875 one) with Holy Word rank 9 (resist level 10,
+50 %) learned, standing among level-104 monsters whose skills carry a decay
+`cspd 30000,30,10,2000` and a darkness `dn 30000,10,10,50`. READ for that target: the overshoot is
+9, so the decay rolls ftol(30 x 0.55) = 16 % and the darkness ftol(10 x 0.55) = 5 %; under the
+buff 16 - 50 and 5 - 50, below zero.
+
+| phase | time | hits of the decay skill | decays landed | hits of the darkness skill | darknesses landed |
+|---|---|---|---|---|---|
+| Holy Word on | 300 s | 22 | **0** | 26 | **0** |
+| no buff (the same fight, the buff run out) | 347 s | 38 | **6** (15.8 %; READ 16 %) | 36 | **2** (5.6 %; READ 5 %) |
+| Holy Word on again | 206 s | 22 | **0** | 17 | **0** |
+
+- 0 of 44 under the buff against 6 of 38 without: at 16 % a hit, 44 misses in a row is a
+  5-in-10,000 chance; at the READ 1 in 101 it is what two runs in three give. (A state landing again while it is on is not seen as a new mask, so the
+  unbuffed counts are floors.) The first darkness landed 11 s after the buff ran out.
+- Each state lasted 23.3-23.5 s (READ: 30,000 ms x (1 - 0.025 x 9) = 23,250 ms).
+- The buff ran 300.0 s both times it ran out; the cast is refused with nothing selected ("The
+  target is not selected.") and taken with oneself selected.
+- The skill window names the passives' needs: Charity "Essential Item: Light Armor, Cleric Rod",
+  Faith "Essential Item: Robe, Cleric Rod"; Holy Word's next rank asks for the mastery level and
+  a rank of Charity (rank 10: Cleric 104, Charity 16).
+- The auto potion window has an "Abnormal status" row beside HP and MP (as built in round 786).
+- Not measured: an accessory's resist option (no monster with a sleep, a fear or an elemental
+  state was fought), and the weapon swap under the buff (the swap could not be driven while the
+  monsters were attacking) -- both READ only.
+
+### 4. What was missing in OpenSRO, and what changed
+
+Every character resisted nothing: `statuseffect.Target` carried only the level. `bgra` / `reat`
+were parsed and never written; `real` was parsed and never used; no item option was read;
+disease landed and did nothing; darkness, powerless, dissociation and panic landed, showed their
+icon and did nothing; combustion was not applied at all; a burn's tick ignored the magical
+absorption.
+
+- `statuseffect`: `resist.go` (`CatResist`, `ResistedChance`, `ElementalStrength`, the record of
+  each state), `effects.go` (the six appliers), `Target.Resist / ResistPercent / ResistFlat /
+  Disease` (the elemental params are now indexed by the state's client bit: electric shock is
+  param 29, burn 30), `Resolve` with the three terms, panic's and combustion's tick, `csmp`
+  applied.
+- `combat.RollChanceClamped`: the dice for a chance below zero.
+- `buff`: `StateResist` on a spec and a record (`real`), `bgra` / `reat` in `StatContributions`.
+- `session/resist.go`: `statusTargetOf` gathers the running buffs', the passives' (gated by their
+  list, `passiveReqsHold`) and the worn items' entries at each roll; `passives.go` keeps a
+  passive's resists apart from its other stats.
+- The effects: `attackRateStat` (darkness, in the blow's centre and the character window),
+  `applyBuffDamageVs` (powerless), `applyPlayerTaken` (dissociation), `character.Bonus.HPScale /
+  MPScale` (panic, combustion), `statusRuntime.recovered` at the potion, the regeneration, the
+  heal skills and the self-heal, the MP drain and the burn's param 8 in `dealCharacterTick`; the
+  stats go out again when a state that moves a number lands or ends.
+- `OPENSRO_STATUS_RESIST_TRACE=1` (QA) logs every state roll on a character with its resists.
+
+**The Cleric 110 kit in OpenSRO today (MEASURED, the real client on the lane server):** the
+skill table carries all five skills of section 2; learning works and enforces the chain as the
+original does (Holy Word 1 "requires skill group 794 at level 1" -- Charity -- and each rank its
+predecessor): Charity 1..17 and Holy Word 1..10 learned in 27 requests. The cast works: a cleric
+rod worn, oneself selected, the hotbar key pressed -- `BUFF start ... skill 11929 ... duration
+300000 ms`, cool-down 60 s, its cast effects and sound; the buff stays through the swap back to
+the two-handed sword. Before this round the buff did nothing.
+
+### 5. The real client, the Wrecked Ship's first group
+
+The round-880 setup: a copy of the user's character (533 / 206, 50,047 HP, phy def 2,602, mag
+def 3,984, absorption 119.8 %, the four accessories with five 20 % resists each) in world 81
+against the first group, seven Ghost Seirens (`csmd 15000,50,10,2934`: on a level-110 target the
+weakness rolls 25 %), no potion, standing still; the lane server with prod's flags and the
+tables exported from the client archive. Blows from the server's AI trace, rolls from the resist
+trace.
+
+| run | Holy Word | swings taken | weakness rolls | landed | a blow (min / median / max) | dead after |
+|---|---|---|---|---|---|---|
+| `w1` | not on (the learn refused: no Charity) | 12 | 3 | 1 | 42 / 6,856 / 10,317 | 4.9 s |
+| `w2` | not on (the same) | 10 | 3 | 1 | 521 / 6,952 / 11,036 | 5.1 s |
+| `w3` | rank 10 (level 11, 50 %) | 78 | 25 | **0** | 109 / 621 / 1,548 | 43.8 s |
+| `w4` | rank 10 | 53 | 21 | **1** (monster 1073807361's fourth roll: the 1 in 101) | 86 / 644 / 1,472, then 10,660 | 31.7 s |
+
+Without the buff a weakness landed on the second or third roll both times (25 % a roll) and the
+character was dead within a second or two of it. With it, 45 of 46 rolls did not land; the one
+that did is the dice's own rule for a chance below zero (section 1), not a leak: the roll was
+traced with the record at level 11 / 50 %, a chance of -25.
+
+In `w3` every roll was traced with the weakness record `{Level:11 Prob:50}`, the elemental
+percents `[80 80 80 80 80 80]` (the accessories) and the flats `[228 ...]` (Holy Word).
+Frames: none taken (numbers only); logs on the box under `/var/tmp/r881c/lane/`.
+
+### 6. The answer
+
+Learn **Holy Word** to rank 10 (Cleric mastery 104; it needs Charity rank 16 on the way, which
+does nothing for a sword-and-robe character but is the prerequisite), and keep it on: put a
+cleric rod on, select yourself, cast, put the sword back. It lasts 5 minutes and can be cast
+again after 1. Holy Spell rank 4 (Cleric 106) is the same for the whole party within 30 m.
+
+What it does on the Wrecked Ship 100-110, by the original's formula (and MEASURED on open-world
+monsters of the same state level):
+
+- **Weakness** (Ghost Seiren and King Nipper 50 %, Pirate 30 %, all level 10; 25 % and 15 % on a
+  level-110 character): 25 - 50 and 15 - 50 are below zero, so a roll lands once in 101 instead
+  of once in 4 (or 7), and a monster that has landed it once never lands it again. The magic
+  defence stays 3,984 instead of 1,196 for 11 s, and a magical blow stays 200-2,700 instead of
+  7,000-14,000.
+- The same for the Pirate's dissociation (+30 % damage taken), the Beast's decay, the Commander's
+  and Gluttony's darkness (state level 11 and 12: rank 10's 50 comes off level 11 whole and as
+  25 off level 12, more than their 30 % and 10 %), every bleeding (1,956-2,835 a tick), the
+  Specter's and Gluttony's disease and the slows.
+- Holy Word's flat 228 also refuses every burn and poison there outright (strength 222-238, 44-47
+  after the accessories' 80 %, less 228).
+- Not covered: stun (the necklace's option only), and plain damage.
+
+Without Holy Word the accessories alone already cut a burn or a poison there to a fifth of its
+time (33-36 s instead of 167-238 s); Charity, Faith and the Warrior's Protection do nothing for a
+character holding a two-handed sword.
+
+It does not make the first group soloable by standing still: seven Seirens' plain blows are
+about 1,100 HP a second on the robe (`w3`: dead in 44 s without a potion instead of 5 s; `w4`:
+32 s, the one weakness in a hundred landing). It takes the 10,000 blows from one roll in four to
+one in a hundred; potions, a heal or a party do the rest.
+
+### Tests
+
+`statuseffect/resist881_test.go` (the record of each state, the halving, the percent, the
+disease, the elemental params by bit, each curse's numbers, the drain's tick at 2001 ms, the
+burn's table value), `session/resist881_test.go` (a `real` buff through `statusTargetOf` and its
+end, `bgra`, a passive's list -- a rod and a whole set, a sword, a robe -- the items' options to
+80 % and the cap, `rals`, the negative chance: one fresh caster in 101 and never twice, the
+curses on a character's numbers). Synthetic ids throughout. Changed: `apply_test.go` (`csmp` is
+applied). `go build ./... && go vet ./... && go test ./...`: 100 packages pass. `remote_godot.sh check`:
+ALL LOAD (1,179 scripts); `tests`: ran 452 suite(s), 0 failing.
+
+### Differs on purpose / unsure (not changed)
+
+- Nothing OURS was reverted.
+- OpenSRO counts a passive's OTHER params (the shield passive's `setv`, a passive's attack or
+  defence) whatever is worn; the original takes them off while the passive's list fails
+  (`s:0x59f0e0`). Only the resists added here follow the list. Gating the rest would change
+  numbers players have today -- a decision for the user.
+- An active buff whose `reqi` list fails after an equipment move is still not ended (round 839's
+  note; e.g. the Rogue's Poison Circle after the dagger is put away).
+
+### OPEN
+
+- A monster as the target: its records are empty (as the original's, every resist column 0) but
+  a player's darkness, powerless or dissociation on a monster changes nothing yet, and a
+  monster's own `real` buffs (none found in the table) are not looked for.
+- **`tb` (incubation) is still not applied**: its block is unread. 14 rows carry it (ten ranks
+  of one Warlock skill, four skills of two uniques; none in the Forgotten World).
+- The stun block's own guards; the slow block's level from the caster when value[2] is 0 (none of
+  the 777 `sl` rows has it).
+- Whether the engine lowers a pool standing above a max a panic has just cut (OpenSRO lowers HP).
+- The item options' resists and the weapon swap under the buff are READ, not measured.
+- Prod needs no re-import (no table column changed); it runs with `-magic-options-csv` already.
+
+### Changelog lines (draft)
+
+- Buffs and passives that resist bad statuses now work as in the original: Holy Word, Holy Spell, Fire Shield and the resist passives lower or remove the chance of curses and other statuses landing on you.
+- Accessory options now count: Freezing/Frostbite, Electric shock, Burn, Poison and Zombie "reduce" options shorten those statuses (four 20 % accessories leave a fifth of the time); Sleep, Fear, Stun, Disease and Combustion options lower their chance.
+- Burn damage over time is now reduced by your magical absorption.
+- Darkness lowers your attack rate, Disease makes every other status more likely to land, Powerless lowers the damage you deal, Dissociation raises the damage you take, Panic halves the HP you recover (and from a few monsters cuts your maximum HP), Combustion cuts your maximum MP, halves the MP you recover and drains MP -- each as in the original.
+
 ## Eight-hundred-and-eightieth round: how hard the Wrecked Ship's monsters hit a level-110 character -- a swing every action time and as much again at random (not every ReuseDelay), every blow of a two- and three-hit skill, a curse that leaves 30 % of the defence, the defence taken off unrounded; and what a +12 robe set really takes there
 
 The user (round 875): "101+ mobs can easily kill me. I have the highest end gear that should tank

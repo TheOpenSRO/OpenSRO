@@ -115,6 +115,12 @@ type Tick struct {
 	Source          SourceRule
 	SourceID        int64
 	SourceIsMonster bool
+	// DrainMP is the MP a panic's or a combustion's tick takes (round 881,
+	// effects.go); such a tick deals no damage.
+	DrainMP int
+	// BurnTable is a burn tick's numerator, table[value[2]] (Damage is it
+	// with param 8 at 0): the dealer divides it by the owner's own param 8.
+	BurnTable int
 	// NeverKills marks poison: its damage is min(value, HP-1) against the HP
 	// the owner has when the tick is dealt.
 	NeverKills bool
@@ -238,9 +244,9 @@ func (r *Record) tick(nowMs uint32, curHP int, caster CasterLookup) (Tick, bool)
 		}
 		return Tick{Code: r.Code, Damage: d, NeverKills: true, Source: r.source(caster, true), SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
 	case SlotBurn:
-		// AbnormalState_Apply02 (0x4a46f0): the same 2001 ms. Param 8 is 0
-		// on everything OpenSRO spawns, and the factor is the 1.0 the block
-		// writes. READ.
+		// AbnormalState_Apply02 (0x4a46f0): the same 2001 ms. The factor is
+		// the 1.0 the block writes. READ. Param 8 (the magical absorption,
+		// 0 on a monster) is the dealer's to divide by: Tick.BurnTable.
 		if nowMs-r.LastTickMs < TickIntervalMs {
 			return Tick{}, false
 		}
@@ -249,7 +255,18 @@ func (r *Record) tick(nowMs uint32, curHP int, caster CasterLookup) (Tick, bool)
 		if d <= 0 {
 			return Tick{}, false
 		}
-		return Tick{Code: r.Code, Damage: d, Source: r.source(caster, false), SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
+		return Tick{Code: r.Code, Damage: d, BurnTable: r.TickValue, Source: r.source(caster, false), SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
+	case SlotPanic, SlotCombustion:
+		// s:0x4a5381 / s:0x4a5501: `GetTickCount() - +0x68 <= 0x7d0`
+		// returns, then ConsumeHpMp(0, word +0x30, 2). READ.
+		if nowMs-r.LastTickMs <= DrainIntervalMs {
+			return Tick{}, false
+		}
+		r.LastTickMs = nowMs
+		if r.DrainMP <= 0 {
+			return Tick{}, false
+		}
+		return Tick{Code: r.Code, DrainMP: r.DrainMP, SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
 	case SlotBleeding:
 		// AbnormalState_Apply11 (0x4a4cc0): `GetTickCount() - +0x68 <= +0x10`
 		// returns -- strictly MORE than the interval must pass -- then
