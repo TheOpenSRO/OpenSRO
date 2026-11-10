@@ -98,6 +98,13 @@ func wearOneSlot(ctx context.Context, eq equipment.Store, characterID int64, slo
 		}
 		if broke {
 			character.InvalidateBonus(characterID) // round 769: a broken piece counts nothing
+			// Round 882: ChangeItemDurability's re-check when a worn item
+			// reaches 0 (s:0x4e71a2, gearreqs.go) -- a broken item answers no
+			// list. The passives are counted again at once; the buffs' walk
+			// runs off this call's stack, since a blow can be resolved with
+			// the owner's buff lock held (a buff cast that also strikes).
+			invalidatePassives(characterID)
+			go gearBroke(characterID)
 		}
 		slog.Info("durability lost", "character_id", characterID, "slot", int(slot), "durability", next, "broke", broke)
 		notifyDurability(characterID, int(slot), next)

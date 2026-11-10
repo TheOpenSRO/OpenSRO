@@ -518,6 +518,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 		}
 		gearSlotChanged(characterID, other) // round 877
 		broadcastUnworn(hub, characterID, other, removed)
+		gearChanged(ctx, hub, characterID) // round 882: the re-check (gearreqs.go)
 	}
 	// Round 800: a job suit goes on over 10 seconds (jobsuit.go).
 	if req.Slot == equipment.SlotJobSuit {
@@ -531,7 +532,11 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	}
 	gearSlotChanged(characterID, req.Slot) // round 877: an attached item passed the test
 	character.InvalidateBonus(characterID) // round 769: the worn options changed
-	clampHP(ctx, chars, characterID)       // a swap can lower the max (review F2)
+	// Round 882: the re-check after a worn item changed (s:0x50f53f ->
+	// FUN_0059f0e0, gearreqs.go): the passives are counted again and the
+	// character's own buffs whose list fails end, before the move's answer.
+	gearChanged(ctx, hub, characterID)
+	clampHP(ctx, chars, characterID) // a swap can lower the max (review F2)
 	err = sendWornList(ctx, sess, store, items, characterID)
 	// The zone sees it put on (0x3038, round 735). A swap is one 0x3038 of
 	// the incoming item, as retail's: the client's handler replaces the slot.
@@ -576,6 +581,7 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	}
 	gearSlotChanged(characterID, req.Slot) // round 877: nothing held there now
 	character.InvalidateBonus(characterID) // round 769: the worn options changed
+	gearChanged(ctx, hub, characterID)     // round 882: the re-check (gearreqs.go)
 	clampHP(ctx, chars, characterID)       // taking it off can lower the max (review F2)
 	err = sendWornList(ctx, sess, store, items, characterID)
 	// The zone sees it taken off (0x3039, round 735).

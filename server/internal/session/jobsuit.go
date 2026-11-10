@@ -311,6 +311,7 @@ func finishJobChange(sess *gateway.Session, d suitDeps, characterID int64, ch *j
 			return
 		}
 		gearSlotChanged(characterID, equipment.SlotJobSuit) // round 877
+		gearChanged(ctx, d.hub, characterID)                // round 882
 		jobWearLocks.Store(characterID, now.Add(jobWearLockSeconds*time.Second))
 		setJobState(ctx, characterID, byte(item.TypeID4))
 		_ = sendWornList(ctx, sess, d.store, d.items, characterID)
@@ -327,6 +328,7 @@ func finishJobChange(sess *gateway.Session, d suitDeps, characterID int64, ch *j
 		return
 	}
 	gearSlotChanged(characterID, equipment.SlotJobSuit) // round 877
+	gearChanged(ctx, d.hub, characterID)                // round 882
 	setJobState(ctx, characterID, pcspawn.JobStateNone)
 	// The suit off ends a safe trade (round 802, s:0x4f0dd4).
 	safeTradeLose(ctx, characterID)

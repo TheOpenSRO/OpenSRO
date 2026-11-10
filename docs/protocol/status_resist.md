@@ -197,9 +197,8 @@ OURS / OPEN:
 - A monster resists nothing (its characterdata resist columns are 0 on every row, MEASURED) and a
   monster's own darkness, powerless or dissociation -- a player's curse on it -- changes nothing
   yet (one player row carries `cssr`).
-- Passive params other than the resists are still counted whatever is worn (`passives.go`), and
-  an active buff whose `reqi` list fails after an equipment move is still not ended
-  (`buffreqs.go`).
+- Round 882: a passive's other params follow its list too, and an active buff whose `reqi` list
+  fails after an equipment move ends (`skill_gear.md`).
 - The slow block's level from the caster when value[2] is 0 (no row has it) and the stun block's
   own guards are not built; **`tb` (incubation) is still not applied** -- its block is unread,
   and 14 rows carry it.

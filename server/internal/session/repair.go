@@ -207,6 +207,11 @@ func RepairHandlerWithBag(chars character.Store, eq equipment.Store, inv invento
 			}
 			// Round 769: a broken piece mended counts again.
 			character.InvalidateBonus(characterID)
+			// Round 882: ChangeItemDurability's re-check when a worn item
+			// comes back from 0 (s:0x4e71a2, gearreqs.go).
+			if e.durability == 0 && e.slot < RepairBagSlotBase {
+				gearChanged(ctx, nil, characterID)
+			}
 			gold -= cost
 			spent += cost
 			if e.slot >= RepairBagSlotBase {
@@ -310,6 +315,7 @@ func useRepairHammer(ctx context.Context, sess *gateway.Session, eq equipment.St
 	}
 	type mendedItem struct{ slot, durability int }
 	var mended []mendedItem
+	wornMended := false // round 882: a worn item came back from 0
 	for _, e := range list {
 		if e.durability == durability.Untracked {
 			continue
@@ -326,6 +332,7 @@ func useRepairHammer(ctx context.Context, sess *gateway.Session, eq equipment.St
 			continue
 		}
 		mended = append(mended, mendedItem{e.slot, max})
+		wornMended = wornMended || (e.durability == 0 && e.slot < RepairBagSlotBase)
 	}
 	if len(mended) == 0 {
 		return refuse(ErrNoItemToRepair, "no item needs repairing")
@@ -337,6 +344,9 @@ func useRepairHammer(ctx context.Context, sess *gateway.Session, eq equipment.St
 	}
 	// A broken piece mended counts again (round 769).
 	character.InvalidateBonus(characterID)
+	if wornMended {
+		gearChanged(ctx, nil, characterID) // round 882 (gearreqs.go)
+	}
 	if err := sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
 		Remaining: int32(have - 1), ItemID: uint32(it.ID),
 	}).Encode()}); err != nil {

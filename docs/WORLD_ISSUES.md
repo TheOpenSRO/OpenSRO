@@ -7483,6 +7483,204 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eighty-second round: passives and buffs follow their required gear, as the original's -- a passive counts only while its own item list holds, a buff of one's own ends when its list fails, a buff without a list outlives the swap
+
+Round 881 left two differences for the user: "OpenSRO still counts a passive's other params
+whatever is worn" and "an active buff whose `reqi` fails after an equipment move is still not
+ended". The user, asked whether passives should stop counting without their gear as in the
+original: "yes, jjust like the original". This round reads the whole rule, measures it, builds it
+and counts what changes on prod. Labels: READ (`s:` SR_GameServer.exe, as assembly), MEASURED,
+INFERRED, OURS, OPEN. Base `bdbe9d05`. Server only; no client code changed, the perf gate is
+skipped (no world drawing). The rule in full: `docs/protocol/skill_gear.md`.
+
+### 1. The rule (READ)
+
+**The list.** A row's `reqi` runs are up to five `[kind, value]` entries (`CRefSkill+0x3a0`),
+`reqn` (`+0x3b4`) makes them ALL-of. The cast gate (`s:0x58d480`), the head of
+`ApplySkillParamsToChar` (`s:0x594aed..0x594cd5`) and the re-check `GObjPC::FUN_0059f0e0`
+(`s:0x59f0e0`) walk it with the same loop (the jump table `s:0x59f3e4`):
+
+- kind 6: the weapon's TypeID4 is the value; kind 4: the shield slot's;
+- kinds 1, 2, 3, 9, 10, 11 with value 0: **all six** body parts are of that kind (the part table
+  `s:0xc63f44`; the first that is not clears the answer, `s:0x59f232..0x59f274`); with a value N
+  the part at index N has TypeID4 N;
+- kind 14, value 1: the avatar storage's index 4 (round 839);
+- a slot's getter (`s:0x4ead40`, `s:0x4ead80`, `s:0x4eadc0`) answers 0 for an empty slot and for
+  a **broken** item (`+0x190`), and asks nothing else: an item that fails its own level or
+  mastery requirement (round 877: worn, counting for no stat) **still answers the list**;
+- five filled ALL-of entries that all hold leave the loop with the answer cleared
+  (`s:0x59f2a9..0x59f2d3`); no shipped row fills five.
+
+**When.** The params' gate runs at a passive's engage -- a world entry (`s:0x4df9e0` ->
+`FUN_0059acd0` `s:0x59acd0`), a revive (`s:0x4df290`), the learn (`s:0x59bfe0`) -- and a list
+that fails applies nothing at all (`s:0x594cc7`: no param, no `real`, no `setv`; record
+`+0x10 = 0`). The re-check runs after an equipment or avatar move changed a worn item
+(`s:0x50f53f`) and when a worn item's durability reaches 0 or leaves it (`s:0x4e71a2`). It looks
+only at records the owner cast on itself whose skill has a list (`s:0x59f12e..0x59f160`):
+
+- a passive: its `real`, its `setv` variables (`s:0x5a02a0`) and its ParamKeeper contributions
+  (`s:0x4b3660`) come off while the list fails and go back on (`ApplySkillParamsToChar`) when it
+  holds (`s:0x59f2f8..0x59f37d`);
+- an active buff whose list fails is ended (`FUN_0059eff0(0)`), unless its code holds
+  `SKILL_CH_FIRE_SHIELD_` (`s:0x59f383..0x59f3a8`).
+
+A record another character cast and a skill with **no list** are never looked at: that is why
+Holy Word (a cleric rod only through the cast gate's weapon columns) outlives the swap. A level
+change or a mastery raise runs neither.
+
+**Which skills** (MEASURED, the skill table): 176 of the 783 player passive rows carry a list, 18
+skills -- the Cleric's four (a whole light-armour or robe set AND a cleric rod), the Warrior's
+seven (a one-handed sword `6:7`, a two-handed sword `6:8`, a dual axe `6:9`), the Warlock's two,
+the Rogue's crossbow passive, the Chinese shield passive and three balance rows. The other 607
+have none. Timed buffs with a list: the Warrior's guard and frenzy buffs (`6:7; 6:8; 6:9`; the
+damage frenzy `6:8` alone), the Cleric's blessings, the Wizard's, Warlock's, Rogue's and Bard's
+weapon buffs, the Chinese shield, bow and damage-divide buffs, the 23 spirit rows.
+
+### 2. MEASURED on the original
+
+A level-109 European (Warrior 110, Cleric 101, a +12 robe set) holding rank 18 of the
+one-handed-sword defence passive (`defp` 224), a rank of the Cleric's light-armour defence passive
+(`defp` 168), the damage frenzy (900 s), the physical guard buff (`defp` 2118, 45 s) and Holy
+Word; the character window after each move, the buffs by their icons and packets:
+
+| worn weapon | phy def | mag def |
+|---|---|---|
+| none | 2590 | 3956 |
+| a cleric rod | 2590 | 3956 |
+| a one-handed sword | **2814** | 3956 |
+| a two-handed sword (+7 Str / Int of its own) | 2602 | 3984 |
+| a one-handed sword, read at a login wearing it | **2814** | 3956 |
+
+- The 224 is there with the one-handed sword only, on at the move and off at the swap; the
+  light-armour passive adds nothing with the rod over a robe set (both entries are asked).
+- **Damage frenzy** (two-handed sword only), cast with the two-handed sword, then the swap to the
+  one-handed one: its 0xB072 **34 ms** after the move's request, ahead of the move's answer; the
+  icon gone.
+- **Guard buff** (any of the three), cast with the one-handed sword: phy def 4932 (2814 + 2118);
+  the swap to the two-handed sword: stays, 4720 (2602 + 2118); the swap to a cleric rod: 0xB072
+  **96 ms** after the request (57 ms after the move's answer), 2590.
+- **Holy Word**, cast with the rod on oneself, then the two-handed and the one-handed sword: no
+  0xB072 in 30 s, the icon kept. (Round 881 had this READ only.)
+- No system line or banner came with the frenzy's end (the others' were not looked at).
+- Not measured: a broken item, a whole light-armour set, a revive (READ only).
+
+### 3. What was different in OpenSRO, and what changed
+
+Before: every learned passive's stats and variables counted whatever was worn (only round 881's
+resists followed the list), and only the spirits' buffs (kind 14, at the avatar moves) were
+re-checked.
+
+- `session/gearreqs.go` (new): `gearReqsHold` -- the list walk of section 1 over the worn,
+  unbroken items (`wornKindsOf`, every worn item whether or not round 877 lets it count) and
+  kind 14; `gearChanged` -- the re-check: the passives are counted again and the character's own
+  buffs whose list fails end, the zone told, before the move's answer.
+- `passives.go`: the passive set is computed over what is worn -- a row whose list fails adds no
+  stat and no `setv` variable -- and forgotten at each `gearChanged` (OURS: OpenSRO keeps no
+  passive records; the set agrees with the engine's at every moment the engine re-checks). The
+  first read after a world entry is the engage.
+- `buffreqs.go`: `buffReqFails` walks the whole list (it passed over every list without a
+  kind-14 entry before); the avatar moves run the same walk.
+- `gearChanged` is called after an equip, an unequip and a swap (`handleEquip`,
+  `handleUnequip`), the job suit's two moves, a worn item breaking (`wearOneSlot`: the passives
+  at once, the buffs' walk and a stats push on their own goroutine, since a blow can be resolved
+  with the owner's buff lock held) and a broken worn item mended (both repair paths).
+- `resist.go`: the passives' lists at a state roll read every unbroken worn item, not only the
+  ones round 877 lets count (the getters ask for the broken flag alone).
+- The cast gate is unchanged: it walks the same list at the cast (rounds 486 / 490, refusal
+  0x300d); it was not re-read in this round.
+
+### 4. Prod (read-only, 2026-11-10)
+
+16,908 characters; **4** have learned a passive with a list, **2** wear something its list does
+not accept:
+
+- **The user's character** (level 110, Warrior 110 + Cleric 110, a two-handed sword, a
+  robe set). Its passives with a list, today and after:
+
+  | passive (rank) | list | today | after |
+  |---|---|---|---|
+  | one-handed-sword defence (18), `defp` 224 | `6:7` | counts | **no** |
+  | one-handed-sword block (10), `br` | `6:7` | counts | **no** |
+  | one-handed-sword critical guard (9), `dcri` | `6:7` | counts | **no** |
+  | dual-axe defence (17), `defp` 212 | `6:9` | counts | **no** |
+  | dual-axe Protection (9), `real` / `reat` | `6:9` | no (round 881) | no |
+  | two-handed-sword critical (10), `cr` 11 | `6:8` | counts | counts |
+  | two-handed-sword return (9), `dmgr` | `6:8` | (not built) | (not built) |
+
+  Its four passives without a list (the three weapon attack passives, the dual-axe hit rate)
+  are untouched; it has learned no Cleric passive. **Character window, a copy of its kit on the
+  lane server: phy def 3,038 today, 2,602 after** (-436 = 224 + 212); mag def 3,984, HP 50,047,
+  attack 5,149-6,097, parry 617 and hit 524 unchanged. 2,602 / 3,984 is what the original shows
+  for the same set.
+- A level-140 character with rank 10 of the Rogue's crossbow passive (`odar`) wearing a dagger:
+  that absorption stops counting. The other two hold their lists (a spear; a one-handed sword).
+
+No table column changed: prod needs no re-import.
+
+### 5. The real client on the lane server (prod's flags, the tables from the client archive)
+
+`/var/tmp/r882p/lane/go.sh`: a copy of the user's kit and its 173 passive rows learned through
+the skill window's own messages (218 learns accepted), a plain one-handed sword, cleric rod and
+dual axe in the bag; the inventory opened with its key, each swap a left click on the bag item
+and a left click on the worn weapon slot, each cast a hotbar key; the character window's numbers
+from the server's stats answer, the buffs from the client's own start / end handling. `p3` is
+this round's server (`p4` the same run again on the committed code: the same numbers), `q3` the
+base's (the same input).
+
+| step | `q3` (base) phy def | `p3` phy def | the original |
+|---|---|---|---|
+| two-handed sword | 3038 | **2602** | 2602 |
+| one-handed sword | 3026 | **2814** | 2814 |
+| cleric rod | 3026 | **2590** | 2590 |
+| dual axe | 3026 | **2802** (2590 + 212) | |
+| two-handed sword again | 3038 | **2602** | 2602 |
+| damage frenzy cast, swap to the one-handed sword | buff kept | **buff ended** at the swap | ended |
+| guard buff cast with the one-handed sword | 5144 | **4932** | 4932 |
+| swap to the two-handed sword | 5156, kept | **4720, kept** | 4720, kept |
+| swap to the cleric rod | 5144, kept (ran out at 45 s) | **2590, ended** at the swap | 2590, ended |
+| Holy Word cast with the rod, swap to both swords | kept | **kept** | kept |
+
+Frames: `/var/tmp/r882p/lane/p3/snaps/` (13, one per step). Not run with a second client: the
+buff's end goes to the zone through the same `OpBuffEnd` broadcast every buff end uses. The
+break path (a weapon reaching durability 0) was not driven in the client; its test is the unit
+test.
+
+### Tests
+
+`session/gearreqs882_test.go` (synthetic ids): the list walk (weapon, shield, a whole set, one
+piece of another kind, a piece missing, a part by value, kind 14, any-of, all-of, five filled
+entries, unreadable gear); the passive's stat and variable through bare hands, rod, one-handed and
+two-handed sword, a light set with and without a piece; a broken and a mended weapon; a weapon
+held by its own requirement still answering; the set at a world entry; the three buffs through
+the swaps, the fire shield and another's cast spared; a buff ended by its weapon breaking.
+Changed: `buffreqs839_test.go` (a weapon list is walked now). `go build ./... && go vet ./... &&
+go test ./...`: 100 packages pass. `remote_godot.sh check`: ALL LOAD (1,179 scripts); `tests`:
+ran 452 suite(s), 0 failing.
+
+### Differs on purpose / unsure (not changed)
+
+- Nothing OURS was reverted.
+- The original marks the record and its 0xB072 leaves at the book's next update (34 and 96 ms
+  after the request, once before and once after the move's answer); OpenSRO sends the end before
+  the move's answer every time.
+
+### OPEN
+
+- A buff restored at a world entry has no row filed for the re-check until it is cast again, so
+  a carried buff is not ended by a later swap.
+- An ammunition reload into the shield slot runs no re-check (the engine's reload path was not
+  followed; no list asks for ammunition).
+- Kind 14 in the params' gate reads another getter (`FUN_004eae20`) than the re-check; not
+  followed (no passive carries kind 14).
+- `dmgr` (the two-handed-sword return passive) is still not built; round 881's OPEN items stand.
+- Not measured, READ only: a broken item against a list, a revive's engage, a whole light-armour
+  set with the rod.
+
+### Changelog lines (draft)
+
+- Passive skills now need their required gear, as in the original: a weapon or armour passive counts only while that weapon (or the whole armour set and weapon) is worn, and switches on and off as you change equipment.
+- Your own buffs that need a certain weapon or shield now end when you swap it away or take it off, as in the original; buffs without such a requirement (Holy Word, for one) stay.
+
 ## Eight-hundred-and-eighty-first round: resisting curses and abnormal states as the original's -- a buff's level and probability taken off the landing roll, the accessories' percent off a poison's and a burn's time, a negative chance still rolled once, and what darkness, disease, powerless, dissociation, panic and combustion do
 
 Round 880 found that on the Wrecked Ship it is the Weakness curse that kills a robe wearer, and

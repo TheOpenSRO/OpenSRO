@@ -7,6 +7,7 @@ import (
 	"github.com/TheOpenSRO/OpenSRO/server/internal/avatar"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 )
@@ -51,35 +52,41 @@ func TestBuffReqFails839(t *testing.T) {
 	const owner = 839001
 	self := buff.Record{OwnerID: owner, CasterID: owner, SkillID: 31142, Activity: 2}
 	row := spiritRow839(31142, "SKILL_MALL_NASRUN_ECCENTRICDEMON_01", 2)
-	if buffReqFails(self, row, true) {
+	with := gearState{known: true, spirit: true}
+	without := gearState{known: true}
+	if buffReqFails(self, row, with) {
 		t.Error("ended while the spirit holds")
 	}
-	if !buffReqFails(self, row, false) {
+	if !buffReqFails(self, row, without) {
 		t.Error("kept with the spirit gone")
 	}
 	// Cast by another: ctx+0x20 is not 1, the record is passed over.
 	other := self
 	other.CasterID = owner + 1
-	if buffReqFails(other, row, false) {
+	if buffReqFails(other, row, without) {
 		t.Error("another's cast ended")
 	}
 	// A passive (Basic_Activity 0) is not ended (its params toggle; OpenSRO
 	// keeps no passive records).
 	passive := self
 	passive.Activity = 0
-	if buffReqFails(passive, spiritRow839(1, "SKILL_X", 0), false) {
+	if buffReqFails(passive, spiritRow839(1, "SKILL_X", 0), without) {
 		t.Error("a passive ended")
 	}
 	// The fire shield is spared.
-	if buffReqFails(self, spiritRow839(2, "SKILL_CH_FIRE_SHIELD_A_01", 2), false) {
+	if buffReqFails(self, spiritRow839(2, "SKILL_CH_FIRE_SHIELD_A_01", 2), without) {
 		t.Error("the fire shield ended")
 	}
-	// No kind-14 entry: not this re-check's (the equipment kinds are OPEN).
+	// A weapon list (round 882: the equipment kinds are walked too): kept
+	// with the weapon worn, ended without it.
 	weapon := &refdata.Skill{ID: 3, BasicCode: "SKILL_CH_SWORD_X", Activity: 2, ReqCastList: "6:2"}
-	if buffReqFails(self, weapon, false) {
-		t.Error("a weapon-list buff ended")
+	if buffReqFails(self, weapon, gearOf(wornKind{slot: equipment.SlotWeapon, typeID3: 6, typeID4: 2})) {
+		t.Error("a weapon-list buff ended with its weapon worn")
 	}
-	if buffReqFails(self, nil, false) {
+	if !buffReqFails(self, weapon, without) {
+		t.Error("a weapon-list buff kept with no weapon")
+	}
+	if buffReqFails(self, nil, without) {
 		t.Error("a record with no row ended")
 	}
 }
@@ -94,12 +101,14 @@ func TestBuffReqsHoldAllOf839(t *testing.T) {
 		{"14:1", false, true, true},
 		{"14:1", false, false, false},
 		{"14:2", false, true, false},     // the case wants value 1 (s:0x59f276)
-		{"6:2;14:1", false, false, true}, // ANY: the other entry passes here
+		{"6:2;14:1", false, false, true}, // ANY: the weapon entry holds
 		{"6:2;14:1", true, false, false}, // ALL: the spirit entry fails
 		{"6:2;14:1", true, true, true},
 	}
 	for _, c := range reqs {
-		got := buffReqsHold(combat.ParseCastRequirements(c.packed), c.all, c.spirit)
+		g := gearOf(wornKind{slot: equipment.SlotWeapon, typeID3: 6, typeID4: 2})
+		g.spirit = c.spirit
+		got := gearReqsHold(combat.ParseCastRequirements(c.packed), c.all, g)
 		if got != c.want {
 			t.Errorf("%q all=%v spirit=%v: %v, want %v", c.packed, c.all, c.spirit, got, c.want)
 		}
