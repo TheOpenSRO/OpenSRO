@@ -13,6 +13,17 @@ package session
 //
 // Only a group's highest learned level counts (a group holds one learned
 // level; the store keeps every id ever learned).
+//
+// Round 882: a passive whose row carries a 'reqi' list counts only while
+// the list holds over what the character wears -- its stat runs, its 'real'
+// resists and its 'setv' variables alike (gearreqs.go: ApplySkillParamsToChar's
+// own gate at the engage, GObjPC::FUN_0059f0e0 at each change of a worn
+// item). MEASURED: a character with rank 18 of the Warrior's one-handed-sword
+// defence passive ('defp' 224, list 6:7) and a rank of the Cleric's
+// light-armour defence passive ('defp' 168, list 10:0 AND 6:15), in a robe
+// set, reads phy def 2590 bare-handed, 2590 with a cleric rod, 2814 with a
+// one-handed sword and 2602 with a two-handed sword whose own options add
+// 12.
 
 import (
 	"context"
@@ -20,6 +31,7 @@ import (
 	"time"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/buff"
+	"github.com/TheOpenSRO/OpenSRO/server/internal/combat"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/skill"
 	"github.com/TheOpenSRO/OpenSRO/server/internal/skillparam"
@@ -73,14 +85,17 @@ func passiveOf(characterID int64) passiveState {
 	if (ok && time.Since(st.at) < passiveTTL) || skills == nil || ref == nil || characterID == 0 {
 		return st
 	}
-	st = computePassives(context.Background(), skills, ref, characterID)
+	// The set is counted over what is worn now; gearChanged forgets it at
+	// each change of a worn item (round 882).
+	ctx := context.Background()
+	st = computePassives(ctx, skills, ref, characterID, wornGearOf(ctx, characterID))
 	passives.Lock()
 	passives.m[characterID] = st
 	passives.Unlock()
 	return st
 }
 
-func computePassives(ctx context.Context, skills skill.Store, ref SkillRefStore, characterID int64) passiveState {
+func computePassives(ctx context.Context, skills skill.Store, ref SkillRefStore, characterID int64, g gearState) passiveState {
 	st := passiveState{at: time.Now(), vars: map[skillparam.Code]int{}}
 	known, err := skills.KnownSkills(ctx, characterID)
 	if err != nil {
@@ -99,11 +114,18 @@ func computePassives(ctx context.Context, skills skill.Store, ref SkillRefStore,
 	var stats []buff.Contribution
 	for _, row := range best {
 		r := row.Runs()
+		// The row's own list (round 882): while it fails nothing of the row
+		// is applied. Its resists stay listed with their list: the state
+		// roll walks it over the gear it reads itself (resist.go).
+		counts := gearReqsHold(combat.ParseCastRequirements(row.ReqCastList), row.ReqCastAll, g)
 		cs, pr := splitPassiveResists(row, buff.StatContributions(r, row.ActionKind, row.Activity), buff.StateResists(r))
-		stats = append(stats, cs...)
 		if pr != nil {
 			st.resists = append(st.resists, *pr)
 		}
+		if !counts {
+			continue
+		}
+		stats = append(stats, cs...)
 		for _, v := range r.All("setv") {
 			if len(v) >= 2 {
 				st.vars[skillparam.CodeOf(v[0])] += int(v[1])

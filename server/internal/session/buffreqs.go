@@ -18,8 +18,8 @@ package session
 //   - 0, a passive: its params are taken off while the list fails
 //     (ParamKeeper_RemoveContributionsOf, record +0x10 = 0) and put back
 //     (ApplySkillParamsToChar) when it holds again. OpenSRO keeps no passive
-//     records, and no kind-14 skill is passive (below), so nothing is modelled
-//     for it.
+//     records: its passives are a set computed over what is worn (round 882,
+//     passives.go, gearreqs.go).
 //   - non-zero, an active buff: a failing list ends it (FUN_0059eff0(0), its
 //     0xB072), unless its Basic_Code holds "SKILL_CH_FIRE_SHIELD_"
 //     (FUN_009dddc0 on refskill +0xc).
@@ -46,11 +46,9 @@ package session
 // SKILL_EVENT_NASRUN_ECCENTRICDEMON_01) and the two CELESTIAL_WAR rows -- all
 // Basic_Activity 1 or 2 (active), 'dura' 300, 600 or 1800 s.
 //
-// OURS, disclosed: OpenSRO runs the re-check at the avatar moves only, and
-// there only for the records whose list holds a kind-14 entry. The equipment
-// moves and the durability change (the weapon, shield and armour kinds) do
-// not run it yet -- a buff whose weapon was swapped away keeps running, as it
-// did before this round (OPEN).
+// Round 882: the whole re-check is built (gearreqs.go) -- every equipment
+// move, an item breaking or mended, and the avatar moves evaluate the whole
+// list of every self-cast record, the equipment kinds and kind 14 alike.
 
 import (
 	"context"
@@ -88,65 +86,33 @@ func spiritReqHolds(held []avatar.Held, now time.Time) bool {
 	return false
 }
 
-// spiritReqKind reports whether reqs holds a kind-14 entry.
-func spiritReqKind(reqs []combat.CastRequirement) bool {
-	for _, r := range reqs {
-		if r.Kind == combat.CastReqFlagKind {
-			return true
-		}
-	}
-	return false
-}
-
-// buffReqsHold is FUN_0059f0e0's list walk for a kind-14 list: the kind-14
-// value-1 entries answer spirit, the others pass (OURS: the equipment kinds
-// are not re-checked here, see the file's note). all is 'reqn'.
-func buffReqsHold(reqs []combat.CastRequirement, all bool, spirit bool) bool {
-	if len(reqs) == 0 {
-		return true
-	}
-	for _, r := range reqs {
-		ok := true
-		if r.Kind == combat.CastReqFlagKind {
-			ok = r.Value == 1 && spirit
-		}
-		if all && !ok {
-			return false
-		}
-		if !all && ok {
-			return true
-		}
-	}
-	return all
-}
-
 // buffReqFails reports whether the re-check ends rec: a self-cast active
-// record of a skill whose kind-14 list no longer holds (not a fire shield).
-func buffReqFails(rec buff.Record, row *refdata.Skill, spirit bool) bool {
+// record of a skill whose list no longer holds over g (not a fire shield).
+// A record with no row, a record another cast, a passive and a skill with
+// no list are passed over (s:0x59f12e..0x59f160).
+func buffReqFails(rec buff.Record, row *refdata.Skill, g gearState) bool {
 	if row == nil || !rec.SelfCast() || rec.Activity == 0 {
 		return false
 	}
 	reqs := combat.ParseCastRequirements(row.ReqCastList)
-	if !spiritReqKind(reqs) {
+	if len(reqs) == 0 {
 		return false
 	}
 	if strings.Contains(row.BasicCode, fireShieldCode) {
 		return false
 	}
-	return !buffReqsHold(reqs, row.ReqCastAll, spirit)
+	return !gearReqsHold(reqs, row.ReqCastAll, g)
 }
 
-// recheckSpiritBuffs is the re-check after an avatar move of characterID's
-// (s:0x50f53f): every running buff of its own whose spirit requirement no
-// longer holds ends, and its zone hears the OpBuffEnd. held is the avatar
-// storage after the move.
-func recheckSpiritBuffs(hub *world.Hub, characterID int64, held []avatar.Held, now time.Time) []buff.Record {
-	spirit := spiritReqHolds(held, now)
+// recheckGearBuffs is the re-check's walk over characterID's running buffs
+// (s:0x59f0e0): every one of its own whose list no longer holds over g
+// ends, and its zone hears the OpBuffEnd.
+func recheckGearBuffs(hub *world.Hub, characterID int64, g gearState) []buff.Record {
 	l := buffLock(characterID)
 	l.Lock()
 	defer l.Unlock()
 	ended, sp := buffBooks.EndWhere(characterID, func(r buff.Record) bool {
-		return buffReqFails(r, rowOf(false, characterID, r.SkillID), spirit)
+		return buffReqFails(r, rowOf(false, characterID, r.SkillID), g)
 	})
 	if len(ended) > 0 {
 		var zone []world.Entity
@@ -158,11 +124,16 @@ func recheckSpiritBuffs(hub *world.Hub, characterID int64, held []avatar.Held, n
 	return ended
 }
 
-// recheckSpiritBuffsAfterMove reads the avatar storage and runs the re-check.
+// recheckSpiritBuffsAfterMove is the re-check after an avatar move
+// (s:0x50f53f): the avatar storage read from d, the worn equipment from the
+// gear source.
 func recheckSpiritBuffsAfterMove(ctx context.Context, d AvatarDeps, characterID int64) {
 	held, err := avatar.List(ctx, d.Avatars, d.Items, characterID)
 	if err != nil {
 		return
 	}
-	recheckSpiritBuffs(d.Hub, characterID, held, time.Now())
+	g := wornGearOf(ctx, characterID)
+	g.spirit = spiritReqHolds(held, time.Now())
+	invalidatePassives(characterID)
+	recheckGearBuffs(d.Hub, characterID, g)
 }

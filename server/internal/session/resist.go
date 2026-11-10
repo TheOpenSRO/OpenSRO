@@ -16,8 +16,8 @@ package session
 //     ask for a cleric rod AND a whole robe set (10 0 / 6 15 with 'reqn') or a
 //     whole light-armour set, the Warrior's for a dual axe (MEASURED, the
 //     skill table), so a character fighting with another weapon has none of
-//     them. OURS: OpenSRO's other passive params are not gated this way yet
-//     (passives.go), only the resists added in this round;
+//     them. Round 882: the passive's other params follow the same list
+//     (passives.go, gearreqs.go);
 //   - a worn item's blue options (Stat_ApplyTaggedModifier s:0x498690): 'fz'
 //     params 27 and 28, 'es' 29, 'bu' 30, 'ps' 31, 'zb' 32; 'rsli', 'rfei',
 //     'rsti', 'rdii', 'rcsi' the percent list of sleep, fear, stun, disease,
@@ -117,61 +117,9 @@ type wornKind struct {
 	typeID3, typeID4 int
 }
 
-// passiveReqsHold is FUN_0059f0e0's list walk over what is worn (s:0x59f0e0,
-// READ): kind 6 the weapon's TypeID4, kind 4 the shield's, an armour kind
-// (1, 2, 3, 9, 10, 11) with value 0 every one of the six body parts being of
-// that TypeID3, with a value the part of that TypeID4; 'reqn' asks for every
-// entry, otherwise one is enough. A broken item is an empty slot. Kind 14
-// (the spirit) is not asked of a passive (no passive row carries it,
-// MEASURED) and fails here.
+// passiveReqsHold is the list walk over a worn set (gearreqs.go).
 func passiveReqsHold(reqs []combat.CastRequirement, all bool, worn []wornKind) bool {
-	if len(reqs) == 0 {
-		return true
-	}
-	at := func(slot equipment.Slot) (wornKind, bool) {
-		for _, w := range worn {
-			if w.slot == slot {
-				return w, true
-			}
-		}
-		return wornKind{}, false
-	}
-	holds := func(r combat.CastRequirement) bool {
-		switch r.Kind {
-		case 6:
-			w, ok := at(equipment.SlotWeapon)
-			return ok && w.typeID4 == r.Value
-		case 4:
-			w, ok := at(equipment.SlotShield)
-			return ok && w.typeID4 == r.Value
-		case 1, 2, 3, 9, 10, 11:
-			if r.Value != 0 {
-				for _, s := range equipment.ArmorSlots {
-					if w, ok := at(s); ok && w.typeID4 == r.Value {
-						return true
-					}
-				}
-				return false
-			}
-			for _, s := range equipment.ArmorSlots {
-				if w, ok := at(s); !ok || w.typeID3 != r.Kind {
-					return false
-				}
-			}
-			return true
-		}
-		return false
-	}
-	for _, r := range reqs {
-		ok := holds(r)
-		if all && !ok {
-			return false
-		}
-		if !all && ok {
-			return true
-		}
-	}
-	return all
+	return gearReqsHold(reqs, all, gearOf(worn...))
 }
 
 // statusTargetOf is what a state's roll needs of characterID: its level,
@@ -192,18 +140,24 @@ func statusTargetOf(ctx context.Context, characterID int64, level int, eq equipm
 		t.ResistPercent[bit] = int(totals[buff.ParamResistPercent+bit].Flat)
 		t.ResistFlat[bit] = int(totals[buff.ParamResistFlat+bit].Flat)
 	}
-	// The worn items: their types for the passives' lists, their options.
+	// The worn items: their types for the passives' lists (every unbroken
+	// item, whether or not its own requirement lets it count: the list's
+	// getters ask only for the broken flag, gearreqs.go), and the options of
+	// the ones that count.
 	var worn []wornKind
 	if eq != nil {
-		if list, err := countedWorn(ctx, eq, characterID); err == nil {
+		if list, err := eq.Get(ctx, characterID); err == nil {
 			for _, e := range list {
-				if durability.IsBroken(e.Durability) {
+				if durability.IsBroken(e.Durability) || items == nil {
 					continue
 				}
-				if items != nil {
-					if it, err := items.GetItem(ctx, e.ItemID); err == nil && it != nil {
-						worn = append(worn, wornKind{slot: e.Slot, typeID3: it.TypeID3, typeID4: it.TypeID4})
-					}
+				if it, err := items.GetItem(ctx, e.ItemID); err == nil && it != nil {
+					worn = append(worn, wornKind{slot: e.Slot, typeID3: it.TypeID3, typeID4: it.TypeID4})
+				}
+			}
+			for _, e := range gearCounted(ctx, characterID, list) {
+				if durability.IsBroken(e.Durability) {
+					continue
 				}
 				for _, o := range optionsOf(e.MagParams) {
 					for _, bit := range optionElemental[o.tag] {
