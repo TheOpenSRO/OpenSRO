@@ -7483,6 +7483,178 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-eighth round: "I get teleported back to where I was" -- a heading run stood at the start of the walk that met its wall while the client ran on, and a stalled frame lost the walk's time; every correction now logged on the server
+
+The user (prod v0.1.649, Linux): "I'm dealing with a movement bug where I get teleported back to where I
+was, seems like server lag", then "it happens outside of the dungeon too". Lane RB, base `6ba23646`,
+dev `884c4815` merged. Labels: READ (`s:` the game server, `c:` the client), MEASURED, INFERRED, OURS,
+OPEN.
+
+### The evidence
+
+- **The user's client log**: four `MOVE correction` lines inside a Wrecked Ship instance, the server
+  147.0, 250.7, 157.1 and 75.4 units from the client, each after quick clicks. 62 of the 153 walk
+  clicks inside the ship logged `-> walk` with no point -- **sky clicks, heading runs** (a click over
+  the sea: the pick's 1000-unit reach ends above the sea floor) -- against 1 of 30 before it in
+  Jangan. Its frames had no long stall while walking (the longest wall gap 156 ms; 767 ms at the
+  instance entry only).
+- **Prod's own counters** (Prometheus, read only): in the session that log is from, the movement
+  pass ended 2 legs at a wall (`move_leg_ends_total{reason="wall"}`, each a 0xB023 to the mover) and
+  refused 2 stop claims (`move_claims_total{result="refused"}`, each a correction) -- the four lines.
+  The day's earlier Wreck sessions show the same (6 refused claims); in the open world, 3 wall ends
+  on 11-09 (18:01-18:03 UTC, the log's zone `world`) and a `refused_wall` correction on 11-08. The 42,957
+  corrections of 15:41-15:53 UTC are round 871's void loop on v0.1.642 (fixed there). Prod's server
+  log had nothing about movement at INFO.
+
+### Reproduced (MEASURED, real clicks, lane server with prod's flags)
+
+`/var/tmp/r878r/srv.sh` on 17831: in memory, `-full-map` (so `-single-frame`), `-test-items-npc`, the
+navigation meshes with the compounds (`/var/tmp/r870q/navdata`), the game worlds, monster AI, dead
+state; `OPENSRO_MOVE_TRACE=1`. The client from the tree, `OPENSRO_QA_INPUT` clicks through the
+viewport (`groundclick`, `click` on the sky), a click every 9-22 ticks with duplicate presses, the
+Wreck entered by the Test Items NPC, the hole and the gate (round 871's script).
+
+1. **The heading run's hold (the user's case).** The server walks a heading run two seconds ahead at
+   a time (round 857, OURS; `world.Hub.walkRuns`). A walk that met a wall set the wall's distance but
+   left the run's clear stretch at the walk's START, and `Mover.headingSpan` caps the run at that
+   stretch: the run stood there until its time reached the wall, then jumped to it. The Wreck run w2:
+   a sky click's run from (-373.5, -502.0) on `wreck_sship_in_01`; the server's first walk went 100
+   clear to (-300.57, -433.58), its second met the deck's edge 57.16 on (the probe on the box's mesh:
+   end (-258.89, -394.46), blocked); the client ran 157.5 to its own stop there at (-257.53, -391.09)
+   3.12 s after the click and reported it; the server still had the run at (-300.53, -433.56), 60.4
+   short -- the claim was refused (beyond the slack 9 and the second of run banked) and the player put
+   back. At the user's run speed 129 a walk is 258 units: the corrections of 75-251 fit it. A click
+   during the hold started its leg at the held point, so the client and server stayed apart until
+   something reported a stop. A run toward a wall within its first walk stood at its START for the
+   whole way there (`TestRound878AHeadingRunIsWhereItsTimeHasItUpToTheWall`: 0 at 0.25 s, want 12.5).
+2. **The stalled frame (open world).** The client walks in physics ticks; Godot runs at most 8 a frame
+   and drops the rest of a longer frame. Jangan run j1: a 724 ms frame (a window opened) ran 6 ticks,
+   the walk lost 0.6 s; from then on every leg the server started was 24-28 units from where the client
+   sent it (0.2-1.4 before), and a leg the server started from its own point met a wall the client's
+   did not: corrected 18.9 back.
+3. Not the cause (MEASURED in the same runs and in the trace): the bucket, the region and height
+   gates (no refusal logged), speed (both 50.0 a second, the user's 129 from the same buff packets),
+   the server's ticks, the 50-unit observer resync (other players only).
+
+### The original's rule
+
+- READ `s:0x48c1b0` (`CGObjMoverByCmd::vslot_003`) -> `s:0x48bff0`: the heading run's server step is
+  `|speed (+0x174) x elapsed|`, capped at 160.0 (`0xb45ea8`, f32; round 653's "not read"), each
+  component under 0.01 (`0xb45df8`) zeroed -- every tick, through the collision query. Nothing of the
+  run waits.
+- READ `c:FUN_009e0e60` (round 649): the client's mover steps by the frame's elapsed time; a stalled
+  frame is one longer step.
+- READ `s:0x48c35f` (round 749): the 5.0 re-click test is against the mover's destination, which the
+  original's mover keeps while its step stops at an edge; ours compared a wall-clipped point.
+
+### What changed
+
+- **Server** (`world/mover.go`): a walk that meets the wall counts its stretch as clear up to the wall
+  (`clear = wallAt`): the run is where its time has it, cut at the wall. The 5.0 test compares the
+  destinations the client asked for (`MoveOrder.Asked`, `Mover.asked`), and a walled leg notes the
+  client's clicked height, not the server's walked one.
+- **Client** (`world/walk_clock.gd`, `World3D._physics_process` / `_process`): `WalkClock` reads the
+  wall clock once a frame after its ticks and the walk takes back what the ticks fell behind by more
+  than 0.05 s, in extra steps of one tick at most (OURS: the 0.05 slack, a 2 s cap -- a loading screen
+  is not walked).
+- **Server logging** (`session/movelog.go`, INFO, one line a second per character and rule, the next
+  one counting what was kept back): `move: refused` (bucket, malformed, dead, state, trade, region,
+  height, wall_root, motion, near, scroll_hold), `move: leg cut at a wall`, `move: corrected`
+  (`claim_distance`, `claim_unreached`, `claim_height`, `claim_state`; the claim, the anchor, the
+  distance, the slack, the allowance, the speed, the leg; where the client is put), `move: stopped by
+  the server` (wall, run_limit), `move: a wall stop replaced before it was told` (a walled leg the next
+  click replaced before the 250 ms pass reported it). `world.MoveResult` carries the claim's verdict
+  (`ClaimVerdict`) and the pass's reason.
+
+### QA (real clicks, the same click scripts before and after)
+
+Base: server and client at `6ba23646`; after: this round's server and client. "Visible" is a
+correction more than 1 unit from where the client stood (a server wall stop at the client's own wall
+lands 0.0-0.3 off).
+
+| run | where | clicks (point / sky) | before: corrections, visible | after: corrections, visible |
+|---|---|---|---|---|
+| j1 / j1f | Jangan, ground clicks | 194 / 0 ; 152 / 0 | 1, **18.9** (the 724 ms stall) | 0 (a 512 ms stall walked back: the server's legs 3.2 from the client at most, against 27 before) |
+| js | Jangan, sky and ground | 135 / 90 ; 86 / 134 | 1, **84.9** (refused claim) | 3, none (0.0-0.3) |
+| w2 / w2f | Wreck deck, ground clicks | 114 / 118 | 1, **60.4** (the hold) | 7, none over 1.0 |
+| ws | Wreck deck, sky and ground | 40 / 84 | 2, **59.9** (the hold) | 1, none |
+| w1f | Wreck deck (w2's script again) | 114 / 118 | -- | 6, none over 1.0 |
+| wsn | Wreck deck, ws's script with frames, the final server | 41 / 81 | 4: **69.9, 59.1, 32.3, 11.2** | 2: 6.9 (below), 0.1 |
+
+The 6.9 after: the client's walk stopped at an edge of `wreck_sship_in_01` where the server's walk of
+the same leg found none; the stop claim was taken (within the slack), but a taken claim leaves the
+server's trusted point at its anchor on the server's line (OURS, round 749's review F1), so the next
+click's run started there, 6.9 away, met the edge at once and its stop put the client there (OPEN).
+
+Refused claims: 1, 1, 1 before (js, w2, ws), 0 in every run after. The observer side is the same
+0xB023: `TestRound878AStopAtTheRunsWallIsTakenNotCorrected` reads it on the second client (Bram) at the
+wall, and the mover is not corrected (before: corrected 70 back). The lane runs' logs:
+`/var/tmp/r878r/{j1,js-b,w2,ws-b,j1f,js-f,w2f,ws-f,w1f,wsn-b,wsn-f}/godot.log` and `server-<run>.log`
+on the box; frames `/var/tmp/r878r/keep/wreck_before_t3290_running.png`,
+`wreck_before_t3300_snapped_back_32.png` (the 32.3 snap; a recall pillar's talk box a stray click
+opened is up in both), `wreck_after_t3290.png`, `wreck_after_t3300.png`. The snaps are by eye; the
+numbers are the logs'.
+
+### Tests
+
+- `server/internal/session/rubberband878_test.go`: the run's place every 250 ms up to a wall in its
+  first and in its second walk (NEGATIVE at the base: held at 100 from 2.0 s, held at 0); the user's
+  sequence -- quick clicks with a duplicate, a sky click, the client's stop at the wall 20 ms before
+  the server's run reaches it -- taken, no correction (NEGATIVE: corrected to x 237.5); the 5.0 rule
+  against the asked destination; the log limiter.
+- `client/scripts/world/walk_clock_test.gd`: steady 8-144 fps walk the wall clock, a 724 ms stall and
+  three 400 ms stalls are walked back (NEGATIVE: the ticks alone walk 2.133 of 2.724 s), the time stood
+  through is no walk, a 5 s gap is not walked.
+
+### Gates
+
+The own walk changed (client movement), so the gate ran (`--base 884c4815 --head dcc3941a --sites
+jangan --frames 40000`, Forward+ on the RX 7600; runs other lanes overlapped were repeated):
+
+```
+perf gate: base 884c4815 (forward_plus) vs head dcc3941a (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.96  head 0.99  (+0.0)  SAME
+jangan  entry ms   base 9257  head 9180  (-77.0)  SAME
+jangan  freeze ms  base 2972  head 2976  (+4.0)  SAME
+jangan  hitches    base 4  head 5  (+1.0)  SAME
+```
+
+On the merged tree (dev `884c4815` in): `cd server && go build ./... && go vet ./internal/session/
+./internal/world/ && go test ./...`: pass. `remote_godot.sh check`: ALL LOAD (1,177 scripts, 9 scenes).
+`remote_godot.sh tests`: "ran 451 suite(s), 0 failing". (The QA rows' after-server was built before the
+5.0-rule change; the frames below ran the final server.)
+
+### OPEN
+
+- A click over the sea in the Wreck is a heading run here; the original's pick also tests the
+  region's water plane (READ, round 781's `GroundPick` note: SWorld::vslot_034 0xa01310), so there it
+  is a walk to the water's point (the deck's edge stops it). Not changed (OPEN); with the hold fixed
+  both end at the same wall.
+- A stop the server makes at a wall reaches the mover's client as a correction however near (here
+  0.0-0.3); the original re-places a body only when it is more than 50 from the point
+  (`FUN_009e11e0`, round 846), and a click sent before such a stop is then cancelled here (the stop
+  ends the order). Not changed.
+- A walled leg the next click replaces before the pass reports it is logged, not told (the original
+  tells at once: its mover is stepped on the server). With the meshes agreeing, the client is at that
+  wall too.
+- A taken stop claim keeps the trusted point at the server's anchor (OURS, F1: claims cannot creep), so
+  where the server's and the client's walks of one leg disagree about an edge the next leg starts up to
+  the slack (9) from the client: the 6.9 above. Starting it at the claim would undo F1's bound; the
+  user's call.
+- Where the server's walk and the client's disagree about a deck edge (`wreck_sship_in_01` above) was
+  not traced to the edge (OPEN); `move: corrected` / `move: stopped by the server` lines now name the
+  spots on prod.
+- Not measured on the running original this round: the rules above are READ.
+
+### Changelog lines (draft)
+
+- Fixed being pulled back while running: a run toward a wall (a click on the sky or over the sea,
+  or the Up key) no longer leaves the server's copy of you behind, so you are not teleported back
+  when you reach the wall or click again.
+- Your character keeps its pace through a brief freeze (a window opening, a region loading) instead
+  of falling behind where the server has it.
+- The server now logs every movement correction with its reason, so a "teleported back" can be traced.
+
 ## Eight-hundred-and-seventy-seventh round: gear requirements as the original's -- a robe refused without a caster mastery, a worn item that fails its requirement counts for nothing until it is published again, and armour does not mix with a robe
 
 Round 875's D8: the original refuses a European robe to a character without Wizard, Warlock,
