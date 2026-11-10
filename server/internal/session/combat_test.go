@@ -414,14 +414,15 @@ func TestCombatArmorMitigation(t *testing.T) {
 
 	// 15 attack - 10 armor = 5 net damage taken, not the raw 15 -- less the
 	// four empty body slots' naked reinforce (round 875): Str 20 x (19.0 - the
-	// helm's 3.2 - the mail's 4.2) % = 2.32, so 12.32 defence, 3 taken.
+	// helm's 3.2 - the mail's 4.2) % = 2.32, so 12.32 defence, 2.68 -> 2 taken
+	// (round 880: the defence comes off unrounded).
 	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
 	ar, err := DecodeAttackResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.PlayerDamageTaken != 3 || ar.PlayerHP != int32(character.StartingMaxHP)-3 || ar.PlayerDied {
-		t.Fatalf("armored hit: got %+v, want damageTaken=3 hp=%d died=false", ar, character.StartingMaxHP-3)
+	if ar.PlayerDamageTaken != 2 || ar.PlayerHP != int32(character.StartingMaxHP)-2 || ar.PlayerDied {
+		t.Fatalf("armored hit: got %+v, want damageTaken=2 hp=%d died=false", ar, character.StartingMaxHP-2)
 	}
 
 	// Re-equip the huge-defense shoulderguard and confirm the 1-damage floor
@@ -434,8 +435,8 @@ func TestCombatArmorMitigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.PlayerDamageTaken != 1 || ar.PlayerHP != int32(character.StartingMaxHP)-3-1 {
-		t.Fatalf("overarmored hit: got %+v, want damageTaken=1 (floor) hp=%d", ar, character.StartingMaxHP-3-1)
+	if ar.PlayerDamageTaken != 1 || ar.PlayerHP != int32(character.StartingMaxHP)-2-1 {
+		t.Fatalf("overarmored hit: got %+v, want damageTaken=1 (floor) hp=%d", ar, character.StartingMaxHP-2-1)
 	}
 }
 
@@ -817,10 +818,10 @@ func TestLevelAdvantageAppliedInCombat(t *testing.T) {
 	if ar.MonsterDamage != 17 {
 		t.Errorf("player's blow = %d, want 17 (out-levelled, so no bonus)", ar.MonsterDamage)
 	}
-	// Round 875: (15 - the naked 3) x 1.30 = 15.6, truncated as the engine
-	// truncates the finished blow.
-	if ar.PlayerDamageTaken != 15 {
-		t.Errorf("counterattack = %d, want 15 ((15 - 3) * the capped 1.30)", ar.PlayerDamageTaken)
+	// Round 875: truncated as the engine truncates the finished blow; round
+	// 880: (15 - the naked 3.8) x 1.30 = 14.56.
+	if ar.PlayerDamageTaken != 14 {
+		t.Errorf("counterattack = %d, want 14 ((15 - 3.8) * the capped 1.30)", ar.PlayerDamageTaken)
 	}
 }
 
@@ -1097,7 +1098,7 @@ func TestMonsterCriticalAppliedInCombat(t *testing.T) {
 		t.Fatalf("a critical chance of 100 must always crit, got %+v", ar)
 	}
 	if ar.PlayerDamageTaken != nakedBlow*combat.CriticalMultiplier {
-		t.Errorf("counterattack = %d, want %d (15 - the naked 3, doubled by the critical)",
+		t.Errorf("counterattack = %d, want %d (15 - the naked 3.8, doubled by the critical: 22.4)",
 			ar.PlayerDamageTaken, nakedBlow*combat.CriticalMultiplier)
 	}
 }

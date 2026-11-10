@@ -813,13 +813,20 @@ type SkillRow struct {
 	// AttPercent / AttType are 'att' value[1] / value[0] (round 875,
 	// combat.MonsterSkill.AttPercent).
 	AttPercent, AttType int
-	Chance              int
-	ChanceKnown         bool
+	// Hits is the row's 'mc' count (refdata.Skill.HitsFor): how many blows one
+	// swing lands (round 880, combat.MonsterSkill.Hits).
+	Hits        int
+	Chance      int
+	ChanceKnown bool
 	// Status is the row's status runs (refdata.Skill.StatusParams, round 659).
 	Status string
 	// ActionMs is PreparingTime + CastingTime + ActionDuration (cols 7-9;
 	// combat.MonsterSkill.ActionMs, round 812).
 	ActionMs int
+	// HoldMs is the base of the hold a swing puts on the monster's AI (round
+	// 880, combat.MonsterSkill.HoldMs): the action time for a row of
+	// Basic_Activity 2 with an ActionDuration, else the ReuseDelay.
+	HoldMs int
 }
 
 // SkillLookup resolves a skilldata id; ok is false for an id the table does
@@ -838,12 +845,23 @@ func RefdataLookup(get func(id int64) (*refdata.Skill, error)) SkillLookup {
 		return SkillRow{
 			ReuseMs: sk.ReuseDelayMs, Range: sk.Range,
 			AttMin: sk.DamageMin, AttMax: sk.DamageMax,
-			AttPercent: sk.AttackPercent, AttType: sk.AttackType,
+			AttPercent: sk.AttackPercent, AttType: sk.AttackType, Hits: sk.HitsFor(),
 			Chance: sk.AIAttackChance, ChanceKnown: sk.AIAttackChance >= 0,
 			Status:   sk.StatusParams,
 			ActionMs: sk.PreparingTimeMs + sk.CastingTimeMs + sk.ActionDurationMs,
+			HoldMs:   holdMs(sk),
 		}, true
 	}
+}
+
+// holdMs is SkillRow.HoldMs for a skill row (READ s:0x5a1a40: `[skill+0x65]
+// == 2 && [skill+0x78] != 0` takes CastingTime + ActionDuration -- the server's
+// CastingTime includes PreparingTime -- else `[skill+0x7c]`, the ReuseDelay).
+func holdMs(sk *refdata.Skill) int {
+	if sk.Activity == 2 && sk.ActionDurationMs != 0 {
+		return sk.PreparingTimeMs + sk.CastingTimeMs + sk.ActionDurationMs
+	}
+	return sk.ReuseDelayMs
 }
 
 // Attacks is a species' attack list as the monster AI uses it.
@@ -883,7 +901,7 @@ func (r Row) Attacks(lookup SkillLookup) Attacks {
 		if !sr.ChanceKnown {
 			a.WholeList = false
 		}
-		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, AttPercent: sr.AttPercent, AttType: sr.AttType, Chance: sr.Chance, Status: sr.Status, ActionMs: sr.ActionMs}
+		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, AttPercent: sr.AttPercent, AttType: sr.AttType, Hits: sr.Hits, Chance: sr.Chance, Status: sr.Status, ActionMs: sr.ActionMs, HoldMs: sr.HoldMs}
 		if k == 0 {
 			a.Primary, a.HasPrimary = ms, true
 		}

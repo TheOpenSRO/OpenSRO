@@ -335,8 +335,41 @@ func (h *Holder) Thawing(nowMs uint32) bool {
 	return h.thawing && int32(nowMs-h.thawUntilMs) < 0
 }
 
+// CurseKeepRatio is the share of its defence a decay or a weakness always
+// leaves a target: 0.3 (READ: the double at s:0xb461a0, loaded by both
+// appliers, s:0x4a51df and s:0x4a52bf).
+const CurseKeepRatio = 0.3
+
+// CurseCutOf is what a decay or a weakness of `value` takes off a defence of
+// `current`: value, but never more than 70 % of the defence (round 880).
+//
+// READ, the decay applier s:0x4a5160 (the weakness twin s:0x4a5240 is the
+// same on param 6):
+//
+//	4a51c4  cur = ftol(GetParam(5))            ; the defence there is, truncated
+//	4a51d7  fild cur ; fld 0.3 ; fmul ; fsubp  ; cur - cur * 0.3
+//	4a51ec  cap = ftol(...)
+//	4a51f1  if value > cap: value = cap
+//	4a51f7  SetParam(slot 0, 5, -value)
+//
+// MEASURED: `cspd 30000,30,10,2000` on a defender of phy def 2602.86 leaves a
+// 76 % blow of base 6969 behind an absorption of 119.8 % at 1815 again and
+// again (the cut is 1821 = ftol(2602 x 0.7), not 2000), and on a defender of
+// 3182.49 the same blow at 1510 (the whole 2000: the cap there is 2227).
+func CurseCutOf(value, current int) int {
+	if value <= 0 || current <= 0 {
+		return 0
+	}
+	limit := int(float64(current) - float64(current)*CurseKeepRatio)
+	if value > limit {
+		return limit
+	}
+	return value
+}
+
 // CurseCut is the flat defence a decay (physical) or a weakness (magical)
-// takes off, before the cap at the defence there is (Record.CurseCut).
+// asks for, before CurseCutOf's cap at 70 % of the defence there is
+// (Record.CurseCut).
 func (h *Holder) CurseCut(magical bool) int {
 	slot := SlotDecay
 	if magical {

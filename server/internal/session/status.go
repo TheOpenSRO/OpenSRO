@@ -420,9 +420,21 @@ func (s *statusRuntime) addHeld(insistent map[int64]struct{}, hasBrain func(id i
 
 // cursedDefence is a character's flat defence after the states on it (round
 // 875): bleeding's flat cut (Holder.DefenceCut, both defences), then a decay
-// (physical) or a weakness (magical) takes its value[3] off, never below 0
-// (READ: the appliers write -min(v3, current); MEASURED, Record.CurseCut).
+// (physical) or a weakness (magical) takes its value[3] off -- but never more
+// than 70 % of the defence there is (round 880, statuseffect.CurseCutOf).
 func (s *statusRuntime) cursedDefence(characterID int64, def int, magical bool) int {
+	return int(s.cursedDefenceExact(characterID, float64(def), magical))
+}
+
+// cursedDefenceExact is cursedDefence on the unrounded defence a blow takes
+// off (round 880). The curse's size is worked from the truncated defence, as
+// the applier's is (s:0x4a51ce, statuseffect.CurseCutOf), and comes off the
+// float.
+//
+// OURS: the cut is worked at each blow from the defence there is then; the
+// engine works it once, when the state lands, and keeps it until the state
+// ends. The two agree unless the defence changes while the state runs.
+func (s *statusRuntime) cursedDefenceExact(characterID int64, def float64, magical bool) float64 {
 	s.mu.Lock()
 	h := s.pcs[characterID]
 	bleed, curse := 0, 0
@@ -430,9 +442,15 @@ func (s *statusRuntime) cursedDefence(characterID int64, def int, magical bool) 
 		bleed, curse = h.DefenceCut(), h.CurseCut(magical)
 	}
 	s.mu.Unlock()
-	def -= bleed
-	def -= min(curse, max(def, 0))
-	return max(def, 0)
+	def -= float64(bleed)
+	if def < 0 {
+		def = 0
+	}
+	def -= float64(statuseffect.CurseCutOf(curse, int(def)))
+	if def < 0 {
+		def = 0
+	}
+	return def
 }
 
 // monsterDefenceCut is the flat defence bleeding takes off monsterID.

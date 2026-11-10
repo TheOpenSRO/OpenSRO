@@ -112,8 +112,9 @@ func TestNakedReinforce(t *testing.T) {
 	}
 }
 
-// A decay ('cspd') takes value[3] off the physical defence, never below 0;
-// weakness ('csmd') the same off the magical (READ, statusRuntime.cursedDefence).
+// A decay ('cspd') takes value[3] off the physical defence, never more than
+// 70 % of it (round 880); weakness ('csmd') the same off the magical (READ,
+// statusRuntime.cursedDefence).
 func TestDecayCutsPhysicalDefence(t *testing.T) {
 	ctx := context.Background()
 	items, worn := set875(false)
@@ -138,7 +139,9 @@ func TestDecayCutsPhysicalDefence(t *testing.T) {
 		t.Errorf("a decay touched magic defence: %d", mag)
 	}
 	h.Put(statuseffect.Record{Code: "cspd", Slot: statuseffect.SlotDecay, Bit: 17, DurationMs: 30000, CurseCut: 9000})
-	if phy, _ := defenderArmor(ctx, id, 533, eq, items); phy != 0 {
-		t.Errorf("a decay larger than the defence left %d, want 0", phy)
+	// Round 880: a decay larger than the defence takes 70 % of it, 2227 of
+	// 3182 (ftol(3182 - 3182 x 0.3)), and leaves 955.
+	if phy, _ := defenderArmor(ctx, id, 533, eq, items); phy != 955 {
+		t.Errorf("a decay larger than the defence left %d, want 955 (30 %% is kept)", phy)
 	}
 }

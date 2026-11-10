@@ -1090,7 +1090,16 @@ type MonsterSkill struct {
 	// zero type is physical (AttackType.Known).
 	AttPercent int
 	AttType    int
-	Chance     int
+	// Hits is how many blows one swing of the skill lands: the row's 'mc'
+	// count (refdata.Skill.HitCount). Round 880. READ: Combat_ResolveDamage
+	// (s:0x58e5f0) runs its whole resolution once per count -- each blow its
+	// own damage roll, its own critical and its own block. MEASURED: a
+	// level-104 monster's 76 % skill with a count of 2 lands two numbers a
+	// swing (442 and 463; 1815 and 1815 at the bottom of its range under a
+	// decay; a critical 3888 beside a plain 2144), where its 152 % skills
+	// with a count of 1 land one. 0 reads as 1.
+	Hits   int
+	Chance int
 	// Status is the skill's status runs, refdata.Skill.StatusParams
 	// (statuseffect.ParseRuns reads it): what a blow of this skill applies to
 	// the character it lands on (round 659). "" applies nothing.
@@ -1102,6 +1111,12 @@ type MonsterSkill struct {
 	// CastingTime + ActionDuration (the server's CastingTime includes
 	// PreparingTime, auto_command.md) before anything else runs. Round 812.
 	ActionMs int
+	// HoldMs is the base D of the hold a swing of this skill puts on the
+	// monster's AI, D + rand % D ms (round 880, session.swingHold; READ
+	// s:0x5a1a40): PreparingTime + CastingTime + ActionDuration for a row of
+	// Basic_Activity 2 with an ActionDuration, else its ReuseDelay. 0 (a
+	// hand-typed roster row) reads as ReuseMs.
+	HoldMs int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the

@@ -989,6 +989,36 @@ idle window above. The cadence between swings is the action machine's cooldown, 
 `ReuseDelay` -- 3000 ms for a Mangyang, not 3000..3600. The reading is in "The pure BATTLE rules
 and the timer read (round 545)", below.
 
+*Corrected in round 880.* Timer 5 does fire at once, but the cadence is not the `ReuseDelay`
+either: **each swing blocks the monster's AI for `D + rand() % D` ms, `D` the swung skill's action
+time.** READ (`s:` SR_GameServer.exe):
+
+- The swing's resolver (`s:0x59b480`, reached from the 0x7070 command's consumer `s:0x4b21b0` ->
+  `s:0x59b7c0`) ends, for a non-player only (`vt+0x1c` answers 0, `s:0x59b763..0x59b76a`), by
+  sending the monster's command source **command 4 with `D`** (`s:0x59b770..0x59b787`).
+- `D` is `s:0x5a1a40`: for a row of `Basic_Activity` 2 (`[skill+0x65] == 2`) with an
+  `ActionDuration` (`[skill+0x78] != 0`), `(CastingTime + ActionDuration) x param 140 / 100`,
+  truncated -- the server's `CastingTime` includes `PreparingTime`; for any other row its
+  `ReuseDelay` (`[skill+0x7c]`).
+- Command 4 reaches `CAIState::DispatchCommand` (`s:0x558bb0`) case 4 -> the state's slot 8
+  (`s:0x558f70`, BATTLE's too): `ctx+0x148 = 0`, **`ArmTimer(index 10, base D, spread 0, now,
+  flag 1)`** and the selector's armed skill cleared (`s:0x561a40`), so the next swing draws afresh.
+- `ArmTimer` (`s:0x53d600`): the first table has 9 entries (`[obj+4] = 9`), so index 10 is a
+  second-table timer: `period = max(base, 1)`, **`last = now + rand() % period`**, no fired byte;
+  flag 1 makes it the PENDING entry (`table+0x28`).
+- `TimerDue` (`s:0x53d6e0`): while a pending entry exists and `now - period < last` it answers 0
+  for **every** index. So `Handler_0e8`'s `TimerDue(5)` is "not due", the handler returns 2, and
+  `BATTLE::OnUpdate` neither swings nor chases until `now >= armed + D + rand % D`.
+
+MEASURED: three level-104 monsters whose three attack skills all have an action time of 2000 ms and
+a `ReuseDelay` of 2500 ms swung 2.11 .. 4.03 s apart (49 intervals, flat over that range, 3.15 s on
+average), with no relation to which skill came before, standing still in between: `2000 + rand %
+2000`, landing on the next AI update. INFERRED: param 140 is 100 for a monster (the measurement
+fits; its publish is unread). OPEN: the AI update's own period (the measured swings fall about
+0.31 s apart) and who sends slot 8 a `-1`. OpenSRO: `session.swingHold`,
+`combat.MonsterSkill.HoldMs`; round 812's "the action holds the monster for CastingTime +
+ActionDuration" was this hold's lower end.
+
 `ai.ThreatTable` (`internal/ai/threat.go`) carries the credit, the drop, the
 three rules and the interval with tests; nothing in OpenSRO runs it yet.
 

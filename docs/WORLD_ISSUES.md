@@ -7483,6 +7483,241 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eightieth round: how hard the Wrecked Ship's monsters hit a level-110 character -- a swing every action time and as much again at random (not every ReuseDelay), every blow of a two- and three-hit skill, a curse that leaves 30 % of the defence, the defence taken off unrounded; and what a +12 robe set really takes there
+
+The user (round 875): "101+ mobs can easily kill me. I have the highest end gear that should tank
+even 110 mobs easily and barely have to use potions yet I can hardly fight one monster." Round 875
+fixed four formula gaps and the item table; round 879's QA then saw a level-110 QA warrior die to
+three or four blows of 13,800-19,800 in world 81 (`INS_GOD_WRECK_IN_100_110_LEVEL_1`). This round
+asks whether those monsters hit harder in OpenSRO than in the original, for the user's own
+character: level 110, Warrior 110 + Cleric 110, Str 456 / Int 129, a +12 robe set
+(ITEM_EU_M_CLOTHES_11_*), a +12 two-handed sword and four +12 accessories, every piece perfect and
+full of blues. Labels: READ (`s:` SR_GameServer.exe), MEASURED, INFERRED, OURS, OPEN. Base
+`f1513f95`. Server and client; the perf gate is skipped (no world drawing changed: one damage
+number per blow of a multi-hit swing).
+
+### 1. What round 879's blows meant: nothing about armour
+
+MEASURED (runs `d26`-`d29` re-read, and re-run as `a1`): that QA character wore **no armour that
+counted**. Its kit's three starting heavy pieces refused all six robe pieces ("Armor and robe
+cannot be equipped at the same time", round 877's rule), it had 255 of its 327 stat points spent
+(the QA step's one message carries at most 255: Str 384, HP 33,246), and its lane server was
+started without the magic option table. Its character window read phy def 95 / mag def 50. A
+14,000-19,800 blow is a Wrecked Ship skill on no defence at all (7,265 x 250 % = 18,162;
+7,772 x 270 % = 20,984). The runs prove nothing about a geared character.
+
+### 2. The user's character on a prod-like lane server
+
+MEASURED (the real client, a lane server with prod's flags and tables exported from the client
+archive by this round's exporter, the user's eleven items given, optioned and worn through the GM
+console, the character window's 0x303D read back as `QA STATS`):
+
+| | OpenSRO | the original's character window (MEASURED, round 875) |
+|---|---|---|
+| Str / Int | 533 / 206 | 533 / 206 |
+| max HP / MP | 50,047 / 21,735 | 50,047 / 21,735 |
+| phy def / mag def | 2,602 / 3,984 | 2,602 / 3,984 |
+| parry / hit | 617 / 524 | 617 / 524 |
+| accessory absorption | 119.8 % physical and magical | 119.8 % |
+
+The user's Seal of Nova pieces (`_A_RARE_ACTIVE`) carry the same ranges as the `_A_RARE` ones the
+panel was measured with. So the defender side is the original's, to the point.
+
+### 3. The differences found (READ, each checked against MEASURED blows)
+
+MEASURED before the reading: three level-104 open-world monsters (three skills, all with an action
+time of 2000 ms and a ReuseDelay of 2500 ms; one 76 % skill with an 'mc' count of 2, two 152 %
+skills with a count of 1, one of them carrying `cspd 30000,30,10,2000`) on a level-110 character
+in a +12 robe set and in a +12 heavy set. OpenSRO fought the same three species in run `a3`.
+
+| # | difference | the original | OpenSRO before | effect on the player |
+|---|---|---|---|---|
+| D1 | the time between one monster's swings | `D + rand % D` ms, `D` the swung skill's action time: MEASURED 2.11 .. 4.03 s, flat, 3.15 s on average over 49 intervals (D = 2000) | every `max(ReuseDelay, action time)`: exactly 2.5-2.6 s, all three monsters in step | monsters swung about 1.25x as often as the original's here, **1.5x on the Wrecked Ship** (its skills' ReuseDelay equals their action time) |
+| D2 | a skill with an 'mc' count of 2 or 3 | that many blows a swing, each its own roll, critical and block: MEASURED `442 ; 463`, `1815 ; 1815`, a critical 3888 beside a plain 2144 | one blow | monsters weaker than the original's on those skills (half or a third) |
+| D3 | a decay or a weakness larger than 70 % of the defence | takes `ftol(defence - defence x 0.3)`: MEASURED a decay of 2000 on 2,602.86 takes 1,821 (the 76 % blow lands 1,815 again and again) | the whole value, down to 0 (`a3`: phy def 2,602 -> 602) | monsters stronger under a curse: a weakness of 3,020 left the robe's magic defence 964 instead of 1,196, and +12 heavy armour's 186 instead of 963 |
+| D4 | the defence a blow takes off | the float (2,602.86): MEASURED the lowest 152 % blow 862 | the truncated 2,602: 864 | a point or two |
+
+- **D1, READ.** The swing's resolver (`s:0x59b480`) ends, for a non-player only, by sending the
+  monster's command source command 4 with `D` (`s:0x59b763..0x59b787`). `D` (`s:0x5a1a40`): for a
+  row of Basic_Activity 2 with an ActionDuration, `(CastingTime + ActionDuration) x param 140 /
+  100` (the server's CastingTime includes PreparingTime); otherwise its ReuseDelay. The AI state's
+  slot 8 (`s:0x558f70`) arms tactics timer 10 with base `D` as the pending entry and clears the
+  armed skill; `ArmTimer` (`s:0x53d600`) gives a second-table timer `last = now + rand() % D`; and
+  while a pending entry is not due `TimerDue` (`s:0x53d6e0`) answers 0 for every index, so
+  BATTLE neither swings nor chases. `docs/protocol/monster_ai.md` carries the chain and corrects
+  rounds 254, 545 and 812 in place. INFERRED: param 140 is 100 for a monster.
+- **D2, READ** (already on record for a player's skill, `refdata.Skill.HitCount`):
+  `Combat_ResolveDamage` (`s:0x58e5f0`) runs its whole resolution once per count.
+- **D3, READ.** Both appliers (`s:0x4a5160` on param 5, `s:0x4a5240` on param 6): `cur =
+  ftol(GetParam)`, `fild cur; fld [0xb461a0] (0.3); fmul; fsubp`, `ftol`, `cmp value, cap` -- the
+  decompiler had dropped the multiply. This is round 875's OPEN item ("the robe's decayed blows
+  imply a cut of about 1,820, not 2,000"): 2,602 x 0.7 = 1,821.4.
+- **D4.** Params 5 and 6 are floats; the window truncates them.
+- **Settled, no change needed:** the rank factor (x1.2 party monster, x1.5 rank 6) multiplies
+  the skill's own 'att' range -- `Combat_ComputeWeaponDamage` (`s:0x40db50`) is `(param 13|14 +
+  the 'att' min|max) x FUN_0040da20`, READ; round 712 had it INFERRED. A champion or a giant
+  takes no attack factor. The curse's roll is already the original's: value[1] less 5 % a level
+  the target stands above ten times the state's level, so the Wrecked Ship's `csmd ..,50,10,..`
+  lands on a level-110 character 25 % of the times its skill hits, for 11.25 s.
+- **The data.** MEASURED: the client archive's skilldata and the shard backup's `_RefSkill`
+  (EXTERNAL) agree on all 778 Forgotten World monster skills ('att', ReuseDelay), so prod's
+  table is the right one. The monsters' sight range is the tactics table's (300 for the Wrecked
+  Ship's species), which the nest DB already supplies.
+
+With D1-D4 built, the formula gives the measured blows exactly: 862 (robe, 152 %), 1,815 (robe,
+76 %, decayed), 1,510 and 3,021 (heavy, 76 % and 152 %, decayed) -- `curse880_test.go`.
+
+### 4. What changed
+
+- `session.swingHold` and `combat.MonsterSkill.HoldMs` (from `species.holdMs`): after a swing the
+  monster neither swings nor chases for `D + rand % D` ms. The ReuseDelay no longer paces a
+  monster's swings (a summon's swing keeps it; a hand-typed roster row without a hold base holds
+  for its ReuseDelay). OURS: with the package's randomness off (a test's) the hold is `D`.
+- `combat.MonsterSkill.Hits` (the row's 'mc' count) and `monsterStrike`: every blow of the count
+  resolved on its own, the swing's damage their sum, blocked only when all were;
+  `MonsterAttacked.Hits` lists them after the skill id (a u8 count, then per blow an s32 damage
+  and a flags byte; written only for two blows or more, so a one-blow push is byte for byte what
+  it was -- the layout is OURS). The client draws one number per blow, the later ones 0.25 s
+  apart (OURS: the swing clip's own later hit events are not read).
+- `statuseffect.CurseCutOf` (`CurseKeepRatio` 0.3) in `statusRuntime.cursedDefence`. OURS: the cut
+  is worked at each blow from the defence there is then; the engine works it once, when the state
+  lands.
+- `defenderArmorExact` / `defenderMagicArmorExact`: a monster's blow takes the float defence off.
+  The tests' starting character (naked defence 3.8) now takes 11 from a flat 15, not 12.
+- QA input steps (client): `statpoints:<str>,<int>` and `stats` (the server's character window
+  numbers as a `QA STATS` line); the blow line names the skill and lists a multi-hit swing's blows.
+
+### 5. The numbers: each Wrecked Ship 100-110 monster on the user's character
+
+The level-1 world's species (`MOB_GOD_GHOST_<name>_B1`, named by their code below; levels 101-103,
+hit 178-180, critical 2 %),
+computed with the server's own functions from the exported tables for phy def 2,602.86 / mag def
+3,984 / absorption 119.8 %. "A blow" is one blow at the bottom, the centre and the top of the
+roll (the character's parry puts the centre about 14 % up the range, so the centre figures are
+good to a few points; a blow under 5 % of its base
+lands a random 1 .. base / 10 instead, shown as "band"). "Every" is the average time between that
+skill's swings. D1-D4 are READ and reproduce the blows that were measured, so this is what the
+original's formula gives on the same rows (the Wrecked Ship's own blows were not measured, see OPEN);
+before this round a plain blow was the same, the swings 1.5x as frequent and the
+counts all 1.
+
+| monster (level) | skill | a blow on the robe | blows a swing | every (was) | under a weakness (robe) | a blow on +12 heavy |
+|---|---|---|---|---|---|---|
+| `MARAUDER` (101) | physical 207 % | 545 / 673 / 1,454, critical up to 2,908 | 1 | 3.1 s (2.07) | -- | band, up to 726 |
+| | physical 108 %, bleeding | band / 351 / 758 | 2 | 3.25 s (2.17) | -- | band |
+| | physical 250 %, burn | 658 / 813 / 1,756, critical 3,512 | 1 | 3.75 s (2.5) | -- | band |
+| `SEIREN`, "Ghost Seiren" (101) | physical 100 % | band / 325 / 702 | 2 | 3.0 s (2.0) | -- | band |
+| | magical 233 % | band / 468 / 1,347 | 1 | 3.5 s (2.33) | 6,820 .. 7,843 | 2,138 / 2,282 / 3,161 |
+| | magical 333 %, weakness 2,934 | 464 / 670 / 1,926 | 1 | 5.0 s (3.33) | 9,748 .. 11,210 | 3,056 / 3,262 / 4,518 |
+| `KINGNIPPER` (102) | physical 207 % | 749 / 883 / 1,689, critical 3,378 | 1 | 3.1 s | -- | band |
+| | magical 300 %, weakness 3,020, poison | 841 / 1,035 / 2,203 | 1 | 4.5 s (3.0) | 9,205 .. 10,567 | 3,176 / 3,370 / 4,538 |
+| | physical 100 %, bleeding | 362 / 426 / 816 | 3 | 4.5 s (3.0) | -- | band |
+| `PIRATE` (102) | physical 183 % | 662 / 780 / 1,493, critical 2,987 | 1 | 2.75 s (1.83) | -- | band |
+| | magical 80 % | band / band / 587 | 2 | 2.4 s (1.6) | 2,454 .. 2,817 | 847 / 898 / 1,210 |
+| | magical 100 %, weakness 3,020 | band / band / 734 | 2 | 3.0 s (2.0) | 3,068 .. 3,522 | 1,058 / 1,123 / 1,512 |
+| `COMMANDER` (102) | magical 200 %, sleep | 560 / 690 / 1,468 | 1 | 3.0 s | 6,136 .. 7,044 | 2,117 / 2,246 / 3,025 |
+| | magical 100 % | band / band / 734 | 2 | 3.0 s | 3,068 .. 3,522 | 1,058 / 1,123 / 1,512 |
+| | magical 250 %, darkness | 701 / 862 / 1,836 | 1 | 3.75 s | 7,671 .. 8,806 | 2,647 / 2,808 / 3,782 |
+| `SPECTER` (103) | physical 207 % | 958 / 1,098 / 1,931, critical 3,862 | 1 | 3.1 s | -- | band, up to 731 |
+| | magical 387 %, poison | 1,648 / 1,909 / 3,465 | 1 | 5.8 s (3.87) | 12,438 .. 14,255 | 4,660 / 4,921 / 6,478 |
+| | magical 293 %, disease, sleep | 1,248 / 1,445 / 2,623 | 1 | 4.4 s (2.93) | 9,417 .. 10,792 | 3,528 / 3,726 / 4,904 |
+| `WRECK` (103) | physical 210 % | 972 / 1,113 / 1,959, critical 3,918 | 1 | 3.15 s | -- | band, up to 742 |
+| | physical 270 %, bleeding | 1,250 / 1,432 / 2,519, critical 5,038 | 1 | 4.05 s | -- | up to 954 |
+| | magical 300 % | 1,278 / 1,480 / 2,686 | 1 | 4.5 s | 9,642 .. 11,050 | 3,613 / 3,815 / 5,021 |
+| `CURSE` (103) | physical 237 % / magical 307 % x2 | band, up to 388 / 536 | 1 | 3.55 / 4.6 s | 3,097 .. 3,817 | band |
+| `ENVY` (103, champion) | physical 150 % of 13,479 .. 15,545 | 5,294 / 5,496 / 6,704, critical 13,408 | 2 | 4.5 s (3.0) | -- | 4,424 / 4,626 / 5,834 |
+| `GLUTTONY` (103, rarity 8) | physical 233 % / 260 % | 1,832 .. 3,397, critical 6,794 | 1 | 3.5 / 3.9 s | -- | 482 .. 1,890 |
+| | magical 297 %, disease | 2,642 / 2,863 / 4,186 | 1 | 4.45 s | 10,922 .. 12,467 | 4,953 / 5,175 / 6,498 |
+| `BEAST` (103, rarity 8) | physical 107 % / 150 % (bleeding, decay 2,118) | 841 .. 1,959, critical 3,919 | 2 | 3.2 / 4.5 s | under its decay 2,790 .. 4,691 a blow | band .. 1,090 |
+| `UNDINE`, "Ghost Sereness" (103, the boss) | magical 200 % / 300 % (weakness 3,589) / 500 % | 2,446 .. 3,559 / 3,669 .. 5,338 / 6,115 .. 8,897 | 1 | 3.0 / 4.5 / 7.5 s | 8,022 .. 9,135 / 12,033 .. 13,702 / 20,055 .. 22,837 | 4,002 .. 12,789 |
+
+- Without a curse one normal monster takes about 100-570 HP a second off the robe on average
+  (the Envy about 2,400): 90 s to 8 minutes of standing still for 50,047 HP.
+- A weakness leaves the robe 1,196 magic defence (3,984 less 2,788; before this round 964) for
+  11.25 s, and a magical blow is then 3,000-14,000. Three of the world's normal species and
+  its boss carry one.
+- The robe is the better set there: +12 heavy armour makes every physical blow a floor-band blow
+  but lets the magical ones through at 2-6,000 without any curse.
+
+### 6. The real client, before and after
+
+The same client and tables; the server at `f1513f95` ("before") and at this round's head
+("after"); the character of section 2 at full HP, no potion, no buff. Blows from the client's
+`monster .. strikes ..` lines (each names its skill), times from the server's AI trace.
+
+| run | fight | swings | a normal swing | under the weakness | dead after |
+|---|---|---|---|---|---|
+| `a3` before | three level-104 open-world monsters (spawned) | every 2.5-2.6 s each, in step | 122 .. 385 | decayed (def 2,602 -> 602): 1,518 .. 3,386, a critical 6,072 | 20.5 s |
+| `b1` before | world 81's first group, as it comes: 7 Ghost Seirens | 29 in 10.5 s | 26 .. 966 | after 7.7 s: 7,161 .. 11,349 | 10.5 s |
+| `b2` after | the same group | 19 in 9.2 s | 154 .. 1,409, the two-blow skill as two numbers (427 + 473) | from the 14th swing: 6,820 .. 10,801 | 9.2 s |
+| `c0` before | one Ghost Seiren (spawned in the open world), the character standing still | 23 in 61 s (2.8 s apart) | 196 .. 625 | three times: 7,161 .. 10,340 | 61 s |
+| `c1` after | the same | 44 in 172 s (4.0 s apart) | 194 .. 1,389 | four times: 6,943 .. 9,748 | 172 s |
+
+The group's two runs differ by the dice (when the first weakness lands), not by the fix: seven
+Seirens swing a weakness-carrying skill often enough that one lands within seconds either way.
+Frames: none taken (numbers only); logs on the box under `/var/tmp/r880w/lane/`.
+
+### 7. The answer
+
+After this round a Wrecked Ship 100-110 monster hits the user's character exactly as the
+original's formula does -- the blows that could be measured against a level-110 character in the
+same robe set (862, 1,815, 1,510, 3,021) are reproduced to the point, and so is the time between
+swings. Before it OpenSRO's monsters swung 1.5x as often there, hit once where the original hits
+two or three times, and a curse stripped the defence to nothing.
+
+In numbers, for the user's robe: a normal blow is 200-2,700, usually under 1,500, one every 3-6 s
+from each monster. One monster alone takes minutes. What kills is the weakness: a quarter of the
+blows of four species' weakness skills cut the magic defence from 3,984 to 1,196 for 11 s, and a
+magical blow is then 7,000-14,000 against 50,047 HP. A whole group pulled at once (the first group
+is seven Ghost Seirens that all come) kills a lone level-110 robe wearer in about ten seconds; by
+the formula the original does the same (INFERRED for the group: the original's own Wrecked Ship
+fight was not measured, see OPEN). The level-1 world admits four players, and a target's buffs
+can lower or refuse a curse (READ `s:0x59de50`; OpenSRO has none yet). "The highest end gear that
+should tank even 110 mobs" holds against the open world's monsters (MEASURED, round 875: three
+level-104 monsters at once need over half a minute, and only once a decay lands); by the
+original's own formula it does not hold on the Wrecked Ship.
+
+### Tests
+
+`curse880_test.go` (the cap: 1,821 of 2,602, the whole 2,000 of 3,182; the four measured blows;
+the weakness on the magic defence), `multihit880_test.go` (two blows of a count-2 skill, their
+sum, the push's list and its round trip; a one-blow push unchanged), `swinghold880_test.go` (the
+hold's range and mean; the second swing at the action time, not the ReuseDelay),
+`species/hold880_test.go` (the hold base per row kind, the count), `combat_test.gd` (the blow
+list's decode). Changed expectations: the starting character's blow (11), rounds 812 / 813's
+species (a hold base), round 661's trigger test (it counts the trigger skill's swings).
+`go build ./... && go vet ./... && go test ./...`: 100 packages pass. `remote_godot.sh check`: ALL LOAD
+(1,179 scripts);
+`tests`: ran 452 suite(s), 0 failing.
+
+### Differs on purpose / unsure (not changed)
+
+- Nothing OURS was reverted.
+
+### OPEN
+
+- Not measured on the Wrecked Ship's own species (only READ): no monster could be made to stand
+  where a level-110 character could be put, so the measured blows are open-world level-104
+  monsters' and the Wrecked Ship table is the formula on its rows. A magical monster blow on a
+  robe, and a weakness's size, are READ and unmeasured.
+- Param 140 on a monster (taken as 100); the AI update's own period (the measured swings fall
+  about 0.31 s apart, OpenSRO's pass is 0.1 s); who sends the state's slot 8 a `-1`.
+- The target's own resistance to a curse (`s:0x59de50`: a level and a percentage per state, fed by
+  the target's buffs -- a cleric's curse-resistance skills) is still 0 in OpenSRO, as are the
+  item options' elemental resists (the user's accessories carry frostbite, shock, burn, poison and
+  zombie resists: a shorter poison from two of the species).
+- `cssr`, `csit`, `cshp`, `csmp` and darkness's hit-rate cut are still not applied (round 875).
+- A multi-hit monster swing's later numbers are spaced 0.25 s (OURS), not at the clip's hit events.
+- The curse's cut is recomputed at each blow (OURS) rather than fixed when the state lands.
+- Prod runs the same tables (re-imported in round 875); nothing to re-import for this round.
+
+### Changelog lines (draft)
+
+- Monsters attack at the original's pace: after each attack a monster waits its attack's own time and up to as much again, instead of striking on a fixed timer (about a third fewer attacks from Forgotten World monsters).
+- Monster skills that hit two or three times now land every hit, each with its own number.
+- Decay and Weakness can no longer strip all of your defence: they always leave 30 % of it.
+- Monster damage uses your exact defence (no rounding), matching the original to the point.
+
 ## Eight-hundred-and-seventy-ninth round: the Wrecked Ship's chain to its boss -- the standing monsters were drawn on the sea floor under the deck (counted, never seen, never killed), the hatch walked from its nest as the original's, the doors block at their own navigation mesh
 
 The user on prod (v0.1.649, a level-110 warrior in world 81, `INS_GOD_WRECK_IN_100_110_LEVEL_1`):

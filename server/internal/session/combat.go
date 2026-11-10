@@ -1826,6 +1826,24 @@ func defenderArmor(ctx context.Context, characterID int64, str int, eq equipment
 	return statusFX.cursedDefence(characterID, buffStatInt(characterID, buff.ParamPhysDefFlat, v), false), err
 }
 
+// defenderArmorExact is defenderArmor unrounded, for a blow's own arithmetic
+// (round 880): the float sum, the buffs' param-5 entries, then the states that
+// cut it (statusRuntime.cursedDefenceExact).
+func defenderArmorExact(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup) (float64, error) {
+	v, err := defenderDefenceExact(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
+		return it.PhysDefenseMin, it.PhysDefenseMax, it.PlusIncPhysDef
+	}, durability.ArmourPhysDefenseGroup, durability.ShieldPhysDefenseGroup, str, false)
+	return statusFX.cursedDefenceExact(characterID, buffStat(characterID, buff.ParamPhysDefFlat, v), false), err
+}
+
+// defenderMagicArmorExact is defenderArmorExact's magical twin (param 6).
+func defenderMagicArmorExact(ctx context.Context, characterID int64, intel int, eq equipment.Store, items combat.ItemLookup) (float64, error) {
+	v, err := defenderDefenceExact(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
+		return it.MagDefenseMin, it.MagDefenseMax, it.PlusIncMagDef
+	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup, intel, true)
+	return statusFX.cursedDefenceExact(characterID, buffStat(characterID, buff.ParamMagDefFlat, v), true), err
+}
+
 // defenderDefence is the shared walk behind defenderArmor and its magical
 // twin: the worn armour and shield, each piece's range through its instance's
 // variance group (armourGroup for the six armour slots, shieldGroup for the
@@ -1841,6 +1859,16 @@ func defenderArmor(ctx context.Context, characterID int64, str int, eq equipment
 // TRUNCATED, not rounded (MEASURED: a magic defence of 3205.99 reads 3205 on
 // the character window, a parry of 617.6 reads 617).
 func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64, float64), armourGroup, shieldGroup int, stat int, magical bool) (int, error) {
+	total, err := defenderDefenceExact(ctx, characterID, eq, items, rangeOf, armourGroup, shieldGroup, stat, magical)
+	return int(total), err
+}
+
+// defenderDefenceExact is defenderDefence before the truncation: the sum the
+// engine keeps in param 5 / 6 as a float and takes off a blow unrounded
+// (round 880; MEASURED: a defence of 2602.86 leaves a 152 % blow of base
+// 6969 behind an absorption of 119.8 % at 862, where the truncated 2602
+// would leave 864).
+func defenderDefenceExact(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64, float64), armourGroup, shieldGroup int, stat int, magical bool) (float64, error) {
 	equipped, err := countedWorn(ctx, eq, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1886,7 +1914,7 @@ func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store,
 	if stat > 0 {
 		total += float64(stat) * armourReinforce(ctx, equipped, items, magical) / 100
 	}
-	return int(total), nil
+	return total, nil
 }
 
 // nakedReinforce is each body slot's scale when nothing that counts is worn
@@ -2127,10 +2155,10 @@ func playerEvadeCrit(_ context.Context, characterID int64, _ equipment.Store) fl
 // concurrent use.
 // resolveSkillBlow is resolveBlow with a skill's damage percentage
 // (combat.ResolveSkillBlow): a monster's skill blow, round 875.
-func resolveSkillBlow(base, percent int, mitigationPercent float64, flat, critChance, blockChance, attackerLevel, defenderLevel int, attackerID, defenderID int64) combat.Blow {
+func resolveSkillBlow(base, percent int, mitigationPercent float64, flat float64, critChance, blockChance, attackerLevel, defenderLevel int, attackerID, defenderID int64) combat.Blow {
 	damageRollMu.Lock()
 	defer damageRollMu.Unlock()
-	return combat.ResolveSkillBlow(base, percent, mitigationPercent, float64(flat), critChance, blockChance,
+	return combat.ResolveSkillBlow(base, percent, mitigationPercent, flat, critChance, blockChance,
 		attackerLevel, defenderLevel, damageRollNG,
 		&combat.ChanceMemory{Tracker: chanceMemory, AttackerID: attackerID, DefenderID: defenderID})
 }

@@ -430,6 +430,29 @@ func _test_decode_monster_attacked() -> void:
 	var longer := data.duplicate()
 	longer.append(0xff)
 	_check(CombatNet.decode_monster_attacked(longer) != null, "a byte past the 33rd is ignored")
+	_check(m != null and m.hits.is_empty(), "a 33-byte push lists no blows")
+	# Round 880: a two-blow swing -- 13 zero wall bytes, the skill id, then a
+	# count and per blow an s32 damage and a flags byte.
+	var two := data.duplicate()
+	two.resize(CombatNet.MONSTER_ATTACKED_SKILL_OFFSET + 4 + 1 + 10)
+	for i in range(CombatNet.MONSTER_ATTACKED_SIZE, CombatNet.MONSTER_ATTACKED_SKILL_OFFSET):
+		two[i] = 0
+	two.encode_u32(CombatNet.MONSTER_ATTACKED_SKILL_OFFSET, 880168)
+	var at := CombatNet.MONSTER_ATTACKED_SKILL_OFFSET + 4
+	two[at] = 2
+	two.encode_s32(at + 1, 442)
+	two[at + 5] = 0
+	two.encode_s32(at + 6, 463)
+	two[at + 10] = CombatNet.STRIKE_CRITICAL
+	var t := CombatNet.decode_monster_attacked(two)
+	_check(t != null and t.skill_id == 880168 and t.hits.size() == 2, "a two-blow push lists two blows after its skill id")
+	_check(t != null and t.hits.size() == 2 and t.hits[0] == [442, false, false] and t.hits[1] == [463, true, false],
+		"the blows are 442 and a critical 463")
+	# A list cut short, or a count of 1, lists nothing.
+	_check(CombatNet.decode_monster_attacked(two.slice(0, two.size() - 1)).hits.is_empty(), "a blow list cut short lists nothing")
+	var one := two.duplicate()
+	one[at] = 1
+	_check(CombatNet.decode_monster_attacked(one).hits.is_empty(), "a count of 1 lists nothing")
 	# Round 785: the skill id after a zero wall block -- no wall, skill 161
 	# (session.MonsterAttacked{SkillID: 161}'s 50 bytes).
 	var skilled := data.duplicate()

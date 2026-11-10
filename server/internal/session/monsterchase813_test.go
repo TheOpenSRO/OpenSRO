@@ -48,7 +48,7 @@ func TestRound813ChaserSwingsAtARunner(t *testing.T) {
 	f := startBattleFixture(t, 813, 0, 0)
 	sp := testMangyang
 	sp.BCRadius, sp.WalkSpeed, sp.RunSpeed = 15, 16, 120
-	sp.Skills = []combat.MonsterSkill{{ID: 182, ReuseMs: 1500, Range: 9, AttMin: 1, AttMax: 1, Chance: 100, ActionMs: 600}}
+	sp.Skills = []combat.MonsterSkill{{ID: 182, ReuseMs: 1500, Range: 9, AttMin: 1, AttMax: 1, Chance: 100, ActionMs: 600, HoldMs: 600}}
 	m := f.monsters.SpawnSpecies("jangan", sp, 40, 0, 0, 1000, 0, 15, 0)
 	now := aiT0
 	monsterAITick(now)

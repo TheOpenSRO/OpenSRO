@@ -198,21 +198,26 @@ func TestHPTriggerFiresOnceAtItsThreshold(t *testing.T) {
 	}
 	m := spawnUnique661(f.monsters, 5, 0, 100000, u)
 	now := engage661(t, f, m.ID)
+	// Round 880: a swing holds the AI until its hold ends, so a trigger skill
+	// is armed and fired in the same pass; what is counted is its swings.
+	fired := func() int {
+		n := 0
+		for _, s := range f.rec.strikesOf(m.ID) {
+			if s.SkillID == 12087 {
+				n++
+			}
+		}
+		return n
+	}
 	arms := func(ticks int) int {
-		n, was := 0, false
+		before, swings := fired(), len(f.rec.strikesOf(m.ID))
 		for i := 0; i < ticks; i++ {
 			monsterAITick(now)
 			now = now.Add(MonsterAITick)
-			f.a.mu.Lock()
-			b := f.a.brains[m.ID]
-			is := b != nil && b.hasArmed && b.armed.ID == 12087
-			f.a.mu.Unlock()
-			if is && !was {
-				n++
-			}
-			was = is
 		}
-		return n
+		// The strike workers land the swings of these passes (one a second).
+		waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) >= swings+ticks/10-1 })
+		return fired() - before
 	}
 	f.monsters.ApplyDamage(m.ID, 49999)
 	if n := arms(100); n != 0 {
