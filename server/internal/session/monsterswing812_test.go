@@ -19,7 +19,9 @@ func TestRound812SwingHoldsTheMonsterUntilItsActionEnds(t *testing.T) {
 	battleForTest(t, true)
 	f := startBattleFixture(t, 812, 0, 0)
 	sp := chaseMangyang
-	sp.Skills = []combat.MonsterSkill{{ID: 160, ReuseMs: 3000, Range: 10, AttMin: 15, AttMax: 15, Chance: 100, ActionMs: 2400}}
+	// Round 880: the hold is D + rand % D with D the action time (HoldMs); the
+	// tests' randomness is off, so it is the 2400 ms it was here.
+	sp.Skills = []combat.MonsterSkill{{ID: 160, ReuseMs: 3000, Range: 10, AttMin: 15, AttMax: 15, Chance: 100, ActionMs: 2400, HoldMs: 2400}}
 	m := f.monsters.SpawnSpecies("jangan", sp, 10, 0, 0, 1000, 0, 15, 0)
 	now := aiT0
 	monsterAITick(now)

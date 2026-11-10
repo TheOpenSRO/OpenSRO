@@ -19924,6 +19924,22 @@ func _qa_input_step() -> void:
 			# Round 844 part 2: one console line at this tick (as
 			# OPENSRO_QA_COMMANDS' at tick 60).
 			_run_qa_commands(arg)
+		"statpoints":
+			# Round 880 (QA): `statpoints:<str>,<int>` spends unspent stat
+			# points through the character window's own message, to build a
+			# character with a given Strength / Intellect.
+			var sp := arg.split(",")
+			if sp.size() == 2:
+				NetClient.spend_stat_points(NetClient.current_character_name, int(sp[0]), int(sp[1]))
+			_qa_input_report = "%s %s" % [action, arg]
+		"stats":
+			# Round 880 (QA): the server's character window numbers, printed
+			# as they arrive ("QA STATS ...").
+			NetClient.character_stats_result.connect(func(st: StatsNet.Stats) -> void:
+				print("QA STATS level %d str %d int %d hp %d/%d mp %d/%d phy def %d mag def %d parry %d hit %d phy atk %d..%d" % [
+					st.level, st.str, st.intel, st.hp, st.max_hp, st.mp, st.max_mp, st.phys_defense, st.mag_defense,
+					st.parry_rate, st.hit_rate, st.phys_attack_min, st.phys_attack]), CONNECT_ONE_SHOT)
+			NetClient.character_stats(NetClient.current_character_name)
 		"storebuy":
 			# Round 844 part 2: the buy box for a store good, as putting it
 			# down on the bag opens it (HudPanels._confirm_buy; not a drag).
@@ -34255,10 +34271,12 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 			elif not _other_bodies.has(attacked.target_character_id):
 				how = "target not drawn here"
 	# One line per push: a live run counts them against the counter results.
-	print("World3D: monster %d strikes %d for %d (HP %d)%s%s -- %s" % [
+	print("World3D: monster %d strikes %d for %d (HP %d)%s%s%s -- %s" % [
 		attacked.monster_id, attacked.target_character_id, attacked.damage, attacked.target_hp,
 		" BLOCKED" if attacked.blocked else (" CRIT" if attacked.critical else ""),
-		", died" if attacked.target_died else "", how])
+		", died" if attacked.target_died else "",
+		(" skill %d" % attacked.skill_id if attacked.skill_id != 0 else "") + (" blows %s" % str(attacked.hits) if not attacked.hits.is_empty() else ""),
+		how])
 	# Only a push that claimed a counter still waiting for its blow repaints
 	# the vitals; a late one (CLAIM_DRAWN) is swallowed whole (round 544).
 	if claim == MonsterStrikes.CLAIM_HELD:
@@ -34695,7 +34713,27 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, re
 		# Red over a player, the critical's art for a critical; none for a
 		# blow that dealt nothing (READ: no zero or "miss" text); another
 		# player's only within 200 units of this one (round 786, DamageText).
-		_damage_text(anchor, _number_art(attacked.critical), attacked.damage, true, false))
+		if attacked.hits.size() < 2:
+			_damage_text(anchor, _number_art(attacked.critical), attacked.damage, true, false)
+			return
+		# Round 880: a multi-hit swing draws one number per blow (retail's
+		# 0xB070 carries one damage entry per blow). OURS: the blows after
+		# the first are drawn MONSTER_HIT_SPACING apart -- the swing clip's
+		# own later hit events are not read here.
+		for i in range(attacked.hits.size()):
+			var hit: Array = attacked.hits[i]
+			_after(i * MONSTER_HIT_SPACING, func() -> void:
+				var again = player if on_self else _other_bodies.get(target_id)
+				if again == null or not is_instance_valid(again):
+					return
+				if bool(hit[2]):
+					_damage_text(again, DamageText.Art.BLOCK, 0, true, false)
+				elif int(hit[0]) > 0:
+					_damage_text(again, _number_art(bool(hit[1])), int(hit[0]), true, false)))
+
+## Seconds between the numbers of a multi-hit monster swing's blows (round
+## 880, OURS).
+const MONSTER_HIT_SPACING := 0.25
 
 ## The numbers of this player's plain swing on `monster` (round 786): one per
 ## hit of the monster's entry in the result's hit block, hit i drawn

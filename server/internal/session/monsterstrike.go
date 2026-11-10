@@ -90,7 +90,45 @@ type MonsterAttacked struct {
 	// blow met no wall); 0 writes neither, so a blow without one is byte for
 	// byte what it was.
 	SkillID int64
+	// Hits lists the blows of a multi-hit swing (round 880): retail's 0xB070
+	// carries one damage entry per blow of the skill's 'mc' count, each with
+	// its own critical bit (MEASURED: `442 ; 463`, `critical 3888 ; 2144`).
+	// A u8 count and then, per blow, an s32 damage and a u8 of the Strike*
+	// flags, after the skill id -- written only for two blows or more, so a
+	// one-blow swing is byte for byte what it was. Damage is their sum,
+	// Critical set when any was, Blocked when all were. The layout is OURS.
+	Hits StrikeHits
 }
+
+// StrikeHits is a swing's blow list: the first N of Blows (a fixed array, so
+// the message stays comparable).
+type StrikeHits struct {
+	N     uint8
+	Blows [MaxStrikeHits]StrikeHit
+}
+
+// add appends one blow; past MaxStrikeHits it is dropped from the list (the
+// swing's total still carries it).
+func (h *StrikeHits) add(b StrikeHit) {
+	if int(h.N) < MaxStrikeHits {
+		h.Blows[h.N] = b
+		h.N++
+	}
+}
+
+// List is the blows as a slice.
+func (h StrikeHits) List() []StrikeHit { return h.Blows[:h.N] }
+
+// StrikeHit is one blow of a multi-hit swing (MonsterAttacked.Hits).
+type StrikeHit struct {
+	Damage   int32
+	Critical bool
+	Blocked  bool
+}
+
+// MaxStrikeHits bounds a swing's blow list on the wire (the largest 'mc'
+// count in the skill table is 5, MEASURED).
+const MaxStrikeHits = 8
 
 func (m *MonsterAttacked) Encode() []byte {
 	out := make([]byte, MonsterAttackedSize)
@@ -113,16 +151,37 @@ func (m *MonsterAttacked) Encode() []byte {
 	out[20] = flags
 	binary.LittleEndian.PutUint32(out[21:25], uint32(m.TargetHP))
 	binary.LittleEndian.PutUint64(out[25:33], uint64(m.DeathExpLost))
-	if m.Wall == (WallInfo{}) && m.SkillID == 0 {
+	hits := m.Hits.List()
+	if len(hits) < 2 {
+		hits = nil
+	}
+	if m.Wall == (WallInfo{}) && m.SkillID == 0 && hits == nil {
 		// No wall: the 33 bytes as they were (round 640's suffix is only
 		// there when the blow met one).
 		return out
 	}
 	out = append(out, m.Wall.encode()...)
-	if m.SkillID == 0 {
+	if m.SkillID == 0 && hits == nil {
 		return out
 	}
-	return binary.LittleEndian.AppendUint32(out, uint32(m.SkillID))
+	out = binary.LittleEndian.AppendUint32(out, uint32(m.SkillID))
+	if hits == nil {
+		return out
+	}
+	// Round 880: the blow list, after the skill id (0 when none is named).
+	out = append(out, uint8(len(hits)))
+	for _, h := range hits {
+		out = binary.LittleEndian.AppendUint32(out, uint32(h.Damage))
+		var f uint8
+		if h.Critical {
+			f |= StrikeCritical
+		}
+		if h.Blocked {
+			f |= StrikeBlocked
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // MonsterAttackedSkillOffset is where OpMonsterAttacked's skill id sits:
@@ -171,7 +230,32 @@ func DecodeMonsterAttacked(data []byte) (*MonsterAttacked, error) {
 		DeathExpLost:      int64(binary.LittleEndian.Uint64(data[25:33])),
 		Wall:              wallFrom(data[33:]),
 		SkillID:           skillFrom(data),
+		Hits:              hitsFrom(data),
 	}, nil
+}
+
+// hitsFrom decodes the round-880 blow list after the skill id, empty when a
+// payload carries none.
+func hitsFrom(data []byte) StrikeHits {
+	var hits StrikeHits
+	at := MonsterAttackedSkillOffset + 4
+	if len(data) < at+1 {
+		return hits
+	}
+	n := int(data[at])
+	at++
+	if n < 2 || n > MaxStrikeHits || len(data) < at+5*n {
+		return hits
+	}
+	for i := 0; i < n; i++ {
+		hits.add(StrikeHit{
+			Damage:   int32(binary.LittleEndian.Uint32(data[at : at+4])),
+			Critical: data[at+4]&StrikeCritical != 0,
+			Blocked:  data[at+4]&StrikeBlocked != 0,
+		})
+		at += 5
+	}
+	return hits
 }
 
 // wallFrom decodes the wall suffix, zero when a payload predates it.
@@ -230,6 +314,9 @@ type monsterStrikeOutcome struct {
 	// wall is the blow's meeting with the target's protection wall (round
 	// 640): when Absorbed, the wall took it and the target nothing.
 	wall WallInfo
+	// hits lists a multi-hit swing's blows (round 880, MonsterAttacked.Hits);
+	// empty for a swing of one blow.
+	hits StrikeHits
 }
 
 // killLocks holds one mutex per character a blow has ever left at 0 HP: the
@@ -313,7 +400,7 @@ func (o monsterStrikeOutcome) message(monsterID, targetID int64) *MonsterAttacke
 	return &MonsterAttacked{
 		MonsterID: monsterID, TargetCharacterID: targetID,
 		Damage: int32(o.damage), Critical: o.critical, Blocked: o.blocked, TargetDied: o.died,
-		TargetHP: int32(o.hp), DeathExpLost: o.deathExpLost, Wall: o.wall,
+		TargetHP: int32(o.hp), DeathExpLost: o.deathExpLost, Wall: o.wall, Hits: o.hits,
 	}
 }
 
@@ -347,12 +434,14 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	at := combat.AttackType(skill.AttType)
 	magical := skill.ID != 0 && at.IsMagical() && !at.IsPhysical()
 	str, intel := wearerStats(ctx, chars, characterID)
-	var armor int
+	// Round 880: the defence comes off unrounded, as the engine's float
+	// param 5 / 6 does (defenderDefenceExact).
+	var armor float64
 	var err error
 	if magical {
-		armor, err = defenderMagicArmor(ctx, characterID, intel, eq, items)
+		armor, err = defenderMagicArmorExact(ctx, characterID, intel, eq, items)
 	} else {
-		armor, err = defenderArmor(ctx, characterID, str, eq, items)
+		armor, err = defenderArmorExact(ctx, characterID, str, eq, items)
 	}
 	if err != nil {
 		return monsterStrikeOutcome{}, fmt.Errorf("combat: reading armor: %w", err)
@@ -361,6 +450,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// -> that skill's 'att' param), rolled the same way a weapon is. The
 	// flat disclosed Attack remains only for a monster with no range.
 	raw := monster.Attack
+	rollAgain := func() int { return raw }
 	// A swing of a drawn skill rolls THAT skill's 'att' block (round 554). A
 	// block whose max is 0 -- MSKILL_CH_WATERGHOST_ATTACK02 169, att
 	// 9,0,0,0,100 (its effect is a `ps` param OpenSRO has no status system
@@ -402,6 +492,9 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 			parry = 0
 		}
 		raw = monsterBlow(swung, playerLevel, parry)
+		// Round 880: each further blow of a multi-hit skill rolls its own
+		// place in the range (rollAgain, below).
+		rollAgain = func() int { return monsterBlow(swung, playerLevel, parry) }
 	}
 	// The player's side of the SAME mitigation the monster gets, through
 	// the same function -- percentage term first, then the flat absorb.
@@ -480,9 +573,10 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// Round 875: the skill's 'att' percentage applies after the mitigation and
 	// before the critical, the level term and the floor band
 	// (combat.ResolveSkillBlow).
-	counter := resolveSkillBlow(raw, skill.AttPercent, playerMitigationPercent(ctx, characterID, eq, items, magical), armor,
-		critChance,
-		combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
+	mitigation := playerMitigationPercent(ctx, characterID, eq, items, magical)
+	blockChance := combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion)
+	counter := resolveSkillBlow(raw, skill.AttPercent, mitigation, armor,
+		critChance, blockChance,
 		monster.Level, playerLevel, monster.ID, characterID)
 	incoming := counter.Damage
 	// The defender's damage-taken multiplier (round 838, applyPlayerTaken):
@@ -492,6 +586,31 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	}
 	out.critical = counter.Critical
 	out.blocked = counter.Blocked
+	// Round 880: a skill whose 'mc' count is above 1 lands that many blows a
+	// swing, each resolved on its own -- its own place in the range, its own
+	// critical and its own block (combat.MonsterSkill.Hits; READ, the loop of
+	// Combat_ResolveDamage s:0x58e5f0; MEASURED, two numbers a swing). The
+	// swing's damage is their sum, it is blocked only when every blow was, and
+	// the push lists the blows (MonsterAttacked.Hits).
+	if skill.ID != 0 && skill.Hits > 1 {
+		out.hits.add(StrikeHit{Damage: int32(incoming), Critical: counter.Critical, Blocked: counter.Blocked})
+		for i := 1; i < skill.Hits; i++ {
+			b := resolveSkillBlow(rollAgain(), skill.AttPercent, mitigation, armor,
+				critChance, blockChance,
+				monster.Level, playerLevel, monster.ID, characterID)
+			d := b.Damage
+			if !b.Blocked {
+				d = applyPlayerTaken(characterID, false, d)
+			}
+			incoming += d
+			out.critical = out.critical || b.Critical
+			out.blocked = out.blocked && b.Blocked
+			out.hits.add(StrikeHit{Damage: int32(d), Critical: b.Critical, Blocked: b.Blocked})
+		}
+		// The first blow's record stands for the swing below: blocked when
+		// all were, its damage the sum.
+		counter.Blocked, counter.Damage = out.blocked, incoming
+	}
 	// A rider's blow lands on its mount (round 795: a single-target blow at
 	// a riding PC is retargeted to the ridden COS, s:0x59b480, READ): the
 	// rider keeps its HP and wears nothing; the mount loses the damage and,

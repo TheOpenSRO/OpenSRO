@@ -428,21 +428,20 @@ type brain struct {
 	chaseAimX, chaseAimZ float64
 	chaseAimed           bool
 	// lastSwing is when the monster last fired its attack skill, zero for
-	// never. It is the action machine's cooldown, not BATTLE's timer 5: that
-	// timer is armed fired at BATTLE::OnEnter (0x55a018) and after every swing
-	// (Handler_0e8 0x547342), so it is due at once each time (ArmTimer
-	// 0x53d6c7, round 545), and what spaces the swings is the skill's
-	// ReuseDelay through the action machine (round 254). So it persists
-	// across BATTLE entries, as the cooldown does. swungReuseMs is the
-	// ReuseDelay of the skill that swing fired, the length of the cooldown
-	// (round 554: a species with two skills has two).
+	// never. It is not BATTLE's timer 5: that timer is armed fired at
+	// BATTLE::OnEnter (0x55a018) and after every swing (Handler_0e8
+	// 0x547342), so it is due at once each time (ArmTimer 0x53d6c7, round
+	// 545). What spaces the swings is the hold the swing itself arms (round
+	// 880, swingHold): swungReuseMs, D + rand % D ms with D the swung skill's
+	// action time -- the tactics context's pending timer, so it persists
+	// across BATTLE entries. (The name is round 254's, when the ReuseDelay
+	// was taken for the spacing; a summon's swing still holds for its
+	// ReuseDelay, summon.go.)
 	lastSwing    time.Time
 	swungReuseMs int
-	// actionUntil is when the last swing's action ends (round 812): the
-	// swing is a 0x7070 skill command whose action holds the monster in
-	// phase 3 for the skill's PreparingTime + CastingTime + ActionDuration
-	// (combat.MonsterSkill.ActionMs), so until then BATTLE neither chases
-	// nor swings -- the monster stands through its swing, then follows.
+	// actionUntil is when the last swing's hold ends (round 880; round 812
+	// ended it with the action, the hold's lower end): until then BATTLE
+	// neither chases nor swings -- the monster stands, then follows.
 	actionUntil time.Time
 	// backingOff is true while the monster walks back out of a target it
 	// stood too deep inside (round 812, BackOff): the walk runs out before
@@ -1625,25 +1624,64 @@ func (a *monsterAI) battleTick(b *brain) {
 		}
 	}
 	b.chaseAimed = false
-	// The action machine's cooldown: the ReuseDelay of the skill the LAST
-	// swing fired (skilldata col 14; round 254), swungReuseMs. The first
-	// swing is immediate (timer 5 armed fired at BATTLE::OnEnter, round 545).
-	// A species with no known ReuseDelay has no skill row to fire and swings
-	// not at all -- disclosed; every roster species carries one (cmd/server's
-	// roster). OWN DESIGN: one cooldown per monster, not one per skill --
-	// whether the engine's action machine would fire the OTHER skill inside
-	// the first's re-use delay is not read (docs/protocol/monster_ai.md, "The
-	// second attack skill: the runtime (round 554)").
+	// The hold after a swing (round 880, swingHold): the skill the LAST swing
+	// fired blocks the monster's AI for D + rand % D ms, D that skill's action
+	// time. The first swing is immediate (timer 5 armed fired at
+	// BATTLE::OnEnter, round 545). A species with no known ReuseDelay has no
+	// skill row to fire and swings not at all -- disclosed; every roster
+	// species carries one (cmd/server's roster). One hold per monster, as the
+	// engine's one pending timer is.
 	if sk.ReuseMs <= 0 {
 		return
 	}
 	if !b.lastSwing.IsZero() && a.now.Sub(b.lastSwing) < time.Duration(b.swungReuseMs)*time.Millisecond {
 		return
 	}
-	b.lastSwing, b.swungReuseMs = a.now, sk.ReuseMs
-	b.actionUntil = a.now.Add(time.Duration(sk.ActionMs) * time.Millisecond)
+	b.lastSwing, b.swungReuseMs = a.now, swingHold(sk)
+	// Until the hold ends BATTLE neither swings nor chases (the early return
+	// on actionUntil above; round 812 held it for the action time alone).
+	b.actionUntil = a.now.Add(time.Duration(b.swungReuseMs) * time.Millisecond)
 	b.hasArmed = false
 	a.queueStrike(b, e.CharacterID, sk)
+}
+
+// swingHold is how long, in ms, a swing of sk blocks the monster's AI before
+// its next: D + rand % D, with D the skill's hold base (combat.MonsterSkill.
+// HoldMs: its action time; the ReuseDelay when the row gives none). Round 880.
+//
+// READ (SR_GameServer.exe): the swing's resolver ends, for a non-player, by
+// sending its command source command 4 with D (s:0x59b763..0x59b787), D from
+// s:0x5a1a40 -- (CastingTime + ActionDuration) x param 140 / 100 for a row of
+// Basic_Activity 2 with an ActionDuration, else the ReuseDelay. The AI state's
+// slot 8 (s:0x558f70) arms tactics timer 10 with base D as the PENDING entry
+// (ArmTimer s:0x53d600: a second-table index, so last = now + rand() % D and
+// no fired byte) and clears the armed skill; while a pending entry is not due
+// -- now < armed + D + rand % D -- TimerDue (s:0x53d6e0) answers 0 for every
+// index, so BATTLE's swing handler returns 2 and the state neither swings nor
+// chases. The skill's ReuseDelay does not pace a monster's swings.
+//
+// MEASURED: three level-104 monsters whose skills have an action time of 2000
+// ms and a ReuseDelay of 2500 ms swung 2.11 .. 4.03 s apart, flat over that
+// range, 3.15 s on average (49 intervals) -- not every 2.5 s.
+//
+// INFERRED: param 140 is 100 for a monster (the measurement fits; its publish
+// is unread). OURS: the randomness is switched off with the package's
+// generator (a test's), leaving D.
+func swingHold(sk combat.MonsterSkill) int {
+	d := sk.HoldMs
+	if d <= 0 {
+		d = sk.ReuseMs
+	}
+	if d <= 1 {
+		return max(d, 0)
+	}
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	if damageRollNG == nil {
+		return d
+	}
+	// The engine's rand() answers 0..32767.
+	return d + damageRollNG.Intn(32768)%d
 }
 
 // armSkill is the attack skill the next swing fires: the one already armed

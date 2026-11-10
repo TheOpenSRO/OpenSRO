@@ -713,3 +713,27 @@ mitigation and its clamp, before the critical, the level term and the floor band
 roll needs the 0x4 bit (`0x58e80b`): a magical blow never crits. OpenSRO:
 `combat.ResolveSkillBlow` and `session.monsterStrike`; MEASURED numbers in WORLD_ISSUES
 "Eight-hundred-and-seventy-fifth round".
+
+## Round 880: the rank factor's operand, the blow count, the unrounded defence, the curse's cap
+
+- **The rank factor is on the skill's range.** `Combat_ComputeWeaponDamage` (`0x40db50`) is
+  `(GetParam(13 | 14) + the skill's 'att' min | max)` and then, when `vt+0x28` answers non-zero,
+  `x FUN_0040da20` (1.2 for a party monster, x1.5 for rank 6); the magical twin `0x40dc10` the same
+  on params 15 | 16. So for a monster (params 13..16 unwritten) the factor multiplies the skill's
+  own min and max -- READ; round 712's "applying it to a drawn skill's range is INFERRED" is
+  settled.
+- **A skill's 'mc' count is that many blows a swing.** `Combat_ResolveDamage` (`0x58e5f0`) runs its
+  whole resolution once per count: each blow its own place in the range, its own critical, its
+  own block. MEASURED: a level-104 monster's 76 % skill with a count of 2 lands two numbers a
+  swing (`442 ; 463`, `1815 ; 1815` at the bottom of its range under a decay, a critical 3888
+  beside a plain 2144). OpenSRO: `combat.MonsterSkill.Hits`, `MonsterAttacked.Hits`.
+- **The defence comes off unrounded.** Params 5 and 6 are floats; the character window truncates
+  them. MEASURED: a physical defence of 2602.86 (read 2602) behind an absorption of 119.8 % leaves
+  a 152 % blow of base 6969 at 862 (`(6969 / 2.198 - 2602.86) x 1.52 = 862.99`), where 2602 would
+  leave 864. OpenSRO: `session.defenderArmorExact`.
+- **A decay or a weakness takes at most 70 % of the defence there is.** The appliers (`0x4a5160`
+  for param 5, `0x4a5240` for param 6): `cur = ftol(GetParam)`; `cap = ftol(cur - cur x 0.3)`
+  (the double at `0xb461a0`, loaded at `0x4a51df` / `0x4a52bf`); `SetParam(slot 0, -min(value[3],
+  cap))`. MEASURED: `cspd ..,2000` on a physical defence of 2602.86 takes 1821 (the 76 % blow
+  of base 6969 lands 1815 a hit, again and again), on 3182.49 the whole 2000 (1510 a hit).
+  OpenSRO: `statuseffect.CurseCutOf`.

@@ -82,6 +82,13 @@ class MonsterAttacked:
 	## The attack skill the monster swung (round 785; retail's 0xB070 names
 	## it): a u32 after the wall block, 0 from a server that sends none.
 	var skill_id: int = 0
+	## The blows of a multi-hit swing (round 880; retail's 0xB070 carries one
+	## damage entry per blow of the skill's 'mc' count): after the skill id a
+	## u8 count and, per blow, an s32 damage and a u8 of the STRIKE_* flags.
+	## Empty for a swing of one blow (the server writes the list only for two
+	## or more); `damage` is their sum. Each entry is [damage, critical,
+	## blocked].
+	var hits: Array = []
 
 ## A monster's blow on a protection wall (round 640, the server's
 ## session/walls.go WallInfo): a strict suffix on OpAttackResult (after the
@@ -745,7 +752,20 @@ static func decode_monster_attacked(data: PackedByteArray) -> MonsterAttacked:
 		m.wall = null
 	if data.size() >= MONSTER_ATTACKED_SKILL_OFFSET + 4:
 		m.skill_id = data.decode_u32(MONSTER_ATTACKED_SKILL_OFFSET)
+	# Round 880: the blow list of a multi-hit swing.
+	var at := MONSTER_ATTACKED_SKILL_OFFSET + 4
+	if data.size() > at:
+		var n: int = data[at]
+		at += 1
+		if n >= 2 and n <= MONSTER_ATTACKED_MAX_HITS and data.size() >= at + 5 * n:
+			for i in range(n):
+				var f: int = data[at + 4]
+				m.hits.append([data.decode_s32(at), (f & STRIKE_CRITICAL) != 0, (f & STRIKE_BLOCKED) != 0])
+				at += 5
 	return m
+
+## The most blows a swing's list carries (session.MaxStrikeHits).
+const MONSTER_ATTACKED_MAX_HITS := 8
 
 ## Where OpMonsterAttacked's skill id sits: after the 33 bytes and the 13-byte
 ## wall block (round 785; session.MonsterAttackedSkillOffset).

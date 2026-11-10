@@ -184,10 +184,11 @@ type Record struct {
 	DefenceCut int
 	// CurseCut is decay's ('cspd', slot 17) or weakness's ('csmd', slot 18)
 	// value[3] (record+0x34): the flat physical / magical defence the state
-	// takes away, never more than there is (round 875; READ, the appliers
-	// s:0x4a5160 / Apply18 s:0x4a5240 write p5 / p6 slot 0 = -min(v3,
-	// current)). MEASURED: `cspd 30000,30,10,2000` on a defender of phy def
-	// 3182 moved a 152 % 6969..8038 blow from 572..688 to 3021..3559.
+	// asks for (round 875). What it takes is CurseCutOf's: never more than
+	// 70 % of the defence there is (round 880; READ, the appliers s:0x4a5160
+	// / Apply18 s:0x4a5240 write p5 / p6 slot 0 = -min(v3, ftol(current -
+	// current x 0.3))). MEASURED: `cspd 30000,30,10,2000` on a defender of
+	// phy def 3182 moved a 152 % 6969..8038 blow from 572..688 to 3021..3559.
 	CurseCut int
 	// SourceID is who applied it (record+0x4c): a character id, or a monster
 	// id when SourceIsMonster.
