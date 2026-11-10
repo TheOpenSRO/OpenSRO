@@ -7483,6 +7483,27 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eighty-third round: the auto potion window's frame follows its vigor row, and a slider's thumb keeps its place
+
+The user, on the window round 876 grew by its vigor row (OURS): "The center portion goes below the old
+border". UI-only, no perf gate; base `c81308bd` (v0.1.655). Labels: MEASURED, OURS.
+
+- **The border.** MEASURED in the user's frame and in round 876's own (`b0_window_opened`): the inner
+  border (`GDR_AUTO_POTION_FRAME_1`, `int_window_`, authored 13,42 368x465) still ended 86 px above the
+  grown window's bottom, across the "Potion use delay" row, while its tile and the window had grown.
+  Cause: `UiBuilder._build_frame` lays a frame's eight pieces once, for the authored height; round 876
+  gave the control a taller authored rect and its pieces stayed. `UiBuilder.grow_frame_height` (OURS)
+  moves the pieces that end on the old bottom edge and grows the sides; `_add_vigor_row` calls it for a
+  control it grows. MEASURED after (real client, round 876's run script): the border closes under the
+  Confirm and Cancel buttons, window 394x606, no layout problem.
+- **The thumbs.** In the user's frame the HP, MP and vigor rows read 86, 85 and 66 with every thumb at
+  the slider's start. The thumb is a built control with an authored rect at the start; a settling pass
+  (`UiBuilder.apply_authored_rects`, e.g. the window's re-centring on its first open) put it back there
+  after `fill` had placed it. `_slider_set` now writes the thumb's place into its authored rect.
+- Tests (`auto_potion_window_test.gd`, ALL PASS): a frame's pieces after a growth (top stays, sides
+  reach, bottom on the new edge), the window frame's border on its new bottom, the thumbs on 86 and 66
+  after the authored rects are applied again. `check` ALL LOAD; `auto_potion_test` ALL PASS.
+
 ## Eight-hundred-and-eighty-second round: passives and buffs follow their required gear, as the original's -- a passive counts only while its own item list holds, a buff of one's own ends when its list fails, a buff without a list outlives the swap
 
 Round 881 left two differences for the user: "OpenSRO still counts a passive's other params

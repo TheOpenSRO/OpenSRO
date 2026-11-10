@@ -185,6 +185,35 @@ func _vigor(c, window: HudWindow) -> void:
 	var pml_frame := window.node("GDR_AUTO_POTION_FRAME_2") as Control
 	_check(frame.size.y == 551 and bg.size.y == 519 and pml_frame.size.y == 126,
 		"vigor: the window's frame and tile grow by 86, the description's frame does not (got %s, %s, %s)" % [frame.size.y, bg.size.y, pml_frame.size.y])
+	# The frame's pieces follow its new height (the user's report after round
+	# 876: "The center portion goes below the old border"). A frame as
+	# _build_frame lays one, 100 x 60 with 8 px pieces, grown by 86.
+	var f := Control.new()
+	var rects := {"lu": Rect2(0, 0, 8, 8), "mu": Rect2(8, 0, 84, 8), "ru": Rect2(92, 0, 8, 8),
+		"ls": Rect2(0, 8, 8, 44), "rs": Rect2(92, 8, 8, 44),
+		"ld": Rect2(0, 52, 8, 8), "md": Rect2(8, 52, 84, 8), "rd": Rect2(92, 52, 8, 8)}
+	for k in rects:
+		var tr := TextureRect.new()
+		tr.name = k
+		tr.position = rects[k].position
+		tr.size = rects[k].size
+		f.add_child(tr)
+	UiBuilder.grow_frame_height(f, 60, 86)
+	var piece := func(k: String) -> Rect2: return (f.get_node(k) as Control).get_rect()
+	_check(piece.call("lu") == rects["lu"] and piece.call("mu") == rects["mu"] and piece.call("ru") == rects["ru"],
+		"frame growth: the top pieces stay")
+	_check(piece.call("ls") == Rect2(0, 8, 8, 130) and piece.call("rs") == Rect2(92, 8, 8, 130),
+		"frame growth: the sides reach the new bottom corners (got %s)" % str(piece.call("ls")))
+	_check(piece.call("ld").position.y == 138 and piece.call("md").position.y == 138 and piece.call("rd").position.y == 138,
+		"frame growth: the bottom pieces sit on the new bottom edge (got %s)" % str(piece.call("md")))
+	f.free()
+	# The window's own frame, where the fixture's art loaded: no piece ends
+	# above the grown frame's bottom edge but the top row.
+	var lowest := 0.0
+	for piece_node in frame.get_children():
+		if piece_node is TextureRect:
+			lowest = maxf(lowest, (piece_node as Control).position.y + (piece_node as Control).size.y)
+	_check(lowest == 0.0 or lowest == frame.size.y, "frame growth: the window frame's border ends on its new bottom (%s of %s)" % [lowest, frame.size.y])
 	var problems: Array = c.layout_problems()
 	_check(problems.is_empty(), "vigor: no two controls overlap and all are inside the window (%s)" % str(problems))
 	# A box too close: the check catches it.
@@ -211,6 +240,16 @@ func _vigor(c, window: HudWindow) -> void:
 	c.on_confirm = func(vals: Dictionary) -> void: got.append(vals)
 	(window.node("GDR_AUTO_POTION_OK_BTN") as BaseButton).emit_signal("pressed")
 	_check(got.size() == 1 and got[0]["rows"][3] == {"enabled": true, "percent": 37, "slot": 25}, "vigor: Confirm hands the row out fourth")
+	# A slider's thumb keeps its place through a settling pass.
+	c.fill({"rows": [{"enabled": true, "percent": 86, "slot": 1}, {"enabled": true, "percent": 85, "slot": 2},
+		{"enabled": true, "percent": 0, "slot": 3}, {"enabled": true, "percent": 66, "slot": 4}], "delay_enabled": false, "delay_ms": 500})
+	UiBuilder.apply_authored_rects(window)
+	var hp_thumb := hp.find_child("Thumb", true, false) as Control
+	var vg_thumb := host.find_child("Thumb", true, false) as Control
+	_check(hp_thumb != null and int(hp_thumb.position.x) == 20 + c.thumb_offset(86),
+		"slider: the HP thumb stays on 86 after the authored rects are applied again (x %s)" % (str(hp_thumb.position.x) if hp_thumb != null else "none"))
+	_check(vg_thumb != null and int(vg_thumb.position.x) == 20 + c.thumb_offset(66),
+		"slider: the vigor thumb stays on 66 (x %s)" % (str(vg_thumb.position.x) if vg_thumb != null else "none"))
 
 func _finish() -> void:
 	if _failures == 0:

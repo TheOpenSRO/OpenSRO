@@ -968,6 +968,25 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 ## A copy of `tex` turned 90 degrees clockwise (a texture column becomes a
 ## screen row), cached per texture: how CNIFStretchWnd's edge mode 3 draws a
 ## six-piece set's top and bottom from its side pieces (round 718).
+## Grows a built frame (the pieces _build_frame laid for `old_h`) by `dy`:
+## the pieces that end on the old bottom edge and lie in its lower half move
+## down, the sides between the corners grow, the top stays. OURS, for a window
+## that gains a row after it is built (the auto potion window's vigor row,
+## round 876): the pieces are placed once, so a new authored height alone left
+## the bottom border where the old window ended.
+static func grow_frame_height(frame: Control, old_h: float, dy: float) -> void:
+	if frame == null or dy == 0.0 or old_h <= 0.0:
+		return
+	for c in frame.get_children():
+		var tr := c as TextureRect
+		if tr == null:
+			continue
+		var bottom := tr.position.y + tr.size.y
+		if bottom >= old_h - 0.5 and tr.position.y >= old_h * 0.5:
+			tr.position.y += dy
+		elif tr.size.y >= old_h * 0.5:
+			tr.size.y += dy
+
 var _rotated_cache: Dictionary = {}
 
 func rotated_cw(tex: Texture2D) -> Texture2D:

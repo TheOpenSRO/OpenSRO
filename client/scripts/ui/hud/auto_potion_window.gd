@@ -223,6 +223,10 @@ func _add_vigor_row(slot_layout: UiLayoutParser.LayoutDef) -> void:
 		if r.position.y >= at.position.y:
 			r.position.y += pitch
 		elif r.end.y > at.position.y:
+			# A frame's pieces are laid at build time for its authored
+			# height (UiBuilder._build_frame): its sides and bottom follow
+			# the new one, or the border ends where the old window did.
+			UiBuilder.grow_frame_height(c, r.size.y, pitch)
 			r.size.y += pitch
 		else:
 			continue
@@ -426,6 +430,13 @@ func _slider_set(row: Dictionary, v: int) -> void:
 	var thumb := host.get_node_or_null("Thumb") as Control
 	if thumb != null:
 		thumb.position = Vector2(SLIDER_THUMB_AT.x + thumb_offset(v), SLIDER_THUMB_AT.y)
+		# The thumb is a built control with an authored rect: a settling pass
+		# (UiBuilder.apply_authored_rects, e.g. the window's re-centring on
+		# its first open) would put it back at the slider's start.
+		if thumb.has_meta(UiBuilder.AUTHORED_RECT_META):
+			var ar: Rect2 = thumb.get_meta(UiBuilder.AUTHORED_RECT_META)
+			ar.position = thumb.position
+			thumb.set_meta(UiBuilder.AUTHORED_RECT_META, ar)
 	_builder.set_static_text(row.get("data") as Control, "%d" % v)
 
 ## The thumb's x past its origin for value v (0x6598e2..0x659901).
