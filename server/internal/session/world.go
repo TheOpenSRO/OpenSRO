@@ -2198,7 +2198,8 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// 0x7021, destmove.go); its client is put back where the server has it.
 	if !trustPositions.Load() && (!statusFX.characterCanMove(self.CharacterID) || tradeEstablishedOn(hub, self.CharacterID)) {
 		metrics.MoveClaim("refused_state")
-		correctMover(sess, hub)
+		correctMover(sess, hub, "claim_state", "stopped", req.Stopped, "relocated", req.Relocated,
+			"claim_x", pos.X, "claim_y", pos.Y, "claim_z", pos.Z)
 		return nil
 	}
 	bound := claimBound(self.CharacterID, req.Relocated, now)
@@ -2215,7 +2216,19 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 		} else {
 			metrics.MoveClaim("refused")
 		}
-		correctMover(sess, hub)
+		// Round 878: why, from where, and how far (world.ClaimVerdict).
+		v := moved.Claim
+		leg := "none"
+		if m := moved.Entity.Move; m != nil {
+			leg = "destination"
+			if m.Heading {
+				leg = "heading"
+			}
+		}
+		correctMover(sess, hub, "claim_"+v.Rule, "stopped", req.Stopped, "relocated", req.Relocated,
+			"claim_x", pos.X, "claim_y", pos.Y, "claim_z", pos.Z,
+			"anchor_x", v.Anchor.X, "anchor_z", v.Anchor.Z, "distance", v.Distance,
+			"slack", v.Slack, "allowance", v.Allowance, "speed", bound.Speed, "leg", leg)
 		return nil
 	}
 	metrics.MoveClaim("taken")

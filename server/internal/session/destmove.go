@@ -285,7 +285,13 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	hub = hub.For(sess)
 	// Round 860: the scroll state 1 holds every move (scrollhold.go, READ
 	// s:0x4296a0 group 11); OURS, the mover is told where it stands.
+	// Round 878: who asked, for the refusal lines (movelog.go).
+	who := int64(0)
+	if e, ok := hub.EntityBySession(sess.ID()); ok {
+		who = e.CharacterID
+	}
 	if scrollHolds(sess) {
+		moveRefused(who, "scroll_hold")
 		scrollHoldAnswer(sess, hub)
 		return nil
 	}
@@ -293,14 +299,19 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	// click beyond the session's bucket is dropped, silently as every refusal
 	// (its client takes a missing echo as a refusal: MoveOrderSync).
 	if !moveBucketTake(sess, time.Now()) {
+		moveRefused(who, "bucket", "rate", moveBucketRate, "burst", moveBucketBurst)
 		return nil
 	}
 	m, angle, err := proto.DecodeMovement(data, false)
 	if err != nil || (m.Kind != proto.MovementKindHeading && m.Kind != 1) {
+		moveRefused(who, "malformed", "bytes", len(data))
 		return nil // a kind other than 0 or 1 is refused
 	}
 	e, ok := hub.EntityBySession(sess.ID())
 	if !ok || e.Life == world.LifeDead {
+		if ok {
+			moveRefused(who, "dead", "x", e.Pos.X, "z", e.Pos.Z)
+		}
 		return nil
 	}
 	// Round 800: a movement request cancels a pending suit change
@@ -310,7 +321,12 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	// states that stop a move -- the bits 0xc1 | 0x4000 (`test al,0xc1` at
 	// 0x4b0fa6), stun, freeze, sleep, root: statuseffect.Holder.CanMove --
 	// and an established trade (interaction state 2; 0 and 1 pass).
-	if !statusFX.characterCanMove(e.CharacterID) || tradeEstablishedOn(hub, e.CharacterID) {
+	if !statusFX.characterCanMove(e.CharacterID) {
+		moveRefused(who, "state", "x", e.Pos.X, "z", e.Pos.Z)
+		return nil
+	}
+	if tradeEstablishedOn(hub, e.CharacterID) {
+		moveRefused(who, "trade", "x", e.Pos.X, "z", e.Pos.Z)
 		return nil
 	}
 	// The walk speed while the run flag is cleared (round 781, motionSpeed).
@@ -346,15 +362,18 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 			// dungeon the character is in; three i32 of dungeon space.
 			rid, in := dungeonOf(e.Zone)
 			if !in || uint16(rid) != m.Region {
+				moveRefused(who, "region", "zone", e.Zone, "region", m.Region, "why", "a dungeon destination outside its dungeon")
 				return nil
 			}
 			x, y, z = worldmap.DungeonToWorld(float64(m.X), float64(m.Y), float64(m.Z))
 		} else {
 			if _, in := dungeonOf(e.Zone); in {
+				moveRefused(who, "region", "zone", e.Zone, "region", m.Region, "why", "a field destination from inside a dungeon")
 				return nil // a field destination from inside a dungeon
 			}
 			here, _, _ := regionLocalOf(e.Zone, e.Pos)
 			if !regionsAdjacent(here, m.Region) {
+				moveRefused(who, "region", "zone", e.Zone, "here", here, "region", m.Region, "why", "outside the 3 x 3 regions")
 				return nil // outside the 3 x 3 regions (FUN_0048c2d0)
 			}
 			x, z = worldOfRegionLocal(e.Zone, m.Region, float64(m.LocalX), float64(m.LocalZ))
@@ -365,8 +384,10 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 		// destination's height is bounded as a claim's is, from the last
 		// height the client gave (world.Entity.HeightAllows).
 		if !e.HeightAllows(x, y, z, claimHeight, claimSanity) {
+			moveRefused(who, "height", "x", e.Pos.X, "y", e.Pos.Y, "z", e.Pos.Z, "to_x", x, "to_y", y, "to_z", z)
 			return nil
 		}
+		order.Asked = order.Dest
 		// Round 812: the server walks the leg on its navigation mesh (READ:
 		// CGObjMoverByDest steps on the server's navmesh; a blocked step
 		// stops the mover and sends 0xB023). The echo still names the
@@ -389,21 +410,46 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 		}
 		traceMove("move: leg", "character_id", e.CharacterID, "from_x", e.Pos.X, "from_y", fromY, "from_z", e.Pos.Z,
 			"to_x", x, "to_z", z, "wall", order.Wall, "end_x", order.Dest.X, "end_z", order.Dest.Z)
+		// Round 878: a leg the server's own walk cuts short at a wall is
+		// logged -- the client walks the same mesh and should stop there too;
+		// where it did not, this line and the stop that follows are the trace.
+		if order.Wall {
+			moveLog("move: leg cut at a wall", who, "wall", "from_x", e.Pos.X, "from_y", fromY, "from_z", e.Pos.Z,
+				"to_x", x, "to_z", z, "end_x", order.Dest.X, "end_y", order.Dest.Y, "end_z", order.Dest.Z,
+				"cut", math.Hypot(x-order.Dest.X, z-order.Dest.Z))
+		}
 	}
 	now := time.Now()
 	// Round 640, OURS: a character its own protection wall holds does not
 	// move; its client is told where it is held (walls.go).
 	if wallRoots(e.CharacterID) {
+		moveRefused(who, "wall_root", "x", e.Pos.X, "z", e.Pos.Z)
 		rootedMoveAnswer(sess, e)
 		return nil
 	}
 	// CHANGEMOTION is refused; a sitter stands at once (motion.go).
 	if accepted, _ := motions.movedUnrooted(e.CharacterID, now); !accepted {
+		moveRefused(who, "motion", "x", e.Pos.X, "z", e.Pos.Z)
 		return nil
 	}
 	r, st := hub.StartMove(sess, order)
+	if st == world.MoveRefusedNear {
+		// READ (0xb45b28): a destination within 5.0 of the one being walked
+		// to, while moving. The client holds such a click back (round 846,
+		// MoveOrderSync.held), so one reaching here is a timing miss.
+		moveRefused(who, "near", "x", r.Entity.Pos.X, "z", r.Entity.Pos.Z, "to_x", order.Dest.X, "to_z", order.Dest.Z,
+			"walking_to_x", r.Entity.Move.Dest.X, "walking_to_z", r.Entity.Move.Dest.Z)
+	}
 	if st != world.MoveAccepted {
 		return nil
+	}
+	if r.WallStop {
+		// Round 878: the leg this one replaces had already stopped at a wall
+		// the server's walk met, before the pass told the window (the pass's
+		// 0xB023, moverPass): this leg starts there. A client that did not
+		// stop at that wall is that far off now.
+		moveLog("move: a wall stop replaced before it was told", who, "wall_untold",
+			"wall_x", r.WallAt.X, "wall_z", r.WallAt.Z, "heading", order.Heading)
 	}
 	if order.Heading {
 		// Round 857: the run is walked on the server's mesh before anything
@@ -573,13 +619,17 @@ func stopRelay(sess *gateway.Session, r world.MoveResult, self bool) {
 // correctMover ends sess's character's leg where the server has it and tells
 // the window, the mover included: a report or relocation the server did not
 // take. The client snaps there (FUN_008a4f80).
-func correctMover(sess *gateway.Session, hub *world.Hub) {
+// Round 878: logged at INFO with the rule that refused and args (slog pairs:
+// the claim, the anchor), and where the client is put.
+func correctMover(sess *gateway.Session, hub *world.Hub, rule string, args ...any) {
 	// Round 869: the session's own world (gameworlds.go).
 	hub = hub.For(sess)
 	r, ok := hub.Correct(sess)
 	if !ok {
 		return
 	}
+	moveLog("move: corrected", r.Entity.CharacterID, rule, append(args,
+		"put_x", r.Entity.Pos.X, "put_y", r.Entity.Pos.Y, "put_z", r.Entity.Pos.Z)...)
 	metrics.MoveCorrection()
 	motions.walking(r.Entity.CharacterID, time.Now())
 	stopRelay(sess, r, true)
@@ -745,7 +795,11 @@ func moverPass(hub *world.Hub) {
 	// F10), or a leg its navigation-mesh wall ended (round 812): the window
 	// and the mover hear where the server stopped it.
 	for _, r := range pass.Ended {
-		traceMove("move: ended by the server", "character_id", r.Entity.CharacterID, "x", r.Entity.Pos.X, "z", r.Entity.Pos.Z)
+		// Round 878: at INFO -- this 0xB023 puts the mover's own client
+		// there (World3D._apply_own_correction).
+		moveLog("move: stopped by the server", r.Entity.CharacterID, r.EndedBy,
+			"x", r.Entity.Pos.X, "y", r.Entity.Pos.Y, "z", r.Entity.Pos.Z,
+			"leg_from_x", r.EndedLeg.Src.X, "leg_from_z", r.EndedLeg.Src.Z, "heading", r.EndedLeg.Heading)
 		motions.walking(r.Entity.CharacterID, time.Now())
 		stopRelay(r.Entity.Session, r, true)
 	}

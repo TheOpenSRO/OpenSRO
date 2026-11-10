@@ -1345,6 +1345,8 @@ var _other_legs := {}
 var _other_speeds := {}
 ## Round 749 (MoveOrderSync): what this player's walk has told the server.
 var _move_sync := MoveOrderSync.new()
+## Round 878: the own walk against the wall clock (WalkClock).
+var _walk_clock := WalkClock.new()
 ## character_id -> {skeleton, gender, group, moving}: what another player's
 ## body is playing, so its gait can follow its movement.
 var _other_gaits := {}
@@ -23497,6 +23499,8 @@ func _process(_delta: float) -> void:
 	_night_tick()
 	if title_mode:
 		return
+	# Round 878: the own walk's clock, read after this frame's ticks.
+	_walk_clock.frame(Time.get_ticks_usec())
 	# Round 795: riders on their mounts' saddles, the mounts under them
 	# (round 813: a mount leaning with the ground before its rider is seated).
 	_cos_place_riders(_delta)
@@ -23763,6 +23767,17 @@ func _physics_step(delta: float) -> void:
 				_move_heading_run = false
 				player.velocity.x = 0.0
 				player.velocity.z = 0.0
+		# Round 878 (WalkClock, READ c:FUN_009e0e60: the mover steps by the
+		# frame's elapsed time): the walk time a stalled frame's dropped ticks
+		# lost, walked now a tick at a time, so the walk stays where the
+		# server's leg has it.
+		var owed := _walk_clock.tick(delta, _has_move_target and on_graph)
+		while owed > 0.0 and _has_move_target:
+			var sub := minf(owed, delta)
+			owed -= sub
+			_step_move_order(sub)
+			if not _has_move_target or not _move_on_nav_graph(sub):
+				break
 		_walked_since_send += Vector2(player.position.x - walk_from.x, player.position.z - walk_from.z).length()
 		# Round 846: the walk to the Up key's stop point (_own_arrow_stop).
 		_step_own_settle(delta)

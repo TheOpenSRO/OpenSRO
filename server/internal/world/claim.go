@@ -163,23 +163,32 @@ func (h *Hub) Claim(sess *gateway.Session, pos Position, kind MoveKind, heading 
 	}
 	anchor := anchorLocked(e, pos.X, pos.Z, now)
 	trusted, paid := anchor, 0.0
+	d := math.Hypot(pos.X-anchor.X, pos.Z-anchor.Z)
+	v := ClaimVerdict{Anchor: anchor, Distance: d, Slack: b.Slack, Allowance: e.allow}
 	admitted = b.Trust
-	if admitted {
-		trusted = pos
-	} else if !b.Unreached && outLocked(e, now).HeightAllows(pos.X, pos.Y, pos.Z, b.Height, b.Sanity) {
-		d := math.Hypot(pos.X-anchor.X, pos.Z-anchor.Z)
+	switch {
+	case admitted:
+		trusted, v.Rule = pos, "trust"
+	case b.Unreached:
+		v.Rule = "unreached"
+	case !outLocked(e, now).HeightAllows(pos.X, pos.Y, pos.Z, b.Height, b.Sanity):
+		v.Rule = "height"
+	default:
 		switch need := d - b.Slack; {
 		case need <= 0:
-			admitted = true
+			admitted, v.Rule = true, "near"
 		case need <= e.allow:
-			admitted, paid = true, need
+			admitted, paid, v.Rule = true, need, "allowance"
 			trusted.X += (pos.X - anchor.X) / d * need
 			trusted.Z += (pos.Z - anchor.Z) / d * need
+		default:
+			v.Rule = "distance"
 		}
 	}
 	if !admitted && b.Named != nil && b.Named(pos.X, pos.Z) {
-		admitted, trusted = true, pos
+		admitted, trusted, v.Rule = true, pos, "named"
 	}
+	r.Claim = v
 	if !admitted {
 		r.Entity = outLocked(e, now)
 		return r, false, true
