@@ -2238,7 +2238,8 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 	// Round 812: the leg ends where the navigation mesh stops it (READ: the
 	// server steps its mover on its own navmesh and stops it at a blocking
 	// edge, CGObjMoverByDest; navWalk). A wall right ahead leaves no leg.
-	if cx, cz, clipped := navClipLeg(b.m.Zone, b.m.X, b.m.Y, b.m.Z, destX, destZ); clipped {
+	cx, cz, endY, clipped := navLegEnd(b.m.Zone, b.m.X, b.m.Y, b.m.Z, destX, destZ)
+	if clipped {
 		if math.Hypot(cx-b.m.X, cz-b.m.Z) < navMinLeg {
 			a.tracef("ai: monster %d %s to (%.0f,%.0f) blocked at once", b.id, what, destX, destZ)
 			return
@@ -2249,6 +2250,14 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 	m, ok := a.monsters.SetMotion(b.id, destX, destZ, speed, mode)
 	if !ok {
 		return
+	}
+	// Round 879: a monster that carries its height (an instance's hatch on
+	// its deck) takes the surface its leg's walk ends on, so a list after
+	// the leg names the surface it stands on there (the mover carries its
+	// cell, CGObjMoverByDest). The push names no height; the client carries
+	// the body's own footing while it walks.
+	if m.HasHeight && !math.IsNaN(endY) && a.monsters.SetY(b.id, endY) {
+		m.Y = endY
 	}
 	if dx, dz := destX-m.X, destZ-m.Z; dx != 0 || dz != 0 {
 		b.heading = math.Atan2(dz, dx)

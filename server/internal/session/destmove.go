@@ -401,12 +401,18 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 			order.Dest = world.Position{X: w.X, Y: w.Y, Z: w.Z}
 			order.Wall = true
 		}
-		// Round 869 (OURS, game_worlds.md 14 item 9; the original's block at
-		// a closed door is OPEN): a leg through a closed trigger door of the
-		// layer ends where it starts, as a wall at the first step does.
-		if gw := instanceOf(hub); gw != nil && gw.DoorBlocks(e.Pos.X, e.Pos.Z, order.Dest.X, order.Dest.Z) {
-			order.Dest = world.Position{X: e.Pos.X, Y: e.Pos.Y, Z: e.Pos.Z}
-			order.Wall = true
+		// Round 869 (OURS, game_worlds.md 14 item 9) and 879: a leg into a
+		// closed trigger door of the layer ends at the door's outline, as at
+		// a wall (gameworld.DoorStop; the door model's own navigation mesh
+		// where the export has it, a 40-unit disc at its point otherwise).
+		if gw := instanceOf(hub); gw != nil {
+			if sx, sz, blocked := gw.DoorStop(e.Pos.X, e.Pos.Z, order.Dest.X, order.Dest.Z); blocked {
+				order.Dest = world.Position{X: sx, Y: e.Pos.Y, Z: sz}
+				if wy, ok := navGround(e.Zone, world.Position{X: e.Pos.X, Y: fromY, Z: e.Pos.Z}, sx, sz); ok {
+					order.Dest.Y = wy
+				}
+				order.Wall = true
+			}
 		}
 		traceMove("move: leg", "character_id", e.CharacterID, "from_x", e.Pos.X, "from_y", fromY, "from_z", e.Pos.Z,
 			"to_x", x, "to_z", z, "wall", order.Wall, "end_x", order.Dest.X, "end_z", order.Dest.Z)

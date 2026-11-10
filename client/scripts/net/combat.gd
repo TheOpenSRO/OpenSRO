@@ -253,6 +253,12 @@ class MonsterSnapshot:
 	## creatable bodies (ICMonster::FUN_009d3470). -1 when the server sent
 	## none (MONSTER_LIST_FLAG_BODY not asked, or an older server).
 	var body: int = -1
+	## Round 879: whether `y` is the surface the server stands the monster
+	## on (a hatch in an instance's field: the Wrecked Ship's decks), set by
+	## NetClient when the wire's height is not 0 in a field frame, with `y`
+	## then the scene height. A field monster of the open world comes with
+	## 0, and its body stands on its terrain as before.
+	var has_height := false
 
 ## Result of decode_monster_list_result().
 class MonsterListResult:

@@ -200,6 +200,8 @@ func openWorldRuntime(w *gameworld.World) {
 		rt.ai = newMonsterAI(w.Hub, w.Monsters, s.logger, s.cfg, rand.New(rand.NewSource(time.Now().UnixNano()^int64(w.Key))), nil)
 	}
 	rt.aoi = newMonsterAOI(w.Hub, w.Monsters, aoiLogger.Load())
+	// Round 879: the doors' footprints in the layer's frame (doorblock.go).
+	setDoorBlocks(w)
 	if rt.npc == nil {
 		if prev := runtimeOfWorld(w); prev != nil {
 			rt.npc = prev.npc

@@ -66,6 +66,6 @@ func buildZonePlaces(ref *Ref, t *reftable.Table) {
 			continue
 		}
 		ref.ZonePlaces[name] = ZonePlace{Region: uint16(t.Int(r, "Region")), X: t.Float(r, "X"), Y: t.Float(r, "Y"),
-			Z: t.Float(r, "Z"), Angle: angleOfYaw(t.Float(r, "Yaw"))}
+			Z: t.Float(r, "Z"), Angle: angleOfYaw(t.Float(r, "Yaw")), Yaw: t.Float(r, "Yaw")}
 	}
 }

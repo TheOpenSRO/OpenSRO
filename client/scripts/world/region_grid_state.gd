@@ -122,6 +122,12 @@ static func cell_world_offset(dx: int, dy: int) -> Vector3:
 static func cell_at(rel: Vector3) -> Vector2i:
 	return Vector2i(int(floorf(-rel.z / REGION_SPAN)), int(floorf(rel.x / REGION_SPAN)))
 
+## True when the cell `rel` lies in (cell_at) is loaded (round 879: an arrival
+## point more than a cell from the frame region waits for its own cell).
+func cell_loaded_at(rel: Vector3) -> bool:
+	var cell := cell_at(rel)
+	return loaded_cells.has("%d_%d" % [cell.x, cell.y])
+
 func mark_loaded(dx: int, dy: int, region_x: int, region_y: int) -> void:
 	loaded_cells["%d_%d" % [dx, dy]] = Vector2i(region_x, region_y)
 

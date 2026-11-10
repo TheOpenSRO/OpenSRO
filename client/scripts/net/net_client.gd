@@ -1383,6 +1383,26 @@ func wire_y(y: float) -> float:
 func scene_y(y: float) -> float:
 	return y - wire_height_anchor if _spawn_dungeon < 0 else y
 
+## Round 879: a monster record's height. The server names a field monster's
+## surface only where it has one (an instance's hatch: its deck), region-local
+## like every height since round 870, and 0 otherwise (the open world's nests
+## carry none). A named height becomes this frame's scene height and the
+## record says it has one (CombatNet.MonsterSnapshot.has_height); a dungeon's
+## heights are its own and are left as they are.
+func _monster_wire_height(m: CombatNet.MonsterSnapshot) -> void:
+	if m == null or _spawn_dungeon >= 0 or m.y == 0.0:
+		return
+	m.has_height = true
+	m.y = scene_y(m.y)
+
+## Round 879: a ground item's height, as a monster's (_monster_wire_height):
+## a drop carries the corpse's height, region-local, or 0 where the server has
+## none; a named one becomes this frame's scene height.
+func _ground_wire_height(g) -> void:
+	if g == null or _spawn_dungeon >= 0 or g.y == 0.0:
+		return
+	g.y = scene_y(g.y)
+
 ## Round 749: where the player's walk stopped short of the destination its
 ## 0x7021 named (WorldNet.MOVE_FLAG_STOPPED, OURS) -- the server takes it on
 ## its own leg and tells the window with retail's 0xB023.
@@ -3261,6 +3281,8 @@ func _dispatch(p: Packet) -> void:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		CombatNet.OP_MONSTER_LIST_RESULT:
 			var r := CombatNet.decode_monster_list_result(p.data)
+			for lm in r.monsters:
+				_monster_wire_height(lm)
 			if r.error != "" or r.pages <= 1:
 				_monster_list_pages.clear()
 				monster_list_result.emit(r.monsters, r.error)
@@ -3326,13 +3348,17 @@ func _dispatch(p: Packet) -> void:
 		CombatNet.OP_MONSTER_SPAWNED:
 			var mob_spawned := CombatNet.decode_monster_spawned(p.data)
 			if mob_spawned != null:
+				_monster_wire_height(mob_spawned.monster)
 				monster_spawned.emit(mob_spawned)
 		GroundItemsNet.OP_LIST_RESULT:
 			var gl := GroundItemsNet.decode_list_result(p.data)
+			for gi in gl.items:
+				_ground_wire_height(gi)
 			ground_item_list_result.emit(gl.items, gl.error)
 		GroundItemsNet.OP_SPAWNED:
 			var spawned := GroundItemsNet.decode_snapshot(p.data)
 			if spawned != null:
+				_ground_wire_height(spawned)
 				ground_item_spawned.emit(spawned)
 		GroundItemsNet.OP_REMOVED:
 			var removed := GroundItemsNet.decode_removed(p.data)

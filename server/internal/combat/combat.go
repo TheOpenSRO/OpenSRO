@@ -51,6 +51,13 @@ type Monster struct {
 	// The client maps it to the target-window rank gem (mapping recovered from
 	// the retail client). Structural data, so grounded like Level.
 	Rarity int
+	// HasHeight is whether Y is the walkable surface the monster stands on
+	// (round 879): a hatch of an instance's field nest stands on its nest's
+	// surface and carries it from leg to leg (READ s:0x5f704f, the hatch
+	// point walked from the nest; CGObj::EnterWorld s:0x485360 resolves the
+	// height). Without it Y is the nest's 0 in the field and the client
+	// stands the body on its terrain, as before.
+	HasHeight bool
 	// BCRadius is the species' collision radius (characterdata col 50), the
 	// monster's half of the attack-distance rule's base -- see ApproachBand.
 	BCRadius int
@@ -1130,6 +1137,8 @@ type Hatch struct {
 	HasHeading bool
 	// Leader is Monster.Leader (a summoned minion's unique, round 661).
 	Leader int64
+	// HasHeight is Monster.HasHeight (round 879).
+	HasHeight bool
 }
 
 // Tactics is the slice of a _RefTactics row (EXTERNAL: the Eternity DB, round
@@ -1183,7 +1192,7 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP), ExpToGive: species.ExpToGive, HasExpToGive: species.HasExpToGive, Knockdown: species.Knockdown, KORecoverMs: species.KORecoverMs, HasKnockdown: species.HasKnockdown,
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: hatch.HomeX, HomeZ: hatch.HomeZ, DestX: x, DestZ: z,
 		Party: hatch.Party, Tactics: hatch.Tactics, Summon: species.Summon, Triggers: species.Triggers, Leader: hatch.Leader,
-		Body: byte(rand.Intn(32768))}
+		HasHeight: hatch.HasHeight, Body: byte(rand.Intn(32768))}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for
 	// a species of the roster's TypeID shape whose rarity is not 3: `cmp
 	// [edi+0x89],3` at 0x5609b6, whose `jne` at 0x5609bd jumps to the rand()

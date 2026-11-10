@@ -241,16 +241,54 @@ func navBlocked(zone string, x, y, z, tx, tz float64) bool {
 	return ok && r.Blocked
 }
 
+// HatchFooting is where a hatch of a nest at (x, y, z) lands when its offset
+// puts it at (tx, tz) (round 879, READ Nest_Hatch's placement GObjPC::
+// FUN_005f6eb0): the world's line test from the nest's point to the hatch
+// point (DAT_00cc387c slot 0x30 with the nest's position as the source,
+// s:0x5f704f..0x5f7068) answers bit 0 for a wall in between, and then no
+// monster is made and the nest's out-flag is set (s:0x5f712e..0x5f7133; the
+// nest halves its delay, Nest_Hatch s:0x5607b0). Otherwise the monster
+// enters the world at the walk's end, its height the surface the walk
+// carried it on from the nest's (CGObj::EnterWorld s:0x485360 resolves an
+// object's cell and height). OpenSRO's walk is the no-slide one every mover
+// uses (navWalk). Without a mesh there (no navigation mesh, a dungeon) the
+// nest's own height is kept.
+func HatchFooting(zone string, x, y, z, tx, tz float64) (ty float64, blocked bool) {
+	r, ok := navWalk(zone, x, y, z, tx, tz)
+	if !ok || !r.Checked || math.IsNaN(r.Y) {
+		return y, false
+	}
+	if r.Blocked {
+		return y, true
+	}
+	return r.Y, false
+}
+
+// SurfaceNear is the walkable surface nearest height y at (x, z) in zone
+// (navArrivalHeight's rule: an object entering the world stands on its
+// cell), y itself without a mesh there (round 879: a trigger's LOAD_MONSTER
+// at a player in an instance).
+func SurfaceNear(zone string, x, y, z float64) float64 {
+	if h, ok := navArrivalHeight(zone, world.Position{X: x, Y: y, Z: z}); ok {
+		return h
+	}
+	return y
+}
+
+// navLegEnd is a leg's end after the walk (round 812: where the first wall
+// stops it, or the destination) and the height the walk ends at (round 879,
+// for a monster that carries its height): NaN when no mesh walked it.
+func navLegEnd(zone string, x, y, z, tx, tz float64) (ex, ez, ey float64, clipped bool) {
+	r, ok := navWalk(zone, x, y, z, tx, tz)
+	if !ok || !r.Checked {
+		return tx, tz, math.NaN(), false
+	}
+	if !r.Blocked {
+		return tx, tz, r.Y, false
+	}
+	return r.X, r.Z, r.Y, true
+}
+
 // navMinLeg is the shortest clipped leg worth walking (OURS): a wall closer
 // than this ahead leaves the mover standing.
 const navMinLeg = 0.5
-
-// navClipLeg is a leg's destination after the walk: where the first wall
-// stops it, or the destination. NaN height: the walk settles it.
-func navClipLeg(zone string, x, y, z, tx, tz float64) (float64, float64, bool) {
-	r, ok := navWalk(zone, x, y, z, tx, tz)
-	if !ok || !r.Blocked {
-		return tx, tz, false
-	}
-	return r.X, r.Z, true
-}

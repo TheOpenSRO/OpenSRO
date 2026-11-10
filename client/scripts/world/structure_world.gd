@@ -286,12 +286,35 @@ func place(rec: StructureSpawnNet.Record) -> Node3D:
 		if skinned.has_meta(META_IDLE) and skinned.get_meta(META_IDLE) != null:
 			w._animate_skeleton(skinned, skinned.get_meta(META_IDLE))
 	holders[rec.uid] = holder
+	if rec.kind == StructureSpawnNet.KIND_EVENT and model_path != "":
+		_set_door_footprint(holder, model_path, rec.angle)
 	_attach_effects(holder)
 	print("StructureWorld: %s uid=%d built '%s' (%s, %s) in %d/%d at %.1f,%.1f,%.1f" % [
 		"gate" if rec.kind == StructureSpawnNet.KIND_GATE else "door", rec.uid, name_text, model_path,
 		"skinned" if skinned != null else "static", rec.region_x, rec.region_y,
 		holder.position.x, holder.position.y, holder.position.z])
 	return holder
+
+# --- A closed door's footprint (round 879, DoorBlock) --------------------------
+
+## A closed door's model's navigation mesh placed as a map object at the
+## holder (NavGraph.place, the yaw from the record's angle), its blocking
+## edges kept on the holder (DoorBlock.META_SEGMENTS) for door_stop.
+func _set_door_footprint(holder: Node3D, model_path: String, angle: int) -> void:
+	var archive: Pk2Reader = w._open_pk2_if_set()
+	var full := model_path if model_path.to_lower().begins_with("res\\") else "res\\" + model_path
+	var collision := NavObjectSource.load_collision(archive, full)
+	if collision == null:
+		print("StructureWorld: %s has no navigation mesh -- the door blocks nothing" % holder.name)
+		return
+	var placed := NavGraph.place(collision, -1, holder.position, DoorBlock.door_yaw(angle))
+	holder.set_meta(DoorBlock.META_SEGMENTS, placed.blocking)
+	print("StructureWorld: %s blocks with %d edge(s) of %s" % [holder.name, placed.blocking.size() / 2, full])
+
+## Where a step from `from` to `to` (world points) ends at a closed door in
+## view (DoorBlock.stop); {} when it crosses none.
+func door_stop(from: Vector3, to: Vector3) -> Dictionary:
+	return DoorBlock.stop(holders, from, to)
 
 ## Round 871: the Forgotten World gate's model. MEASURED: the original draws
 ## the gate as a big blue crystal with a glow and sparkles beside its maker,

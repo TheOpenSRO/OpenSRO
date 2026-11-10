@@ -58,7 +58,15 @@ type hatchData struct {
 	// homeY is the hatch height: 0 in the field (the client stands a monster
 	// on its ground), the npcpos row's or nest's own y in a dungeon (round
 	// 773), whose floors stack, so a y of 0 would name another floor.
-	homeY             float64
+	homeY float64
+	// footing (round 879) is an instance's field nest: a hatch is walked
+	// from the nest's point at homeY on the navigation mesh -- a wall in
+	// between fails it, as the original's line test does -- and stands on
+	// the surface the walk ends on, a height the monster carries
+	// (session.HatchFooting; combat.Monster.HasHeight). fails counts its
+	// failures in a row (hatchFailLimit).
+	footing           bool
+	fails             int
 	tactics, champion *combat.Tactics
 	// rotation marks a unique's spot (round 661): its window is
 	// -unique-respawn's, not -nest-respawn's, and its hatch faces the nest
@@ -176,7 +184,9 @@ func (s *respawnScheduler) addSlot(sl *nest.Slot) {
 // combat.ScaleHPForMonster), and a champion or giant runs under its tactics
 // row's champion row -- or, when that row does not exist, as the engine's
 // assert path does, with its rank cleared under its own row. OpenSRO has no
-// server-side navigation mesh, so no placement fails.
+// server-side navigation mesh, so no placement fails -- but an instance's
+// field nest (footing, round 879) walks its hatch from the nest and fails on
+// a wall, as the original's does.
 func (s *respawnScheduler) hatch(sl *nest.Slot, roll nest.HatchRoll, dx, dz float64) (int64, bool, bool) {
 	d, ok := sl.Data.(*hatchData)
 	if !ok {
@@ -192,8 +202,24 @@ func (s *respawnScheduler) hatch(sl *nest.Slot, roll nest.HatchRoll, dx, dz floa
 			sp.Rarity = 0
 		}
 	}
-	m := s.monsters.SpawnHatched(d.spec.Zone, sp, d.homeX+dx, d.homeY, d.homeZ+dz, d.maxHP, d.defense, d.attack, d.gold,
-		combat.Hatch{HomeX: d.homeX, HomeZ: d.homeZ, Party: roll.Class.Party(), Tactics: tac, Heading: d.heading, HasHeading: d.rotation})
+	x, y, z := d.homeX+dx, d.homeY, d.homeZ+dz
+	if d.footing {
+		var blocked bool
+		if y, blocked = session.HatchFooting(d.spec.Zone, d.homeX, d.homeY, d.homeZ, x, z); blocked {
+			if d.fails++; d.fails < hatchFailLimit {
+				return 0, false, true
+			}
+			// OURS: a nest whose every offset meets a wall hatches on its
+			// own point rather than never (a hive that cannot fill never
+			// fires its MONSTER_HIVE_KILL).
+			x, z = d.homeX, d.homeZ
+			y = session.SurfaceNear(d.spec.Zone, x, d.homeY, z)
+		}
+		d.fails = 0
+	}
+	m := s.monsters.SpawnHatched(d.spec.Zone, sp, x, y, z, d.maxHP, d.defense, d.attack, d.gold,
+		combat.Hatch{HomeX: d.homeX, HomeZ: d.homeZ, Party: roll.Class.Party(), Tactics: tac, Heading: d.heading, HasHeading: d.rotation,
+			HasHeight: d.footing})
 	if d.rotation {
 		n := 0
 		if sl.Hive != nil {
@@ -213,6 +239,10 @@ func (s *respawnScheduler) hatch(sl *nest.Slot, roll nest.HatchRoll, dx, dz floa
 	}
 	return m.ID, true, false
 }
+
+// hatchFailLimit is how many failed placements in a row a footing nest takes
+// before it hatches on its own point (OURS, round 879).
+const hatchFailLimit = 50
 
 // run hatches every nest's first monster at once, then runs the pass every
 // nestPassPeriod until ctx ends.

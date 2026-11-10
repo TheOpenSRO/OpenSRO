@@ -781,6 +781,51 @@ is the round's WORLD_ISSUES entry):**
 - **The gate** stands 50 units before its maker (READ, section 4) and draws the crystal (OURS over this
   archive's row, section 4); so does the exit NPC.
 
+**Round 879 notes (the user on prod, v0.1.649: the Wrecked Ship's chain stopped after
+NOMAL_MONSTER_2, "one I couldn't see but it let me through the gate anyways"):**
+- **The hive kill count** (READ `CGameTriggerCondition_MONSTER_HIVE_KILL::vslot_003` s:0x690a70): on a
+  MONSTER_KILL event (bytes 01 04 01) the killed object's hive (+0x1d20) is compared with the
+  condition's; on a match the layer's hive counter (+0x80 -> +0x34) is incremented and the condition
+  passes once it reaches the sum of the hive's nests' caps (s:0x55e9b0, every nest of the hive, dormant
+  ones too, computed once). Every kill counts once; the Wreck's nests do not respawn. OpenSRO's engine
+  counts the same way: the rule was not the stall.
+- **The stall**: the layer's monsters were hatched at y 0 (a field nest's height was not kept), and
+  the client stands a standing body on its terrain -- on the Wrecked Ship the sea floor, ~960 under the
+  deck (MEASURED: 4 of 7 Seirens at the first nest drawn at scene 0.4 against the player's 957.7). A
+  body was seen while it walked (the walking height is the landing's) and dropped under the deck when
+  it stood again: counted by the hive, never killed (prod's log: the hives of NOMAL_MONSTER_3 and of
+  areas A and B never reached their caps).
+- **A hatch's place** (READ Nest_Hatch's placement `GObjPC::FUN_005f6eb0`): the world's line test from
+  the nest's point to the hatch point (s:0x5f704f..0x5f7068); a wall in between (bit 0) sets the nest's
+  out-flag and makes nothing (s:0x5f712e..0x5f7133; the nest halves its delay); else the monster enters
+  the world there (`CGObj::EnterWorld` resolves its cell and height). OpenSRO (round 879): an
+  instance's field nest walks its hatch from the nest at its own height and the monster carries the
+  surface it ends on, from leg to leg; the record names that height (region-local) and the client draws
+  a body that names one on the surface nearest it. MEASURED over world 81's nests (300 hatch points
+  each): none lies past a wall and none off its deck. An open-world nest keeps y 0 (OPEN).
+- **The doors**: the door model's navigation mesh is a slab of blocking edges (MEASURED:
+  `wreck_event_door.bsr` -> `wreck_eventdoor01.bms`, one 153.6 x 31.2 rectangle, every outline edge 0x3;
+  184 of 393 characterdata STRUCTURE_* rows have one). How the original registers it at run time was
+  not found (the client's `CIEventRuntimeObj::FUN_00535750` builds the model; the server's
+  `CGObjEventZone::vslot_306` s:0x52de60 keeps the state and broadcasts it). OURS (round 879): a closed
+  door stops a leg 0.2 short of that outline, placed as a map object at its named position and yaw,
+  on the server (`gameworld.DoorStop`, in the layer's frame) and in the client's walk
+  (`StructureWorld.door_stop`). Round 869's 40-unit disc compared the door's region-local point with the
+  mover's frame position and stopped nothing at the door; it stays for an export without the meshes.
+  The meshes come from `export-navmesh -media Media.pk2` (`structures.gob`).
+- **A kill's stacks** (READ `FUN_0048fdf0` s:0x48fdf0, CGItem slot 311): the stack enters the world at
+  the ring's point with the corpse's position as the source (vslot 0x2b0); when that answers 0 it
+  enters at the corpse's own point (the second call, source and target the same). OpenSRO (round 879),
+  for a monster that carries its height: the walk from the corpse on the navigation mesh; a wall or the
+  deck's edge in between leaves the stack on the corpse, else it lies on the surface the walk ends on.
+  MEASURED before: 2 of 203 stacks of a Wrecked Ship run landed past the deck's edge and were drawn on
+  the sea floor.
+- **An arrival far from the frame region** (OURS, the client): the zone's grid is built around the
+  frame region (114/243 on the Wrecked Ship) and an arrival point more than a cell away has its own
+  cell streamed in afterwards; the arrival is held (neither walking nor falling) until that cell is
+  built, 15 s at most. Released at once, it fell to the sea floor under the deck and the server refused
+  every walk from there (rule height).
+
 ## 12. Stage 2: size (estimate)
 
 The foundation is the larger half. Suggested lanes (each with its own tests; the scaling work can

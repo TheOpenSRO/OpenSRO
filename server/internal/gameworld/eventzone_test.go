@@ -109,7 +109,7 @@ func TestWorldRunsItsScript(t *testing.T) {
 	if z == nil || !z.Closed() || z.StructureCode != "STRUCTURE_GOD_BIG_GATE_TOGUI_3" || z.Ref.ID != 238 {
 		t.Fatalf("zone %+v", z)
 	}
-	if !w.DoorBlocks(400, 500, 600, 500) || w.DoorBlocks(400, 600, 600, 600) {
+	if !doorBlocks(w, 400, 500, 600, 500) || doorBlocks(w, 400, 600, 600, 600) {
 		t.Fatal("a closed door does not block the move through it, or blocks one 100 away")
 	}
 	// The hive: two nests of 677 (caps 2 and 1) and the dormant 30126.
@@ -145,7 +145,7 @@ func TestWorldRunsItsScript(t *testing.T) {
 	if fmt.Sprint(switched) != want || !dormant.Active || len(msgs) != 1 || msgs[0] != "1 UIIT_MGS_GOD_TRIGGER_NOTICE_COMMON_OPEN_DOOR [7]" {
 		t.Fatalf("switched %v (want %s), nest woken %v, messages %v", switched, want, dormant.Active, msgs)
 	}
-	if z.Closed() || w.DoorBlocks(400, 500, 600, 500) {
+	if z.Closed() || doorBlocks(w, 400, 500, 600, 500) {
 		t.Fatal("the open door still blocks")
 	}
 	w.Close(CloseManual)
@@ -254,4 +254,10 @@ func TestCanEnterOrder(t *testing.T) {
 	if got := CanEnter(w, ok, now); ReplyCode(got) != 3 {
 		t.Errorf("a closed layer: %#x", got)
 	}
+}
+
+// doorBlocks is whether a move is stopped by a closed door (DoorStop).
+func doorBlocks(w *World, x0, z0, x1, z1 float64) bool {
+	_, _, b := w.DoorStop(x0, z0, x1, z1)
+	return b
 }

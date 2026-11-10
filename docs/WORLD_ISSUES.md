@@ -7483,6 +7483,232 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventy-ninth round: the Wrecked Ship's chain to its boss -- the standing monsters were drawn on the sea floor under the deck (counted, never seen, never killed), the hatch walked from its nest as the original's, the doors block at their own navigation mesh
+
+The user on prod (v0.1.649, a level-110 warrior in world 81, `INS_GOD_WRECK_IN_100_110_LEVEL_1`):
+"also I don't see the final boss for the shipwreck im at", then "hmm I think it's buggy then because I
+ran through it all and cleared every mob. There was one I couldn't see but it let me through the gate
+anyways." Prod's server log: the layer opened (35 nests, 15 dormant, 6 NPCs, 13 triggers, a first pass of
+20), the entry notice, `NOMAL_MONSTER_1` at +6:22, `NOMAL_MONSTER_2` at +9:18, then nothing. Lane BC,
+base `6ba23646`, dev (`0efce403`, v0.1.651) merged in. Labels: READ (`s:` the game server, `c:` the
+client), MEASURED, INFERRED, OURS, OPEN.
+
+### The chain and its hives (MEASURED, the data; READ, the rule)
+
+World 81's script: `NOMAL_MONSTER_1/2/3` on hives 996 (4 nests x 7), 997 (4 x 7) and 998 (10 x 7) wake
+the A, B and C areas' normals (hives 999, 1003, 1007: 2 nests each, 9 and 9, or the GLUTTONY and 9);
+`A_AREA_1` (hive 999) wakes A's Envy (1000), `A_AREA_2` A's BEAST and 9 Wrecks (1001), `A_AREA_3` (1001)
+opens `BIG_GATE_WRECK_B1_1` and loads `MOB_GOD_GHOST_CURSE_B1` at a random player; B the same with
+1003/1004/1005 and `_B1_2`; `C_AREA_1` (1007) wakes C's Envy (1008), `C_AREA_2` (1008) wakes the boss
+`MOB_GOD_GHOST_UNDINE_B1` with 9 Seirens (1009); `C_AREA_BOSS_KILL` on the Undine's kill. Every nest
+has respawn 0.
+
+- READ `CGameTriggerCondition_MONSTER_HIVE_KILL::vslot_003` (s:0x690a70): on a MONSTER_KILL (event
+  bytes 01 04 01) the killed object's hive (its +0x1d20) against the condition's; on a match the
+  layer's hive counter (+0x80 -> +0x34) goes up by one and the condition passes when it reaches the
+  sum of the hive's nests' `dwMaxTotalCount` (s:0x55e9b0: every nest of the hive's list, the dormant
+  ones too, summed once into +0x88). So every kill of the hive's own monsters counts once, whoever
+  woke them. OpenSRO's engine counts the same (`trigger.Engine`, `World.AddNest`): the rule was not the
+  stall, and the area normals' kills go to their own hives (999, 1003, 1007).
+- So `NOMAL_MONSTER_3` needed all 70 of hive 998 killed, and A/B's first steps all 18 of 999 / 1003
+  (woken at +6:22 and +9:18). The user's client log (prod v0.1.649): 141 kills in the layer; three
+  monsters seen and never killed -- a Commander of nest 32051 (hive 998) left at 18,304 HP when the
+  player walked off, a Marauder of nest 32061 and a Commander of nest 32062 (hive 1003) seen spawned
+  and never struck -- and the rest of those hives never seen at all (the client logs only pushed
+  spawns).
+
+### The invisible monsters: drawn on the sea floor, ~960 under the deck
+
+- **Cause:** an instance's field nest hatched at y 0 (the field nests' height was never kept, round
+  808's note), and the client stands a **standing** monster body on its terrain
+  (`_terrain_hit_height`, the terrain-only ray) and a walking one on the highest landing. On the
+  Wrecked Ship the terrain is the sea floor (region-local -1800; the frame's anchor), ~960 under the
+  decks. A body was seen while it walked and dropped under the deck when it stood again (a list's
+  refresh re-places a standing body by the terrain ray): counted by the hive, out of sight, out of the
+  player's walk -- "one I couldn't see". The gold of the kills fell there too: 113 of the 141 drops in
+  the user's log were drawn at y 0.40 with the player at 957.
+- MEASURED (base, run `d1`, real client on the lane server with prod's flags, the first nest of hive
+  996): 4 of 7 Ghost Seirens at scene y 0.4 ("terrain 0.4") with the player on the deck at 957.7; the
+  walking ones at 957.7.
+- READ (the original's placement, Nest_Hatch s:0x5607b0 -> `GObjPC::FUN_005f6eb0`): the hatch offset
+  (s:0x531240), then the world's line test from the nest's point to the hatch point (`DAT_00cc387c`
+  slot 0x30 with the nest's position as the source, s:0x5f704f..0x5f7068); a blocked answer (bit 0)
+  with the out-flag sets it and makes nothing (s:0x5f712e..0x5f7133; the nest halves its delay); else
+  the object enters the world at the point, its cell and height resolved (`CGObj::EnterWorld`
+  s:0x485360, round 870).
+- **Fixed (server):** an instance's field nest keeps its own height and walks each hatch from its
+  point on the navigation mesh (`session.HatchFooting`): a wall in between fails the hatch (tried
+  again at the halved delay; OURS: after 50 failures in a row it hatches on its own point, so a hive
+  can always fill), else the monster stands on the surface the walk ends on and carries it
+  (`combat.Monster.HasHeight`; each leg's walk sets the height it ends on, `navLegEnd`). A trigger's
+  LOAD_MONSTER in an instance stands on the surface nearest its target player's height. The open
+  world's nests are unchanged (y 0; OPEN below). MEASURED over world 81's 35 nests, 300 hatch points
+  each (the probe, on the box's export): none past a wall, none off its deck.
+- **Fixed (client):** a monster record whose height is not 0 in a field frame names its surface
+  (`NetClient._monster_wire_height`: region-local, to the scene by the frame's anchor; `has_height`);
+  its body stands on the walkable surface nearest that height (`_navmesh_surface_near`, the
+  `NavGraph.height_at` rule READ c:0x403dd0), walking on the one nearest its own drawn height, at the
+  record's height where no region is loaded. A drop that names its height lies on the surface nearest
+  it (`_ground_item_height`). Anything else keeps its old placement.
+- MEASURED (this round, run `d2`): the same seven Seirens at 953.9..957.7 with the player at 957.7,
+  "under_landing=0" in all five reports, standing and walking.
+
+### The gate: walked through
+
+- The user's log: door `BIG_GATE_WRECK_B1_1` built (zone 270, `wreck_event_door.bsr`) in 111/243 at
+  (840.0, -910.3, 759.5), closed; the player walked from local (794, 753) to (919, 781) across it, on
+  the ship's deck onto `wreck_bridgein_04`, two minutes later. Nothing blocked it on either side.
+- **Cause (server):** round 869's block (OURS) compared the door's **region-local** point with the
+  mover's **frame** position, so it stopped legs near (840, 759) in frame coordinates -- in the
+  Wrecked Ship's frame ~5,960 units from the door -- and none at the door; and its 40-unit disc is
+  narrower than the door. Only the click-walk's leg was tested.
+- **Cause (client):** the door is drawn only; the walk knew nothing of it.
+- MEASURED: the door model's navigation mesh (`wreck_event_door.bsr` names `wreck_eventdoor01.bms`)
+  is one 153.6 x 31.2 rectangle of two cells, every outline edge blocking both ways (0x3); 184 of
+  393 characterdata `STRUCTURE_*` rows have one. READ: the client's `CIEventRuntimeObj::FUN_00535750`
+  builds the model at state 0 and removes it at 1; the server's `CGObjEventZone::vslot_306`
+  (s:0x52de60) keeps the state and broadcasts it (`FUN_0052f0e0`). How the original stops a mover at a
+  standing door was not found (OPEN; INFERRED: at that mesh's outline).
+- **Fixed (OURS, both sides):** a closed door stops a leg 0.2 short of that outline, placed as a map
+  object is placed (`navmesh.Place` / `NavGraph.place`: the named position, the objectstring yaw; the
+  client takes the yaw back from the record's angle, `DoorBlock.door_yaw`): the server's click-walk leg
+  in the layer's frame (`gameworld.DoorStop`, footprints built when the layer opens,
+  `session.setDoorBlocks`), and the client's own walk (`DoorBlock.stop` in `_move_on_nav_graph`: a
+  click walk ends there as at a wall). The meshes come from `export-navmesh -media Media.pk2`
+  (`structures.gob`); without them the 40-unit disc stands, now at the frame point.
+
+### Found on the way to the boss (the real-kill runs)
+
+- **A kill's stacks past the deck's edge.** MEASURED (run `d24`): 2 of 203 stacks lay past the deck's
+  edge and were drawn on the sea floor: the ring (8 to 20 units from the corpse) kept its point
+  whatever lay there. READ (`FUN_0048fdf0` s:0x48fdf0, CGItem slot 311): the stack enters the world at
+  the ring's point with the corpse's position as the source (vslot 0x2b0); when that answers 0 it
+  enters at the corpse's own point (the second call, source and target the same). **Fixed (server):**
+  for a monster that carries its height, the ring's point is walked from the corpse
+  (`HatchFooting`); a wall or the edge in between leaves the stack on the corpse, else it lies on the
+  surface the walk ends on (`dropKillLoot`). The open world's ring is unchanged.
+- **An arrival far along the ship fell to the sea floor.** The zone's grid is built around the frame
+  region (114/243) and an arrival more than a cell away (a revive or a GM move to the stern, 111/243)
+  has its own cell streamed in afterwards. MEASURED (run `d21`): released when the zone's load ended
+  ("no walkable graph under the teleport point (-897.0, 5140.0)"), the player stood at scene y 0 (the
+  sea floor's terrain) under the deck at 893.3, and the server refused its walks from there
+  (`move: refused rule=height`, from y -1800 to the deck's -906). **Fixed (client, OURS):** the arrival is held
+  (neither walking nor falling) until its own cell is loaded, 15 s at most
+  (`_teleport_cell_loaded`, `RegionGridState.cell_loaded_at`).
+- **A slope tilt on a freed region.** A zone rebuilt around the player left the old region's group
+  valid but out of the tree, and `_slope_pair` used it (`to_local` on a node out of the tree): now it
+  needs the group in the tree, else it looks the graph up again.
+- **The QA hunt** (`OPENSRO_QA_HUNT`, a QA aid only, never in play): points in groups advanced by the
+  layer's trigger banners, every point found empty in a row moves it on, real left clicks through the
+  client's own input path (the first selects, the second attacks), a walk click towards a monster
+  out of reach, the camera turned to a monster out of the picture, a monster clicked 8 times and still
+  alive REPORTED as `NOT KILLED` and left for a while, a player under a landing REPORTED as `UNDER`
+  (never corrected), and `OPENSRO_QA_HUNT_AFTER` steps once the boss is dead and every group empty.
+
+### QA: the whole chain with real kills (run `d30`, the final build)
+
+The real client against the lane server (in memory, `-full-map`, the Test Items NPC, the dead state,
+monster AI on, the navigation meshes with `structures.gob`), a level-110 warrior: `/fgw 81`, the gate
+clicked and the talk line taken, then the QA hunt -- real left clicks on the bodies drawn, no
+`/fgwkill`, no `/kill`. QA aids (not play): the five Wrecked Ship normals at 3,000 HP (time), `/tp` to
+each group's points, `/heal` near monsters, and monster battle and aggro off. With them on (runs
+`d26`-`d29`) three or four blows of 13,800 to 19,800 within two seconds killed the 33,246-HP QA
+character before the hunt could heal it, and the return-point revive took it out of the layer; the
+monsters' damage is round 875's and not this round's.
+
+- Every step in order, one player: entry notice 03:47:05, `NOMAL_MONSTER_1` +3:22, `_2` +6:31, `_3`
+  +12:20, `A_AREA_1/2/3` +13:43 / +13:58 / +14:54, `B_AREA_1/2/3` +16:38 / +16:55 / +17:57,
+  `C_AREA_1/2` +19:14 / +19:33, `C_AREA_BOSS_KILL` +20:41 (the server's `trigger fired` lines; the
+  client's banners in the same order).
+- 206 kills on the client (`killed by own blow`, 206 EXP results): every monster of the layer --
+  hives 996-1009's 205 and the gate's `MOB_GOD_GHOST_CURSE_B1`. The boss `MOB_GOD_GHOST_UNDINE_B1`
+  ("Ghost Sereness", Unique, Lv 103) stood at scene y 818.3 on the stern's deck (the wire's 807.7,
+  surface 818.3; the terrain under it 801.9), fought there and killed (frame `t67500`).
+- 49 body reports (`mobh`, every 1,500 ticks): `under_landing=0` in all of them; every body, standing
+  or walking, on the surface nearest its wire height.
+- 206 stacks drawn, none below the deck (base `d24`: 2 of 203 at y < 700).
+- No walk refused (`move: refused`: 0) and the player never under a landing (`UNDER`: 0).
+- The doors. Closed (runs `d26`/`d27`/`d28`, the same build, battle on): from (-166, 5967) a click 150
+  ahead stopped at -133.86 on both sides -- the server's `move: leg cut at a wall ... end_x=-133.857`
+  and the client's `where at (-133.86, 889.69, 5967.83)`; a second click 40 aside stayed there.
+  Opened by `A_AREA_3`, after the boss: the same click walked to (-13.0, 5970.0) and the next to
+  (170.0, 6050.0) (frames `door_closed_*`, `door_open_*`).
+- The hunt's two `NOT KILLED` reports were picks, not monsters out of reach: a Marauder whose clicks
+  landed on another body (killed later at 43.6, its body on the deck at 957.6 throughout) and the boss
+  under attack when the click count ran out (dead 19 ticks later).
+
+Frames on the box: `/var/tmp/r879b/lane/d30/snaps/` (`t4500` .. `t88500`, `door_open_*`) and
+`/var/tmp/r879b/lane/d28/snaps/door_closed_*`.
+
+### Tests
+
+- `server/internal/session/fgw879_test.go`: `TestHatchFootingOnTheDeck` (a hatch on a deck 958 over
+  the sea floor stands at -842; past the deck's wall it fails; a load at a player on the deck; a leg's
+  end height; no mesh keeps the nest's), `TestDoorSegmentsInTheFrame` (the door's mesh placed and
+  turned into the frame, far from its region-local point), `TestDropsStayOnTheDeck` (300 kills beside
+  the deck's edge: every stack on the deck at its height, some on the corpse; the open world's ring
+  unchanged).
+- `server/internal/trigger/wreck879_test.go`: the Wrecked Ship's script on a fake layer.
+  `TestWreckChainStallsOneKillShort` (the user's run: hive 998 one kill short, `NOMAL_MONSTER_3` and
+  the C area never come; the last kill carries it on), `TestWreckChainToItsBoss` (every hive in a
+  player's order: the nests woken, both gates opened, the curse loaded, every banner in order, the
+  boss's Seirens give nothing, the Undine's kill gives `BOSS_KILL`).
+- `server/internal/gameworld/eventzone879_test.go`: `TestDoorStopsAtItsFootprint` (round 869's rule
+  stopped nothing at the frame point; the footprint stops a leg 70 off the door's middle 0.2 short,
+  from either side; beside it free; open, free).
+- `server/cmd/server/fgw879_test.go`: `TestRound879InstanceHatchStandsOnItsDeck` (the hatch at -842
+  with its height; a failed placement past the wall; the open world's at 0; the nest's own point after
+  the limit).
+- `client/scripts/world/fgw879_test.gd`: the wire heights (deck -842.3 -> scene 957.7 with the anchor
+  -1800, 0 names none, a dungeon's kept), the door's yaw from angle 36409 (5.0614), the walk's stop at
+  a door 0.2 short, beside it free, gone free; an arrival three regions along the ship held until
+  its cell is loaded.
+
+### Gates
+
+- `cd server && go build ./... && go test ./...`: all pass.
+- `remote_godot.sh check`: 1,179 scripts and 9 scenes, ALL LOAD; `remote_godot.sh tests`: 452 suites,
+  0 failing (`fgw879_test.gd` ALL PASS).
+- `perf_gate.sh --base 0efce403 --head 8c2dd529 --sites jangan,togui,flame --frames 40000` (the
+  client's code at the head is this entry's; 1280x720, median of 3):
+
+```
+jangan  frame ms   base 0.92  head 0.91  (-0.0)  SAME
+jangan  entry ms   base 9000.50  head 8874  (-126.5)  SAME
+jangan  freeze ms  base 2874.50  head 2871  (-3.5)  SAME
+jangan  hitches    base 5.00  head 5  (+0.0)  SAME
+togui   frame ms   base 0.74  head 0.74  (+0.0)  SAME
+togui   entry ms   base 6089.00  head 6073  (-16.0)  SAME
+togui   freeze ms  base 1249.00  head 1257  (+8.0)  SAME
+togui   hitches    base 3.00  head 3  (+0.0)  SAME
+flame   frame ms   base 14.13  head 14.25  (+0.1)  SAME
+flame   entry ms   base 15819  head 15663  (-156.0)  SAME
+flame   freeze ms  base 7051  head 7028  (-23.0)  SAME
+flame   hitches    base 5  head 4  (-1.0)  SAME
+```
+
+### Deploy notes
+
+- **Re-export the navigation mesh with `-media`**: `export-navmesh -data Data.pk2 -map Map.pk2 -media
+  Media.pk2 -out DIR` (writes `structures.gob`; "184 of 393 structure rows with a navigation mesh").
+  Without it the server logs a warning and a closed door blocks only within 40 units of its point.
+- The server and the client go out together (the monster records' heights; an old client draws the
+  instance's monsters at the wire's height and resolves nothing).
+
+### OPEN
+
+- The open world's nests still hatch at y 0 and the client stands their bodies on the terrain (a
+  monster on a bridge or a deck in the open world is drawn under it; the server's AoE reach in 3-D,
+  `skilltargets.go`'s `dist3`, measures a hilly field monster from y 0 against the player's real
+  height). Not changed this round (the risk to every field).
+- How the original stops a mover at a standing door (the mesh's run-time registration).
+- The chain on the original (monsters could not be loaded into the measured layers, rounds 869/873).
+- The layer's monsters with battle on: three or four blows of 13,800 to 19,800 within two seconds on a
+  level-110 warrior of 33,246 HP (runs `d27`/`d29`, a QA character with +12 gear and no skills used).
+  Whether a real level-110 warrior survives the Wrecked Ship as the original's does was not measured
+  here (round 875's numbers).
+- The heading run (arrow keys) on the server is not stopped by a closed door (the client's walk is).
+
 ## Eight-hundred-and-seventy-eighth round: "I get teleported back to where I was" -- a heading run stood at the start of the walk that met its wall while the client ran on, and a stalled frame lost the walk's time; every correction now logged on the server
 
 The user (prod v0.1.649, Linux): "I'm dealing with a movement bug where I get teleported back to where I

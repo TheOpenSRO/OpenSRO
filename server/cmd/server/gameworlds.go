@@ -143,9 +143,13 @@ func (b *gameWorldBuild) build(w *gameworld.World) {
 		}
 		spec.Zone, spec.X, spec.Z = bucket, pos.X, pos.Z
 		data := hatchDataOf(spec)
-		if worldmap.IsDungeonRegion(n.Region) {
-			data.homeY = pos.Y
-		}
+		// The nest's own height: a dungeon's floors stack (round 773); a
+		// field nest of an instance stands its hatches on the surface its
+		// walk from the nest ends on (round 879: the Wrecked Ship's decks
+		// stand ~1,000 over the sea floor's terrain, and a height of 0 put
+		// every standing body there in the client).
+		data.homeY = pos.Y
+		data.footing = !worldmap.IsDungeonRegion(n.Region)
 		data.tactics = combatTactics(tac, float64(n.Radius))
 		hasChampion := tac.ChampionTacticsID != 0
 		if hasChampion {
@@ -201,8 +205,15 @@ func (b *gameWorldBuild) spawn(w *gameworld.World, code, zone string, x, y, z fl
 	spec, _ := specFromRow(monsterSpec{}, row, b.lookup)
 	spec.Zone, spec.X, spec.Z = zone, x, z
 	d := hatchDataOf(spec)
-	m := w.Monsters.SpawnHatched(zone, d.species, x, d.homeY, z, d.maxHP, d.defense, d.attack, d.gold,
-		combat.Hatch{HomeX: x, HomeZ: z})
+	h := combat.Hatch{HomeX: x, HomeZ: z}
+	hy := d.homeY
+	// Round 879: inside an instance's field a loaded monster stands on the
+	// surface nearest the point it is loaded at (the target player's), as a
+	// hatch does, and carries that height.
+	if w.ID.World != gameworld.OpenWorldID {
+		hy, h.HasHeight = session.SurfaceNear(zone, x, y, z), true
+	}
+	m := w.Monsters.SpawnHatched(zone, d.species, x, hy, z, d.maxHP, d.defense, d.attack, d.gold, h)
 	return m.ID, true
 }
 

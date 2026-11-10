@@ -7891,9 +7891,22 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_step_teleport_landing()
 		if _teleport_landing != null:
 			var unlanded: Vector2 = _teleport_landing
-			print("World3D: no walkable graph under the teleport point (%.1f, %.1f) after the zone loaded -- released to the ground snap" % [
-				unlanded.x, unlanded.y])
-			_teleport_landing = null
+			# Round 879: the zone's grid is built around its frame region, and
+			# a point more than a cell from it (an arrival far along the
+			# Wrecked Ship, 3 regions from its frame's) has its cell streamed
+			# in only once the player is held there. MEASURED: released here,
+			# the player fell to the sea floor's terrain ~900 under the deck,
+			# 36 frames before the deck's cell was built, and the server
+			# refused every walk from there (rule height). Held until that
+			# cell is loaded (TELEPORT_HOLD_MS at most, OURS).
+			if _teleport_cell_loaded(unlanded):
+				print("World3D: no walkable graph under the teleport point (%.1f, %.1f) after the zone loaded -- released to the ground snap" % [
+					unlanded.x, unlanded.y])
+				_teleport_landing = null
+			else:
+				_teleport_hold_until_ms = Time.get_ticks_msec() + TELEPORT_HOLD_MS
+				print("World3D: the teleport point (%.1f, %.1f) lies outside the cells loaded with the zone -- held until its cell is built" % [
+					unlanded.x, unlanded.y])
 	# Round 786: the arrival is laid out; the effects take it as one
 	# placement, as retail's do once its loading screen goes.
 	EfpEffect.pause_world(false)
@@ -17674,6 +17687,16 @@ func _move_on_nav_graph(delta: float) -> bool:
 	var step := graph.step_tracked(local, asked, _nav_footing, slide)
 	if FrameSplit.on:
 		FrameSplit.add("pp_navstep", Time.get_ticks_usec() - nt)
+	# Round 879: a closed trigger door stops the walk at its outline, as a
+	# wall does (StructureWorld.door_stop; the server stops the leg there too).
+	if _structures != null and not _structures.holders.is_empty():
+		var door := _structures.door_stop(player.global_position, group.to_global(step.position))
+		if not door.is_empty():
+			var at: Vector3 = group.to_local(door["at"])
+			step.position = Vector3(at.x, step.position.y, at.z)
+			step.blocked = true
+			if trace:
+				print("NAV %4d: a closed door at local %.1f, %.1f" % [_qa_tick, at.x, at.z])
 	if _has_move_target and ClickWalk.blocked_ends(step.blocked):
 		_end_blocked_click_walk(graph, step)
 	if trace and OS.get_environment("OPENSRO_QA_NAVTRACE") == "2":
@@ -19452,6 +19475,274 @@ func _qa_stall_booth(decoration: int, race: int) -> void:
 	_qa_booth.global_position = player.global_position
 	_qa_booth.rotation.y = player.rotation.y
 
+## Round 879 (QA): OPENSRO_QA_HUNT="<start tick>@<x>,<z>|<x>,<z>#<x>,<z>|..." -- from
+## the start tick a player's hunt through a layer by real clicks: stand at each
+## frame point in turn (a GM /tp), left-click the nearest drawn monster within
+## QA_HUNT_REACH whenever no attack is under way (as `monsterclick` does: the
+## pick and the click's dispatch decide), go on to the next point once none
+## has been drawn there for QA_HUNT_IDLE checks, and cycle. /heal (a GM line)
+## keeps the player alive: under 60 % HP, and every QA_HUNT_HEAL ticks with a
+## monster near. Every kill is the player's own blow;
+## nothing is killed by a GM aid. Groups of points are separated by `#`: the
+## hunt cycles its group's points and goes on to the next group at each
+## trigger banner of the layer (UIIT_MGS_GOD_TRIGGER_NOTICE_*, the entry
+## notice aside) -- a chain step done -- and when every point of the group
+## was found empty in a row (then round again from the first group).
+const QA_HUNT_REACH := 1000.0
+const QA_HUNT_IDLE := 8
+const QA_HUNT_HEAL := 8
+var _qa_hunt_points: Array = []
+var _qa_hunt_groups: Array = []
+var _qa_hunt_group := 0
+var _qa_hunt_start := -1
+var _qa_hunt_index := -1
+var _qa_hunt_idle := 0
+var _qa_hunt_next := 0
+var _qa_hunt_clicked_at := 0
+var _qa_hunt_heal_at := 0
+var _qa_hunt_hp := Vector2i(0, 0)
+var _qa_hunt_near := false
+var _qa_hunt_empty := 0
+var _qa_hunt_turned_at := -1000
+var _qa_hunt_empty_groups := 0
+var _qa_hunt_boss_dead := false
+const QA_HUNT_TRIES := 8
+const QA_HUNT_NEAR := 110.0
+const QA_HUNT_WALKS := 14
+var _qa_hunt_walks := 0
+var _qa_hunt_last := 0
+var _qa_hunt_tries := 0
+var _qa_hunt_skip: Dictionary = {}
+
+func _qa_hunt_step() -> void:
+	if _qa_hunt_start == -2:
+		return
+	if _qa_hunt_start == -1:
+		var spec := OS.get_environment("OPENSRO_QA_HUNT")
+		if spec == "" or not spec.contains("@"):
+			_qa_hunt_start = -2
+			return
+		_qa_hunt_start = int(spec.get_slice("@", 0))
+		for group in spec.get_slice("@", 1).split("#", false):
+			var pts: Array = []
+			for part in String(group).split("|", false):
+				var xz := String(part).split(",")
+				if xz.size() == 2:
+					pts.append(Vector2(float(xz[0]), float(xz[1])))
+			if not pts.is_empty():
+				_qa_hunt_groups.append(pts)
+		if not _qa_hunt_groups.is_empty():
+			_qa_hunt_points = _qa_hunt_groups[0]
+		if _hud_player_info != null:
+			_hud_player_info.pool_set.connect(func(kind: int, cur: int, mx: int) -> void:
+				if kind == 0:
+					_qa_hunt_hp = Vector2i(cur, mx))
+	if _qa_tick < _qa_hunt_start or _qa_hunt_points.is_empty() or player == null:
+		return
+	# OPENSRO_QA_HUNT_END=<tick>: the hunt stops there (scripted input after).
+	var hunt_end := int(OS.get_environment("OPENSRO_QA_HUNT_END"))
+	if hunt_end > 0 and _qa_tick >= hunt_end:
+		return
+	if _player_dead:
+		if _qa_tick >= _qa_hunt_next:
+			_qa_hunt_next = _qa_tick + 300
+			print("QA HUNT %d: dead at %s" % [_qa_tick, str(player.global_position)])
+		return
+	if _qa_hunt_hp.y > 0 and _qa_hunt_hp.x < _qa_hunt_hp.y * 0.6 and _qa_tick >= _qa_hunt_heal_at:
+		_qa_hunt_heal_at = _qa_tick + 45
+		_run_qa_commands("/heal")
+	# Near monsters, /heal every QA_HUNT_HEAL ticks whatever the bar says.
+	if _qa_hunt_near and _qa_tick >= _qa_hunt_heal_at:
+		_qa_hunt_heal_at = _qa_tick + QA_HUNT_HEAL
+		_run_qa_commands("/heal")
+	if _qa_tick < _qa_hunt_next:
+		return
+	_qa_hunt_next = _qa_tick + 20
+	if _qa_hunt_index < 0:
+		# OPENSRO_QA_HUNT_STR: stat points put into Strength first, through
+		# the character window's own message.
+		var str_points := int(OS.get_environment("OPENSRO_QA_HUNT_STR"))
+		if str_points > 0:
+			NetClient.spend_stat_points(NetClient.current_character_name, str_points, 0)
+		_qa_hunt_goto(0)
+		return
+	# The player under a deck (round 879: an arrival released before its
+	# cell was built fell to the sea floor): reported, never corrected.
+	var land := _navmesh_height_at(player.global_position)
+	if not is_nan(land) and land > player.global_position.y + 200.0:
+		print("QA HUNT %d: the player at y %.1f UNDER the landing %.1f" % [_qa_tick, player.global_position.y, land])
+	var best: Node3D = null
+	var best_id := 0
+	var best_d := QA_HUNT_REACH
+	# The one under attack (the pick may have taken a monster standing in
+	# front of the one aimed at), else the one last clicked.
+	var keep := _qa_hunt_last
+	if _monster_bodies.has(_last_attack_target) and not _dying_until.has(_last_attack_target):
+		keep = _last_attack_target
+	for mid in _monster_bodies:
+		var mb = _monster_bodies[mid]
+		if mb == null or not is_instance_valid(mb) or _dying_until.has(mid):
+			continue
+		var snap = _monster_snapshots.get(mid)
+		if snap != null and String(snap.code_name).contains("TREASUREBOX"):
+			continue
+		if int(_qa_hunt_skip.get(mid, 0)) > _qa_tick:
+			continue
+		var d: float = (mb as Node3D).global_position.distance_to(player.global_position)
+		# The monster already engaged is kept while it lives (the nearest
+		# changes as they walk, and a first click only selects).
+		if int(mid) == keep:
+			d = minf(d, 0.5)
+		if d < best_d:
+			best_d = d
+			best = mb
+			best_id = int(mid)
+	if best == null:
+		_qa_hunt_near = false
+		_qa_hunt_idle += 1
+		if _qa_hunt_idle >= QA_HUNT_IDLE:
+			# A whole group found empty: on to the next group (and round
+			# again), so no step waits on a banner.
+			_qa_hunt_empty += 1
+			if _qa_hunt_empty >= _qa_hunt_points.size() and _qa_hunt_groups.size() > 1:
+				_qa_hunt_empty = 0
+				# The boss dead and every group found empty in a row: done.
+				# OPENSRO_QA_HUNT_AFTER="<ticks>:<input step>;..." then runs
+				# as OPENSRO_QA_INPUT steps, ticks counted from here.
+				_qa_hunt_empty_groups += 1
+				if _qa_hunt_boss_dead and _qa_hunt_empty_groups >= _qa_hunt_groups.size():
+					print("QA HUNT %d: the boss is dead and all %d groups are empty -- the hunt is done" % [_qa_tick, _qa_hunt_groups.size()])
+					_qa_hunt_start = -2
+					for part in OS.get_environment("OPENSRO_QA_HUNT_AFTER").split(";", false):
+						var sep := String(part).find(":")
+						if sep > 0 and String(part).substr(0, sep).is_valid_int():
+							_qa_input_steps[_qa_tick + int(String(part).substr(0, sep))] = String(part).substr(sep + 1)
+					return
+				_qa_hunt_group = (_qa_hunt_group + 1) % _qa_hunt_groups.size()
+				_qa_hunt_points = _qa_hunt_groups[_qa_hunt_group]
+				print("QA HUNT %d: the group's points are empty -- group %d (%d point(s))" % [_qa_tick, _qa_hunt_group, _qa_hunt_points.size()])
+				_qa_hunt_goto(0)
+			else:
+				_qa_hunt_goto((_qa_hunt_index + 1) % _qa_hunt_points.size())
+		return
+	_qa_hunt_empty = 0
+	_qa_hunt_empty_groups = 0
+	_qa_hunt_idle = 0
+	_qa_hunt_near = true
+	var fighting := _monster_bodies.has(_last_attack_target) and not _dying_until.has(_last_attack_target)
+	var busy := not _pending_attack.is_empty() or _has_move_target or fighting
+	# A new monster's first click selects it; the second, 10 ticks on,
+	# attacks (the original's two clicks).
+	var second := best_id == _qa_hunt_last and _qa_hunt_tries == 1 and _qa_tick - _qa_hunt_clicked_at < 60
+	if busy and not second and _qa_tick - _qa_hunt_clicked_at < 300:
+		return
+	# A click in a blow's last frames is not taken: a second apart at least.
+	if not second and _qa_tick - _qa_hunt_clicked_at < 60:
+		return
+	if camera_3d == null:
+		return
+	var aim: Vector3 = best.global_position + Vector3(0, 1.0 * PLAYER_SCALE_RATIO, 0)
+	# A monster far off draws small and high in the picture, under the HUD's
+	# top row, where a click is the HUD's: the ground 70 units towards it is
+	# clicked instead (a walk), and the monster once it is near.
+	var gap := best.global_position - player.global_position
+	gap.y = 0.0
+	var walk_click := gap.length() > QA_HUNT_NEAR
+	if walk_click:
+		aim = player.global_position + gap.normalized() * 70.0
+	var at := camera_3d.unproject_position(aim)
+	# A monster out of the picture cannot be clicked: the camera is turned
+	# to look past the player at it first, as a player's drag turns it (a
+	# camera aid; the click stays a click), and the click follows.
+	var view := get_viewport().get_visible_rect().size
+	if (camera_3d.is_position_behind(aim) or at.x < 80.0 or at.y < 80.0 or at.x > view.x - 80.0 or at.y > view.y - 200.0) \
+			and _qa_tick - _qa_hunt_turned_at > 40:
+		var to := best.global_position - player.global_position
+		var fwd := -camera_3d.global_transform.basis.z
+		camera_arm.rotation.y += atan2(to.x, to.z) - atan2(fwd.x, fwd.z)
+		_qa_hunt_turned_at = _qa_tick
+		_qa_hunt_next = _qa_tick + 6
+		return
+	_qa_hunt_clicked_at = _qa_tick
+	if walk_click:
+		_qa_hunt_walks += 1
+		if _qa_hunt_walks <= QA_HUNT_WALKS:
+			print("QA HUNT %d: walk towards monster %d at %.1f" % [_qa_tick, best_id, gap.length()])
+			_qa_push_click(at, MOUSE_BUTTON_LEFT)
+			_qa_hunt_next = _qa_tick + 70
+			return
+	else:
+		_qa_hunt_walks = 0
+	# The same monster clicked QA_HUNT_TRIES times and still alive: left for
+	# 3000 ticks and REPORTED (a monster the player cannot reach or strike).
+	if best_id == _qa_hunt_last:
+		_qa_hunt_tries += 1
+	else:
+		_qa_hunt_last = best_id
+		_qa_hunt_tries = 1
+		_qa_hunt_next = _qa_tick + 10
+	if _qa_hunt_tries > QA_HUNT_TRIES:
+		var ms = _monster_snapshots.get(best_id)
+		print("QA HUNT %d: monster %d (%s) NOT KILLED after %d clicks, at %.1f (body %s, player %s) -- left for now" % [_qa_tick, best_id,
+			String(ms.code_name) if ms != null else "?", QA_HUNT_TRIES, best.global_position.distance_to(player.global_position), str(best.global_position), str(player.global_position)])
+		_qa_hunt_skip[best_id] = _qa_tick + 3000
+		_qa_hunt_tries = 0
+		return
+	print("QA HUNT %d: click monster %d at %.1f (body y %.1f, player y %.1f)" % [_qa_tick, best_id,
+		best.global_position.distance_to(player.global_position), best.global_position.y, player.global_position.y])
+	_qa_push_click(at, MOUSE_BUTTON_LEFT)
+
+## A trigger banner of the layer: the hunt's next group (OPENSRO_QA_HUNT).
+func _qa_hunt_on_notice(key: String) -> void:
+	if _qa_hunt_groups.is_empty() or key.ends_with("COMMON_MONSTER_KILL"):
+		return
+	# The boss's kill ends the hunt; OPENSRO_QA_HUNT_AFTER="<ticks>:<input
+	# step>;..." then runs as OPENSRO_QA_INPUT steps, ticks counted from here.
+	if key.ends_with("BOSS_KILL") and _qa_hunt_start >= 0:
+		print("QA HUNT %d: notice %s -- the boss is dead; the hunt goes on until every group is empty" % [_qa_tick, key])
+		_qa_hunt_boss_dead = true
+		return
+	if _qa_hunt_group + 1 >= _qa_hunt_groups.size():
+		print("QA HUNT %d: notice %s -- the last group already" % [_qa_tick, key])
+		return
+	_qa_hunt_group += 1
+	_qa_hunt_empty = 0
+	_qa_hunt_points = _qa_hunt_groups[_qa_hunt_group]
+	print("QA HUNT %d: notice %s -- group %d (%d point(s))" % [_qa_tick, key, _qa_hunt_group, _qa_hunt_points.size()])
+	_qa_hunt_goto(0)
+
+func _qa_hunt_goto(i: int) -> void:
+	_qa_hunt_index = i
+	_qa_hunt_idle = 0
+	# Past the arrival's untouchable seconds (an attack is refused in them).
+	_qa_hunt_next = _qa_tick + 420
+	_qa_hunt_near = true
+	var p: Vector2 = _qa_hunt_points[i]
+	print("QA HUNT %d: to point %d (%.0f, %.0f)" % [_qa_tick, i, p.x, p.y])
+	_run_qa_commands("/tp %d %d" % [int(p.x), int(p.y)])
+
+## Round 879 (QA): each monster body as drawn -- {id, name, drawn y, the
+## snapshot's y, the landing (highest walkable) and terrain heights under it,
+## its distance from the player across, moving} -- and the player's height.
+func _qa_monster_heights() -> String:
+	var rows: Array = []
+	var under := 0
+	for mid in _monster_bodies:
+		var mb = _monster_bodies[mid]
+		if mb == null or not is_instance_valid(mb) or _dying_until.has(mid):
+			continue
+		var p: Vector3 = (mb as Node3D).global_position
+		var snap = _monster_snapshots.get(mid)
+		var land := _navmesh_height_at(p)
+		var terr := _terrain_hit_height(p)
+		var across := Vector2(p.x - player.global_position.x, p.z - player.global_position.z).length()
+		if not is_nan(land) and p.y < land - 20.0:
+			under += 1
+		rows.append("%d %s y=%.1f wire=%.1f land=%.1f terrain=%.1f across=%.0f%s" % [int(mid),
+			snap.monster_name if snap != null else "?", p.y, snap.y if snap != null else NAN, land, terr, across,
+			" moving" if _monster_is_moving(int(mid)) else ""])
+	return "player y=%.1f bodies=%d under_landing=%d [%s]" % [player.global_position.y, rows.size(), under, "; ".join(rows)]
+
 func _qa_input_step() -> void:
 	var spec := OS.get_environment("OPENSRO_QA_INPUT")
 	if spec == "":
@@ -19660,6 +19951,14 @@ func _qa_input_step() -> void:
 				for ch in n.get_children():
 					stack.append(ch)
 			_qa_input_report = "%s takers=%s" % [action, str(takers)]
+		"mobh":
+			# Round 879 (QA): every drawn monster's height against the
+			# player's and the walkable surfaces under it -- whether a body
+			# stands on the deck its player fights on or under it.
+			_qa_input_report = "%s %s" % [action, _qa_monster_heights()]
+		"quit":
+			# Round 879: the run ends here (after OPENSRO_QA_HUNT_AFTER).
+			get_tree().quit()
 		"where":
 			# Round 860: where this player stands, whether it walks, and its
 			# scroll state -- the hold's measurement.
@@ -20717,6 +21016,8 @@ func _qa_step() -> void:
 	# OPENSRO_QA_INPUT: a player's clicks and keys, through push_input
 	# (_qa_input_step has the syntax).
 	_qa_input_step()
+	# OPENSRO_QA_HUNT (round 879): a hunt through a layer by real clicks.
+	_qa_hunt_step()
 
 	# OPENSRO_QA_STALL_BOOTH="<tick>:<decoration item id>[:<race>],..." (round
 	# 838): at each tick, the booth a stall with that decoration (0: none)
@@ -23746,6 +24047,14 @@ func _physics_step(delta: float) -> void:
 		# A teleport arrival still waiting for its region (round 576): held,
 		# neither walking nor falling, until _step_teleport_landing lands it.
 		_step_teleport_landing()
+		if _teleport_landing != null and _teleport_hold_until_ms > 0:
+			var held: Vector2 = _teleport_landing
+			if _teleport_cell_loaded(held) or Time.get_ticks_msec() > _teleport_hold_until_ms:
+				print("World3D: no walkable graph under the teleport point (%.1f, %.1f) once its cell was due -- released to the ground snap" % [
+					held.x, held.y])
+				_teleport_landing = null
+		if _teleport_landing == null:
+			_teleport_hold_until_ms = 0
 	else:
 		var walk_from := player.position
 		var on_graph := _move_on_nav_graph(delta)
@@ -26973,6 +27282,16 @@ var _teleport_arrival_pending := false
 ## or null: set by _on_change_zone_result, cleared by _step_teleport_landing
 ## once the point's region has a walkable graph, or after the zone's drain.
 var _teleport_landing: Variant = null
+## Round 879: a landing past the cells the zone loaded with is held until its
+## own cell is built, to this tick at most (0: not held past the load).
+const TELEPORT_HOLD_MS := 15000
+var _teleport_hold_until_ms := 0
+
+## True when the grid has loaded the cell a frame point lies in (round 879).
+func _teleport_cell_loaded(spot: Vector2) -> bool:
+	if not _grid_has_origin:
+		return true
+	return _grid.cell_loaded_at(Vector3(spot.x, 0.0, spot.y) - _grid_origin_world)
 
 ## A destination's name for the receipt: its zone-name token (SN_ZONE_22002)
 ## through textdata_object, as every SN_ name is (_object_names), or "" --
@@ -28817,6 +29136,8 @@ func _on_teleport_use_ack(d: Dictionary) -> void:
 ## and / or the type-0 system line.
 func _on_world_notice(n: Dictionary) -> void:
 	var t := GameWorldNet.notice_texts(n, func(k: String) -> String: return _game_world_text(k))
+	if int(n.get("kind", 0)) == GameWorldNet.TRIGGER_BANNER and String(n.get("key", "")).begins_with("UIIT_MGS_GOD_TRIGGER_NOTICE"):
+		_qa_hunt_on_notice(String(n["key"]))
 	print("WORLD NOTICE %s -> banner '%s' line '%s'" % [str(n), t["banner"], t["line"]])
 	if String(t["banner"]) != "":
 		_show_banner("system", String(t["banner"]))
@@ -30966,6 +31287,39 @@ func _navmesh_height_at(pos: Vector3) -> float:
 	var local := group.to_local(pos)
 	return group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z, local.y), local.z)).y
 
+## Round 879: the walkable surface nearest `ref_y` at pos's x/z (the
+## region's NavGraph.height_at, READ c:0x403dd0's rule: the terrain, then an
+## object cell only when strictly nearer), carried through the region group as
+## _navmesh_height_at is; NAN when no loaded region covers the point.
+func _navmesh_surface_near(pos: Vector3, ref_y: float) -> float:
+	var pair := _nav_graph_for(pos)
+	if pair.is_empty():
+		return NAN
+	var group: Node3D = pair[1]
+	var local := group.to_local(Vector3(pos.x, ref_y, pos.z))
+	return group.to_global(Vector3(local.x, (pair[0] as NavGraph).height_at(local.x, local.z, local.y), local.z)).y
+
+## Round 879: the height a monster's body is drawn at, NAN for a miss. A
+## monster whose record names its surface (CombatNet.MonsterSnapshot.
+## has_height: an instance's hatch, whose server walks it on its deck)
+## stands on the surface nearest that height -- a walking body on the one
+## nearest its own drawn height, its footing carried as the player's is --
+## and, where no loaded region covers it, at the record's height itself. The
+## original places a spawn at the record's position and resolves its cell
+## from that height (CGObj::EnterWorld s:0x485360; the client's point resolve
+## c:0x403dd0). Before, the Wrecked Ship's standing bodies were put on the
+## sea floor's terrain ~960 under the deck (the terrain-only ray below):
+## counted by the server, never seen by the player -- the user's "one I
+## couldn't see". Any other monster keeps the terrain ray when standing and
+## the landing height when walking (rounds 557, 572).
+func _monster_ground_hit(monster_id: int, pos: Vector3, moving: bool) -> float:
+	var snap = _monster_snapshots.get(monster_id)
+	if snap != null and snap.has_height:
+		var ref: float = pos.y if moving else float(snap.y)
+		var near := _navmesh_surface_near(pos, ref)
+		return ref if is_nan(near) else near
+	return _moving_monster_hit_height(pos) if moving else _terrain_hit_height(pos)
+
 ## A moving monster's height (round 557): the navmesh first, the terrain ray
 ## where no loaded region covers the point. Before this round a walking body
 ## took _terrain_height_at alone, whose ray sees only the terrain layer
@@ -31115,8 +31469,8 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 			print("MOB list %d ums=%d drawn=(%.3f,%.3f) list=(%.3f,%.3f) moving=%s jump=%.3f" % [monster.monster_id, _qa_unix_ms(),
 				existing.position.x, existing.position.z, monster.x, monster.z, "1" if moving else "0",
 				placed.distance_to(Vector2(existing.position.x, existing.position.z))])
-		var at := Vector3(placed.x, monster.y, placed.y)
-		var found := _moving_monster_hit_height(at) if moving else _terrain_hit_height(at)
+		var at := Vector3(placed.x, existing.position.y if moving and monster.has_height else monster.y, placed.y)
+		var found := _monster_ground_hit(monster.monster_id, at, moving)
 		existing.position = Vector3(placed.x, _book_monster_height(monster.monster_id, found, at.y), placed.y)
 		monster.x = placed.x
 		monster.z = placed.y
@@ -31310,7 +31664,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		_monster_pump_credit_usec += waited
 	LatencyProbe.lap("render_sync")
 	var pos := Vector3(monster.x, monster.y, monster.z)
-	pos.y = _book_monster_height(monster.monster_id, _terrain_hit_height(pos), pos.y)
+	pos.y = _book_monster_height(monster.monster_id, _monster_ground_hit(monster.monster_id, pos, false), pos.y)
 	LatencyProbe.lap("height")
 	var body := Node3D.new()
 	body.position = pos
@@ -31785,7 +32139,9 @@ func _step_slope_tilts(delta: float) -> void:
 ## point is still inside it, else the lookup (_nav_graph_for).
 func _slope_pair(e: Array, pos: Vector3) -> Array:
 	var pair: Array = e[4]
-	if pair.size() == 2 and is_instance_valid(pair[1]):
+	# In the tree too (round 879): a zone rebuilt around the player leaves the
+	# old region's group valid but out of the tree until it is freed.
+	if pair.size() == 2 and is_instance_valid(pair[1]) and (pair[1] as Node3D).is_inside_tree():
 		var graph: NavGraph = pair[0]
 		var local := (pair[1] as Node3D).to_local(pos)
 		if graph.dungeon or (local.x >= 0.0 and local.z >= 0.0 and local.x <= REGION_SPAN and local.z <= REGION_SPAN):
@@ -32527,13 +32883,26 @@ func _probe_click_rays(screen_pos: Vector2) -> void:
 ## the server's list and its spawned/removed/released broadcasts, drawing
 ## each stack with its drop model out of Data.pk2. Skipped without an
 ## archive (nothing to draw them with).
+## Round 879: the height a ground item is drawn at, NAN for a miss. A drop
+## that names its height (NetClient._ground_wire_height: the Wrecked Ship's
+## deck, where its monster stood) lies on the walkable surface nearest it;
+## any other on the terrain under it, as since round 785. MEASURED on prod's
+## log (v0.1.649): 113 of 141 kills' gold on the Wrecked Ship was drawn at
+## y 0.40, on the sea floor ~957 under the deck the player stood on.
+func _ground_item_height(pos: Vector3) -> float:
+	if pos.y != 0.0 and NetClient._spawn_dungeon < 0:
+		var near := _navmesh_surface_near(pos, pos.y)
+		if not is_nan(near):
+			return near
+	return _terrain_hit_height(pos)
+
 func _try_setup_ground_items() -> void:
 	if _data_pk2 == null:
 		return
 	_ground_items = GroundItems.new()
 	_ground_items.name = "GroundItems"
 	# Unswept plates: an item's name has its own visibility rule (_name_plate).
-	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _ground_item_plate, _terrain_hit_height)
+	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _ground_item_plate, _ground_item_height)
 	_ground_items.set_types_for(func(item_id: int) -> PackedInt32Array:
 		var row = _item_rows.get(item_id)
 		return row.type_ids if row != null else PackedInt32Array())
@@ -33371,7 +33740,7 @@ func _step_monster_bodies(delta: float, budget: int = MonsterMotion.MAX_HEIGHT_R
 		var monster_id: int = stepped[i][2]
 		var retry := _monster_heights_pending.has(monster_id)
 		var started := Time.get_ticks_usec()
-		var height := _moving_monster_hit_height(body.position) if state != null else _terrain_hit_height(body.position)
+		var height := _monster_ground_hit(monster_id, body.position, state != null)
 		if retry:
 			retry_spent += Time.get_ticks_usec() - started
 			retried += 1

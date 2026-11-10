@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/TheOpenSRO/OpenSRO/server/internal/worldmap"
@@ -18,6 +19,10 @@ import (
 const (
 	NvmSubdir   = "nvm"
 	ObjectsFile = "objects.gob"
+	// StructuresFile (round 879, optional) is the navigation mesh of every
+	// characterdata STRUCTURE_* row's model by its codename (upper case):
+	// the runtime structures -- the trigger doors -- no region lists.
+	StructuresFile = "structures.gob"
 )
 
 // NvmName is a region's .nvm file name: its packed id in hex
@@ -26,10 +31,11 @@ func NvmName(regionID int) string { return fmt.Sprintf("nv_%04x.nvm", regionID&0
 
 // World is the navigation mesh of every region, read on first use.
 type World struct {
-	dir     string
-	objects map[uint32]*CollisionMesh
-	mu      sync.Mutex
-	graphs  map[int]*Graph // nil: the region has no .nvm (or it did not parse)
+	dir        string
+	objects    map[uint32]*CollisionMesh
+	structures map[string]*CollisionMesh
+	mu         sync.Mutex
+	graphs     map[int]*Graph // nil: the region has no .nvm (or it did not parse)
 	// Loaded counts graphs built, for the boot and QA lines.
 	Loaded int
 }
@@ -48,8 +54,30 @@ func Open(dir string) (*World, error) {
 	if _, err := os.Stat(filepath.Join(dir, NvmSubdir)); err != nil {
 		return nil, err
 	}
-	return &World{dir: dir, objects: objs, graphs: map[int]*Graph{}}, nil
+	w := &World{dir: dir, objects: objs, graphs: map[int]*Graph{}}
+	if sf, err := os.Open(filepath.Join(dir, StructuresFile)); err == nil {
+		st := map[string]*CollisionMesh{}
+		err := gob.NewDecoder(sf).Decode(&st)
+		sf.Close()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", StructuresFile, err)
+		}
+		w.structures = st
+	}
+	return w, nil
 }
+
+// Structure is the navigation mesh of the characterdata structure code
+// (StructuresFile), nil when the export has none.
+func (w *World) Structure(code string) *CollisionMesh {
+	if w == nil {
+		return nil
+	}
+	return w.structures[strings.ToUpper(code)]
+}
+
+// Structures is how many structure meshes the export holds.
+func (w *World) Structures() int { return len(w.structures) }
 
 // NewWorld is a World over meshes already in memory (tests): regions come
 // from `regions` by id.

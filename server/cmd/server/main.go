@@ -2212,7 +2212,10 @@ func main() {
 		}
 		session.SetNavmesh(nav)
 		logger.Info("navigation meshes: movers walk the original's navmesh, a wall ends a leg (regions load on first use)",
-			"path", *navmeshDir, "objects", nav.Objects())
+			"path", *navmeshDir, "objects", nav.Objects(), "structures", nav.Structures())
+		if nav.Structures() == 0 {
+			logger.Warn("the navigation export has no structure meshes (export-navmesh -media Media.pk2, round 879): a closed trigger door blocks only within 40 units of its point")
+		}
 	} else {
 		logger.Info("no navigation meshes (-navmesh-dir / OPENSRO_NAVMESH_DIR): movers walk straight legs through walls")
 	}

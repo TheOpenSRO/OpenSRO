@@ -317,7 +317,26 @@ func dropKillLoot(ground *grounditem.Hub, hub *world.Hub, monster combat.Monster
 	var out []grounditem.Item
 	place := func(itemID int64, qty int32, isGold bool) {
 		x, z := grounditem.Scatter(monster.X, monster.Z, grounditem.ScatterDraw(rand.Intn), grounditem.ScatterDraw(rand.Intn))
-		it := ground.Drop(monster.Zone, itemID, qty, isGold, float32(x), float32(monster.Y), float32(z), killerID)
+		y := monster.Y
+		// Round 879 (READ FUN_0048fdf0, s:0x48fdf0): the stack enters the
+		// world at the ring's point from the corpse's (vslot 0x2b0 with the
+		// corpse's position as the source); when that fails it enters at the
+		// corpse's own point (the second call, source and target the same).
+		// For a monster that carries its height (an instance's deck): the
+		// walk from the corpse on the navigation mesh -- a wall or the
+		// deck's edge in between leaves the stack on the corpse, else it
+		// lies on the surface the walk ends on. MEASURED before: 2 of 203
+		// stacks of a Wrecked Ship run landed past the deck's edge and were
+		// drawn on the sea floor ~950 under it.
+		if monster.HasHeight {
+			fy, blocked := HatchFooting(monster.Zone, monster.X, monster.Y, monster.Z, x, z)
+			if blocked {
+				x, z = monster.X, monster.Z
+			} else {
+				y = fy
+			}
+		}
+		it := ground.Drop(monster.Zone, itemID, qty, isGold, float32(x), float32(y), float32(z), killerID)
 		// The corpse and the stack, so a QA run's server.log measures the ring.
 		slog.Info("ground drop", "ground_item", it.ID, "monster", monster.ID, "corpse_x", monster.X, "corpse_z", monster.Z,
 			"x", it.X, "z", it.Z, "from_corpse", math.Hypot(x-monster.X, z-monster.Z))

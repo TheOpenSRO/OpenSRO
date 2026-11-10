@@ -68,7 +68,7 @@ func TestRound812ChaseStopsAtAWall(t *testing.T) {
 	}
 	// No mesh: nothing is clipped.
 	SetNavmesh(nil)
-	if _, _, clipped := navClipLeg("jangan", 60, 0, 0, 10, 0); clipped {
+	if _, _, _, clipped := navLegEnd("jangan", 60, 0, 0, 10, 0); clipped {
 		t.Error("clipped with no navigation mesh")
 	}
 }

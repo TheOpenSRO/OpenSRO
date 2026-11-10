@@ -35,6 +35,25 @@ type ZonePlace struct {
 	Region  uint16
 	X, Y, Z float64
 	Angle   uint16
+	// Yaw is the named position's own yaw in radians (objectstring.ifo), the
+	// one Angle is made from (angleOfYaw).
+	Yaw float64
+}
+
+// DoorBlock is where a closed door stops a mover in its layer's frame (round
+// 879): the door's point and, when the navigation export has the door
+// model's own navigation mesh, its blocking outline placed as a map object
+// at the door's point and yaw (segments {x0, z0, x1, z1}). MEASURED: the
+// Wrecked Ship's door model (wreck_event_door.bsr) names wreck_eventdoor01.bms,
+// whose navigation mesh is one 153.6 x 31.2 rectangle of two cells with every
+// outline edge blocking both ways (flags 0x3) -- a slab a mover cannot enter
+// or cross. INFERRED: the original stops a mover at that outline while the
+// door stands; how it registers the mesh at run time was not found (the
+// client's CIEventRuntimeObj::FUN_00535750 builds the model, the server's
+// CGObjEventZone keeps the state, s:0x52de60), so the mechanism is OURS.
+type DoorBlock struct {
+	X, Z float64
+	Segs [][4]float64
 }
 
 // EventZoneObj is a layer's CGObjEventZone (game_worlds.md 8): one event
@@ -48,6 +67,10 @@ type EventZoneObj struct {
 	// STRUCTURE_GOD_BIG_GATE_TOGUI_1).
 	StructureCode string
 	Place         *ZonePlace
+	// Block is the door's footprint in the layer's frame (round 879), set
+	// when the layer opens (session's openWorldRuntime) before any player
+	// is in; nil: the door's Place is taken as the frame point (a test).
+	Block *DoorBlock
 }
 
 // Closed reports a door that still blocks (INFERRED: drawn while OFF,
@@ -142,20 +165,68 @@ func (w *World) SwitchEventZone(n string, on bool) {
 	}
 }
 
-// DoorBlocks reports whether a move from (x0, z0) to (x1, z1) passes within
-// DoorBlockRadius of a closed, placed door of the layer (OURS mechanism).
-// Read from any goroutine: the zones' states change only on the world's
-// goroutine, and a stale read costs one move.
-func (w *World) DoorBlocks(x0, z0, x1, z1 float64) bool {
+// doorNudge is how far short of a door's outline a stopped move ends (the
+// walk's own wall nudge, READ: at most 0.2 back from the crossing).
+const doorNudge = 0.2
+
+// DoorStop is where a move from (x0, z0) to (x1, z1) in the layer's frame
+// stops at a closed door (round 879; read from any goroutine: the zones'
+// states change only on the world's goroutine, and a stale read costs one
+// move): a door with a footprint stops it
+// doorNudge short of the first outline segment it crosses; one without, at
+// its start when it passes within DoorBlockRadius of the door's point (round
+// 869's OURS block, now at the frame point, not the region-local one).
+func (w *World) DoorStop(x0, z0, x1, z1 float64) (sx, sz float64, blocked bool) {
+	best := math.Inf(1)
 	for _, z := range w.zones {
 		if z.Place == nil || !z.Closed() {
 			continue
 		}
-		if segmentDisc(x0, z0, x1, z1, z.Place.X, z.Place.Z, DoorBlockRadius) {
-			return true
+		b := z.Block
+		if b == nil {
+			b = &DoorBlock{X: z.Place.X, Z: z.Place.Z}
+		}
+		if len(b.Segs) == 0 {
+			if segmentDisc(x0, z0, x1, z1, b.X, b.Z, DoorBlockRadius) && best > 0 {
+				best = 0
+			}
+			continue
+		}
+		for _, sg := range b.Segs {
+			if t, ok := segmentCross(x0, z0, x1, z1, sg); ok && t < best {
+				best = t
+			}
 		}
 	}
-	return false
+	if math.IsInf(best, 1) {
+		return x1, z1, false
+	}
+	dx, dz := x1-x0, z1-z0
+	l := math.Hypot(dx, dz)
+	back := 0.0
+	if l > 0 {
+		back = math.Min(best, doorNudge/l)
+	}
+	t := best - back
+	return x0 + dx*t, z0 + dz*t, true
+}
+
+// segmentCross is where (as a fraction of a-b) the segment a-b crosses sg,
+// ok false when it does not.
+func segmentCross(ax, az, bx, bz float64, sg [4]float64) (float64, bool) {
+	rx, rz := bx-ax, bz-az
+	sx, sz := sg[2]-sg[0], sg[3]-sg[1]
+	den := rx*sz - rz*sx
+	if den == 0 {
+		return 0, false
+	}
+	qx, qz := sg[0]-ax, sg[1]-az
+	t := (qx*sz - qz*sx) / den
+	u := (qx*rz - qz*rx) / den
+	if t < 0 || t > 1 || u < 0 || u > 1 {
+		return 0, false
+	}
+	return t, true
 }
 
 // segmentDisc reports whether the segment a-b comes within r of c.

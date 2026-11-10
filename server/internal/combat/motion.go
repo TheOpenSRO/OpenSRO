@@ -70,6 +70,20 @@ func (h *Hub) SetMotion(id int64, destX, destZ, speed float64, mode uint8) (Mons
 	return *m, true
 }
 
+// SetY is monster id's height (round 879): the surface the navigation mesh's
+// walk puts a leg's end on, for a monster that carries one (HasHeight). ok is
+// false when the monster is gone.
+func (h *Hub) SetY(id int64, y float64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	m, ok := h.byID[id]
+	if !ok {
+		return false
+	}
+	m.Y = y
+	return true
+}
+
 // StopMotion ends monster id's leg where it stands: its destination becomes
 // its own position and Moving is cleared. The speed and mode are left as they
 // were, so the stop push can carry them (docs/protocol/monster_ai.md,
