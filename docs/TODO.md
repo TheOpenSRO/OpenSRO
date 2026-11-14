@@ -1835,15 +1835,18 @@ what the same `OPENSRO_PARSE_PROFILE=1` Jangan entry measured with the native re
 deploy/README.md "Branding your front-end" the operator's side; FRONTEND_CHECKLIST.md section 6 the
 front-end's next steps.
 
-- **The [SCRIPT] section** (GScript): rm.txt's `S_SetWorldTime 22` and seven `roc_smoke.efp`
-  effects, ruby_baghdad's 333 lines (objects created by index with `#rand`, `S_ObjectEquipSet`,
-  `S_ObjectMoveTo`, `S_CameraShake`). Kept as text by IntroScript; the interpreter is
-  `FUN_004779a0` / `FUN_00477ca0` and the title-time flag `FUN_0056b380` (whether [SCRIPT] runs at the
-  title at all is still OPEN). Their cameras fly over empty scenes until then.
+- **The [SCRIPT] section** (GScript): since round 884 `S_SetWorldTime` (the title's hour) and
+  `S_EffectCreate` run (rm.txt's 22 o'clock and seven `roc_smoke.efp`, ruby_baghdad's hour and two
+  effects; intro_script.md "The script's commands"). Left: ruby_baghdad's crowd (objects created by
+  index with `#rand`, `S_ObjectEquipSet`, `S_ObjectMotionState`, `S_ObjectMoveTo`) and
+  `S_CameraShake`.
+- **The objects' fog colour (round 884, OPEN)**: the original fogs objects to the unrooted channel 9
+  and only the landscape to its root (intro_script.md, "The scenery's effects and the fog");
+  WorldFog fogs every surface to the root. Needs a per-surface mask in the pass.
 - **Constantinople's crowd** (`AREA=EUROP_CONSTANTINOPLE`, `FUN_00520580` -> `FUN_0051dea0`).
 - **The sun at the title hour**: the environment colours follow the random phase; the sun's
-  direction (`SWorld::vslot_004`, (phase - c) * 2 pi) does not. `SWorld::vslot_043(0x17, 0)` at the
-  title is unread.
+  direction (`SWorld::vslot_004`, (phase - c) * 2 pi) does not. (`SWorld::vslot_043(0x17, 0)` at the
+  title: option 23, a cell detail switch -- round 884.)
 - **The scenes after the title** -- character select (105/81 harbour), race select (box.bsr, idols,
   lizard), create China (98/168) / Europe (105/79): READ and recorded, not built
   (FRONTEND_CHECKLIST.md section 6). The theme's `charselect` / `create` slots wait for them.

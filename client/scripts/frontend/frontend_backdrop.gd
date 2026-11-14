@@ -109,7 +109,19 @@ func cells_loaded() -> int:
 func cells_pending() -> int:
 	return world.call("title_cells_pending") if world != null else 0
 
+## OPENSRO_QA_BACKDROP_FX=<seconds> (round 884, QA): that many seconds of
+## frame time after the whole scene is built (a movie run's own clock), one
+## `QA BACKDROP FX` line -- the backdrop's fog and effects
+## (World3D.title_fx_report) -- on any front-end screen (title, select,
+## create).
+var _qa_fx_at := OS.get_environment("OPENSRO_QA_BACKDROP_FX").to_float() if OS.get_environment("OPENSRO_QA_BACKDROP_FX").is_valid_float() else -1.0
+var _qa_fx_left := -1.0
+
 func _process(_delta: float) -> void:
+	if _qa_fx_left >= 0.0:
+		_qa_fx_left -= _delta
+		if _qa_fx_left < 0.0 and world != null and world.has_method("title_fx_report"):
+			print("QA BACKDROP FX frame %d %s" % [Engine.get_frames_drawn(), world.call("title_fx_report")])
 	if world == null or (_ready_sent and _scene_sent):
 		return
 	if not _ready_sent and cells_loaded() > 0 and (_focus_cell_loaded() or cells_pending() == 0):
@@ -122,6 +134,8 @@ func _process(_delta: float) -> void:
 		print("FrontEndBackdrop: scene ready in %d ms (%d cell(s) built)" % [
 			Time.get_ticks_msec() - _started_ms, cells_loaded()])
 		scene_ready.emit()
+		if _qa_fx_at >= 0.0:
+			_qa_fx_left = _qa_fx_at
 
 func _focus_cell_loaded() -> bool:
 	var grid = world.get("_grid")

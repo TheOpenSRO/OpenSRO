@@ -32,7 +32,11 @@ class_name WorldFog
 ## renderer's fog slot (vslot_014, vertex constant c16: `vss0.c`'s LINEAR fog,
 ## docs/RE_MAP_ENGINE.md). So the terrain, the objects and the characters fog
 ## alike: linear in VIEW DEPTH (range fog off), nothing before the start, the
-## fog colour from the end on. Particles turn fog off (EFP_FORMAT.md:
+## fog colour from the end on. Round 884 (READ): not the same colour -- the
+## objects' fog state is built from the UNROOTED channel 9 (world+0x67e2,
+## Map::FUN_00a1e530 0xa1e9dd..0xa1ea5a) and FOGCOLOR is set back to it after
+## them (0xa24ea8); this pass fogs every surface to the rooted colour (OPEN,
+## docs/protocol/intro_script.md). Particles turn fog off (EFP_FORMAT.md:
 ## FOGENABLE 0). The sky step fogs its own cloud layer from 90,000 to 200,000
 ## (cloud_dome.gdshader). Nothing else in the step darkens or hazes what is
 ## near the camera.

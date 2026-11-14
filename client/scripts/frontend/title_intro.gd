@@ -127,6 +127,9 @@ var _qa_shots: PackedFloat32Array = PackedFloat32Array()
 ## without recording the whole flight.
 var _qa_seek: PackedFloat32Array = PackedFloat32Array()
 var _qa_seek_frames := 0
+## OPENSRO_QA_TITLE_SEEK_FRAMES=<n> (round 884, QA): how many frames each
+## seek stands before its shot (30 by default) -- the effects' warm-up.
+var _qa_seek_hold := maxi(OS.get_environment("OPENSRO_QA_TITLE_SEEK_FRAMES").to_int(), 30)
 var _qa_login_shot := false
 ## OPENSRO_QA_TITLE_POPS (round 680, QA): the pop-in measurement.
 var _pop_probe: TitlePopProbe = null
@@ -174,10 +177,17 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 	var origin := IntroScript.origin_region(parsed)
 	path = IntroCameraPath.from_keyframes(parsed.keyframes)
 	day_phase = pick_day_phase()
-	print("TITLE: intro %s -- %d keyframe(s), %.1f s, region %d/%d%s; %d [SCRIPT] line(s) not run (OPEN); title hour phase %.4f" % [
+	# Round 884 (READ, IntroScript.start_hour): the script's S_SetWorldTime
+	# at its time 0 runs after OnCreate's random hour, so its hour is the
+	# title's (rm.txt's and ruby_baghdad.txt's 22 o'clock).
+	var script_hour := IntroScript.start_hour(parsed)
+	if script_hour >= 0:
+		day_phase = script_hour / 24.0
+	print("TITLE: intro %s -- %d keyframe(s), %.1f s, region %d/%d%s; %d [SCRIPT] line(s), %d run (S_SetWorldTime, S_EffectCreate), the rest not run (OPEN); title hour phase %.4f%s" % [
 		intro_source, parsed.keyframes.size(), path.length, origin.x, origin.y,
 		", AREA=%s not built (OPEN)" % parsed.area if parsed.area != "" else "",
-		parsed.script_lines.size(), day_phase])
+		parsed.script_lines.size(), parsed.commands.size(), day_phase,
+		" (the script's S_SetWorldTime %d)" % script_hour if script_hour >= 0 else ""])
 	_origin = origin
 	state = State.PRELOADING
 	FrontEndBackdrop.preload_world()
@@ -446,11 +456,18 @@ func _process(delta: float) -> void:
 				_qa_seek_step()
 			elif path.length != 0.0:
 				var before := path.time
+				if _qa_frames_on and not path.finished():
+					_qa_frame_ms.append(delta * 1000.0)
+					_qa_process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 				var pose := path.advance(delta)
 				backdrop.show_pose(pose)
+				_run_script(path.time)
 				for t in _qa_shots:
 					if before < t and path.time >= t:
 						print("QA TITLE SHOT t=%.2f frame %d" % [t, Engine.get_frames_drawn()])
+						_qa_fx_line(t)
+			if _qa_frames_on and path.finished() and not _qa_frame_ms.is_empty():
+				_qa_frames_print()
 			if not login_up and path.finished():
 				print("TITLE: the path ended (%.2f s)" % path.length)
 				show_login()
@@ -468,14 +485,66 @@ func _qa_seek_step() -> void:
 	if _qa_seek_frames == 0:
 		path.time = minf(t, path.length)
 		backdrop.show_pose(path.sample(path.time))
+		_run_script(path.time)
 	_qa_seek_frames += 1
-	if _qa_seek_frames >= 30 and backdrop.cells_pending() == 0:
+	if _qa_seek_frames >= _qa_seek_hold and backdrop.cells_pending() == 0:
 		var pose := path.sample(path.time)
 		print("QA TITLE SHOT t=%.2f frame %d target (%.1f, %.1f, %.1f) pitch %.3f yaw %.3f dist %.1f cells %d" % [
 			t, Engine.get_frames_drawn(), pose.target.x, pose.target.y, pose.target.z, pose.pitch, pose.yaw,
 			pose.distance, backdrop.cells_loaded()])
+		_qa_fx_line(t)
 		_qa_seek.remove_at(0)
 		_qa_seek_frames = 0
 		if _qa_seek.is_empty():
 			print("QA TITLE SEEK done")
 			skip("the end of OPENSRO_QA_TITLE_SEEK")
+
+## Round 884: the intro script's commands this client runs, in time order,
+## each once the fly's clock reaches its time. READ: CPSTitle::vslot_012
+## (0x8691b0) runs the intro's script object (the intro +0x58, made at load
+## by UI_ALCHEMYBOX::FUN_0056b380 from the [SCRIPT] text) every title frame,
+## beside the path. INFERRED: its clock and the path's start together (both
+## from the title's first frames; here the fly's clock, which starts once the
+## scene is built). S_SetWorldTime at time 0 is the title's hour (start());
+## a later one is logged, not run (none in the archives, MEASURED).
+var _script_next := 0
+
+func _run_script(clock: float) -> void:
+	if parsed == null or backdrop == null or backdrop.world == null:
+		return
+	while _script_next < parsed.commands.size() and parsed.commands[_script_next].time <= clock:
+		var cmd: IntroScript.Command = parsed.commands[_script_next]
+		_script_next += 1
+		match cmd.name:
+			IntroScript.CMD_EFFECT_CREATE:
+				backdrop.world.call("title_effect_create", cmd)
+			IntroScript.CMD_SET_WORLD_TIME:
+				if cmd.time > 0.0:
+					print("TITLE: S_SetWorldTime %d at %.2f s not run (OPEN: only time 0 sets the title's hour)" % [cmd.hour, cmd.time])
+
+## QA (round 884): the backdrop's fog and effects at a shot
+## (World3D.title_fx_report).
+func _qa_fx_line(t: float) -> void:
+	if backdrop != null and backdrop.world != null and backdrop.world.has_method("title_fx_report"):
+		print("QA TITLE FX t=%.2f frame %d %s" % [t, Engine.get_frames_drawn(), backdrop.world.call("title_fx_report")])
+
+## OPENSRO_QA_TITLE_FRAMES=1 (round 884, QA): the fly's frame times, printed
+## once when the path ends -- run in real time (QA_SHOT_REALTIME=1), where a
+## frame's delta is its wall time.
+var _qa_frames_on := OS.get_environment("OPENSRO_QA_TITLE_FRAMES") != ""
+var _qa_frame_ms := PackedFloat32Array()
+## Each frame's main-thread process time (Performance.TIME_PROCESS).
+var _qa_process_ms := PackedFloat32Array()
+
+func _qa_frames_print() -> void:
+	for pair in [["frame", _qa_frame_ms], ["process", _qa_process_ms]]:
+		var v := Array(pair[1])
+		v.sort()
+		var sum := 0.0
+		for x in v:
+			sum += x
+		print("QA TITLE FRAMES %s: %d frames over the fly, mean %.2f ms, median %.2f, p95 %.2f, max %.1f, over 100 ms %d" % [
+			pair[0], v.size(), sum / maxf(v.size(), 1.0), v[v.size() / 2], v[mini(v.size() - 1, int(v.size() * 0.95))], v[v.size() - 1],
+			v.filter(func(x): return x > 100.0).size()])
+	_qa_frame_ms.clear()
+	_qa_process_ms.clear()

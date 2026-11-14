@@ -31,9 +31,9 @@ snippets, and the real files are read at runtime from the player's own `Media.pk
 | roc.txt = egypt.txt = china_whatf.txt (byte-identical) | 21 | 40 s | 100/71 | the option.txt default; a ruined city, flies 4 regions south |
 | constantinople.txt | 14 | 53 s | 105/78 | `AREA=EUROP_CONSTANTINOPLE` (crowd, OPEN) |
 | china_wharf.txt | 8 | 35 s | 95/188 | z values carry a trailing `f` |
-| rm.txt = rmzh.txt | 7 | 43 s | 101/189 | 8 [SCRIPT] lines: `S_SetWorldTime 22`, seven `roc_smoke.efp` (OPEN) |
+| rm.txt = rmzh.txt | 7 | 43 s | 101/189 | 8 [SCRIPT] lines: `S_SetWorldTime 22`, seven `roc_smoke.efp` (run since round 884) |
 | jupiter_login.txt | 7 | 27 s | 124/236 | |
-| ruby_baghdad.txt | 6 | 33.5 s | 92/84 | 333 [SCRIPT] lines (crowds, riders, camera shake) -- OPEN |
+| ruby_baghdad.txt | 6 | 33.5 s | 92/84 | 333 [SCRIPT] lines (crowds, riders, camera shake) -- its `S_SetWorldTime` and two `S_EffectCreate` run since round 884, the rest OPEN |
 | ruby_baghdad - kopie.txt | 6 | 33.5 s | 92/84 | 347 [SCRIPT] lines |
 
 None shows Alexandria (an iSRO screenshot's obelisks and palms): `egypt.txt` is roc.txt in these
@@ -66,7 +66,8 @@ AREA=EUROP_CONSTANTINOPLE
   used. Any other [CAMERA] line (ruby_baghdad's `S_CameraShake`) is skipped.
 - `_wtof` stops at the first non-number character: china_wharf's `484.136963f` reads 484.136963.
 - In [SCRIPT]: each line's tokens go to the GScript interpreter (`FUN_004779a0`, `FUN_00477ca0`).
-  This client keeps them as text and does not run them (OPEN: the GScript subset).
+  This client runs two of its commands since round 884 (below, "The script's commands"); the rest
+  are kept as text and not run (OPEN: `S_Object*` crowds, `S_CameraShake`).
 - Keyframes are appended in FILE order (`FUN_0056ca60`); each one's region goes to
   `FUN_0056c870`, which collects the regions to preload (below).
 - Region word = hi << 8 | lo; lo is the X sector, hi the Z sector (the game's own
@@ -111,6 +112,70 @@ Since round 680 the title plans its whole scene before the camera moves (`TitleC
 3x3 window around the target at every 0.05 s of the path, built behind the 2D still; the fly
 starts when all of it is built, and nothing streams or unloads while it flies
 (`World3D.title_begin`'s `plan`). The numbers are in round 680's WORLD_ISSUES entry.
+
+## The script's commands (round 884)
+
+READ, `sro_client.exe`:
+- **Compile.** The loader appends the [SCRIPT] text (`FUN_004779a0`, `FUN_00477ca0`); with it
+  non-empty, `UI_ALCHEMYBOX::FUN_0056b380` makes the script object (intro +0x58, a gwnd from
+  `gwnd::FUN_00ba20b0`) and compiles the text into it (`FUN_0052cdb0`). Per line
+  (`FUN_0052cd00` -> `UI_ALCHEMYBOX::FUN_0051e4c0`): the first token is the time,
+  `round(_wtof(t) * 1000.0)` ms (the double at 0xd83268); the second the command, looked up by name
+  (`FUN_0051cbe0`; an unknown one is logged `<= Not Find` and dropped); the rest the command's own
+  parser's. The compiled commands are then ordered by that time (`FUN_0052cdb0` takes the smallest
+  left each pass).
+- **Run.** `CPSTitle::vslot_012` (0x8691b0) calls the script object's slot 12 every title frame,
+  beside the camera path; INFERRED: its clock and the path's start together.
+- **`S_SetWorldTime <hour>`** (parser `FUN_0050a750`: one integer, a byte at +0xc; run 0x5041b0):
+  `SWorld::vslot_020(hour / 24.0)` (the double at 0xd830a0) -- the same day phase OnCreate's random
+  hour sets, so a time-0 `S_SetWorldTime` is the hour the title shows (rm.txt's 22 o'clock).
+- **`S_EffectCreate <name> "<efp>" <lo> <hi> <x> <y> <z> <angle> <scale> <keep>`** (parser
+  `FUN_00522850`; run `FUN_005163a0`): the name (+0xc), the file between the line's first two double
+  quotes (`FUN_004ee310` twice, 0x22), the region's low and high byte (+0x2c, +0x2d), the
+  region-local x, y, z (+0x30..+0x38), the angle (+0x40), the scale (+0x44) and the keep flag
+  (+0x3c). The run makes a game object (`FUN_00ba36d0`) holding the effect (`FUN_00a55450`: the
+  effect manager's slot 2 loads it into +0xe4), places it at the region-local point with its
+  region taken relative to the current one (`FUN_009c4610`, SWorld slot 7), turns it by
+  angle x pi/180 (the double at 0xe1b8d8; `FUN_009c4260`), and sets the effect's uniform scale
+  (IEasyFxEffect slot 10) and keep flag (slot 4).
+
+This client (round 884): `IntroScript.Command` parses the two, `IntroScript.start_hour` gives a
+time-0 `S_SetWorldTime`'s hour to the backdrop as its day phase, and `TitleIntro._run_script` runs
+each `S_EffectCreate` once the fly's clock reaches its time (`World3D.title_effect_create`: a host
+set up as a placed object's frame, the effect following it with the scale and keep flag; blended
+and fogged as the placed objects' effects are, OURS). A later `S_SetWorldTime` is logged, not run
+(none in the archives, MEASURED). The archive's commands: rm.txt `S_SetWorldTime 22` and seven
+`system\roc_smoke.efp` at 1, 3, 5, 7, 9, 11 and 13 s; ruby_baghdad.txt `S_SetWorldTime 22` and two
+effects (MEASURED, the box's Media.pk2).
+
+## The scenery's effects and the fog at the front end (round 884)
+
+- **Effects (READ).** Every front-end screen's frame runs the world update with its camera:
+  `CPSTitle::vslot_012` (0x8691b0) and `CPSCharacterSelect::vslot_012` (0x85ce30) call
+  `SWorld::vslot_004` through `FUN_009edd60()` (vtable +0x10), as do
+  `CPSCharacterCreateChina::vslot_012` (0x850500) and `CPSCharacterCreateEurope::vslot_012`
+  (0x8542d0) with the camera at gfxmainframe+0x33c. That update runs the placed objects and their
+  mods -- the `ambient` particles, the glows -- as in the world (teleport_effects.md). Until round
+  884 this client's backdrop (`World3D` in `title_mode`) built none of them: the per-frame block
+  returned before `_tick_world_fx`, the tick before the glow pass and the animated textures.
+- **Fog (READ, MEASURED).** The same update draws the landscape with its fog (`Map::FUN_00a26f60`,
+  round 702): nothing in CPSTitle turns it off (`SWorld::vslot_043(0x17, 0)` in OnCreate stores
+  option 23 at SWorld+0x2eac -- its one reader, 0xa2bd5d in `Map::FUN_00a2b370`, sets each listed
+  cell's +0xa23 level (0 with the option off, else 1..3 by the squared cell distance): a detail
+  switch, INFERRED; no fog state).
+  MEASURED (the title flying the rm path, at its script's 22 o'clock): below the horizon a flat
+  band, standard deviation 1/255, of (55, 57, 92) -- channel 9 at that hour x 255 = (55, 56, 92).
+  So the title is fogged as the world is. Under the horizon the sky is the unrooted fog colour
+  (READ: `SWorld::vslot_004` hands the sky's set-up `Map::FUN_00a3eb40` world+0x67e2 at 0xa2db2d;
+  how the dome mixes it is not traced, OPEN); this client drew channel 13 there (OURS) and draws
+  the fog colour since round 884.
+- **OPEN, the objects' fog colour.** The landscape fogs to the square root of channel 9
+  (world+0x67e6, round 628), but the objects' draw `Map::FUN_00a1e530` hands its renderer a fog
+  state built from the unrooted world+0x67e2 with the same planes (0xa1e9dd..0xa1ea5a), and
+  `Map::FUN_00a24e30` sets D3DRS_FOGCOLOR back to world+0x67e2 after the objects (0xa24ea8) for
+  what draws next. This client's fog pass (WorldFog) fogs every surface to the rooted colour, so
+  fogged objects come out lighter (MEASURED at the rm title's door: 4-10 / 255 per channel). Splitting the pass by surface needs a mask (a stencil
+  probe under Godot 4.7.2 drew nothing, round 884); not done.
 
 ## The camera path (READ)
 
@@ -182,7 +247,7 @@ camera_transform`, `World3D.title_world_from_local`).
   floats at 0xdd8ef4, 0xdd8ef0, 0xdd8eec, 0xdd8ee8 -- 5, 14, 18 and 23 o'clock over 24) for
   `SWorld::vslot_020` (0x9f6fb0), which stores SWorld+0x26a3: the day phase the environment graphs
   are read at (round 226's ENVIRONMENT_REFERENCE_TIME is that phase's in-game value, 0.5). Before it,
-  `SWorld::vslot_043(0x17, 0)` (OPEN). The sun's direction from the phase (`SWorld::vslot_004`) is
+  `SWorld::vslot_043(0x17, 0)` (round 884: option 23, a cell detail switch, below "The scenery's effects and the fog"). The sun's direction from the phase (`SWorld::vslot_004`) is
   not applied here (OPEN).
 - **Music:** IntroBGM pushed at level 0 (0x86be89; round 612).
 - **The windows** (pstitle.txt's Title section, IDs): 1 `GDR_STA_SCREENUP` (blackbar_up_18.ddj),

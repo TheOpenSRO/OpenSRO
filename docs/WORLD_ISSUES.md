@@ -7483,6 +7483,129 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-eighty-fourth round: the intro scenes play their scenery's effects (the teleporter's globe, the lamps, the nest's glow) and their scripts' smoke and hour, and the sky under the horizon is the fog colour -- the title's fog itself is the original's
+
+The user (2026-11-14): "The intro scene has fog and it shouldn't and it doesn't load any effects,
+especially around the teleporter at the end of the sequence. Fix this for all intro scenes." Their
+log plays `constantinople.txt` (the server's theme), whose fly passes the city's fountain and its
+glowing globe (`rock_mt_portal.efp`). Lane IN, base `c166fb8e` (v0.1.656), client only. Labels:
+READ (`sro_client.exe`, the box's decompile and asm), MEASURED, INFERRED, OURS, OPEN.
+
+### 1. Effects: the backdrop never ran them (READ, MEASURED)
+
+- **The original.** Every front-end screen's frame runs the world update with its camera:
+  `CPSTitle::vslot_012` (0x8691b0), `CPSCharacterSelect::vslot_012` (0x85ce30) and
+  `CPSCharacterCreateChina/Europe::vslot_012` (0x850500, 0x8542d0) call `SWorld::vslot_004` through
+  `FUN_009edd60()` (vtable +0x10) -- the update that runs the placed objects and their mods, the
+  `ambient` particles and glows among them (teleport_effects.md). MEASURED: the title's fly over the
+  Roc nest ends on the nest's red glow.
+- **Here.** The backdrop is World3D in `title_mode`: `_physics_process` returned into
+  `_title_physics` (sky, map animations, the stream queue) before the glow pass and `TexAni.tick`,
+  and `_process` returned after `_night_tick` before `_tick_world_fx`. The objects' hosts were
+  registered (`_objects_commit` -> `WorldAmbientFx.add`) and never decided, built or stepped.
+  MEASURED before (QA TITLE FX lines, below): constantinople 289 hosts, 0 built, 0 effects; rm 11
+  hosts, 0 built.
+- **Fix.** `_title_physics` runs `_ambient_step` and `TexAni.tick`; `_process`'s title branch runs
+  `_tick_world_fx` -- the world's own code, round 807's fog reach and round 806's night flag
+  included. Character select and create are the same backdrop, so they play theirs too.
+
+### 2. The intro scripts' effects and hour (READ)
+
+`[SCRIPT]` was kept as text. Two of its commands now run (intro_script.md "The script's
+commands"): the GScript compile reads a line's time as `round(_wtof * 1000)` ms (0xd83268) and
+orders the commands by it (`FUN_0052cdb0`); `CPSTitle::vslot_012` runs the script object (intro
++0x58, made by `FUN_0056b380`) every frame. `S_SetWorldTime h` (parser `FUN_0050a750`, run
+0x5041b0) is `SWorld::vslot_020(h / 24.0)` (0xd830a0) -- at time 0 it overrides OnCreate's random
+hour, so rm.txt and ruby_baghdad.txt fly at 22 o'clock. `S_EffectCreate name "efp" lo hi x y z
+angle scale keep` (parser `FUN_00522850`, run `FUN_005163a0` -> `FUN_00a55450` / `FUN_009c4610` /
+`FUN_009c4260`): a game object at the region-local point (its region relative to the current one),
+turned by angle x pi/180 (0xe1b8d8), the effect's uniform scale (IEasyFxEffect slot 10) and keep flag
+(slot 4). `IntroScript.Command` / `start_hour`, `TitleIntro._run_script` (on the fly's clock;
+INFERRED that the original's script and path start together), `World3D.title_effect_create` /
+`title_effect_transform`. rm.txt's seven `roc_smoke.efp` and ruby_baghdad's two effects play;
+the rest of ruby_baghdad (its crowd, `S_CameraShake`) stays OPEN.
+
+### 3. The fog (READ, MEASURED)
+
+- **The original's title is fogged as the world is.** The world update draws the landscape with
+  round 702's fog (`Map::FUN_00a26f60`); nothing in CPSTitle turns it off --
+  `SWorld::vslot_043(0x17, 0)` in OnCreate stores option 23 at +0x2eac, whose one reader (0xa2bd5d)
+  sets the cells' detail levels (a detail switch, INFERRED). MEASURED, the title flying the rm path at its
+  script's 22 o'clock: under the horizon a flat band, standard deviation 1/255, of (55, 57, 92).
+  So the fog stays (the original's), and the user's "it shouldn't" is listed for the user below.
+- **What looked like more fog here than there: the sky under the horizon.** That band is channel 9
+  at that hour as sampled, (0.2157, 0.2208, 0.3615) x 255 = (55, 56, 92) -- not its square root
+  (118, 120, 153), the landscape's FOGCOLOR. READ: `SWorld::vslot_004` hands the sky's set-up
+  `Map::FUN_00a3eb40` the unrooted world+0x67e2 (0xa2db2d, its ninth argument; how the dome mixes it
+  is not traced, OPEN). This client drew channel 13 there (OURS), a pale band the high fly-overs
+  look down into -- (164, 164, 191) at that pose, 4 s into the fly. `World3D._day_push` now gives the
+  sky's ground half the fog colour (channel 9, the night's scale as the sky's). After, the same pose
+  shows a flat (52, 54, 114) there (MEASURED, Forward+): the sky's way to the screen moves the blue
+  of so dark a colour by ~20 / 255 (OPEN; handing it over through WorldFog.pass_color's inverse
+  tone map showed (43, 43, 79), further off, and was dropped).
+- **The hour.** With rm.txt's own hour (22, section 2) instead of the pinned 23, the fogged door at
+  14 s darkens by 2-7 / 255 per channel (three patches' mean RGB, before / after: 76,76,93 ->
+  74,70,86; 62,61,81 -> 60,58,74; 45,45,54 -> 43,41,50).
+- **OPEN, the objects' fog colour.** The objects' draw builds its fog state from the unrooted
+  colour (`Map::FUN_00a1e530`, 0xa1e9dd..0xa1ea5a) and FOGCOLOR is set back to it after them
+  (0xa24ea8): only the landscape fogs to the root. WorldFog's pass fogs every surface to the root,
+  so a fogged object here comes out lighter (MEASURED at that door: 4-10 / 255 per channel). A
+  per-surface split needs a mask in the pass; a Godot 4.7.2 stencil probe (a writer box, two
+  full-screen readers, shader `stencil_mode` and StandardMaterial3D's own stencil) drew nothing, so
+  it is left (docs/TODO.md).
+
+### 4. QA (render box, real client through Login.tscn, Forward+, 1280x1024)
+
+The QA hook `OPENSRO_QA_TITLE_SEEK` (150 frames a shot, `OPENSRO_QA_TITLE_SEEK_FRAMES`) now prints
+`QA TITLE FX` (World3D.title_fx_report: the fog pass and its planes, every EfpEffect in the scene and
+how many draw particles, the glows, WorldAmbientFx's line); `OPENSRO_QA_BACKDROP_FX=<s>` prints the
+same on any front-end screen; `OPENSRO_QA_TITLE_FRAMES=1` the fly's frame times.
+
+| Scene (hour) | before (c166fb8e + the QA hooks) | after |
+|---|---|---|
+| constantinople.txt, the user's (14 h) | 289 hosts, 0 built, 0 effects at every shot | from 20 s: 2 built, 6 effects drawing 166-213 particles -- `rock_mt_portal.efp` x2 (the globe over the fountain), `euro_constan_center.efp`, `minga_smoke_b.efp` x3; 1 glow |
+| rm.txt (22 h, the script's) | 11 hosts, 0 built, no script effect, the pinned 23 h | 9 built (10 effects, `rock_mt_nest.efp` the nest's glow) and the 7 `roc_smoke.efp` from 1 to 13 s; 17 effects, 11 drawing 120 particles, 10 glows at 31-43 s |
+| roc.txt (14 h) | 0 hosts | 0 hosts: the Jupiter temple's models carry no `ambient` set |
+| ruby_baghdad.txt (22 h, the script's) | (not run before) | the script's `bagh_masin_lightwall.efp` and `bagh_masin_gold_light.efp` (region 91/84, one south of the frame region) drawing within 400 of the end target; 7 built, 21 effects -- `bagh_portal.efp`, `cj_pal_lamp_orange.efp`, `frame6.efp` x8; 12 glows |
+| character select, 105/81 (5 h) | 66 hosts, 0 built | 4 built, 8 `cj_pal_lamp_light.efp`, 8 glows |
+| create Europe, 105/79 | 220 hosts, 0 built | 6 effects drawing 193 particles (the globe's `rock_mt_portal.efp` x2, the fountain, chimney smoke) |
+| create China, 98/168 (14 h) | -- | 12 built, 17 effects, 11 drawing: `cj_pal_potal_blue.efp`, `w_cd_potal_blue_g.efp` (the palace gate), `multigi.efp` x4 |
+
+- Pixels (constantinople at 30 s, 12 % fuzz): a 300 x 260 patch on the globe changes 31,535 of
+  78,000 pixels before -> after, a ground patch 0.
+- The title's own cost (constantinople, real time, vsync off, 1280x720, the whole 53 s fly, two runs
+  each): before 2.08 / 2.10 ms a frame (p95 2.78, worst 53.5), after 2.71 / 2.73 (p95 3.03, worst
+  53.2) -- +0.6 ms a frame for the effects; no frame over 100 ms either way; the fly starts 12.6 s
+  after launch both ways (the scene's build unchanged).
+- The release path: a Linux `--export-release` of this tree (4.7.2 templates; CLIENT_VERSION stamped
+  as release.yml stamps a tag, so the update check finds it current), launched as a player launches
+  it (Boot -> the update check -> Login), constantinople at 14 h, real time: the fly from 8.3 s, at
+  30-53 s 10-14 effects built, 5-6 drawing 183-248 particles, `rock_mt_portal.efp` x2 stepping, 9
+  glows; the window grabs show the globe glowing over the fountain; the pop probe's line: 0 cells
+  built during the fly, 0 pops.
+
+### 5. Gates
+
+- `remote_godot.sh check`: 1179 scripts and 9 scenes, ALL LOAD; `remote_godot.sh tests`: "ran 452
+  suite(s), 0 failing" (`intro_script_test` adds the two commands' parsing, their time order and
+  the time-0 hour; `title_backdrop_fx_test` the title's tick and frame running the effects -- these
+  fail on c166fb8e -- and `title_effect_transform`'s region offsets, mirror and yaw).
+- Perf gate (world drawing: the sky's ground colour; the title code does not run in the world),
+  Forward+, 1280x720, `--sites jangan --frames 40000`, base c166fb8e:
+
+| Gate | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| `--sites jangan` | 0.92 -> 0.92 SAME | 8869 -> 8903 SAME | 2845 -> 2855 SAME | 5 -> 4 SAME |
+
+- The title's own cost is in section 4 (+0.6 ms a frame over the constantinople fly, uncapped).
+- Deploy: client only, no server change, no data export.
+
+### Differs on purpose / unsure
+
+- The title keeps the original's fog (MEASURED, READ above); a fog-free title would be OURS.
+- Round 680's preload of the whole scene, the theme's intro choice and the QA title hour stay OURS;
+  a script's time-0 `S_SetWorldTime` overrides `OPENSRO_QA_TITLE_HOUR` (the original's order).
+
 ## Eight-hundred-and-eighty-third round: the auto potion window's frame follows its vigor row, and a slider's thumb keeps its place
 
 The user, on the window round 876 grew by its vigor row (OURS): "The center portion goes below the old

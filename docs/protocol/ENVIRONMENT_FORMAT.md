@@ -271,7 +271,15 @@ the calls are at 0xa1d164, 0xa1d17b and 0xa1d192) into world+0x68b7, 0x68bb and 
 `Map::FUN_00a26f60` packs those × 255 into world+0x67e6 and sets it as `D3DRS_FOGCOLOR` (0x22)
 before the landscape draws. So a channel value of 0.25 fogs to 0.5
 (`EnvironmentReader.render_fog_color`). The unrooted channel also goes into world+0x67e2, whose
-use was not followed.
+use was not followed. **Round 884 followed it (READ):** the objects' draw `Map::FUN_00a1e530` builds
+its renderer's fog state from world+0x67e2 and the same planes (0xa1e9dd..0xa1ea5a);
+`Map::FUN_00a24e30` sets D3DRS_FOGCOLOR to it after the objects (0xa24ea8); the sky's set-up
+`Map::FUN_00a3eb40` takes it as its ninth argument (0xa2db2d); `Map::FUN_00a19160` sets it as the
+texture factor (0xa190fd). So only the landscape fogs to the root; the objects, what draws after
+them and the sky's lower half use channel 9 as sampled. MEASURED (round 884, the title's fly at
+22 o'clock): a fully fogged band under the horizon of (55, 57, 92) against channel 9 x 255 =
+(55, 56, 92). This client draws the sky's lower half in it since round 884; its fog pass still fogs
+objects to the root (OPEN, intro_script.md).
 
 MEASURED, Jangan (environment 15) at the reference time 0.5: channel 9 is (0.357, 0.580, 0.677)
 and the rendered fog is (0.598, 0.762, 0.823).

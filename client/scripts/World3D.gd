@@ -5459,12 +5459,28 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	var sky_top := NightLight.scaled(st.sky_top, ns)
 	var sky_bottom := NightLight.scaled(st.sky_bottom, ns)
 	var sky_moved := false
+	# Round 884: below the horizon the sky is the fog colour -- channel 9 as
+	# sampled, NOT its square root (the landscape's fog colour, below).
+	# READ: SWorld::vslot_004 hands the sky's set-up Map::FUN_00a3eb40 the
+	# unrooted channel at world+0x67e2 (0xa2db2d, its ninth argument, kept at
+	# sky +0x1bc and rebuilt into the dome's vertex colours; how it is mixed
+	# there is not traced, OPEN). MEASURED: the title's fly over the Roc
+	# nest at 22 o'clock shows a flat band under the horizon, no texture
+	# (standard deviation 1/255), of (55, 57, 92) -- channel 9 there is
+	# (0.2157, 0.2208, 0.3615) x 255 = (55, 56, 92); its square root would be
+	# (118, 120, 153). Before, the ground half was channel 13 (OURS), a pale
+	# band the high fly-overs looked down into. Handed over as the other sky
+	# colours are: the same pose shows (52, 54, 114) here (MEASURED, Forward+)
+	# -- the sky's way to the screen moves this dark blue's blue channel; a
+	# hand-over through WorldFog.pass_color's inverse tone map showed
+	# (43, 43, 79), further off, so it is not used (OPEN).
+	var sky_ground := NightLight.scaled(st.fog, ns)
 	# The sky's gradient: channels 1 (top) and 13 (bottom).
-	if _sky_material != null and _day_take("sky", [sky_top, sky_bottom], DAY_SKY_EPSILON, force):
+	if _sky_material != null and _day_take("sky", [sky_top, sky_bottom, sky_ground], DAY_SKY_EPSILON, force):
 		_sky_material.sky_top_color = sky_top
 		_sky_material.sky_horizon_color = sky_bottom
-		_sky_material.ground_horizon_color = sky_bottom
-		_sky_material.ground_bottom_color = sky_bottom.darkened(0.4)
+		_sky_material.ground_horizon_color = sky_ground
+		_sky_material.ground_bottom_color = sky_ground
 		sky_moved = true
 	# The light: channel 2 (diffuse) on the directional light and in the
 	# objects' formula, channel 3 the objects' ambient (ObjectLight, round 706).
@@ -23815,6 +23831,10 @@ func _process(_delta: float) -> void:
 	# of CPSTitle's four hours, 5 and 23 o'clock, are night phases).
 	_night_tick()
 	if title_mode:
+		# Round 884: the placed objects' `ambient` effects (WorldAmbientFx)
+		# -- the teleporters', the fountains', the lamps' -- built and stepped
+		# around the title's camera as the world's are (_title_physics).
+		_tick_world_fx(_delta)
 		return
 	# Round 878: the own walk's clock, read after this frame's ticks.
 	_walk_clock.frame(Time.get_ticks_usec())
@@ -40324,12 +40344,17 @@ func _qa_use_first_potion(slots: Array, _error: String) -> void:
 # --- The front-end's 3D backdrop (round 678) ---------------------------------
 #
 # FrontEndBackdrop instances this scene with `title_mode` set before it enters
-# the tree: the login screen's fly-through (and, later, character select and
-# create) reuse the world's own region loaders -- terrain, objects, water, sky
-# and environment -- and nothing else. No player body, HUD, server, keys,
-# NPCs or loading screen; the backdrop drives the camera and the region
-# window follows the point it hands title_focus. Everything here is OURS
-# plumbing around READ behaviour the backdrop documents.
+# the tree: the login screen's fly-through, character select and create reuse
+# the world's own region loaders -- terrain, objects, water, sky and
+# environment -- and, since round 884, the placed objects' effects (their
+# `ambient` particles, the glows, the animated textures: READ, every
+# front-end screen's frame runs SWorld::vslot_004 with its camera -- CPSTitle
+# 0x8691b0, CPSCharacterSelect 0x85ce30, CPSCharacterCreateChina 0x850500,
+# CPSCharacterCreateEurope 0x8542d0 -- the world update that runs the placed
+# objects and their mods). No player body, HUD, server, keys, NPCs or loading
+# screen; the backdrop drives the camera and the region window follows the
+# point it hands title_focus. Everything here is OURS plumbing around READ
+# behaviour the backdrop documents.
 
 ## Set before add_child: this World3D is a front-end backdrop.
 var title_mode := false
@@ -40452,6 +40477,95 @@ func title_cells_loaded() -> int:
 func title_cells_pending() -> int:
 	return _load_queue.size() + _cell_jobs.size()
 
+## Round 884: an intro script's S_EffectCreate (IntroScript.Command) placed
+## in the backdrop. READ (FUN_005163a0 -> FUN_00a55450 -> FUN_009c4610 /
+## FUN_009c4260): a game object carrying the effect stands at the command's
+## region-local point, its region taken relative to the current one (the
+## title's frame region, SWorld slot 7 at 0x9c4642) -- as a placed object
+## would; turned by the angle in radians; the effect's uniform scale set
+## (IEasyFxEffect slot 10) and its keep flag (slot 4). Here a host node is
+## set up as a placed object's frame (the region group's z mirror, then the
+## object's yaw, NavGraph.godot_yaw) and the effect follows it with no
+## offset. OURS: blended and fogged as the placed objects' effects are
+## (AmbientParticles.attach). Null when the file does not build.
+func title_effect_create(cmd: IntroScript.Command) -> EfpEffect:
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		print("World3D: title effect %s -- no Particles.pk2" % cmd.efp)
+		return null
+	var fx := EfpEffect.create(cmd.efp, particles)
+	if fx == null:
+		print("World3D: title effect %s did not build (%s)" % [cmd.efp, EfpEffect.last_error])
+		return null
+	var host := Node3D.new()
+	host.name = "IntroFx_%s" % cmd.effect_name.validate_node_name()
+	add_child(host)
+	host.global_transform = title_effect_transform(cmd, _grid_origin_region)
+	fx.loop = cmd.keep
+	fx.auto_free = not cmd.keep
+	fx.effect_scale = cmd.scale
+	fx.use_display_blend()
+	SkillEffects.attach(fx, host, "none", Vector3.ZERO)
+	_title_script_fx.append(fx)
+	print("World3D: title effect %s (%s) at region %d/%d (%.1f, %.1f, %.1f), angle %.1f, scale %.2f, %s" % [
+		cmd.effect_name, cmd.efp, cmd.region_hi, cmd.region_lo, cmd.pos.x, cmd.pos.y, cmd.pos.z, cmd.angle_deg,
+		cmd.scale, "kept" if cmd.keep else "once"])
+	return fx
+
+## The intro script's effects (title_effect_create).
+var _title_script_fx: Array = []
+
+## Where an S_EffectCreate's host stands for a backdrop begun on `frame`
+## (Vector2i(hi, lo)): its region-local point moved by its region's offset
+## from the frame region (lo -> x, hi -> z, 1920 a region), in the world
+## (title_world_from_local), with a placed object's frame -- the region
+## group's z mirror, then the yaw turned the Godot way (NavGraph.godot_yaw).
+static func title_effect_transform(cmd: IntroScript.Command, frame: Vector2i) -> Transform3D:
+	var at := cmd.pos + Vector3((cmd.region_lo - frame.y) * IntroScript.REGION_SPAN, 0.0,
+		(cmd.region_hi - frame.x) * IntroScript.REGION_SPAN)
+	return Transform3D(Basis.from_scale(Vector3(1, 1, -1)) * Basis(Vector3.UP, NavGraph.godot_yaw(deg_to_rad(cmd.angle_deg))),
+		title_world_from_local(at))
+
+## QA (round 884): the backdrop's fog and effects as of now, one line --
+## the fog pass and its planes, the placed objects' effects (WorldAmbientFx),
+## the glows, and every EfpEffect node in the scene: how many, how many
+## shown, how many draw particles now, and the same within `near` units of
+## the camera's target (the teleporter at roc's end, the nest at rm's).
+func title_fx_report(near: float = 400.0) -> String:
+	var focus := player.global_position if player != null else Vector3.ZERO
+	var all := 0
+	var shown := 0
+	var drawing := 0
+	var particles := 0
+	var near_all := 0
+	var near_drawing := 0
+	var names := {}
+	var stack: Array = [self]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is EfpEffect:
+			var fx := n as EfpEffect
+			all += 1
+			var vis := fx.is_visible_in_tree()
+			var drawn := fx.drawn_particles() if vis else 0
+			if vis:
+				shown += 1
+			if drawn > 0:
+				drawing += 1
+				particles += drawn
+			if fx.global_position.distance_to(focus) <= near:
+				near_all += 1
+				if drawn > 0:
+					near_drawing += 1
+					var k := String(fx.path).get_file()
+					names[k] = int(names.get(k, 0)) + 1
+		for c in n.get_children():
+			stack.append(c)
+	var fog_on := _fog_pass != null and _fog_pass.visible
+	return "fog %s (%.0f..%.0f, fx reach %.0f); effects %d, shown %d, drawing %d (%d particles); within %.0f of the target %d, drawing %d %s; glows %d; world fx: %s" % [
+		"ON" if fog_on else "off", _fog_near_real, _fog_far_real, WorldAmbientFx.fx_reach, all, shown, drawing, particles,
+		near, near_all, near_drawing, str(names), _ambient.glow_count(), _world_fx.describe()]
+
 ## Where a point given relative to the backdrop's frame region lands in the
 ## world, for a backdrop begun with title_begin (anchor 0): the region
 ## group's corner (_group_position, the same placement every cell uses) plus
@@ -40476,11 +40590,19 @@ var _title_held := false
 ## stale-cell guard (_outside_stream_window) never drops one of them.
 var _title_planned := false
 
-func _title_physics(_delta: float) -> void:
+func _title_physics(delta: float) -> void:
 	if _sky_dome != null:
 		_cloud_uv_offset.x = fposmod(Time.get_ticks_msec() / CLOUD_SCROLL_MS, 1.0)
 		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
 	_tick_map_animations()
+	# Round 884: the scenery's effects play at the title as in the world --
+	# the glow pass (the teleporters' and lamps' glows) once a tick and the
+	# animated texture coordinates (READ: CPSTitle::vslot_012, 0x8691b0,
+	# runs SWorld::vslot_004 with the title's camera every frame, the world
+	# update that runs the placed objects and their mods; the title skipped
+	# both here until now). The objects' particle effects step in _process.
+	_ambient_step(delta)
+	TexAni.tick(delta * 1000.0)
 	if not _title_held and not _title_planned:
 		_maybe_stream_regions()
 	_process_stream_queue()
