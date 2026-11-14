@@ -17,16 +17,12 @@ class_name UpdateChecker
 ## never mistakes itself (or an older tag) for a newer one.
 const CLIENT_VERSION := "v0.0.0"
 
-## Real fine-grained GitHub PAT (contents: read-only, this one repo only --
-## see docs/WORLD_ISSUES.md's "private repo + embedded token" entry for the
-## real tradeoff this represents) letting a downloaded client read this
-## project's real, private GitHub Releases API. Empty by default (a dev/
-## editor run, or any build not made from a real tagged release, simply
-## can't check for updates against a private repo -- an honest "no access"
-## rather than a guessed/fake value). release.yml sed-replaces this exact
-## line with the real secret value at build time, the same mechanism
-## CLIENT_VERSION already uses, so the raw token is never committed to
-## this tracked source file.
+## An optional GitHub token for the Releases API. Empty in every build since
+## round 885: the repository is public, so the check and the download need no
+## token. Builds up to v0.1.657 embedded one (from release.yml, when the repo
+## was private); it expired, and GitHub answers 401 to a request carrying an
+## expired token even for a public repo, so those clients saw no release.
+## AutoUpdater drops a refused token and asks again without it.
 const GITHUB_TOKEN := ""
 
 ## Parses a "vMAJOR.MINOR.PATCH" real tag string into [major, minor, patch],

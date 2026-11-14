@@ -37,6 +37,16 @@ func _init() -> void:
 	# for the old names and are not updated (the user's decision, 2026-10-03).
 	_check(AutoUpdater.RELEASES_API_URL == "https://api.github.com/repos/TheOpenSRO/OpenSRO/releases/latest",
 		"the releases API is the OpenSRO repository's (got %s)" % AutoUpdater.RELEASES_API_URL)
+	# Round 885: a token GitHub refuses (expired: 401) is dropped and the
+	# check asked again without it; the shipped builds carry none.
+	_check(AutoUpdater.should_retry_without_token(true, 401), "a refused token (401) is retried without it")
+	_check(AutoUpdater.should_retry_without_token(true, 403), "a forbidden token (403) is retried without it")
+	_check(not AutoUpdater.should_retry_without_token(false, 401), "a request sent without a token is not retried")
+	_check(not AutoUpdater.should_retry_without_token(true, 200), "an answered check is not retried")
+	_check(not AutoUpdater.should_retry_without_token(true, 404), "only 401/403 drop the token")
+	_check(not Array(AutoUpdater.request_headers(false)).any(func(h): return String(h).begins_with("Authorization")),
+		"no Authorization header once the token is dropped")
+	_check(UpdateChecker.GITHUB_TOKEN == "", "the source carries no update token")
 	_check(AutoUpdater.windows_relaunch_script(1, "C:/G/jogo-a\u00e7\u00e3o.exe").contains("%~dp0OpenSRO.exe"),
 		"a non-ASCII executable name falls back to OpenSRO.exe, release.yml's name")
 

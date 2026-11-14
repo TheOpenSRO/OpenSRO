@@ -58,14 +58,30 @@ static func releases_url() -> String:
 	var qa := OS.get_environment(QA_URL_ENV)
 	return qa if qa != "" else RELEASES_API_URL
 
+## Round 885: whether this run still sends the embedded token. GitHub
+## answers 401 "Bad credentials" to a request carrying an expired or revoked
+## token even for a public repo (MEASURED 2026-11-14: the token in every
+## client up to v0.1.657 had expired, so no client could see a release),
+## so a refused token is dropped and the check asked again without it.
+var _use_token := UpdateChecker.GITHUB_TOKEN != ""
+
 ## Headers for a GitHub API/asset request; an Authorization header only when
-## a release build embedded UpdateChecker.GITHUB_TOKEN.
-static func _auth_headers(extra: Array[String] = []) -> PackedStringArray:
+## a release build embedded UpdateChecker.GITHUB_TOKEN and GitHub has not
+## refused it this run.
+func _auth_headers(extra: Array[String] = []) -> PackedStringArray:
+	return request_headers(_use_token, extra)
+
+static func request_headers(with_token: bool, extra: Array[String] = []) -> PackedStringArray:
 	var headers: Array[String] = ["User-Agent: opensro-client"]
 	headers.append_array(extra)
-	if UpdateChecker.GITHUB_TOKEN != "":
+	if with_token and UpdateChecker.GITHUB_TOKEN != "":
 		headers.append("Authorization: Bearer %s" % UpdateChecker.GITHUB_TOKEN)
 	return PackedStringArray(headers)
+
+## Whether a check answered with `response_code` should be asked again
+## without the token (it was sent, and GitHub refused it).
+static func should_retry_without_token(sent_token: bool, response_code: int) -> bool:
+	return sent_token and (response_code == 401 or response_code == 403)
 
 func check_for_update() -> void:
 	var err := _check_request.request(releases_url(), _auth_headers())
@@ -73,6 +89,11 @@ func check_for_update() -> void:
 		check_failed.emit("could not start request: %s" % err)
 
 func _on_check_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if result == HTTPRequest.RESULT_SUCCESS and should_retry_without_token(_use_token, response_code):
+		print("OpenSRO update: the embedded token was refused (HTTP %d); checking again without it" % response_code)
+		_use_token = false
+		check_for_update()
+		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		check_failed.emit("HTTP %d (result %d)" % [response_code, result])
 		return
@@ -94,7 +115,7 @@ func _on_check_completed(result: int, response_code: int, _headers: PackedString
 	# A private repo's browser_download_url does not work unauthenticated; the
 	# asset's API "url" (with Authorization and "Accept:
 	# application/octet-stream", begin_download) does.
-	var url := UpdateChecker.find_asset_api_url(assets, asset_name) if UpdateChecker.GITHUB_TOKEN != "" else ""
+	var url := UpdateChecker.find_asset_api_url(assets, asset_name) if _use_token else ""
 	if url == "":
 		url = UpdateChecker.find_asset_url(assets, asset_name)
 	if url == "":
