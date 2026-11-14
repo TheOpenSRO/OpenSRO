@@ -174,8 +174,7 @@ effects (MEASURED, the box's Media.pk2).
   state built from the unrooted world+0x67e2 with the same planes (0xa1e9dd..0xa1ea5a), and
   `Map::FUN_00a24e30` sets D3DRS_FOGCOLOR back to world+0x67e2 after the objects (0xa24ea8) for
   what draws next. This client's fog pass (WorldFog) fogs every surface to the rooted colour, so
-  fogged objects come out lighter than the original's (at the rm title's door, 5-10 / 255 per
-  channel, MEASURED against the same pose). Splitting the pass by surface needs a mask (a stencil
+  fogged objects come out lighter (MEASURED at the rm title's door: 4-10 / 255 per channel). Splitting the pass by surface needs a mask (a stencil
   probe under Godot 4.7.2 drew nothing, round 884); not done.
 
 ## The camera path (READ)

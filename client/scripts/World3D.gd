@@ -5469,7 +5469,11 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	# (standard deviation 1/255), of (55, 57, 92) -- channel 9 there is
 	# (0.2157, 0.2208, 0.3615) x 255 = (55, 56, 92); its square root would be
 	# (118, 120, 153). Before, the ground half was channel 13 (OURS), a pale
-	# band the high fly-overs looked down into.
+	# band the high fly-overs looked down into. Handed over as the other sky
+	# colours are: the same pose shows (52, 54, 114) here (MEASURED, Forward+)
+	# -- the sky's way to the screen moves this dark blue's blue channel; a
+	# hand-over through WorldFog.pass_color's inverse tone map showed
+	# (43, 43, 79), further off, so it is not used (OPEN).
 	var sky_ground := NightLight.scaled(st.fog, ns)
 	# The sky's gradient: channels 1 (top) and 13 (bottom).
 	if _sky_material != null and _day_take("sky", [sky_top, sky_bottom, sky_ground], DAY_SKY_EPSILON, force):
