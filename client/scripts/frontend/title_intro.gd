@@ -179,7 +179,7 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 	day_phase = pick_day_phase()
 	# Round 884 (READ, IntroScript.start_hour): the script's S_SetWorldTime
 	# at its time 0 runs after OnCreate's random hour, so its hour is the
-	# title's (roc's 22 o'clock night in the archives that carry it).
+	# title's (rm.txt's and ruby_baghdad.txt's 22 o'clock).
 	var script_hour := IntroScript.start_hour(parsed)
 	if script_hour >= 0:
 		day_phase = script_hour / 24.0
@@ -458,6 +458,7 @@ func _process(delta: float) -> void:
 				var before := path.time
 				if _qa_frames_on and not path.finished():
 					_qa_frame_ms.append(delta * 1000.0)
+					_qa_process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 				var pose := path.advance(delta)
 				backdrop.show_pose(pose)
 				_run_script(path.time)
@@ -532,14 +533,18 @@ func _qa_fx_line(t: float) -> void:
 ## frame's delta is its wall time.
 var _qa_frames_on := OS.get_environment("OPENSRO_QA_TITLE_FRAMES") != ""
 var _qa_frame_ms := PackedFloat32Array()
+## Each frame's main-thread process time (Performance.TIME_PROCESS).
+var _qa_process_ms := PackedFloat32Array()
 
 func _qa_frames_print() -> void:
-	var v := Array(_qa_frame_ms)
-	v.sort()
-	var sum := 0.0
-	for x in v:
-		sum += x
-	print("QA TITLE FRAMES %d frames over the fly: mean %.2f ms, median %.2f, p95 %.2f, max %.1f, over 100 ms %d" % [
-		v.size(), sum / v.size(), v[v.size() / 2], v[mini(v.size() - 1, int(v.size() * 0.95))], v[v.size() - 1],
-		v.filter(func(x): return x > 100.0).size()])
+	for pair in [["frame", _qa_frame_ms], ["process", _qa_process_ms]]:
+		var v := Array(pair[1])
+		v.sort()
+		var sum := 0.0
+		for x in v:
+			sum += x
+		print("QA TITLE FRAMES %s: %d frames over the fly, mean %.2f ms, median %.2f, p95 %.2f, max %.1f, over 100 ms %d" % [
+			pair[0], v.size(), sum / maxf(v.size(), 1.0), v[v.size() / 2], v[mini(v.size() - 1, int(v.size() * 0.95))], v[v.size() - 1],
+			v.filter(func(x): return x > 100.0).size()])
 	_qa_frame_ms.clear()
+	_qa_process_ms.clear()
