@@ -22,8 +22,9 @@ class_name IntroScript
 ##     The first token of a keyframe line is read and never used. Any other
 ##     line in [CAMERA] (ruby_baghdad's `S_CameraShake`) is skipped;
 ##   - [SCRIPT] lines go, token by token, to the GScript interpreter
-##     (FUN_004779a0 / FUN_00477ca0) -- kept here as text, not executed
-##     (OPEN: the GScript subset);
+##     (FUN_004779a0 / FUN_00477ca0); round 884 reads and runs two of its
+##     commands, S_SetWorldTime and S_EffectCreate (Command below, run by
+##     TitleIntro); the rest are kept as text, not executed (OPEN);
 ##   - each keyframe is appended in FILE order (FUN_0056ca60) and its region
 ##     handed to FUN_0056c870, which collects the regions to preload
 ##     (preload_regions below).
@@ -74,8 +75,47 @@ class Keyframe:
 	func region_word() -> int:
 		return (region_hi << 8) | region_lo
 
+## One [SCRIPT] line (round 884). READ, the GScript compile (FUN_0052cdb0 ->
+## FUN_0052cd00 -> UI_ALCHEMYBOX::FUN_0051e4c0): the line's first token is
+## its time, `round(_wtof(token) * 1000.0)` ms (the double at 0xd83268), the
+## second the command, looked up by name (FUN_0051cbe0; an unknown one is
+## logged " <= Not Find" and dropped); the compiled commands are sorted by
+## that time (FUN_0052cdb0's selection by +8). The rest of the line is the
+## command's own (its parser, below).
+class Command:
+	## Seconds (the line's ms / 1000).
+	var time: float = 0.0
+	var name: String = ""
+	var line: String = ""
+	## S_SetWorldTime: the hour (READ, FUN_0050a750: one integer token, kept
+	## as a byte at +0xc).
+	var hour: int = -1
+	## S_EffectCreate (READ, the parser FUN_00522850, the run
+	## FUN_005163a0): the effect's name, the .efp between the line's first
+	## two double quotes (FUN_004ee310 twice, 0x22), the region's low and
+	## high byte (+0x2c, +0x2d), the region-local x, y, z (+0x30..+0x38),
+	## the angle in degrees (+0x40; the run multiplies it by pi/180, the
+	## double at 0xe1b8d8), the scale (+0x44; IEasyFxEffect slot 10, the
+	## effect's uniform scale) and the keep flag (+0x3c; slot 4, kept and
+	## looping while set).
+	var effect_name: String = ""
+	var efp: String = ""
+	var region_lo: int = 0
+	var region_hi: int = 0
+	var pos := Vector3.ZERO
+	var angle_deg: float = 0.0
+	var scale: float = 1.0
+	var keep := false
+
+	## Vector2i(hi, lo), this project's "hi/lo".
+	func region() -> Vector2i:
+		return Vector2i(region_hi, region_lo)
+
 class Parsed:
 	var keyframes: Array[Keyframe] = []
+	## The [SCRIPT] lines this client runs (round 884: S_SetWorldTime and
+	## S_EffectCreate), in time order (stable for equal times).
+	var commands: Array[Command] = []
 	## The `AREA=` value, without the prefix ("" when none).
 	var area: String = ""
 	## The [SCRIPT] section's lines as written (not executed this round).
@@ -119,6 +159,9 @@ static func parse(bytes: PackedByteArray) -> Parsed:
 		if section == SECTION_SCRIPT:
 			if line.strip_edges() != "" and out.script_lines.size() < MAX_SCRIPT_LINES:
 				out.script_lines.append(line.strip_edges())
+				var cmd := parse_command(line.strip_edges())
+				if cmd != null:
+					out.commands.append(cmd)
 		elif section == SECTION_CAMERA:
 			if first.begins_with("AREA="):
 				out.area = first.substr(5)
@@ -147,7 +190,76 @@ static func parse(bytes: PackedByteArray) -> Parsed:
 				out.skipped_camera_lines.append(line.strip_edges())
 	if out.keyframes.is_empty():
 		out.error = "no S_CameraInsert keyframe in a [CAMERA] section"
+	# READ: the compiled commands run in time order (FUN_0052cdb0 picks the
+	# smallest time left each pass; the first of equal times stays first).
+	var timed: Array = []
+	for i in out.commands.size():
+		timed.append([out.commands[i].time, i, out.commands[i]])
+	timed.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	out.commands.clear()
+	for t in timed:
+		out.commands.append(t[2])
 	return out
+
+## The commands this client runs (round 884).
+const CMD_SET_WORLD_TIME := "S_SetWorldTime"
+const CMD_EFFECT_CREATE := "S_EffectCreate"
+
+## One [SCRIPT] line as a Command this client runs, or null (another
+## command, or one whose fields are missing or out of bounds -- OURS: the
+## same bounds as a keyframe's).
+static func parse_command(line: String) -> Command:
+	var tokens := tokens_of(line)
+	if tokens.size() < 2:
+		return null
+	var cmd := Command.new()
+	cmd.line = line
+	cmd.name = tokens[1]
+	var ms := roundi(_wtof(tokens[0]) * 1000.0)
+	cmd.time = ms / 1000.0
+	if cmd.time < 0.0 or cmd.time > MAX_TIME:
+		return null
+	match cmd.name:
+		CMD_SET_WORLD_TIME:
+			if tokens.size() < 3:
+				return null
+			cmd.hour = _wtoi(tokens[2]) & 0xFF
+			return cmd
+		CMD_EFFECT_CREATE:
+			var q1 := line.find("\"")
+			var q2 := line.find("\"", q1 + 1) if q1 >= 0 else -1
+			if q1 < 0 or q2 <= q1 + 1 or tokens.size() < 3:
+				return null
+			cmd.effect_name = tokens[2]
+			cmd.efp = line.substr(q1 + 1, q2 - q1 - 1)
+			var rest := tokens_of(line.substr(q2 + 1))
+			if rest.size() < 8:
+				return null
+			cmd.region_lo = _wtoi(rest[0]) & 0xFF
+			cmd.region_hi = _wtoi(rest[1]) & 0xFF
+			cmd.pos = Vector3(_wtof(rest[2]), _wtof(rest[3]), _wtof(rest[4]))
+			cmd.angle_deg = _wtof(rest[5])
+			cmd.scale = _wtof(rest[6])
+			cmd.keep = _wtoi(rest[7]) != 0
+			if absf(cmd.pos.x) > MAX_HORIZONTAL or absf(cmd.pos.z) > MAX_HORIZONTAL or absf(cmd.pos.y) > MAX_HEIGHT \
+					or absf(cmd.angle_deg) > 100000.0 or not (cmd.scale > 0.0 and cmd.scale <= 1000.0):
+				return null
+			return cmd
+	return null
+
+## The hour the last S_SetWorldTime at time 0 sets, or -1 (round 884). READ: the
+## run (0x5041b0) hands SWorld::vslot_020 hour / 24.0 (the double at
+## 0xd830a0), the same day phase CPSTitle::OnCreate's random hour sets
+## (0x86b278); the script runs after OnCreate, so its hour is the one
+## the title shows.
+static func start_hour(parsed: Parsed) -> int:
+	var hour := -1
+	for cmd in parsed.commands:
+		if cmd.time > 0.0:
+			break
+		if cmd.name == CMD_SET_WORLD_TIME:
+			hour = cmd.hour
+	return hour
 
 ## Why a keyframe cannot be flown, or "" (the bounds above).
 static func out_of_bounds(kf: Keyframe) -> String:

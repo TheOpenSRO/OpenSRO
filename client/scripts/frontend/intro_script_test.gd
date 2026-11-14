@@ -43,6 +43,7 @@ func _initialize() -> void:
 		"a [CAMERA] line that is not a keyframe is skipped, not read as one (%s)" % str(p.skipped_camera_lines))
 	_check(p.script_lines.size() == 2 and p.script_lines[0] == "0 S_SetWorldTime 22",
 		"[SCRIPT] lines are kept as text (%s)" % str(p.script_lines))
+	_test_commands(p)
 	if p.keyframes.size() == 3:
 		var a: IntroScript.Keyframe = p.keyframes[0]
 		_check(is_equal_approx(a.time, 0.0) and a.region_lo == 10 and a.region_hi == 20,
@@ -111,3 +112,37 @@ func _initialize() -> void:
 	else:
 		print("FAILURES %d" % _failures)
 	quit()
+
+## Round 884: the two [SCRIPT] commands the title runs (IntroScript.Command,
+## READ from the GScript parsers FUN_0050a750 / FUN_00522850), synthetic lines.
+func _test_commands(p: IntroScript.Parsed) -> void:
+	_check(p.commands.size() == 2, "both commands of the snippet are kept to run (got %d)" % p.commands.size())
+	if p.commands.size() == 2:
+		var w: IntroScript.Command = p.commands[0]
+		_check(w.name == IntroScript.CMD_SET_WORLD_TIME and w.hour == 22 and w.time == 0.0, "S_SetWorldTime: time 0, hour 22")
+		var e: IntroScript.Command = p.commands[1]
+		_check(e.name == IntroScript.CMD_EFFECT_CREATE and e.time == 1.0 and e.effect_name == "fx" and e.efp == "a\\b.efp",
+			"S_EffectCreate: its time, name and the file between the quotes (got '%s', '%s')" % [e.effect_name, e.efp])
+		_check(e.region_lo == 10 and e.region_hi == 20 and e.region() == Vector2i(20, 10), "S_EffectCreate: region lo then hi, as a keyframe's")
+		_check(e.pos == Vector3(1, 2, 3) and e.angle_deg == 0.0 and e.scale == 1.0 and e.keep, "S_EffectCreate: x y z, angle, scale, keep")
+	_check(IntroScript.start_hour(p) == 22, "the hour at time 0 is the title's")
+	# Time: round(_wtof * 1000) ms; sorted by time, the file's order kept for equal times.
+	var q := IntroScript.parse(utf16le("[CAMERA]\r\n0 S_CameraInsert 1 2 3 4 5 6 7 8 9 10\r\n[SCRIPT]\r\n"
+		+ "5 S_EffectCreate late \"l.efp\" 1 2 0 0 0 90 2.5 0\r\n"
+		+ "1.0004 S_EffectCreate first \"f.efp\" 1 2 0 0 0 0 1 1\r\n"
+		+ "1 S_EffectCreate second \"s.efp\" 1 2 0 0 0 0 1 1\r\n"
+		+ "3 S_ObjectMoveTo thief1 1 2 3 4 5\r\n"
+		+ "2 S_SetWorldTime 5\r\n"
+		+ "0 S_SetWorldTime 3\r\n0 S_SetWorldTime 7\r\n"
+		+ "4 S_EffectCreate broken \"x.efp\" 1 2\r\n[END]\r\n"))
+	var names: Array[String] = []
+	for c in q.commands:
+		names.append(c.effect_name if c.name == IntroScript.CMD_EFFECT_CREATE else "%s:%d" % [c.name, c.hour])
+	_check(names == ["S_SetWorldTime:3", "S_SetWorldTime:7", "first", "second", "S_SetWorldTime:5", "late"],
+		"commands in time order (1.0004 s rounds to 1.000), equal times in file order, others and a short S_EffectCreate dropped (got %s)" % str(names))
+	_check(IntroScript.start_hour(q) == 7, "the LAST S_SetWorldTime at time 0 sets the hour (got %d)" % IntroScript.start_hour(q))
+	if q.commands.size() == 6:
+		var late: IntroScript.Command = q.commands[5]
+		_check(late.angle_deg == 90.0 and late.scale == 2.5 and not late.keep, "angle 90, scale 2.5, not kept")
+	var none := IntroScript.parse(utf16le("[CAMERA]\r\n0 S_CameraInsert 1 2 3 4 5 6 7 8 9 10\r\n[END]\r\n"))
+	_check(none.commands.is_empty() and IntroScript.start_hour(none) == -1, "no [SCRIPT]: nothing to run, no hour")
