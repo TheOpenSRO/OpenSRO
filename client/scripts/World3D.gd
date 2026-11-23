@@ -662,7 +662,13 @@ func _apply_fog() -> void:
 	var fog_planes := WorldFog.planes(_fog_channel_near, _fog_channel_far, view)
 	_fog_near_real = fog_planes.x
 	_fog_far_real = fog_planes.y
-	var on := _fog_ready and o.value(VideoOptions.FOG) == 1 and OS.get_environment("OPENSRO_QA_NOFOG") == ""
+	# Round 886 (OURS, the user: "The intro scene has fog and it shouldn't",
+	# then again on v0.1.658 with a screenshot): the front-end backdrops --
+	# the intros, character select and create -- draw no distance fog. The
+	# original fogs them like the world (READ Map::FUN_00a26f60, MEASURED at
+	# its title, round 884); the world keeps its fog.
+	var on := _fog_ready and not title_mode and o.value(VideoOptions.FOG) == 1 \
+			and OS.get_environment("OPENSRO_QA_NOFOG") == ""
 	var env: Environment = world_environment.environment if world_environment != null else null
 	WorldFog.set_globals(fog_planes, on, WorldFog.pass_color(_fog_display_color, env))
 	# The object shaders undo the same tone map (round 706, ObjectLight).

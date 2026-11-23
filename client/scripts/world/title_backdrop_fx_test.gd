@@ -37,12 +37,24 @@ func _initialize() -> void:
 		and tail.contains("if not title_mode and EquipFx.batch_viewport == fx_vp:"),
 		"... neither when it is a title backdrop, which claimed nothing")
 	_test_title_effects(src)
+	_test_title_no_fog(src)
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
+
+## Round 886 (OURS, the user, twice: the intro "has fog and it shouldn't";
+## a regression of an earlier fix): no front-end backdrop shows the fog pass.
+## NEGATIVE: round 884's tree turned the pass on for the title too.
+func _test_title_no_fog(src: String) -> void:
+	var at := src.find("func _apply_fog() -> void:")
+	var end := src.find("\nfunc ", at + 1)
+	var body := src.substr(at, end - at)
+	_check(at >= 0 and body.contains("var on := _fog_ready and not title_mode"),
+		"the fog pass is off on every front-end backdrop (intro, select, create)")
+	_check(body.contains("_fog_pass.visible = on"), "... and the pass follows that flag")
 
 ## Round 884 (the user: the intro "doesn't load any effects, especially around
 ## the teleporter"): the backdrop runs the scenery's effects as the world does
