@@ -45,8 +45,8 @@ func _initialize() -> void:
 		print("%d FAILURES" % _failures)
 		quit(1)
 
-## Round 886 (OURS, the user, twice: the intro "has fog and it shouldn't";
-## a regression of an earlier fix): no front-end backdrop shows the fog pass.
+## Round 886: no front-end backdrop shows the fog pass -- the original's intro
+## shows no fog (MEASURED); round 884 had turned it back on, a regression.
 ## NEGATIVE: round 884's tree turned the pass on for the title too.
 func _test_title_no_fog(src: String) -> void:
 	var at := src.find("func _apply_fog() -> void:")

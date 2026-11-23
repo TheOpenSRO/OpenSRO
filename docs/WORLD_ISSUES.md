@@ -7525,9 +7525,9 @@ INFERRED that the original's script and path start together), `World3D.title_eff
 `title_effect_transform`. rm.txt's seven `roc_smoke.efp` and ruby_baghdad's two effects play;
 the rest of ruby_baghdad (its crowd, `S_CameraShake`) stays OPEN.
 
-### 3. The fog (READ, MEASURED)
+### 3. The fog (CORRECTED in round 886: the original's intro shows no fog, MEASURED)
 
-- **The original's title is fogged as the world is.** The world update draws the landscape with
+- **WRONG, kept for the record: "the original's title is fogged as the world is."** The world update draws the landscape with
   round 702's fog (`Map::FUN_00a26f60`); nothing in CPSTitle turns it off --
   `SWorld::vslot_043(0x17, 0)` in OnCreate stores option 23 at +0x2eac, whose one reader (0xa2bd5d)
   sets the cells' detail levels (a detail switch, INFERRED). MEASURED, the title flying the rm path at its
@@ -7602,7 +7602,8 @@ same on any front-end screen; `OPENSRO_QA_TITLE_FRAMES=1` the fly's frame times.
 
 ### Differs on purpose / unsure
 
-- The title keeps the original's fog (MEASURED, READ above); a fog-free title would be OURS.
+- ~~The title keeps the original's fog~~ -- wrong: the original's intro shows no fog (MEASURED);
+  round 886 turned the fog off on every front-end backdrop.
 - Round 680's preload of the whole scene, the theme's intro choice and the QA title hour stay OURS;
   a script's time-0 `S_SetWorldTime` overrides `OPENSRO_QA_TITLE_HOUR` (the original's order).
 

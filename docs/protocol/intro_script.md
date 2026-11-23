@@ -158,14 +158,18 @@ effects (MEASURED, the box's Media.pk2).
   mods -- the `ambient` particles, the glows -- as in the world (teleport_effects.md). Until round
   884 this client's backdrop (`World3D` in `title_mode`) built none of them: the per-frame block
   returned before `_tick_world_fx`, the tick before the glow pass and the animated textures.
-- **Fog (READ, MEASURED).** The same update draws the landscape with its fog (`Map::FUN_00a26f60`,
-  round 702): nothing in CPSTitle turns it off (`SWorld::vslot_043(0x17, 0)` in OnCreate stores
+- **Fog: none (MEASURED, round 886).** The original's intro shows no distance fog, and since
+  round 886 no front-end backdrop here draws any (`World3D._apply_fog`, `not title_mode`). Round
+  884 concluded the opposite from the code and a sky sample; that conclusion was wrong and is kept
+  below only as what was read. How the original keeps fog off the title is OPEN. What round 884
+  read: the same update draws the landscape with its fog (`Map::FUN_00a26f60`,
+  round 702), and no fog switch was found in CPSTitle (`SWorld::vslot_043(0x17, 0)` in OnCreate stores
   option 23 at SWorld+0x2eac -- its one reader, 0xa2bd5d in `Map::FUN_00a2b370`, sets each listed
   cell's +0xa23 level (0 with the option off, else 1..3 by the squared cell distance): a detail
   switch, INFERRED; no fog state).
   MEASURED (the title flying the rm path, at its script's 22 o'clock): below the horizon a flat
   band, standard deviation 1/255, of (55, 57, 92) -- channel 9 at that hour x 255 = (55, 56, 92).
-  So the title is fogged as the world is. Under the horizon the sky is the unrooted fog colour
+  That band is the sky, not fog on the scenery. Under the horizon the sky is the unrooted fog colour
   (READ: `SWorld::vslot_004` hands the sky's set-up `Map::FUN_00a3eb40` world+0x67e2 at 0xa2db2d;
   how the dome mixes it is not traced, OPEN); this client drew channel 13 there (OURS) and draws
   the fog colour since round 884.
